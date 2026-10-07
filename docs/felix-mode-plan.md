@@ -44,20 +44,25 @@ is planned in `OpenFoam_Instance/plan-4-felix-gpu-solver.md`.
    convergence, recognise its errors (including out-of-memory, which says how much
    memory is needed), and continue a stopped run from a snapshot.
 7. **Make snapshots happen on every solve,** so a preempted or stopped run can
-   continue. How this is guaranteed is open (below), because the harness must not
-   block or rewrite the agent's tool calls.
+   continue, without the harness blocking or rewriting the agent's tool calls
+   (see Decided 1).
 8. **Show results** from Felix output: fields, plots, forces, probes.
 9. **Be measured**: a Felix benchmark with known reference answers, so prompt
    changes are judged by results.
 
-Not needed for launch: the `cad` tool producing Felix meshes, and the web app
-offering Felix (it can start CLI-only).
+The web app offers Felix at launch. Not needed for launch: the `cad` tool
+producing Felix meshes.
 
-## Open questions
+## Decided
 
-1. **How are snapshots guaranteed?** Options: the service refuses a solve without
-   snapshots; Felix writes its own resume file on the cloud runner regardless of the
-   case settings; or the prompt states the fact and the agent chooses.
-2. **The default wall-time limit** for a solve when the agent sets none (the
-   service cap is 24 h).
-3. **Does the web app offer Felix at launch,** or only the CLI?
+1. **Snapshots**: the agent's `felix` client refuses a case with
+   `output.every: 0`, as plan-4 says; felixd restarts a preempted run from the
+   latest snapshot. Neither felixd nor `felixclient` enforces snapshots today, so
+   this check is OpenReynolds' to build.
+2. **Wall time**: with no limit set, felixd uses its 24 h cap.
+3. **Web app**: offers Felix at launch.
+4. **Service calls**: GPU types and prices come from felixd `GET /v1/gpus`; submit,
+   log, kill and outputs go through `felixclient`.
+5. **Workspace type**: OpenReynolds declares the solver when it creates the study;
+   foamd binds the study to a workspace of that type and refuses any other, so the
+   rule holds for every client.
