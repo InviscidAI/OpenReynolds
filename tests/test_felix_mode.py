@@ -651,6 +651,20 @@ def test_solver_auto_choosing_openfoam_gives_the_openfoam_study(monkeypatch, tmp
     assert Store(run.cfg.studies_dir, _study_dir(run).name).session.solver == "openfoam"
 
 
+def test_solver_a_tool_not_offered_is_no_such_tool(monkeypatch, tmp_path):
+    """Before the choice only `choose_solver` is offered. A call to anything else is the
+    same answer as a call to a tool that does not exist -- the list is the mechanism, so
+    no gate and no wait on a workspace nobody has started."""
+    from conftest import message, tool_block
+
+    stray = message([tool_block("bash", {"cmd": "ls"})], stop_reason="tool_use")
+    run = _auto_session(monkeypatch, tmp_path, [stray, _done()])
+
+    assert run.reserves == [] and run.backend.execs == []
+    result = run.loop.fake.calls[1]["messages"][-1]["content"][0]
+    assert result["is_error"] and "No such tool: bash" in str(result["content"])
+
+
 def test_solver_auto_session_that_never_chooses_starts_nothing(monkeypatch, tmp_path):
     run = _auto_session(monkeypatch, tmp_path, [_done()])
 

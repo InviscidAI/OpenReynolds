@@ -654,8 +654,14 @@ class Loop:
     def _run_tool(self, block: Any) -> dict[str, Any]:
         self.view.tool(block.name, _summarize(block.input))
         tool_input = dict(block.input)
-        refused = self._consult(block.name, tool_input)
-        if refused is not None:
+        offered = block.name in {tool["name"] for tool in tools_for(self.ctx)}
+        refused = self._consult(block.name, tool_input) if offered else None
+        if not offered:
+            # Not offered is not served: the same answer as a tool that does not exist.
+            # Before the solver is chosen this is every machine tool, and serving one
+            # would wait on a workspace nobody has started.
+            content, is_error = f"No such tool: {block.name}", True
+        elif refused is not None:
             content, is_error = refused, True
         elif block.name == modes.CHECKPOINT:
             # A question to a person: no mirror gate held while they think, and no
