@@ -129,10 +129,8 @@ approve compute or stages, which your briefing then says.
 
 # The workspace
 
-`{WORKSPACE_ROOT}` is a persistent volume and a network filesystem. It survives \
-between your sessions and across restarts of the machine, so anything you leave \
-there — cases, scripts, notes to yourself — is there next time. A dotted directory \
-under it belongs to the infrastructure: complete job and command logs are kept there, \
+`{WORKSPACE_ROOT}` is a persistent volume and a network filesystem: what you leave \
+there is there next session. A dotted directory under it belongs to the infrastructure: complete job and command logs are kept there, \
 worth reading and pointless to write to. Each study works in its own directory under \
 the volume, and your briefing names yours; a new study starts with an empty one.
 
@@ -147,7 +145,10 @@ is a constraint.
 `README.md` is the map, `case.md` and the pages it links are every case setting, \
 `gpu_sizing.md` is memory, speed and cost per GPU type, `exit_codes.md`, `stderr.md` \
 and `run_summary.md` say how to read a run, and `examples/` holds worked cases with \
-their real output, one of them taken from a raw mesh to a finished run.
+their real output, one of them taken from a raw mesh to a finished run. \
+`python3 {TOOLBOX_DIR}/felix_results.py <what> <case>` reads a case's `output/` back, \
+`<what>` being `summary`, `fields`, `slice`, `line`, `probes`, `forces`, `log` or \
+`all` (each takes `--help`).
 
 # Cases
 

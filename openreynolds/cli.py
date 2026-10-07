@@ -3438,15 +3438,81 @@ def _no_workspace_yet(loop: Any) -> bool:
 def _sync_toolbox(backend: Backend, solver: str = solvers.OPENFOAM) -> None:
     """Push the toolbox into the workspace. It is offered, never imposed.
 
-    The toolbox is OpenFOAM know-how -- case generators, templates, field notes on
-    OpenFOAM practice -- so a Felix workspace is not given it: its reference is the
-    Felix documentation already in the image."""
-    if solver == solvers.FELIX or not TOOLBOX_SOURCE.is_dir():
+    Each solver gets its own part of it (`_toolbox_for`): a Felix study the Felix
+    scripts, an OpenFOAM study everything else, each with an index naming only what
+    it was given."""
+    if not TOOLBOX_SOURCE.is_dir():
         return
     try:
-        backend.put_tree(TOOLBOX_SOURCE, TOOLBOX_DEST)
+        backend.put_tree(_toolbox_for(solver), TOOLBOX_DEST)
     except BackendError as exc:
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
+
+
+FELIX_TOOLBOX_PREFIX = "felix_"
+"""The toolbox's Felix scripts are named for it (`felix_results.py`); every other file
+in it is OpenFOAM know-how -- case generators, templates, field notes."""
+
+_TOOLBOX_ROW = re.compile(r"^\| `([^`]+)` \|")
+_staged_toolboxes: dict[str, Path] = {}
+_staging_lock = threading.Lock()
+
+
+def _toolbox_for(solver: str) -> Path:
+    """The toolbox as one solver's study gets it, staged once per process.
+
+    The scripts are split by name (`FELIX_TOOLBOX_PREFIX`), and so are the rows of the
+    index, `README.md`, which is what the agent reads to find them: an OpenFOAM study
+    is not told about a Felix script, nor a Felix study about OpenFOAM's. The Felix
+    index keeps the index's opening and its own rows, and leaves out the paragraphs
+    after the table, which are about OpenFOAM's environment, templates and notes."""
+    import atexit
+    import shutil
+    import tempfile
+
+    felix = solver == solvers.FELIX
+    key = solvers.FELIX if felix else solvers.OPENFOAM
+    with _staging_lock:
+        staged = _staged_toolboxes.get(key)
+        if staged is not None and staged.is_dir():
+            return staged
+        root = Path(tempfile.mkdtemp(prefix=f"openreynolds-toolbox-{key}-"))
+        atexit.register(shutil.rmtree, root, True)
+        staged = root / "toolbox"
+
+        def is_felix(name: str) -> bool:
+            return name.startswith(FELIX_TOOLBOX_PREFIX)
+
+        if felix:
+            staged.mkdir()
+            for item in sorted(TOOLBOX_SOURCE.iterdir()):
+                if item.is_file() and is_felix(item.name):
+                    shutil.copy2(item, staged / item.name)
+        else:
+            shutil.copytree(
+                TOOLBOX_SOURCE, staged,
+                ignore=lambda folder, names: [
+                    n for n in names
+                    if n == "__pycache__" or (Path(folder) == TOOLBOX_SOURCE and is_felix(n))
+                ],
+            )
+        readme = TOOLBOX_SOURCE / "README.md"
+        if readme.is_file():
+            kept: list[str] = []
+            table_seen = False
+            for line in readme.read_text(encoding="utf-8").splitlines():
+                row = _TOOLBOX_ROW.match(line)
+                if row:
+                    table_seen = True
+                    if is_felix(Path(row.group(1)).name) == felix:
+                        kept.append(line)
+                    continue
+                if felix and table_seen:
+                    break  # past the table: OpenFOAM's environment, templates, notes
+                kept.append(line)
+            (staged / "README.md").write_text("\n".join(kept) + "\n", encoding="utf-8")
+        _staged_toolboxes[key] = staged
+        return staged
 
 
 def _sync_toolbox_timed(backend: Backend, solver: str = solvers.OPENFOAM) -> None:

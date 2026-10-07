@@ -269,6 +269,38 @@ def felix_job_progress(record: Any, tail: str, log_size: int) -> JobProgress | N
     )
 
 
+FELIX_LOG_TAIL_BYTES = 256_000
+"""How much of a Felix job's log is read for its summary: the end, which is where the
+last `step=` records, the errors and the final status are."""
+
+
+def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
+                      log_size: int | None) -> list[str] | None:
+    """A Felix solve's job in a few lines (`felix_progress.summary_lines`), for
+    `job_check` and the job-end wake; None for any other command.
+
+    The log is the job's own; `nsteps` is the case's control.yaml, found from the
+    `felix run|continue <case>` in the command."""
+    from . import felix_progress
+
+    if not felix_progress.is_felix_cmd(cmd):
+        return None
+    size = log_size or 0
+    try:
+        text, _next, _eof = backend.job_tail(job_id, offset=max(0, size - FELIX_LOG_TAIL_BYTES))
+    except BackendError:
+        return None
+    nsteps = None
+    case_dir = felix_progress.case_dir_from_felix_cmd(cmd, cwd)
+    if case_dir:
+        try:
+            control = backend.get_file(f"{case_dir}/control.yaml", limit=32_000)
+        except (BackendError, OSError, KeyError):
+            control = b""
+        nsteps = felix_progress.nsteps_from_control(control.decode("utf-8", "replace"))
+    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), nsteps)
+
+
 def phase_from_cmd(cmd: str) -> tuple[str, str]:
     """(phase, executable) for a shell command, from the last thing in it that this
     recognises. A chain like `blockMesh && simpleFoam` reads as solving: it is what

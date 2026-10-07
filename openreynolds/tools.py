@@ -36,7 +36,13 @@ from typing import Any, Callable
 
 from . import convergence, images
 from . import solvers, trace
-from .progress import case_dir_from_cmd, parse_control_dict, phase_from_cmd
+from .progress import (
+    case_dir_from_cmd,
+    felix_job_summary,
+    is_felix_solve,
+    parse_control_dict,
+    phase_from_cmd,
+)
 from .backend.base import (
     Backend,
     BackendError,
@@ -1561,6 +1567,11 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     if waited_note:
         header += " " + waited_note
     header += _running_on(ctx, record, status)
+    if record is not None:
+        felix = felix_job_summary(ctx.backend, record.cmd, record.cwd or ctx.home,
+                                  job_id, status.log_size)
+        if felix:
+            header += "\n" + "\n".join(felix)
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"
@@ -1609,7 +1620,8 @@ def _running_on(ctx: ToolContext, record: Any, status: JobStatus) -> str:
     if not status.running or record is None:
         return ""
     cmd = getattr(record, "cmd", "") or ""
-    if phase_from_cmd(cmd)[0] != "solving":
+    if phase_from_cmd(cmd)[0] != "solving" or is_felix_solve(cmd):
+        # A Felix solve runs on a cloud GPU: the workspace's cores are not its cost.
         return ""
     load = _load_per_rank(ctx, cmd, case_dir_from_cmd(cmd, getattr(record, "cwd", "") or ctx.home))
     return f"\n{load}" if load else ""
