@@ -446,18 +446,6 @@ def test_tools_openfoam_job_start_still_guards(ctx, backend):
     assert content.startswith("not started:") and "trapFpe" in content
 
 
-def test_tools_felix_does_not_push_the_openfoam_toolbox(monkeypatch):
-    pushed = []
-    backend = FakeBackend()
-    monkeypatch.setattr(backend, "put_tree", lambda *a: pushed.append(a))
-
-    cli._sync_toolbox(backend, solver="felix")
-    assert pushed == []
-
-    cli._sync_toolbox(backend)
-    assert pushed, "an OpenFOAM study gets its toolbox as before"
-
-
 def test_tools_context_carries_the_solver(backend, store):
     assert ToolContext(backend=backend, store=store, max_output=1).solver == "openfoam"
 

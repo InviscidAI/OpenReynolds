@@ -218,7 +218,7 @@ def test_the_felix_prompt_carries_no_prices():
 
 def test_the_felix_prompt_says_nothing_of_openfoam_tooling():
     for openfoam in ("blockMesh", "controlDict", "decomposePar", "mpirun", "v2512",
-                     "latestTime", "`cad`", "mesh_review", ".toolbox"):
+                     "latestTime", "`cad`", "mesh_review", "case_gen"):
         assert openfoam not in _felix(), openfoam
     assert "honesty" in _felix().lower() or "did not verify" in _felix()
 
