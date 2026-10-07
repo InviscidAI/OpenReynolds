@@ -61,6 +61,11 @@ class Session:
     mode: str = ""
     """How much the person chose to be consulted (`modes.py`). Empty on studies made
     before modes existed, which a resume reads as whatever the configuration says."""
+    solver: str | None = None
+    """`openfoam` or `felix`, fixed once for the whole study (`solvers.py`), and
+    written the moment it is known. None (`null` on disk) while the agent has yet to
+    choose. A record from before solvers existed has no `solver` key at all
+    (`Store.recorded_solver`), and is an OpenFOAM study."""
     home: str = ""
     """This study's own directory in the workspace.
 
@@ -85,6 +90,9 @@ class Store:
         one-word answer that does not involve the nested `files/<id>/.../renders`
         path the workspace happens to use."""
         self.session = Session(study_id=study_id, created_at=_now())
+        self._solver_on_record = False
+        """Whether the record on disk has a `solver` key, null or not: what tells a
+        study still choosing from one recorded before solvers existed."""
         self._load()
 
     # -- persistence -----------------------------------------------------------
@@ -105,8 +113,18 @@ class Store:
         except (OSError, json.JSONDecodeError):
             return
         jobs = {jid: JobRecord(**rec) for jid, rec in (raw.pop("jobs", {}) or {}).items()}
+        self._solver_on_record = "solver" in raw
         known = {f.name for f in Session.__dataclass_fields__.values()}
         self.session = Session(**{k: v for k, v in raw.items() if k in known}, jobs=jobs)
+
+    @property
+    def recorded_solver(self) -> str | None:
+        """What the record says of the solver: `openfoam` or `felix` once chosen,
+        `auto` for a study recorded still choosing, None for no record of one -- a
+        study from before solvers existed, or one this machine has never held."""
+        if self.session.solver in ("openfoam", "felix"):
+            return self.session.solver
+        return "auto" if self._solver_on_record else None
 
     def save(self) -> None:
         payload = asdict(self.session)
