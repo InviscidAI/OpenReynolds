@@ -733,10 +733,14 @@ def test_tools_choose_solver_describes_both_solvers(unchosen):
     assert set(tool["input_schema"]["required"]) == {"solver", "reason"}
 
 
-def test_tools_a_machine_tool_before_the_choice_is_refused(unchosen, backend):
-    content, _ = dispatch(unchosen, "bash", {"cmd": "ls"})
-    assert "choose_solver" in content
-    assert backend.execs == [], "nothing reached the workspace"
+def test_tools_the_tool_list_is_the_only_mechanism_before_the_choice(unchosen, backend):
+    """design.md: the harness does not gate a call on policy. Before the choice the
+    machine tools are simply not offered; a call made anyway takes the path any call
+    takes, with no refusal of the harness's own."""
+    assert "bash" not in _names(tools_for(unchosen))
+    content, is_error = dispatch(unchosen, "bash", {"cmd": "ls"})
+    assert backend.execs == ["ls"] and not is_error
+    assert "choose_solver" not in str(content)
 
 
 def test_tools_choose_solver_fixes_the_solver_once(unchosen, store):
@@ -844,3 +848,90 @@ def test_solver_the_json_stream_says_the_solver(tmp_path):
     JsonView(out).solver("felix")
     event = json.loads(out.getvalue().splitlines()[-1])
     assert event["type"] == "solver" and event["solver"] == "felix"
+
+
+# -- a study resumed on a machine that never held it ----------------------------------
+
+
+def _remote_resume(monkeypatch, tmp_path, answer, *, solver=None):
+    """Resume `study-r`, which this machine has no record of, with the platform
+    answering `answer` for its solver: ("felix", True), (None, True) for no such
+    study, or (None, False) for a platform that could not be reached."""
+    calls, cfg = _no_service(monkeypatch, tmp_path)
+    asked = []
+
+    def study_solver(url, key, study_id):
+        asked.append(study_id)
+        return answer
+
+    monkeypatch.setattr(cli.hosted, "study_solver", study_solver)
+    said = _said(monkeypatch)
+    with pytest.raises(SystemExit):
+        cli.session(cfg, study_id="study-r", instance_id=None, one_shot=None,
+                    **({} if solver is None else {"solver": solver}))
+    return calls, asked, said.getvalue()
+
+
+def test_solver_a_study_new_here_takes_its_solver_from_the_platform(monkeypatch, tmp_path):
+    calls, asked, said = _remote_resume(monkeypatch, tmp_path, ("felix", True))
+    assert asked == ["study-r"]
+    assert _solver_of(calls[0]) == "felix", "reserved as the Felix study it is"
+
+
+def test_solver_the_platforms_solver_wins_over_a_flag(monkeypatch, tmp_path):
+    calls, _, said = _remote_resume(monkeypatch, tmp_path, ("felix", True), solver="openfoam")
+    assert _solver_of(calls[0]) == "felix"
+    assert "ignored" in said
+
+
+def test_solver_an_unreachable_platform_is_said_not_guessed(monkeypatch, tmp_path):
+    calls, _, said = _remote_resume(monkeypatch, tmp_path, (None, False))
+    assert _solver_of(calls[0]) == "openfoam"
+    flat = " ".join(said.split())
+    assert "could not read this study's solver" in flat and "--solver felix" in flat
+
+
+def test_solver_an_unreachable_platform_takes_a_named_solver(monkeypatch, tmp_path):
+    calls, _, said = _remote_resume(monkeypatch, tmp_path, (None, False), solver="felix")
+    assert _solver_of(calls[0]) == "felix"
+
+
+def test_solver_a_study_held_here_is_not_asked_about(monkeypatch, tmp_path):
+    studies = _stored(tmp_path, "felix")
+    calls, cfg = _no_service(monkeypatch, tmp_path, studies)
+    asked = []
+    monkeypatch.setattr(cli.hosted, "study_solver",
+                        lambda *a: asked.append(a) or ("openfoam", True))
+    with pytest.raises(SystemExit):
+        cli.session(cfg, study_id="study-x", instance_id=None, one_shot=None)
+    assert asked == [] and _solver_of(calls[0]) == "felix"
+
+
+class _OneStudy:
+    def __init__(self, answer):
+        self.answer = answer
+        self.closed = False
+
+    def get_study(self, study_id):
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ({"id": "s", "solver": "felix"}, ("felix", True)),
+        ({"id": "s"}, ("openfoam", True)),                       # the service's default
+        (BackendError("not found", code="http_error", status=404), (None, True)),
+        (BackendError("unreachable", code="unreachable"), (None, False)),
+    ],
+)
+def test_solver_read_from_the_platform(monkeypatch, answer, expected):
+    client = _OneStudy(answer)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
+    assert hosted_mod.study_solver("https://svc", "key", "s") == expected
+    assert client.closed
