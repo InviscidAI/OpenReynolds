@@ -887,7 +887,7 @@ def test_solver_the_platforms_solver_wins_over_a_flag(monkeypatch, tmp_path):
 def test_solver_an_unreachable_platform_is_said_not_guessed(monkeypatch, tmp_path):
     calls, _, said = _remote_resume(monkeypatch, tmp_path, (None, False))
     assert _solver_of(calls[0]) == "openfoam"
-    flat = " ".join(said.split())
+    flat = " ".join(said.split()).lower()
     assert "could not read this study's solver" in flat and "--solver felix" in flat
 
 

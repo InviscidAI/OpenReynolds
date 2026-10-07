@@ -1579,6 +1579,30 @@ class Starter:
         )
 
 
+def study_solver(base_url: str, api_key: str, study_id: str) -> tuple[str | None, bool]:
+    """The solver the platform holds for a study, asked before a workspace is reserved.
+
+    A study resumed on a machine that never held it has no local record of its
+    solver, and the workspace it reserves has to be of that solver's kind. Returns
+    `(solver, True)` for a study the platform has -- `openfoam` when the row says
+    nothing, the service's default -- `(None, True)` for one it does not have, and
+    `(None, False)` when the platform could not be asked, which is not an answer.
+    """
+    client = FoamdClient(base_url, api_key)
+    try:
+        row = client.get_study(study_id)
+    except BackendError as exc:
+        return None, getattr(exc, "status", None) == 404
+    except Exception:  # noqa: BLE001 - anything else is "could not ask"
+        return None, False
+    finally:
+        client.close()
+    if not isinstance(row, dict):
+        return None, False
+    solver = str(row.get("solver") or "openfoam").strip().lower()
+    return (solver if solver in ("openfoam", "felix") else "openfoam"), True
+
+
 def reserve(
     base_url: str,
     api_key: str,

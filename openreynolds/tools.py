@@ -653,8 +653,6 @@ CHOOSE_SOLVER_TOOL: dict[str, Any] = {
 }
 """The one tool a study whose solver is the agent's to choose has, until it is used."""
 
-SOLVER_FIRST = frozenset({"choose_solver", "checkpoint"})
-"""The calls that can be served before the solver is chosen: neither needs a machine."""
 
 CHECKPOINT_TOOL: dict[str, Any] = {
     "name": "checkpoint",
@@ -746,13 +744,6 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
     handler = _HANDLERS.get(name)
     if handler is None:
         return f"No such tool: {name}", True
-    if getattr(ctx, "solver", solvers.OPENFOAM) == solvers.AUTO and name not in SOLVER_FIRST:
-        # Not offered before the choice (`tools_for`); asked for anyway, it would wait
-        # on a workspace that nobody has started.
-        return (
-            f"not run: {name} needs the workspace, and there is none until this "
-            "study's solver is chosen with choose_solver."
-        ), True
     # Read the clock only when something is listening: the handlers below time
     # themselves off the same `time.monotonic`, and tests drive that with a fake.
     started = time.monotonic() if trace.on else 0.0

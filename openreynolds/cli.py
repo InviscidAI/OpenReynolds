@@ -1313,7 +1313,23 @@ def session(
 
     local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
     asked = solvers.normalize(solver) or solvers.normalize(os.environ.get("OPENREYNOLDS_SOLVER"))
-    settled = _settle_solver(store.recorded_solver, asked, resuming=resuming, local=local)
+    stored = store.recorded_solver
+    if resuming and not local and not (store.dir / "session.json").is_file():
+        # A study this machine never held: its record is the platform's, and the
+        # workspace about to be reserved has to be of its solver's kind.
+        with _timed("study_solver"):
+            found, reachable = hosted.study_solver(cfg.foamd_url, cfg.foamd_api_key, study_id)
+        if found:
+            stored = found
+        elif solvers.chosen(asked):
+            stored = asked  # nothing on record anywhere: the flag is the choice
+        elif not reachable:
+            console.print(
+                "[yellow]Could not read this study's solver from the platform, and "
+                "this machine has no record of it. It runs as OpenFOAM; if it is a "
+                "Felix study, end this session and resume with --solver felix.[/]"
+            )
+    settled = _settle_solver(stored, asked, resuming=resuming, local=local)
     if resuming and solvers.chosen(asked) and asked != settled:
         console.print(
             f"[yellow]This study's solver is {settled}; --solver {asked} is "
