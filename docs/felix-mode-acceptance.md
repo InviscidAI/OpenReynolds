@@ -76,8 +76,8 @@ Test layers:
 
 | # | Goal | Test |
 |---|---|---|
-| A1 | `--solver felix` creates the study with `solver: felix` on a Felix workspace; resuming keeps the stored solver and ignores a different flag; the solver can't change during a study. OpenFOAM studies behave exactly as before. | OR: `test_felix_mode.py::test_solver_*`, existing suite unchanged |
-| A2 | A Felix study uses the Felix system prompt; the OpenFOAM prompt is byte-identical to today's. The Felix prompt passes the same style checks. | OR: `test_prompt.py` |
+| A1 | `--solver auto` (the default): no workspace or study until the agent calls `choose_solver` (offered only until then); the choice is recorded at once, then the workspace of that kind is reserved and started and the study created with that solver; from the next turn the solver's own prompt and tools apply. `--solver openfoam\|felix` forces it at the start, as before. Resuming keeps the stored solver and ignores a different flag; a study from before solvers is OpenFOAM; the solver can't change during a study. OpenFOAM studies behave exactly as before. | OR: `test_felix_mode.py::test_solver_*`, existing suite unchanged |
+| A2 | A Felix study uses the Felix system prompt; a study still choosing uses the solver-choice prompt (what each solver can and cannot do); the OpenFOAM prompt is byte-identical to today's. Both new prompts pass the same style checks. | OR: `test_prompt.py` |
 | A3 | Felix mode doesn't offer the OpenFOAM-only tools (`cad`, `mesh_review`, OpenFOAM case generators); `job_start` runs `felix run` with no OpenFOAM restart guard or trapFpe check. | OR: `test_felix_mode.py::test_tools_*` |
 | A4 | The progress parser reads Felix logs: step, time, residuals/health from `step=` lines, and surfaces `ERROR:` (including out-of-memory with its needed GB) and `WARNING:` lines. Recorded logs from real runs are the fixtures. | OR: `test_felix_progress.py` |
 | A5 | The results tools read Felix `output/`: `summary.json`, `solution.vtu` and snapshots (fields, slices), probes and forces CSVs (plots). | OR: `test_felix_results.py` |

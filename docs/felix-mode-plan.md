@@ -27,9 +27,13 @@ is planned in `OpenFoam_Instance/plan-4-felix-gpu-solver.md`.
 
 ## What the agent needs to do
 
-1. **Work in Felix mode when a study is a Felix study.** The solver is chosen when
-   the study is created and does not change during it. This is a separate choice
-   from the existing approval modes.
+1. **Work in Felix mode when a study is a Felix study.** By default the agent
+   chooses the solver (`--solver auto`): its first decision is `choose_solver`, made
+   from a short prompt stating what each solver can and cannot do, and only then is
+   the workspace (of that kind) reserved and started and the study created with that
+   solver. `--solver openfoam|felix` forces it, with no extra wait. Once fixed it does
+   not change during the study; a resume keeps it, and a study from before solvers is
+   OpenFOAM. This is a separate choice from the existing approval modes.
 2. **Know Felix the way it knows OpenFOAM.** It needs its own system prompt, with
    the documentation at `/opt/felix/docs` as its reference. The OpenFOAM prompt
    stays unchanged.
