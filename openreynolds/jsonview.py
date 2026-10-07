@@ -373,6 +373,9 @@ class JsonView(View):
 
         self.emit("mode", mode=mode, label=label(mode))
 
+    def solver(self, solver: str) -> None:
+        self.emit("solver", solver=solver)
+
     def delivered(self, event: Any) -> None:
         self.emit(
             "delivered",
