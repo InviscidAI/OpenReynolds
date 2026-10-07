@@ -178,11 +178,14 @@ def test_a_case_error_is_surfaced_whole():
 
 
 def test_an_unprefixed_line_continues_the_message_above_it():
-    text = ("ERROR: /work/cases/x/mesh.vtu:\n"
-            "  derived element volume 0 is 0, but the orientation check accepted the cell.\n")
-    facts = fp.parse_felix_log(text)
+    """`error_continuation.stderr` is a real two-line ERROR: the small cavity started
+    with all but 0.47 GB of the GPU held by another process, where Felix reported a
+    zero element volume rather than running out of memory."""
+    facts = fp.parse_felix_log(log("error_continuation.stderr"))
     assert len(facts.errors) == 1
-    assert "derived element volume" in facts.errors[0]
+    assert facts.errors[0].startswith("/work/cases/oom4/mesh.vtu:")
+    assert "derived element volume 0 is 0" in facts.errors[0]
+    assert facts.outcome == "failed"
 
 
 def test_nan_spellings_in_a_step_line_do_not_break_the_parse():
@@ -303,3 +306,20 @@ def test_a_felix_job_tells_the_wake_its_step_and_any_error(backend, store, view)
 
     assert line.startswith("cavity: ")
     assert "needs 112.1 GB" in line
+
+
+def test_the_progress_seam_answers_a_felix_job_with_the_parser_s_reading():
+    """`progress.felix_job_progress` is the one place the tracker asks about a Felix
+    solve; it must answer (not None) so the generic OpenFOAM reading never runs."""
+    from types import SimpleNamespace
+
+    from openreynolds.progress import felix_job_progress, is_felix_solve
+
+    record = SimpleNamespace(job_id="j1", name="cavity", cmd="felix run cavity --gpu A100",
+                             cwd=HOME, launched_at="")
+    assert is_felix_solve(record.cmd)
+    progress = felix_job_progress(record, log("cavity_small.stderr"), 1234)
+    assert progress is not None
+    assert progress.executable == "felix" and progress.step == 30
+    assert progress.felix.outcome == "finished"
+    assert progress.log_size == 1234

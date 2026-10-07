@@ -248,11 +248,25 @@ def is_felix_solve(cmd: str) -> bool:
 def felix_job_progress(record: Any, tail: str, log_size: int) -> JobProgress | None:
     """What the bar shows for a Felix solve, read from the tail of its log.
 
-    The seam for the Felix log parser (felix-mode-acceptance.md, A4): `step=` records
-    for the step, time and health, and `ERROR:` / `WARNING:` lines. Until it lands
-    this answers None, and the job is shown the way any other command is."""
-    del record, tail, log_size
-    return None
+    Felix's log has no `Time =` and its case has no controlDict, so the OpenFOAM
+    reading would show a solve as merely "running". `felix_progress` reads the
+    `step=` records (step, time, dt, residuals), the `ERROR:` / `WARNING:` lines and
+    the final status `felix run` prints; the tracker adds the case's `nsteps`."""
+    from . import felix_progress
+
+    felix = felix_progress.parse_felix_log(tail)
+    return JobProgress(
+        job_id=record.job_id,
+        name=record.name or record.job_id[:8],
+        phase="solving",
+        executable="felix",
+        facts=felix_progress.log_facts(felix),
+        log_size=log_size,
+        elapsed_s=_seconds_since(getattr(record, "launched_at", "")),
+        as_of=time.monotonic(),
+        step=felix.step,
+        felix=felix,
+    )
 
 
 def phase_from_cmd(cmd: str) -> tuple[str, str]:
@@ -260,9 +274,14 @@ def phase_from_cmd(cmd: str) -> tuple[str, str]:
     recognises. A chain like `blockMesh && simpleFoam` reads as solving: it is what
     the command is for, and the log says which part is actually running."""
     phase, exe = "running", ""
-    for token in _TOKEN.findall(cmd or ""):
+    tokens = _TOKEN.findall(cmd or "")
+    for i, token in enumerate(tokens):
         name = token.rsplit("/", 1)[-1]
-        if name in MESHERS:
+        if name == "felix" and i + 1 < len(tokens) and tokens[i + 1] in ("run", "continue"):
+            # A Felix solve (`felix run|continue <case>`) runs on a cloud GPU; this
+            # job is its client, and its log is the solve's.
+            phase, exe = "solving", "felix"
+        elif name in MESHERS:
             phase, exe = "meshing", name
         elif name in PHASE_OF:
             phase, exe = PHASE_OF[name], name
@@ -328,11 +347,24 @@ class JobProgress:
     log_size: int = 0
     as_of: float = 0.0
     """Monotonic clock at the last successful read."""
+    step: int | None = None
+    """A Felix job's last completed step; Felix counts steps, not an end time."""
+    end_step: int | None = None
+    """control.yaml `nsteps` of a Felix job (a PTC run may stop before it)."""
+    felix: Any = None
+    """The `felix_progress.FelixFacts` of a Felix job, for the wake line."""
 
     def headline(self, now: float | None = None) -> str:
         parts = [f"{self.phase} {self.name}".strip()]
         facts = self.facts
-        if self.phase == "solving" and facts.sim_time is not None:
+        if self.step is not None:
+            when = f"step {self.step}"
+            if self.end_step:
+                when += f" / {self.end_step}"
+            if facts.sim_time is not None:
+                when += f" · t {facts.sim_time:g}"
+            parts.append(when)
+        elif self.phase == "solving" and facts.sim_time is not None:
             when = f"Time {facts.sim_time:g}"
             if self.end_time is not None:
                 when += f" / {self.end_time:g} s"
@@ -554,6 +586,7 @@ class Tracker:
         if is_felix_solve(record.cmd):
             felix = felix_job_progress(record, tail, size)
             if felix is not None:
+                self._felix_bounds(record, felix)
                 return felix
         facts = parse_log_tail(tail)
         phase, exe = phase_from_cmd(record.cmd)
@@ -579,6 +612,44 @@ class Tracker:
             progress.stop_at = control.get("stopAt")
             self._estimate(progress)
         return progress
+
+    def _felix_bounds(self, record: Any, progress: JobProgress) -> None:
+        """A Felix job's step against control.yaml `nsteps`, and the time left at
+        the solver's own wall time per step -- labelled an estimate, like the
+        OpenFOAM one. Felix's case has no controlDict; its bound is a step count."""
+        from . import felix_progress
+
+        felix = progress.felix
+        case_dir = felix_progress.case_dir_from_felix_cmd(
+            record.cmd, getattr(record, "cwd", "") or self.home)
+        if case_dir:
+            progress.end_step = self._felix_nsteps(case_dir)
+        if progress.end_step and felix is not None and felix.step is not None:
+            progress.fraction = max(0.0, min(1.0, felix.step / progress.end_step))
+            if felix.wall_time and 0 < felix.step < progress.end_step \
+                    and felix.outcome == "running":
+                progress.eta_s = (progress.end_step - felix.step) * felix.wall_time / felix.step
+
+    def _felix_nsteps(self, case_dir: str) -> int | None:
+        """`nsteps` from the case's control.yaml, from the mirror when it is here,
+        else from the instance; remembered like a controlDict."""
+        from . import felix_progress
+
+        now = time.monotonic()
+        key = f"felix:{case_dir}"
+        cached = self._control.get(key)
+        if cached and now - cached[0] < CONTROL_DICT_TTL_S:
+            return cached[1].get("nsteps")
+        path = f"{case_dir}/control.yaml"
+        text = self._read_local(path)
+        if text is None and self.backend is not None:
+            try:
+                text = self.backend.get_file(path, limit=32_000).decode("utf-8", "replace")
+            except (BackendError, OSError):
+                text = None
+        nsteps = felix_progress.nsteps_from_control(text) if text else None
+        self._control[key] = (now, {"nsteps": nsteps})
+        return nsteps
 
     def _estimate(self, progress: JobProgress) -> None:
         """Fraction and time left, from what the log and the controlDict say.
@@ -728,6 +799,11 @@ class Tracker:
         with self._lock:
             jobs = list(self._jobs.values())
         for job in jobs:
+            if job.felix is not None:
+                from .felix_progress import wake_line
+
+                lines.append(wake_line(job.name, job.felix, job.end_step))
+                continue
             facts = job.facts
             if facts.sim_time is None:
                 continue
