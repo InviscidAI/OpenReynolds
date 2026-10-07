@@ -147,7 +147,7 @@ def test_force_coefficients_need_a_reference_and_use_the_tail_mean(fr):
 
 def test_forces_lines_report_last_value_and_tail_mean(fr):
     text = "\n".join(fr.forces_lines(fr.read_csv(SMALL / "output" / "forces.csv")))
-    assert "Fx" in text and "-0.008286" in text
+    assert "Fx: last -0.00828562" in text
     assert "mean of last 25%" in text
 
 
