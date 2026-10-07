@@ -1,0 +1,22 @@
+# Quasi-2D lid-driven cavity, Re 100, 8x8x1 hex: probes and lid forces.
+boundary_groups:
+  1: lid
+  2: sides
+  3: walls
+nu: 0.01
+mesh: mesh.vtu
+boundary_conditions:
+  velocity:
+    lid:
+      type: dirichlet
+      value: [1.0, 0, 0]
+    walls:
+      type: dirichlet
+      value: [0.0, 0.0, 0.0]
+    sides:
+      type: slip
+probes:
+  u_centre: {location: [0.5, 0.5, 0.06], var: velocity_x}
+  p_corner: {location: [0.9, 0.9, 0.06], var: pressure}
+control: control.yaml
+io: io.yaml

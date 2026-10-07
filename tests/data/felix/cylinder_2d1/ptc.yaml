@@ -1,0 +1,3 @@
+cfl_ramp:
+  target: 4.0
+dt_max: 0.25

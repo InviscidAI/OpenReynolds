@@ -1,0 +1,7 @@
+NOTE: created output directory /work/cases/oom2/output
+NOTE: boundary: 576 surface cell(s) in 3 group(s) (lid, sides, walls)
+NOTE: mesh /work/cases/oom2/mesh.vtu: 578 nodes, 256 elements (hex 256)
+NOTE: boundary conditions: 384 velocity values, 0 pressure nodes, 0 temperature nodes, 0 nu_tilde nodes, 0 wall faces (time-varying: no)
+NOTE: nu=0.01 dt=0.05 nsteps=30 corrector.max=4
+NOTE: forces on 16 face(s) of lid -> /work/cases/oom2/output/forces.csv
+ERROR: this case needs at least 1.1 GB of GPU memory (1.1 GB for the mesh and solver + 0.0 GB minimum for gcr.max); the GPU has 42.4 GB (0.4 GB free at start). Use a GPU with more memory; see gpu_sizing.md.

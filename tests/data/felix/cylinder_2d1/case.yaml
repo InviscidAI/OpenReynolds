@@ -1,0 +1,38 @@
+# Schafer & Turek (1996) benchmark 2D-1: channel 2.2 x 0.41, cylinder D = 0.1 centred
+# at (0.2, 0.2), parabolic inflow with Um = 0.3 (mean 0.2), nu = 1e-3: Re = 20, steady.
+# One hex layer in z with slip front and back, so the flow is 2D.
+boundary_groups:
+  1: inlet
+  2: outlet
+  3: walls
+  4: sides
+  5: cylinder
+nu: 0.001
+mesh: mesh.vtu
+initial_conditions:
+  velocity: [0.0, 0.0, 0.0]
+boundary_conditions:
+  velocity:
+    inlet:
+      type: dirichlet
+      value: ["4*0.3*y*(0.41-y)/(0.41*0.41)", 0, 0]
+    walls:
+      type: dirichlet
+      value: [0, 0, 0]
+    cylinder:
+      type: dirichlet
+      value: [0, 0, 0]
+    sides:
+      type: slip
+    outlet:
+      type: zero_gradient
+  pressure:
+    outlet:
+      type: dirichlet
+      value: 0.0
+probes:
+  p_front: {location: [0.15, 0.2, 0.01], var: pressure}
+  p_back: {location: [0.25, 0.2, 0.01], var: pressure}
+control: control.yaml
+ptc: ptc.yaml
+io: io.yaml
