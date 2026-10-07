@@ -31,7 +31,7 @@ Test layers:
   instance's user data as `felix_token`. first-boot writes `/etc/reynolds/felix.json`
   `{"foamd_url": ..., "token": ...}`, mode 0640, owner root, group `reynolds`.
 - **`felix` command** (in the Felix image): reads `/etc/reynolds/felix.json` (or
-  `$FELIX_CONFIG`). Subcommands: `felix gpus`, `felix run <case> --gpu G [--wall S]` and
+  `$REYNOLDS_FELIX_CONFIG`). Subcommands: `felix gpus`, `felix run <case> --gpu G [--wall S]` and
   `felix continue <case> --gpu G [--wall S]`. Log lines go to stderr as they arrive, and
   the final solve status goes to stdout as JSON. Exit 0 = succeeded, 1 = the solve failed or
   was killed or refused, 2 = refused locally before submitting.
