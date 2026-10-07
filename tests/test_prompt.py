@@ -190,6 +190,11 @@ def test_nothing_per_session_is_baked_into_the_felix_prompt(shape):
         "stderr",
         "summary.json",
         "out of GPU memory",
+        "output.previous",          # what `felix run` does with an earlier output/
+        "usd_per_hour",             # what `felix gpus` answers
+        "402 budget_exhausted",     # a refusal by the service
+        "warm_start",               # what `felix continue` rewrites
+        "FELIX_",                   # the mesh tools refuse to run with one set
         "/work",
         "did not verify",
     ],

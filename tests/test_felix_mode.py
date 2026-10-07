@@ -64,6 +64,14 @@ def _stored(tmp_path, solver):
         store.session.solver = solver
     store.session.instance_id = "iid-stored"
     store.save()
+    if solver is None:
+        # A record written before solvers existed has no `solver` key at all.
+        import json
+
+        path = studies / "study-x" / "session.json"
+        raw = json.loads(path.read_text())
+        raw.pop("solver", None)
+        path.write_text(json.dumps(raw))
     return studies
 
 
@@ -79,7 +87,8 @@ def test_solver_is_a_cli_option_that_defaults_to_the_agent_choosing():
     option = next(p for p in cli.main.params if p.name == "solver")
     assert isinstance(option.type, click.Choice)
     assert sorted(option.type.choices) == ["auto", "felix", "openfoam"]
-    assert option.default == "auto"
+    assert option.default is None, "unset: then OPENREYNOLDS_SOLVER, then auto"
+    assert "auto" in option.help and "default" in option.help
 
 
 def test_solver_felix_reserves_a_felix_workspace(monkeypatch, tmp_path):
@@ -98,7 +107,8 @@ def test_solver_openfoam_reserves_exactly_as_before(monkeypatch, tmp_path):
     calls, cfg = _no_service(monkeypatch, tmp_path)
 
     CliRunner().invoke(cli.main, ["-p", "go", "--solver", "openfoam"])
-    # An embedder that calls `session` without a solver gets what it always got.
+    # An embedder that names OpenFOAM through the environment gets the same call.
+    monkeypatch.setenv("OPENREYNOLDS_SOLVER", "openfoam")
     with pytest.raises(SystemExit):
         cli.session(cfg, study_id=None, instance_id=None, one_shot="go")
 
@@ -140,7 +150,7 @@ def test_solver_a_study_from_before_felix_reads_as_openfoam(monkeypatch, tmp_pat
     """A session.json with no `solver` key is an OpenFOAM study."""
     studies = _stored(tmp_path, None)
     raw = (studies / "study-x" / "session.json").read_text()
-    assert '"solver": ""' in raw or '"solver"' not in raw
+    assert '"solver"' not in raw
     calls, cfg = _no_service(monkeypatch, tmp_path, studies)
 
     with pytest.raises(SystemExit):
@@ -164,7 +174,7 @@ def test_solver_resume_without_a_flag_says_nothing(monkeypatch, tmp_path):
 
 def test_solver_cannot_be_changed_during_a_study():
     """There is a `/mode` and a `/model`; there is no verb for the solver."""
-    verbs = {spec.name for spec in commands.COMMANDS}
+    verbs = {name for spec in commands.COMMANDS for name in (spec.verb, *spec.aliases)}
     assert "/mode" in verbs
     assert not any("solver" in verb for verb in verbs)
 
@@ -183,11 +193,25 @@ def test_solver_felix_needs_the_hosted_workspace(monkeypatch, tmp_path):
 
 
 def test_solver_round_trips_through_the_study_record(tmp_path):
+    import json
+
     store = Store(tmp_path, "s")
-    assert store.session.solver == "", "empty on a record from before Felix"
+    assert store.session.solver is None and store.recorded_solver is None
+    store.save()
+    assert json.loads((tmp_path / "s" / "session.json").read_text())["solver"] is None
+    assert Store(tmp_path, "s").recorded_solver == "auto", "recorded, still choosing"
     store.session.solver = "felix"
     store.save()
     assert Store(tmp_path, "s").session.solver == "felix"
+    assert Store(tmp_path, "s").recorded_solver == "felix"
+
+
+def test_solver_a_record_without_the_key_is_from_before_solvers(tmp_path):
+    import json
+
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "session.json").write_text(json.dumps({"study_id": "s"}))
+    assert Store(tmp_path, "s").recorded_solver is None
 
 
 # -- A1: the platform calls ----------------------------------------------------
@@ -369,7 +393,8 @@ def test_tools_felix_job_start_describes_felix_run(felix):
     job_start = _tool(felix, "job_start")
     text = job_start["description"]
     for fact in ("felix run", "--gpu", "--wall", "felix continue", "stdout", "stderr",
-                 "Exit 0", "output.every"):
+                 "Exit 0", "output.every", "output.previous", "warm_start", "symlink",
+                 "budget_exhausted"):
         assert fact in text, fact
     for openfoam in ("trapFpe", "decomposePar", "startFrom", "OpenFOAM", "mpirun"):
         assert openfoam not in text, openfoam
@@ -498,7 +523,7 @@ class _Platform:
 
 
 def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=None,
-                  lines=("go",)):
+                  lines=("go",), env=None):
     """One session end to end against a scripted model and a fake service, with the
     solver as the CLI hands it over. Returns what the test looks at."""
     from openreynolds.backend import pending as pending_mod
@@ -509,16 +534,19 @@ def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=N
     monkeypatch.setattr(pending_mod, "WAIT_CEILING_S", 10.0)
     monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
     monkeypatch.delenv("OPENREYNOLDS_SOLVER", raising=False)
+    if env is not None:
+        monkeypatch.setenv("OPENREYNOLDS_SOLVER", env)
     monkeypatch.delenv("OPENREYNOLDS_MODE", raising=False)
     _said(monkeypatch)
     backend = FakeBackend()
+    studies = tmp_path / "studies"
     platform = _Platform()
     reserves: list[dict] = []
     loops: list[Loop] = []
 
     def reserve(url, key, iid=None, **kwargs):
         reserves.append({"iid": iid, "model_calls": sum(len(l.fake.calls) for l in loops),
-                         **kwargs})
+                         "recorded": _recorded_solvers(studies), **kwargs})
         return platform, "iid-9", ReadyStarter(backend, "iid-9")
 
     class ScriptedLoop(Loop):
@@ -532,16 +560,44 @@ def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=N
     cfg = Config(foamd_url="u", foamd_api_key="k", llm_api_key="sk-test", model="m",
                  studies_dir=tmp_path / "studies", capture=True, desk=False,
                  mesh_tool=False, mirror_interval_s=0.0, workspace_eta_s=20.0)
-    view = RecordingView()
+    class SolverView(RecordingView):
+        """Records the solver it is told, and what the study's record said of the
+        solver at the moment the header went out."""
+
+        def __init__(self):
+            super().__init__()
+            self.solvers: list[str] = []
+            self.recorded_at_header: list = []
+
+        def header(self, *args, **kwargs):
+            self.recorded_at_header.append(_recorded_solvers(studies))
+            super().header(*args, **kwargs)
+
+        def solver(self, name):
+            self.solvers.append(name)
+
+    view = SolverView()
 
     def interface(drive):
         drive(view, ScriptedReader(list(lines)))
         return False
 
+    kwargs = {} if solver is None else {"solver": solver}
     cli.session(cfg, study_id=study_id, instance_id=None, one_shot=None,
-                interface=interface, solver=solver)
+                interface=interface, **kwargs)
     return SimpleNamespace(reserves=reserves, platform=platform, backend=backend,
                            loop=loops[0], cfg=cfg, view=view)
+
+
+def _recorded_solvers(studies):
+    """`solver` in every study's session.json on disk, `<absent>` where there is none."""
+    import json
+
+    found = []
+    for path in sorted(studies.glob("*/session.json")):
+        raw = json.loads(path.read_text())
+        found.append(raw.get("solver", "<absent>"))
+    return found
 
 
 def _choose(solver, reason="the flow is incompressible and the mesh is large"):
@@ -602,7 +658,8 @@ def test_solver_auto_session_that_never_chooses_starts_nothing(monkeypatch, tmp_
     assert run.platform.studies == []
     assert run.backend.execs == []
     study = Store(run.cfg.studies_dir, _study_dir(run).name)
-    assert study.session.solver == "auto", "still to be chosen when it is resumed"
+    assert study.session.solver is None
+    assert study.recorded_solver == "auto", "still to be chosen when it is resumed"
 
 
 def test_solver_auto_choice_holds_on_resume(monkeypatch, tmp_path):
@@ -627,21 +684,20 @@ def test_solver_forced_reserves_at_the_start_with_no_choice_offered(monkeypatch,
 
 def test_solver_auto_on_a_local_workspace_is_openfoam(monkeypatch, tmp_path):
     """Felix needs the hosted service, so there is nothing to choose between."""
-    from openreynolds.store import Session
-
-    session = Session(study_id="s", solver="auto")
-    assert cli._settle_solver(session, "auto", resuming=False, local=True) == "openfoam"
-    assert cli._settle_solver(session, "auto", resuming=False, local=False) == "auto"
+    assert cli._settle_solver(None, "auto", resuming=False, local=True) == "openfoam"
+    assert cli._settle_solver(None, "auto", resuming=False, local=False) == "auto"
+    assert cli._settle_solver(None, None, resuming=False, local=False) == "auto"
 
 
 @pytest.mark.parametrize(
     ("stored", "asked", "resuming", "settled"),
     [
-        ("", "auto", False, "auto"),          # a new study: the agent chooses
-        ("", "felix", False, "felix"),        # forced
-        ("", "openfoam", False, "openfoam"),
-        ("", "auto", True, "openfoam"),       # a study from before solvers: OpenFOAM
-        ("", "felix", True, "openfoam"),      # ... and a flag does not change it
+        (None, "auto", False, "auto"),        # a new study: the agent chooses
+        (None, None, False, "auto"),          # ... by default
+        (None, "felix", False, "felix"),      # forced
+        (None, "openfoam", False, "openfoam"),
+        (None, "auto", True, "openfoam"),     # a study from before solvers: OpenFOAM
+        (None, "felix", True, "openfoam"),    # ... and a flag does not change it
         ("felix", "auto", True, "felix"),     # the stored solver wins
         ("felix", "openfoam", True, "felix"),
         ("openfoam", "felix", True, "openfoam"),
@@ -650,10 +706,7 @@ def test_solver_auto_on_a_local_workspace_is_openfoam(monkeypatch, tmp_path):
     ],
 )
 def test_solver_settles_from_the_record_and_the_flag(stored, asked, resuming, settled):
-    from openreynolds.store import Session
-
-    session = Session(study_id="s", solver=stored)
-    assert cli._settle_solver(session, asked, resuming=resuming, local=False) == settled
+    assert cli._settle_solver(stored, asked, resuming=resuming, local=False) == settled
 
 
 # -- A3: tools before the choice ----------------------------------------------
@@ -705,3 +758,89 @@ def test_tools_choose_solver_refuses_what_is_not_a_solver(unchosen):
     content, _ = dispatch(unchosen, "choose_solver", {"solver": "fluent", "reason": "x"})
     assert unchosen.solver == "auto"
     assert "felix" in content and "openfoam" in content
+
+
+# -- the seam the Felix log parser (A4) plugs into ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cmd", "felix"),
+    [
+        ("felix run cav --gpu H100", True),
+        ("cd /work/s && felix continue cav --gpu B200 --wall 600", True),
+        ("felix gpus", False),
+        ("felix-check-mesh --case cav", False),
+        ("simpleFoam -parallel", False),
+    ],
+)
+def test_tools_a_felix_solve_is_told_from_its_command(cmd, felix):
+    from openreynolds.progress import is_felix_solve
+
+    assert is_felix_solve(cmd) is felix
+
+
+def test_tools_a_felix_solve_reaches_the_progress_seam(monkeypatch, backend, store):
+    from openreynolds import progress
+
+    seen = []
+    monkeypatch.setattr(progress, "felix_job_progress",
+                        lambda record, tail, size: seen.append((record.cmd, tail)) or None)
+    backend.job_start("felix run cav --gpu H100")
+    backend.logs["job-1"] = b"step=1 t=0.01 dt=0.01\n"
+    import dataclasses
+
+    backend.jobs["job-1"] = dataclasses.replace(backend.jobs["job-1"],
+                                                log_size=len(backend.logs["job-1"]))
+    store.record_job("job-1", cmd="felix run cav --gpu H100", name="cav", cwd="/work")
+    tracker = progress.Tracker(view=None, backend=backend, store=store, home="/work")
+
+    jobs = tracker.refresh_jobs(force=True)
+
+    assert seen and seen[0][0].startswith("felix run") and "step=1" in seen[0][1]
+    assert jobs and jobs[0].job_id == "job-1", "with no Felix reading, shown as any job"
+
+
+# -- the interface an embedder (the web app) uses ------------------------------------
+
+
+def test_solver_an_embedder_that_names_none_leaves_it_to_the_agent(monkeypatch, tmp_path):
+    run = _auto_session(monkeypatch, tmp_path, [_done()], solver=None)
+    assert run.reserves == []
+    assert _names(run.loop.fake.calls[0]["tools"]) == ["choose_solver"]
+
+
+@pytest.mark.parametrize("env", ["felix", "openfoam"])
+def test_solver_an_embedder_can_name_it_in_the_environment(monkeypatch, tmp_path, env):
+    run = _auto_session(monkeypatch, tmp_path, [_done()], solver=None, env=env)
+    assert run.reserves and run.reserves[0]["model_calls"] == 0
+    assert run.reserves[0].get("solver", "openfoam") == env
+
+
+def test_solver_the_keyword_wins_over_the_environment(monkeypatch, tmp_path):
+    run = _auto_session(monkeypatch, tmp_path, [_done()], solver="felix", env="openfoam")
+    assert run.reserves[0].get("solver") == "felix"
+
+
+def test_solver_a_given_solver_is_on_record_before_the_header(monkeypatch, tmp_path):
+    run = _auto_session(monkeypatch, tmp_path, [_done()], solver="felix")
+    assert run.view.recorded_at_header == [["felix"]]
+    assert run.view.solvers == ["felix"]
+
+
+def test_solver_a_chosen_solver_is_on_record_the_moment_it_is_chosen(monkeypatch, tmp_path):
+    run = _auto_session(monkeypatch, tmp_path, [_choose("felix"), _done()])
+    assert run.view.recorded_at_header == [[None]], "null until chosen"
+    assert run.reserves[0]["recorded"] == ["felix"], "written before anything is reserved"
+    assert run.view.solvers == ["felix"]
+
+
+def test_solver_the_json_stream_says_the_solver(tmp_path):
+    import io as _io
+    import json
+
+    from openreynolds.jsonview import JsonView
+
+    out = _io.StringIO()
+    JsonView(out).solver("felix")
+    event = json.loads(out.getvalue().splitlines()[-1])
+    assert event["type"] == "solver" and event["solver"] == "felix"

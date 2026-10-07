@@ -240,6 +240,17 @@ def refusing_to_reserve(error=None):
 
 
 @pytest.fixture(autouse=True)
+def an_openfoam_study_unless_told(monkeypatch):
+    """A session with no solver given leaves it to the agent (`--solver auto`), which
+    reserves no workspace until the model has chosen. The suite's sessions are about
+    everything else, written against an OpenFOAM study whose workspace is reserved at
+    the start, so that is the solver they get -- through the same environment variable
+    an embedder sets. `tests/test_felix_mode.py` clears it where the choice is the
+    subject."""
+    monkeypatch.setenv("OPENREYNOLDS_SOLVER", "openfoam")
+
+
+@pytest.fixture(autouse=True)
 def drawing_starts_allowed():
     """`--output-format stream-json` gives up drawing inline images for the life of
     the process, because a pseudo-terminal answers `isatty()` the same way a person's

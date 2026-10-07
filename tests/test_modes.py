@@ -199,7 +199,10 @@ def test_full_auto_with_a_one_shot_run_goes_ahead(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENREYNOLDS_MODE", raising=False)
     acquired, _ = _no_instance(monkeypatch, tmp_path)
 
-    result = CliRunner().invoke(cli.main, ["-p", "go", "--mode", "full"])
+    # With the solver given, the workspace is reserved at the start, so reaching the
+    # (failing) reserve is the proof the run went past the mode check. Left to the
+    # agent (`--solver auto`, the default) nothing is reserved until it has chosen.
+    result = CliRunner().invoke(cli.main, ["-p", "go", "--mode", "full", "--solver", "openfoam"])
 
     assert result.exit_code == 1  # the fake service is down, which is past the check
     assert acquired
