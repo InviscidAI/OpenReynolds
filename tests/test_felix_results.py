@@ -19,8 +19,11 @@ rendering tests do.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -47,6 +50,33 @@ def fr():
 def needs_pyvista():
     pytest.importorskip("pyvista", reason="the drawing half runs in the workspace image",
                         exc_type=ImportError)
+
+
+PROBE = """
+import pyvista as pv
+pv.OFF_SCREEN = True
+p = pv.Plotter(off_screen=True, window_size=(64, 64))
+p.add_mesh(pv.Sphere())
+p.screenshot(None, return_img=True)
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def _can_draw() -> bool:
+    """Whether VTK can draw off-screen here, asked in a child process: without an OpenGL
+    context (a CI runner, Linux or Windows) the draw is a segfault or an access violation,
+    which no `except` in this process would see. The workspace image draws; the capstone
+    checks it there."""
+    try:
+        return subprocess.run([sys.executable, "-c", PROBE], capture_output=True, timeout=120).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
+def needs_a_renderer():
+    needs_pyvista()
+    if not _can_draw():
+        pytest.skip("no off-screen OpenGL here; the workspace image draws (Capstone 1)")
 
 
 # -- where things are ------------------------------------------------------------
@@ -191,7 +221,7 @@ def test_a_line_through_the_cavity_samples_the_velocity(fr):
 
 
 def test_a_slice_is_rendered_to_png(fr, tmp_path):
-    needs_pyvista()
+    needs_a_renderer()
     mesh = fr.read_vtu(fr.choose_file(SMALL, "latest"))
     out = fr.render_slice(mesh, "velocity", "mag", "z", tmp_path / "u.png", title="|u|")
     assert out.stat().st_size > 5000
