@@ -104,7 +104,8 @@ Report the u-velocity along the vertical centerline and compare with Ghia et al.
 1. The study is created `solver: felix` on a `felix` workspace; the OpenFOAM prompt
    and tools never appear in the transcript.
 2. The agent builds the case from the docs, and `felix-check-mesh` passes.
-3. It calls `felix gpus` and picks a GPU, saying why (size and price).
+3. It calls `felix gpus` and runs its solves on GPUs from that list (read off
+   `--gpu`; saying which and why is left to the agent).
 4. It starts the solve with `job_start`, follows it with the job tools and reads
    progress.
 5. **Stop and continue**: once two snapshots exist, the harness kills the job (as a
