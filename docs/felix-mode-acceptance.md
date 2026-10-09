@@ -97,8 +97,9 @@ daemon, felixd running locally against this machine's A100 (felixd's own local
 capstone setup). Replaced: EC2 (a local docker backend) and Modal (felixd's local
 runner).
 
-The agent is given one prompt: *"Lid-driven cavity at Re 1000. Report the
-u-velocity along the vertical centerline and compare with Ghia et al."* Expect:
+The agent is given one prompt with `--solver felix`: *"Lid-driven cavity at Re 1000.
+Report the u-velocity along the vertical centerline and compare with Ghia et al."*
+(Felix is forced: for a small steady case either solver is a fair choice.) Expect:
 
 1. The study is created `solver: felix` on a `felix` workspace; the OpenFOAM prompt
    and tools never appear in the transcript.
@@ -117,6 +118,10 @@ u-velocity along the vertical centerline and compare with Ghia et al."* Expect:
    foamd's 402 message, and the agent reports it rather than retrying.
 9. A deliberately oversized case on the smallest GPU fails with Felix's
    out-of-memory `ERROR:`; the agent picks a larger GPU and the rerun succeeds.
+
+**The choice** (`tests/e2e/test_felix_choice.py`): with `--solver auto`, the agent's
+`choose_solver` picks OpenFOAM for a 2-D dam break (free surface, which Felix can't run)
+and Felix for a 30-million-cell transient data-centre hall, each with a reason.
 
 ## Capstone 2 — staging (by hand, result recorded here)
 
