@@ -108,9 +108,9 @@ Report the u-velocity along the vertical centerline and compare with Ghia et al.
    `--gpu`; saying which and why is left to the agent).
 4. It starts the solve with `job_start`, follows it with the job tools and reads
    progress.
-5. **Stop and continue**: once two snapshots exist, the harness kills the job (as a
-   user would). The agent notices, continues from the latest snapshot, and the run
-   finishes.
+5. **Stop and continue**: once two snapshots exist, the person ends the session, kills
+   the job and comes back with "I stopped that run by mistake -- pick up where it left
+   off". The agent continues from the latest snapshot, and the run finishes.
 6. Results: centerline u within 2% RMS of Ghia; a plot and the comparison in the
    final report.
 7. Billing: foamd's `felix_solves` rows sum to felixd's `cost_usd` for both solves,
