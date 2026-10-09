@@ -248,9 +248,10 @@ implicit time stepping, element order 1 to 5. Optional: a temperature field with
 Boussinesq buoyancy, Spalart-Allmaras turbulence (SA or SA-DDES, wall functions \
 available), porous zones, fan zones, volumetric heat sources, and pseudo-transient \
 continuation to a steady state. Nothing compressible, no multiphase or free surface, \
-no combustion, no moving meshes, no turbulence model other than Spalart-Allmaras, and \
-no 2-D mode: a 2-D problem is a thin 3-D slab. Felix has no reference scales, so a \
-drag coefficient or a Nusselt number is derived from its forces and fields.
+no combustion, no moving meshes and no turbulence model other than Spalart-Allmaras. \
+A 2-D problem is a one-cell 3-D slab in either solver: `empty` front and back in \
+OpenFOAM, slip in Felix. Felix has no reference scales, so a drag coefficient or \
+a Nusselt number is derived from its forces and fields.
 
 Each solve runs on one cloud GPU (A100, H100, H200 or B200) picked per solve and \
 billed per second only while it runs; the workspace itself has no GPU. On a large \
