@@ -243,7 +243,7 @@ def test_cli_summary_prints_the_run(fr, capsys):
 
 
 def test_cli_all_writes_the_standard_set(fr, tmp_path, capsys):
-    needs_pyvista()
+    needs_a_renderer()
     out = tmp_path / "results"
     assert fr.main(["all", str(SMALL), "--out", str(out), "--normal", "z"]) == 0
     names = {p.name for p in out.iterdir()}
