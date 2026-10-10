@@ -1,0 +1,5 @@
+output:
+  json: true
+  every: 200
+forces:
+  groups: [cylinder]

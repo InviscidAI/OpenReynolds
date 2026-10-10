@@ -1,0 +1,21 @@
+# Quasi-2D lid-driven cavity, Re 1000 (lid speed 1, side 1, nu 1e-3), 128x128x1 hex,
+# slip front and back: the 2D flow Ghia et al. (1982) tabulate.
+boundary_groups:
+  1: lid
+  2: sides
+  3: walls
+nu: 0.001
+mesh: mesh.vtu
+boundary_conditions:
+  velocity:
+    lid:
+      type: dirichlet
+      value: [1.0, 0, 0]
+    walls:
+      type: dirichlet
+      value: [0.0, 0.0, 0.0]
+    sides:
+      type: slip
+control: control.yaml
+ptc: ptc.yaml
+io: io.yaml

@@ -1,0 +1,3 @@
+NOTE: created output directory /work/cases/oom4/output
+ERROR: /work/cases/oom4/mesh.vtu:
+  derived element volume 0 is 0, but the orientation check accepted the cell. This is an internal inconsistency in the solver, not a bad mesh.

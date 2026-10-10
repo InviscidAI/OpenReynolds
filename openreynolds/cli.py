@@ -27,7 +27,7 @@ from .browse import Browser
 from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
-from . import convergence, modes
+from . import convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import Config, config_path
@@ -148,6 +148,14 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
          "(approve a plan and each stage).",
 )
 @click.option(
+    "--solver",
+    type=click.Choice(solvers.CHOICES, case_sensitive=False),
+    default=None,
+    help="auto (the agent chooses, the default), openfoam or felix (GPU); or "
+         "OPENREYNOLDS_SOLVER. Fixed for the whole study: a resumed study keeps the "
+         "solver it has.",
+)
+@click.option(
     "--effort",
     type=click.Choice(EFFORTS, case_sensitive=False),
     help="How hard the model thinks this session. /effort changes it mid-study.",
@@ -182,6 +190,7 @@ def main(
     model: str | None,
     effort: str | None,
     mode: str | None,
+    solver: str | None,
     no_capture: bool,
     plain: bool,
     keep_alive: bool,
@@ -259,6 +268,7 @@ def main(
         output_format=output_format,
         mode_explicit=mode_explicit,
         model_explicit=model_explicit,
+        solver=solver,
     )
     code = ONE_SHOT_EXIT_CODES.get(outcome or "ok", 0)
     if code:
@@ -1161,8 +1171,13 @@ def session(
     interface: Any = None,
     mode_explicit: bool | None = None,
     model_explicit: bool | None = None,
+    solver: str | None = None,
 ) -> str | None:
     """Run one study to its end.
+
+    `solver` is `auto`, `openfoam` or `felix` (`solvers.py`), as `--solver` gives it;
+    None reads `OPENREYNOLDS_SOLVER`, and with neither the agent chooses (`auto`). A
+    resumed study keeps the solver it has (`_settle_solver`).
 
     `interface`, when given, is a callable that takes `drive` -- the one-session
     function below, `drive(view, reader)` -- and runs it against an interface of its
@@ -1297,6 +1312,42 @@ def session(
     inheriting the shared workspace root."""
 
     local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
+    asked = solvers.normalize(solver) or solvers.normalize(os.environ.get("OPENREYNOLDS_SOLVER"))
+    stored = store.recorded_solver
+    if resuming and not local and not (store.dir / "session.json").is_file():
+        # A study this machine never held: its record is the platform's, and the
+        # workspace about to be reserved has to be of its solver's kind.
+        with _timed("study_solver"):
+            found, reachable = hosted.study_solver(cfg.foamd_url, cfg.foamd_api_key, study_id)
+        if found:
+            stored = found
+        elif solvers.chosen(asked):
+            stored = asked  # nothing on record anywhere: the flag is the choice
+        elif not reachable:
+            console.print(
+                "[yellow]Could not read this study's solver from the platform, and "
+                "this machine has no record of it. It runs as OpenFOAM; if it is a "
+                "Felix study, end this session and resume with --solver felix.[/]"
+            )
+    settled = _settle_solver(stored, asked, resuming=resuming, local=local)
+    if resuming and solvers.chosen(asked) and asked != settled:
+        console.print(
+            f"[yellow]This study's solver is {settled}; --solver {asked} is "
+            "ignored: the solver does not change during a study.[/]"
+        )
+    if local and settled == solvers.FELIX:
+        console.print(
+            "[red]Felix runs only through the hosted workspace service[/] -- its "
+            "solves go to cloud GPUs -- so it cannot run on a local workspace "
+            "(OPENREYNOLDS_LOCAL). Unset it, or pass --solver openfoam."
+        )
+        if streaming_json:
+            _terminal_json("config", "felix needs the hosted workspace service",
+                           store.session.study_id)
+        raise SystemExit(2)
+    # Recorded as soon as it is known: with the record written below, before the
+    # header goes out; for a study still choosing, `null` until `choose_solver`.
+    store.session.solver = settled if solvers.chosen(settled) else None
     starter: Any = None
     pending: PendingBackend | None = None
     """The workspace as a promise, while it is coming up. None for a workspace that
@@ -1309,6 +1360,14 @@ def session(
             backend = LocalBackend()
             client, resolved_instance = None, "local"
             console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
+        elif settled == solvers.AUTO:
+            # The agent chooses the solver, and a workspace has one kind: nothing is
+            # reserved, started or opened on the platform until it has chosen
+            # (`choose_solver`, then `begin_workspace` in `drive`). Every tool that
+            # would need the machine waits on this promise, and none is offered.
+            client, resolved_instance = None, ""
+            pending = PendingBackend("")
+            backend = pending
         else:
             # Which workspace, settled now; the workspace itself, started now and
             # waited for later. `reserve` is a fraction of a second of database;
@@ -1322,6 +1381,7 @@ def session(
                     cfg.foamd_url,
                     cfg.foamd_api_key,
                     instance_id or store.session.instance_id or None,
+                    **_kind(settled),
                 )
             starter.start()
             pending = starter.pending()
@@ -1386,10 +1446,15 @@ def session(
                 capture = Capture.start(
                     client, store.session.title or store.session.study_id, resolved_instance,
                     study_id=store.session.study_id, home=store.session.home, warn=_warn,
+                    **_kind(settled),
                 )
             if capture:
                 store.session.remote_study_id = capture.study_id
                 store.save()
+    elif cfg.capture and settled == solvers.AUTO and not local:
+        # The platform's study is opened with its solver, so not before the choice;
+        # what is said meanwhile is held and posted once it is (`Capture.deferred`).
+        capture = Capture.deferred(warn=_warn)
     if store.session.remote_study_id:
         # The workspace is told which study it is serving, under the platform's own
         # name for it: the row just opened, or the one this study was resumed on
@@ -1410,6 +1475,7 @@ def session(
         home=store.session.home,
         on_fetch=_fetch_hook(capture),
         mode=cfg.mode,
+        solver=settled,
     )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
@@ -1490,6 +1556,8 @@ def session(
         # a reader somebody can type into can answer a question; -p has refused a
         # non-auto mode before getting here, so no approver means nothing is asked.
         view.mode(ctx.mode)
+        if solvers.chosen(ctx.solver):
+            view.solver(ctx.solver)
         # Effort and provider too, which header() does not carry: the interface's bar
         # shows them and `/model ` completes from the provider's known models.
         view.model(cfg.model, cfg.effort, cfg.provider)
@@ -1513,7 +1581,10 @@ def session(
         # any mesh under the workspace, whoever built it. `OPENREYNOLDS_CAD_REVIEW=0`
         # takes it away from the desk only; that is the A/B, and the tool stays.
         reviewer = None
-        if not cfg.model_key_missing():
+        # Both build and judge OpenFOAM meshes; a Felix study is offered neither
+        # (`tools_for`), so neither is built for one.
+        openfoam_tools = ctx.solver != solvers.FELIX
+        if openfoam_tools and not cfg.model_key_missing():
             with _timed("review"):
                 reviewer = cad.Reviewer(
                     cfg, backend,
@@ -1521,7 +1592,7 @@ def session(
                                                         store=store, capture=capture),
                 )
             ctx.reviewer = reviewer
-        if cfg.mesh_tool and not cfg.model_key_missing():
+        if openfoam_tools and cfg.mesh_tool and not cfg.model_key_missing():
             # `interject` is read late on purpose: the loop's own drain is attached a
             # few lines below, and the desk needs the same one. It is what lets a
             # person change the shape while it is being built instead of waiting out
@@ -1565,7 +1636,11 @@ def session(
                 browser=browser if pending is None else None,
                 preferences=cfg.preferences,
                 mode=ctx.mode,
-                starting_eta_s=cfg.workspace_eta_s if pending is not None else None,
+                starting_eta_s=(
+                    cfg.workspace_eta_s if pending is not None and starter is not None
+                    else None
+                ),
+                solver_pending=starter is None and pending is not None,
             )
         with _timed("loop_brief"):
             loop.brief(briefing)
@@ -1576,6 +1651,64 @@ def session(
                 toolbox_sync.result()
                 toolbox_pool.shutdown(wait=False)
             _say_workspace_ready(view, resolved_instance, 0.0)
+        elif starter is None:
+            # The agent has the solver to choose; the workspace is reserved, started
+            # and opened on the platform when it has (`begin_workspace`).
+
+            def begin_workspace(chosen: str) -> str:
+                nonlocal starter
+                try:
+                    with _timed("reserve"):
+                        chosen_client, chosen_instance, chosen_starter = hosted.reserve(
+                            cfg.foamd_url, cfg.foamd_api_key, instance_id or None,
+                            **_kind(chosen),
+                        )
+                except BackendError as exc:
+                    pending.fail(exc)
+                    console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+                    view.notice(f"the workspace could not be started: {exc}")
+                    return (
+                        f"The workspace could not be reserved ({exc}); every tool call "
+                        "will fail with that error until the session is resumed."
+                    )
+                starter = chosen_starter
+                chosen_starter.start()
+                pending.bind(
+                    chosen_instance,
+                    instances_held=getattr(chosen_starter, "instances_held", 0),
+                    was_already_running=getattr(chosen_starter, "listed_as_running", False),
+                    closer=getattr(chosen_client, "close", None),
+                )
+                store.session.instance_id = chosen_instance
+                if isinstance(capture, Capture) and chosen_client is not None:
+                    with _timed("capture_start"):
+                        opened = capture.open(
+                            chosen_client,
+                            store.session.title or store.session.study_id,
+                            chosen_instance,
+                            study_id=store.session.study_id,
+                            home=store.session.home,
+                            **_kind(chosen),
+                        )
+                    if opened:
+                        store.session.remote_study_id = capture.study_id
+                        pending.study_id = capture.study_id
+                store.save()
+                tracker.workspace_starting(cfg.workspace_eta_s)
+                bringing_up.set()
+                threading.Thread(
+                    target=_bring_up,
+                    args=(pending, chosen_starter, store, view, loop, tracker, browser,
+                          resuming),
+                    name="workspace-ready",
+                    daemon=True,
+                ).start()
+                return (
+                    f"Its workspace is starting, usually in about "
+                    f"{cfg.workspace_eta_s:.0f} seconds; a call that needs it waits for it."
+                )
+
+            ctx.on_solver = begin_workspace
         else:
             # The workspace is coming up on its own thread; this one runs the
             # conversation. When it is here, `_bring_up` makes it this study's --
@@ -1658,6 +1791,12 @@ def session(
         # it rides alongside rather than in front: every step of the close-down is a
         # round trip the person is waiting on.
         live_mirror.view = None
+        never_started = pending is not None and starter is None
+        """A study that ended with its solver still to choose: nothing was reserved,
+        started or opened, and there is nothing to bring home or put down."""
+        if never_started:
+            pending.fail(BackendError("no solver was chosen, so no workspace was started",
+                                      code="no_solver"))
         if pending is not None and not bringing_up.is_set() and not pending.ready_event.is_set():
             # `drive` never reached the point of bringing the workspace up -- an
             # interface that would not start, an error on the way -- so the start
@@ -1668,7 +1807,9 @@ def session(
                 pending.resolve(starter.result())
             except BackendError as exc:
                 pending.fail(exc)
-        if pending is not None and not pending.ready():
+        if never_started:
+            console.print("[dim]no solver was chosen, so no workspace was started[/]")
+        elif pending is not None and not pending.ready():
             # The workspace never came, or has not come yet: nothing of this study's
             # is on it, so there is nothing to pick up and nothing to bring home,
             # and waiting for it to say so would be the wait this whole arrangement
@@ -1687,8 +1828,12 @@ def session(
                 _capture_the_case(capture, store, ConsoleView(console))
             with _timed("close.capture_close"):
                 capture.close()
-        with _timed("close.close_down"):
-            _close_down(backend, store, keep_alive=keep_alive)
+        if never_started:
+            console.print(f"\n[dim]this study's files are in {store.dir}[/]")
+            console.print(f"[dim]  resume: openreynolds --study {store.session.study_id}[/]")
+        else:
+            with _timed("close.close_down"):
+                _close_down(backend, store, keep_alive=keep_alive)
         with _timed("close.backend_close"):
             backend.close()
         if stream is not None:
@@ -1717,6 +1862,33 @@ the traceback is worth more than a tidy exit -- and it is mapped anyway so that 
 embedder which swallows the exception cannot turn a crash into a zero."""
 
 WORKSPACE_LISTED = 40
+
+
+def _settle_solver(stored: str | None, asked: str | None, *, resuming: bool, local: bool) -> str:
+    """This study's solver: `openfoam`, `felix`, or `auto` for the agent to choose.
+
+    `stored` is what the study's record says (`Store.recorded_solver`); `asked` is
+    the flag or the environment, None for neither, which leaves it to the agent.
+
+    A resumed study keeps the solver it has, whatever is asked: the workspace it binds
+    to has that kind, and its cases are that solver's. One recorded before solvers
+    existed is an OpenFOAM study. One whose choice was left to the agent and never
+    made is still open, and there a `--solver` is a choice rather than a conflict. A
+    local workspace has only OpenFOAM, so on one there is nothing to choose.
+    """
+    stored = solvers.normalize(stored)
+    wanted = solvers.normalize(asked) or solvers.AUTO
+    if resuming and stored != solvers.AUTO:
+        return stored if stored in solvers.SOLVERS else solvers.OPENFOAM
+    if wanted == solvers.AUTO and local:
+        return solvers.OPENFOAM
+    return wanted
+
+
+def _kind(solver: str) -> dict[str, str]:
+    """`solver=` for the calls that take one, given only for Felix: an OpenFOAM study
+    makes exactly the calls it always made, and the service's default is OpenFOAM."""
+    return {"solver": solver} if solver == solvers.FELIX else {}
 
 
 def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
@@ -1748,6 +1920,10 @@ def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
         store.session.instance_id = str(row["instance_id"])
     if row.get("title") and not store.session.title:
         store.session.title = str(row["title"])
+    if solvers.chosen(str(row.get("solver") or "")) and not solvers.chosen(store.session.solver):
+        # The platform's record of a study opened elsewhere. This session's workspace
+        # was settled before the row could be read; the next resume reads it here.
+        store.session.solver = str(row["solver"]).lower()
 
 
 def _home_for(store: Store, backend: Backend, resuming: bool, known_here: bool = True) -> str:
@@ -1994,6 +2170,7 @@ def _situation_brief(
     preferences: str = "",
     mode: str = "auto",
     starting_eta_s: float | None = None,
+    solver_pending: bool = False,
 ) -> str:
     """Facts about this session, assembled by the harness.
 
@@ -2005,16 +2182,25 @@ def _situation_brief(
     that usually takes. The briefing then carries that fact in place of the two it
     would have had to wait for -- the listing and the core count -- and those follow
     as a note once the workspace is here (`_workspace_ready_note`).
+
+    `solver_pending` says there is no workspace at all yet: the study's solver is the
+    agent's to choose, and the workspace is started for it once it has. The same two
+    facts follow in the same note.
     """
     lines = []
+    waiting = starting_eta_s is not None or solver_pending
     if resuming:
         # `situation` re-reads every running job's status from the workspace, which a
         # resume ahead of its workspace cannot do yet: there it says what the study
         # recorded, and the ready note re-reads it.
-        lines.append(situation(store, None if starting_eta_s is not None else backend))
+        lines.append(situation(store, None if waiting else backend))
+    elif solver_pending:
+        lines.append(f"study {store.session.study_id}, with no workspace yet.")
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
-    if starting_eta_s is not None:
+    if solver_pending:
+        lines.append(SOLVER_PENDING_NOTE)
+    elif starting_eta_s is not None:
         lines.append(_starting_note(starting_eta_s, interactive, mode))
     else:
         # The workspace listing and the core count are two independent questions to
@@ -2054,6 +2240,15 @@ def _situation_brief(
             "can arrive, so a question asked here will not be seen."
         )
     return "\n".join(lines)
+
+
+SOLVER_PENDING_NOTE = (
+    "This study's solver is still open, and no workspace is running: one is started "
+    "for the solver chosen with choose_solver, an OpenFOAM workspace or a Felix one. "
+    "What is in the study's directory and what the machine is follow in a note once "
+    "it is up."
+)
+"""The briefing's line for a study whose solver the agent has yet to choose."""
 
 
 def _workspace_facts(
@@ -2207,7 +2402,7 @@ def _bring_up(
             if browser is not None:
                 browser.home = WORKSPACE_ROOT
             tracker.home = WORKSPACE_ROOT
-        _sync_toolbox_timed(live)
+        _sync_toolbox_timed(live, store.session.solver)
         pending.resolve(live)
         seconds = pending.elapsed_s
         tracker.workspace_ready()
@@ -3169,7 +3364,9 @@ def _run_interactive(
         # is asked for, not waited for: the next thing this thread does is read what
         # the user typed, and a sync that takes twenty minutes must not stand in
         # front of that (see LiveMirror.catch_up).
-        if live is not None:
+        if _no_workspace_yet(loop):
+            pass  # the solver is still to be chosen: there is nothing to mirror
+        elif live is not None:
             live.catch_up()
         else:
             _mirror(browser, view)
@@ -3206,7 +3403,7 @@ def _run_one_shot(
     loop.say(prompt)
     if not _run_turn(loop, view):
         return "failed"
-    if live is not None:
+    if live is not None and not _no_workspace_yet(loop):
         live.catch_up()
 
     deadline = time.monotonic() + max_wait_minutes * 60 if max_wait_minutes else None
@@ -3225,30 +3422,106 @@ def _run_one_shot(
         loop.inform(wake.text)
         if not _run_turn(loop, view):
             return "failed"
-        if live is not None:
+        if live is not None and not _no_workspace_yet(loop):
             live.catch_up()
         if loop.needs_refresh:
             loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
 
 
-def _sync_toolbox(backend: Backend) -> None:
-    """Push the toolbox into the workspace. It is offered, never imposed."""
+def _no_workspace_yet(loop: Any) -> bool:
+    """Whether the study's solver is still the agent's to choose, so that no workspace
+    exists and a sync would wait on one that nobody has started."""
+    return getattr(getattr(loop, "ctx", None), "solver", None) == solvers.AUTO
+
+
+def _sync_toolbox(backend: Backend, solver: str = solvers.OPENFOAM) -> None:
+    """Push the toolbox into the workspace. It is offered, never imposed.
+
+    Each solver gets its own part of it (`_toolbox_for`): a Felix study the Felix
+    scripts, an OpenFOAM study everything else, each with an index naming only what
+    it was given."""
     if not TOOLBOX_SOURCE.is_dir():
         return
     try:
-        backend.put_tree(TOOLBOX_SOURCE, TOOLBOX_DEST)
+        backend.put_tree(_toolbox_for(solver), TOOLBOX_DEST)
     except BackendError as exc:
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
 
 
-def _sync_toolbox_timed(backend: Backend) -> None:
+FELIX_TOOLBOX_PREFIX = "felix_"
+"""The toolbox's Felix scripts are named for it (`felix_results.py`); every other file
+in it is OpenFOAM know-how -- case generators, templates, field notes."""
+
+_TOOLBOX_ROW = re.compile(r"^\| `([^`]+)` \|")
+_staged_toolboxes: dict[str, Path] = {}
+_staging_lock = threading.Lock()
+
+
+def _toolbox_for(solver: str) -> Path:
+    """The toolbox as one solver's study gets it, staged once per process.
+
+    The scripts are split by name (`FELIX_TOOLBOX_PREFIX`), and so are the rows of the
+    index, `README.md`, which is what the agent reads to find them: an OpenFOAM study
+    is not told about a Felix script, nor a Felix study about OpenFOAM's. The Felix
+    index keeps the index's opening and its own rows, and leaves out the paragraphs
+    after the table, which are about OpenFOAM's environment, templates and notes."""
+    import atexit
+    import shutil
+    import tempfile
+
+    felix = solver == solvers.FELIX
+    key = solvers.FELIX if felix else solvers.OPENFOAM
+    with _staging_lock:
+        staged = _staged_toolboxes.get(key)
+        if staged is not None and staged.is_dir():
+            return staged
+        root = Path(tempfile.mkdtemp(prefix=f"openreynolds-toolbox-{key}-"))
+        atexit.register(shutil.rmtree, root, True)
+        staged = root / "toolbox"
+
+        def is_felix(name: str) -> bool:
+            return name.startswith(FELIX_TOOLBOX_PREFIX)
+
+        if felix:
+            staged.mkdir()
+            for item in sorted(TOOLBOX_SOURCE.iterdir()):
+                if item.is_file() and is_felix(item.name):
+                    shutil.copy2(item, staged / item.name)
+        else:
+            shutil.copytree(
+                TOOLBOX_SOURCE, staged,
+                ignore=lambda folder, names: [
+                    n for n in names
+                    if n == "__pycache__" or (Path(folder) == TOOLBOX_SOURCE and is_felix(n))
+                ],
+            )
+        readme = TOOLBOX_SOURCE / "README.md"
+        if readme.is_file():
+            kept: list[str] = []
+            table_seen = False
+            for line in readme.read_text(encoding="utf-8").splitlines():
+                row = _TOOLBOX_ROW.match(line)
+                if row:
+                    table_seen = True
+                    if is_felix(Path(row.group(1)).name) == felix:
+                        kept.append(line)
+                    continue
+                if felix and table_seen:
+                    break  # past the table: OpenFOAM's environment, templates, notes
+                kept.append(line)
+            (staged / "README.md").write_text("\n".join(kept) + "\n", encoding="utf-8")
+        _staged_toolboxes[key] = staged
+        return staged
+
+
+def _sync_toolbox_timed(backend: Backend, solver: str = solvers.OPENFOAM) -> None:
     """`_sync_toolbox` under its stopwatch, for the background thread `session` runs
     it on. Never raises: a toolbox that could not be pushed is reported by
     `_sync_toolbox` itself, and the session goes on without it."""
     try:
         with _timed("sync_toolbox"):
-            _sync_toolbox(backend)
+            _sync_toolbox(backend, solver)
     except Exception as exc:  # noqa: BLE001 - see docstring
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
 

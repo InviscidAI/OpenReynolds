@@ -1,0 +1,39 @@
+NOTE: created output directory /work/cases/cavity_small/output
+NOTE: boundary: 160 surface cell(s) in 3 group(s) (lid, sides, walls)
+NOTE: mesh /work/cases/cavity_small/mesh.vtu: 162 nodes, 64 elements (hex 64)
+NOTE: boundary conditions: 192 velocity values, 0 pressure nodes, 0 temperature nodes, 0 nu_tilde nodes, 0 wall faces (time-varying: no)
+NOTE: nu=0.01 dt=0.05 nsteps=30 corrector.max=4
+NOTE: forces on 8 face(s) of lid -> /work/cases/cavity_small/output/forces.csv
+NOTE: no pressure boundary condition is declared, so the pressure is determined up to a constant; the solver holds the mean pressure at its initial value.
+step=1 t=0.05 dt=0.05 gcr=10 gmres=43 cg=42 wall_step=0.0365 wall_time=0.037 res0=4.6691e-03 resF=4.4322e-07 gcr_res=9.9580e-02 cg_res=9.0055e-02 corrector=4
+step=2 t=0.1 dt=0.05 gcr=7 gmres=28 cg=36 wall_step=0.0180 wall_time=0.055 res0=3.8481e-02 resF=1.7121e-05 gcr_res=9.7409e-02 cg_res=9.5536e-02 corrector=3
+step=3 t=0.15 dt=0.05 gcr=6 gmres=24 cg=30 wall_step=0.0156 wall_time=0.070 res0=2.3417e-02 resF=1.2582e-05 gcr_res=9.4425e-02 cg_res=8.9372e-02 corrector=3
+step=4 t=0.2 dt=0.05 gcr=8 gmres=28 cg=36 wall_step=0.0200 wall_time=0.090 res0=1.2471e-02 resF=9.3923e-07 gcr_res=4.5293e-02 cg_res=8.8649e-02 corrector=3
+step=5 t=0.25 dt=0.05 gcr=8 gmres=32 cg=32 wall_step=0.0207 wall_time=0.111 res0=5.7011e-03 resF=6.1154e-07 gcr_res=4.4250e-02 cg_res=9.9377e-02 corrector=3
+step=6 t=0.3 dt=0.05 gcr=7 gmres=27 cg=26 wall_step=0.0179 wall_time=0.129 res0=3.0388e-03 resF=5.3605e-07 gcr_res=8.2287e-02 cg_res=9.8578e-02 corrector=3
+step=7 t=0.35 dt=0.05 gcr=7 gmres=29 cg=28 wall_step=0.0182 wall_time=0.147 res0=1.7591e-03 resF=2.8437e-07 gcr_res=9.5074e-02 cg_res=8.5930e-02 corrector=3
+step=8 t=0.4 dt=0.05 gcr=5 gmres=21 cg=20 wall_step=0.0136 wall_time=0.160 res0=1.4357e-03 resF=9.9126e-07 gcr_res=9.8265e-02 cg_res=8.2293e-02 corrector=3
+step=9 t=0.45 dt=0.05 gcr=6 gmres=25 cg=24 wall_step=0.0158 wall_time=0.176 res0=1.2695e-03 resF=4.0673e-07 gcr_res=9.1070e-02 cg_res=7.8988e-02 corrector=3
+step=10 t=0.5 dt=0.05 gcr=6 gmres=25 cg=22 wall_step=0.0159 wall_time=0.192 res0=1.1721e-03 resF=2.2604e-07 gcr_res=8.5975e-02 cg_res=6.5328e-02 corrector=3
+step=11 t=0.55 dt=0.05 gcr=6 gmres=25 cg=24 wall_step=0.0162 wall_time=0.208 res0=1.0993e-03 resF=2.6234e-07 gcr_res=8.5945e-02 cg_res=7.1132e-02 corrector=3
+step=12 t=0.6 dt=0.05 gcr=6 gmres=25 cg=18 wall_step=0.0156 wall_time=0.224 res0=1.0305e-03 resF=2.1078e-07 gcr_res=9.6161e-02 cg_res=9.2227e-02 corrector=3
+step=13 t=0.65 dt=0.05 gcr=6 gmres=25 cg=20 wall_step=0.0157 wall_time=0.240 res0=9.7299e-04 resF=2.5177e-07 gcr_res=8.6956e-02 cg_res=9.9901e-02 corrector=3
+step=14 t=0.7 dt=0.05 gcr=6 gmres=26 cg=18 wall_step=0.0156 wall_time=0.255 res0=9.1940e-04 resF=1.8417e-07 gcr_res=9.7579e-02 cg_res=9.4436e-02 corrector=3
+step=15 t=0.75 dt=0.05 gcr=6 gmres=25 cg=20 wall_step=0.0155 wall_time=0.271 res0=8.7197e-04 resF=2.1479e-07 gcr_res=8.2815e-02 cg_res=8.5807e-02 corrector=3
+step=16 t=0.8 dt=0.05 gcr=6 gmres=25 cg=20 wall_step=0.0156 wall_time=0.286 res0=8.2828e-04 resF=1.9512e-07 gcr_res=8.0394e-02 cg_res=8.1131e-02 corrector=3
+step=17 t=0.85 dt=0.05 gcr=6 gmres=23 cg=20 wall_step=0.0153 wall_time=0.302 res0=7.8852e-04 resF=1.6796e-07 gcr_res=9.1140e-02 cg_res=9.2442e-02 corrector=3
+step=18 t=0.9 dt=0.05 gcr=6 gmres=23 cg=20 wall_step=0.0153 wall_time=0.317 res0=7.5184e-04 resF=1.5697e-07 gcr_res=8.9291e-02 cg_res=9.2784e-02 corrector=3
+step=19 t=0.95 dt=0.05 gcr=6 gmres=23 cg=20 wall_step=0.0151 wall_time=0.332 res0=7.1794e-04 resF=1.4756e-07 gcr_res=8.8326e-02 cg_res=9.3298e-02 corrector=3
+step=20 t=1 dt=0.05 gcr=6 gmres=23 cg=20 wall_step=0.0155 wall_time=0.348 res0=6.8651e-04 resF=1.3953e-07 gcr_res=8.7267e-02 cg_res=9.3946e-02 corrector=3
+step=21 t=1.05 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0151 wall_time=0.363 res0=6.5723e-04 resF=1.3900e-07 gcr_res=9.0015e-02 cg_res=9.7943e-02 corrector=3
+step=22 t=1.1 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0151 wall_time=0.378 res0=6.2990e-04 resF=1.3180e-07 gcr_res=8.8993e-02 cg_res=9.8041e-02 corrector=3
+step=23 t=1.15 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0144 wall_time=0.392 res0=6.0430e-04 resF=1.2447e-07 gcr_res=8.7936e-02 cg_res=9.7139e-02 corrector=3
+step=24 t=1.2 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0141 wall_time=0.406 res0=5.8028e-04 resF=1.2604e-07 gcr_res=9.0305e-02 cg_res=9.9727e-02 corrector=3
+step=25 t=1.25 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0142 wall_time=0.420 res0=5.5768e-04 resF=1.1975e-07 gcr_res=8.9281e-02 cg_res=9.9406e-02 corrector=3
+step=26 t=1.3 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0141 wall_time=0.435 res0=5.3636e-04 resF=1.1252e-07 gcr_res=8.7576e-02 cg_res=9.8588e-02 corrector=3
+step=27 t=1.35 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0142 wall_time=0.449 res0=5.1624e-04 resF=1.0675e-07 gcr_res=8.6534e-02 cg_res=9.8399e-02 corrector=3
+step=28 t=1.4 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0142 wall_time=0.463 res0=4.9719e-04 resF=1.0089e-07 gcr_res=8.5327e-02 cg_res=9.8097e-02 corrector=3
+step=29 t=1.45 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0141 wall_time=0.477 res0=4.7915e-04 resF=9.5584e-08 gcr_res=8.4299e-02 cg_res=9.7975e-02 corrector=3
+step=30 t=1.5 dt=0.05 gcr=6 gmres=22 cg=18 wall_step=0.0145 wall_time=0.492 res0=4.6202e-04 resF=9.0622e-08 gcr_res=8.3357e-02 cg_res=9.7938e-02 corrector=3
+NOTE: GPU memory: 0.12 GB used by this run (0.12 GB fixed + 0.00 GB for the gcr.max 200 basis); device 42.41 GB total, 0.50 GB already in use before the run (CUDA context and any other process)
+NOTE: solution written to /work/cases/cavity_small/output/solution.vtu

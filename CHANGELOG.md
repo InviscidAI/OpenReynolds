@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Felix mode: a second solver.** `--solver auto|openfoam|felix` (or
+  `OPENREYNOLDS_SOLVER`). With `auto`, the default, the agent's first decision is the
+  solver (`choose_solver`), and the workspace -- of that solver's kind -- is reserved
+  and started, and the platform's study opened with that solver, only once it has
+  chosen. A Felix study gets its own system prompt (pointing at `/opt/felix/docs`), no
+  `cad`, `mesh_review` or OpenFOAM toolbox, and a `job_start` that runs `felix run`
+  without the OpenFOAM restart guard and trapFpe check. The solver is fixed for the
+  whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
+  is unchanged byte for byte.
+
 ## [0.3.2] - 2026-10-05
 
 ### Fixed

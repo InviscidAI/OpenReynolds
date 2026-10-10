@@ -720,8 +720,13 @@ class FoamdClient:
     def list_instances(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/instances"))
 
-    def create_instance(self, cpu: float | None = None, mem_gb: int | None = None) -> str:
+    def create_instance(self, cpu: float | None = None, mem_gb: int | None = None,
+                        kind: str | None = None) -> str:
         """Create an instance, letting the service pick any shape not asked for.
+
+        `kind` is the workspace's solver, `felix` for a Felix workspace. Sent only
+        when given: the service's default is an OpenFOAM workspace, and an OpenFOAM
+        one is created with exactly the body it always was.
 
         The size a new instance gets is the service's to choose: it is the thing that
         knows the fleet's defaults and per-user ceilings, and it validates what it is
@@ -729,7 +734,8 @@ class FoamdClient:
         drift apart -- which they did, silently, until an instance sized by one of them
         was described to the model by the other.
         """
-        shape = {k: v for k, v in (("cpu", cpu), ("mem_gb", mem_gb)) if v is not None}
+        shape = {k: v for k, v in (("cpu", cpu), ("mem_gb", mem_gb), ("kind", kind))
+                 if v is not None}
         body = _json(self.request("POST", "/v1/instances", json=shape))
         return body["instance_id"]
 
@@ -745,7 +751,8 @@ class FoamdClient:
     # -- capture plane ---------------------------------------------------------
 
     def create_study(self, title: str | None, instance_id: str | None,
-                     study_id: str | None = None, home: str | None = None) -> str:
+                     study_id: str | None = None, home: str | None = None,
+                     solver: str | None = None) -> str:
         """Open the study on the platform, under this study's own id when given.
 
         The id used to be the service's to choose, so a study was named twice --
@@ -753,6 +760,10 @@ class FoamdClient:
         row to the directory it described. `home` is recorded for the same reason:
         a resume on a machine with no local state has to be able to find out which
         directory on the volume belongs to this study.
+
+        `solver` is sent for a Felix study, which the service then binds only to a
+        Felix workspace; an OpenFOAM study is opened with the body it always was, the
+        service's default being OpenFOAM.
         """
         payload: dict[str, Any] = {}
         if title:
@@ -763,6 +774,8 @@ class FoamdClient:
             payload["id"] = study_id
         if home:
             payload["home"] = home
+        if solver:
+            payload["solver"] = solver
         return _json(self.request("POST", "/v1/studies", json=payload))["study_id"]
 
     def get_study(self, study_id: str) -> dict[str, Any]:
@@ -1566,10 +1579,35 @@ class Starter:
         )
 
 
+def study_solver(base_url: str, api_key: str, study_id: str) -> tuple[str | None, bool]:
+    """The solver the platform holds for a study, asked before a workspace is reserved.
+
+    A study resumed on a machine that never held it has no local record of its
+    solver, and the workspace it reserves has to be of that solver's kind. Returns
+    `(solver, True)` for a study the platform has -- `openfoam` when the row says
+    nothing, the service's default -- `(None, True)` for one it does not have, and
+    `(None, False)` when the platform could not be asked, which is not an answer.
+    """
+    client = FoamdClient(base_url, api_key)
+    try:
+        row = client.get_study(study_id)
+    except BackendError as exc:
+        return None, getattr(exc, "status", None) == 404
+    except Exception:  # noqa: BLE001 - anything else is "could not ask"
+        return None, False
+    finally:
+        client.close()
+    if not isinstance(row, dict):
+        return None, False
+    solver = str(row.get("solver") or "openfoam").strip().lower()
+    return (solver if solver in ("openfoam", "felix") else "openfoam"), True
+
+
 def reserve(
     base_url: str,
     api_key: str,
     instance_id: str | None = None,
+    solver: str = "openfoam",
 ) -> tuple[FoamdClient, str, Starter]:
     """Settle which workspace, without starting it: the named instance, else an
     existing one, else a new row. A fraction of a second, all of it database.
@@ -1588,6 +1626,12 @@ def reserve(
     and the count is handed on (`Starter.instances_held`, then the backend's),
     because collapsing five workspaces to one id is a thing the user has to be told.
 
+    A workspace has a kind, the solver it serves (`solver`), and a study binds only
+    to a workspace of its own kind. So only workspaces of this study's kind are
+    candidates -- a row with no kind, from a service or a time before Felix, is an
+    OpenFOAM one -- and with none of them the new row is made of that kind. An
+    OpenFOAM workspace is created with exactly the call it always was.
+
     The client is closed on failure here, as `acquire` always closed it; a starter
     handed back is the caller's, and so is the client under it.
     """
@@ -1601,6 +1645,7 @@ def reserve(
                     inst
                     for inst in client.list_instances()
                     if inst.get("status") != "deleted"
+                    and (inst.get("kind") or "openfoam") == solver
                 ),
                 key=_most_recently_active_first,
                 reverse=True,
@@ -1609,8 +1654,11 @@ def reserve(
             if existing:
                 instance_id = existing[0]["id"]
                 listed_as_running = existing[0].get("status") == "running"
-            else:
+            elif solver == "openfoam":
                 instance_id = client.create_instance()
+                held = 1
+            else:
+                instance_id = client.create_instance(kind=solver)
                 held = 1
     except BaseException:
         client.close()

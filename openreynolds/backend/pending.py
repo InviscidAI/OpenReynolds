@@ -94,6 +94,25 @@ class PendingBackend(Backend):
 
     # -- becoming the real thing -----------------------------------------------
 
+    def bind(
+        self,
+        instance_id: str,
+        *,
+        instances_held: int = 0,
+        was_already_running: bool = False,
+        closer: Callable[[], None] | None = None,
+    ) -> None:
+        """Name the workspace this stands in for, once it has been chosen.
+
+        A study whose solver the agent chooses has no workspace row until the choice
+        is made, and everything that will use the workspace already holds this
+        stand-in; the row chosen then is told to it here, as the constructor is told
+        it when the row is known from the start."""
+        self.instance_id = instance_id
+        self._instances_held = instances_held
+        self._listed_as_running = was_already_running
+        self._closer = closer
+
     def resolve(self, backend: Backend) -> None:
         """The workspace is up and set up: from here every call goes to `backend`.
 

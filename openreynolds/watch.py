@@ -18,6 +18,7 @@ from typing import Any
 
 from .backend.base import Backend, BackendError, JobStatus
 from .browse import human
+from .progress import felix_job_summary
 from .store import Store
 from .tools import describe_job
 from .view import View
@@ -326,14 +327,21 @@ def _collect_finished(backend: Backend, store: Store, view: View) -> str:
         # exited"}`, so the exit code and the end reason never reached the stream at
         # all. An agent keying off `jobs` never learns its four-hour solve is done.
         view.jobs(list(store.session.jobs.values()))
-        reports.append(_job_report(backend, status))
+        reports.append(_job_report(backend, status, record))
 
     return "\n\n".join(reports)
 
 
-def _job_report(backend: Backend, status: JobStatus) -> str:
-    """Facts about one finished job, with the tail of its log."""
+def _job_report(backend: Backend, status: JobStatus, record: Any = None) -> str:
+    """Facts about one finished job, with the tail of its log -- and for a Felix
+    solve, its reading (`progress.felix_job_summary`): how it ended, the step it
+    reached, the errors with the out-of-memory figures, the final status."""
     lines = [describe_job(status)]
+    if record is not None:
+        felix = felix_job_summary(backend, record.cmd, record.cwd or "", status.job_id,
+                                  status.log_size)
+        if felix:
+            lines.extend(felix)
     tail = _tail(backend, status)
     if tail:
         lines.append(f"last {len(tail.encode('utf-8'))} bytes of log:\n{tail}")

@@ -1,0 +1,56 @@
+NOTE: created output directory /work/cases/cavity_re1000/output
+NOTE: boundary: 33280 surface cell(s) in 3 group(s) (lid, sides, walls)
+NOTE: mesh /work/cases/cavity_re1000/mesh.vtu: 33282 nodes, 16384 elements (hex 16384)
+NOTE: boundary conditions: 3072 velocity values, 0 pressure nodes, 0 temperature nodes, 0 nu_tilde nodes, 0 wall faces (time-varying: no)
+NOTE: nu=0.001 dt=0.01 (initial; controlled by ptc.yaml cfl_ramp) nsteps=3000 corrector.max=4
+NOTE: no pressure boundary condition is declared, so the pressure is determined up to a constant; the solver holds the mean pressure at its initial value.
+step=1 t=0.01 dt=0.01 gcr=6 gmres=17 cg=166 wall_step=0.0452 wall_time=0.045 res0=6.4014e-05 resF=5.1287e-08 gcr_res=8.6694e-02 cg_res=9.8717e-02 corrector=3
+step=2 t=0.02 dt=0.01 gcr=7 gmres=16 cg=260 wall_step=0.0502 wall_time=0.095 res0=1.1053e-04 resF=4.0899e-08 gcr_res=8.5219e-02 cg_res=9.8452e-02 corrector=3
+step=3 t=0.0325824726 dt=0.0125824726 gcr=8 gmres=20 cg=342 wall_step=0.0630 wall_time=0.158 res0=8.0620e-05 resF=1.5273e-08 gcr_res=9.6962e-02 cg_res=9.7747e-02 corrector=4
+step=4 t=0.0489396869 dt=0.0163572143 gcr=8 gmres=26 cg=304 wall_step=0.0598 wall_time=0.218 res0=5.5785e-05 resF=6.1313e-09 gcr_res=9.0784e-02 cg_res=9.7695e-02 corrector=4
+step=5 t=0.0702040655 dt=0.0212643786 gcr=7 gmres=23 cg=286 wall_step=0.0542 wall_time=0.272 res0=3.4432e-05 resF=1.8818e-08 gcr_res=6.0362e-02 cg_res=9.6360e-02 corrector=3
+step=6 t=0.0978477577 dt=0.0276436922 gcr=10 gmres=45 cg=338 wall_step=0.0708 wall_time=0.343 res0=2.3920e-05 resF=3.9900e-09 gcr_res=9.3403e-02 cg_res=9.9438e-02 corrector=4
+step=7 t=0.133784558 dt=0.0359367999 gcr=10 gmres=50 cg=368 wall_step=0.0750 wall_time=0.418 res0=1.6875e-05 resF=4.6377e-09 gcr_res=9.5123e-02 cg_res=9.9273e-02 corrector=4
+step=8 t=0.180502397 dt=0.0467178398 gcr=14 gmres=84 cg=538 wall_step=0.1076 wall_time=0.526 res0=1.3153e-05 resF=3.2780e-09 gcr_res=9.7680e-02 cg_res=9.8087e-02 corrector=4
+step=9 t=0.241235589 dt=0.0607331918 gcr=17 gmres=129 cg=538 wall_step=0.1223 wall_time=0.648 res0=1.0474e-05 resF=2.9273e-09 gcr_res=9.2923e-02 cg_res=9.9980e-02 corrector=4
+step=10 t=0.320188739 dt=0.0789531493 gcr=20 gmres=193 cg=432 wall_step=0.1262 wall_time=0.774 res0=8.6681e-06 resF=2.9834e-09 gcr_res=8.5878e-02 cg_res=9.7771e-02 corrector=4
+step=11 t=0.413697203 dt=0.0935084644 gcr=21 gmres=232 cg=306 wall_step=0.1206 wall_time=0.895 res0=7.3436e-06 resF=3.9300e-09 gcr_res=9.7703e-02 cg_res=9.7646e-02 corrector=4
+step=12 t=0.517816034 dt=0.104118831 gcr=24 gmres=300 cg=450 wall_step=0.1545 wall_time=1.050 res0=6.4438e-06 resF=5.0030e-09 gcr_res=9.3230e-02 cg_res=9.9901e-02 corrector=4
+step=13 t=0.630384248 dt=0.112568214 gcr=26 gmres=352 cg=390 wall_step=0.1611 wall_time=1.211 res0=5.8571e-06 resF=4.8713e-09 gcr_res=8.6665e-02 cg_res=9.7831e-02 corrector=4
+NOTE: outer corrector did not reach its tolerance at step=14: after all corrector.max=4 corrector solve(s), momentum/pressure ended at residual/reference=1.040e-03 against corrector.rtol=1.000e-03 (corrector.atol=1.000e-10). (reference = max(this step's predicted-state residual, corrector.atol/corrector.rtol).) The residual is below that reference, so this is not a divergence. Reported once per run; the end-of-run summary and health.corrector_nonconverged / health.corrector_worst_res_ratio in the JSON summary give the run totals.
+step=14 t=0.749559402 dt=0.119175154 gcr=27 gmres=396 cg=414 wall_step=0.1734 wall_time=1.384 res0=5.4615e-06 resF=5.6802e-09 gcr_res=9.8418e-02 cg_res=9.9596e-02 corrector=4
+step=15 t=0.8736867 dt=0.124127298 gcr=28 gmres=421 cg=448 wall_step=0.1848 wall_time=1.569 res0=5.1956e-06 resF=4.8522e-09 gcr_res=9.5008e-02 cg_res=9.9220e-02 corrector=4
+step=16 t=1.0016964 dt=0.128009696 gcr=29 gmres=451 cg=582 wall_step=0.2055 wall_time=1.774 res0=5.0049e-06 resF=4.0517e-09 gcr_res=9.0070e-02 cg_res=9.8268e-02 corrector=4
+step=17 t=1.13289814 dt=0.131201748 gcr=31 gmres=502 cg=604 wall_step=0.2210 wall_time=1.995 res0=4.8608e-06 resF=3.3734e-09 gcr_res=9.2250e-02 cg_res=9.9556e-02 corrector=4
+step=18 t=1.26698331 dt=0.134085169 gcr=31 gmres=513 cg=726 wall_step=0.2362 wall_time=2.231 res0=4.7410e-06 resF=2.7426e-09 gcr_res=9.3935e-02 cg_res=9.9897e-02 corrector=4
+step=19 t=1.40389659 dt=0.136913275 gcr=33 gmres=571 cg=730 wall_step=0.2508 wall_time=2.482 res0=4.6333e-06 resF=2.6355e-09 gcr_res=8.6554e-02 cg_res=9.9264e-02 corrector=4
+step=20 t=1.54378084 dt=0.139884253 gcr=34 gmres=609 cg=760 wall_step=0.2636 wall_time=2.746 res0=4.5287e-06 resF=3.0600e-09 gcr_res=9.9250e-02 cg_res=9.8439e-02 corrector=4
+step=599 t=97.1416632 dt=0.165017465 gcr=50 gmres=1020 cg=1150 wall_step=0.4272 wall_time=300.606 res0=8.3955e-11 resF=1.0975e-13 gcr_res=7.6208e-01 cg_res=4.2149e-01 corrector=4
+step=600 t=97.3066807 dt=0.165017462 gcr=51 gmres=1036 cg=1162 wall_step=0.4303 wall_time=301.036 res0=8.3015e-11 resF=1.0556e-13 gcr_res=7.3488e-01 cg_res=4.2755e-01 corrector=4
+step=601 t=97.4716981 dt=0.165017459 gcr=54 gmres=1072 cg=1112 wall_step=0.4366 wall_time=301.473 res0=8.2089e-11 resF=1.0557e-13 gcr_res=7.1008e-01 cg_res=4.1566e-01 corrector=4
+step=602 t=97.6367156 dt=0.165017456 gcr=51 gmres=1021 cg=1100 wall_step=0.4180 wall_time=301.891 res0=8.1170e-11 resF=1.0453e-13 gcr_res=7.4239e-01 cg_res=3.8372e-01 corrector=4
+step=603 t=97.8017331 dt=0.165017453 gcr=52 gmres=1052 cg=1168 wall_step=0.4472 wall_time=302.338 res0=8.0263e-11 resF=1.0623e-13 gcr_res=7.5163e-01 cg_res=3.7157e-01 corrector=4
+step=604 t=97.9667505 dt=0.16501745 gcr=48 gmres=986 cg=1098 wall_step=0.4052 wall_time=302.743 res0=7.9367e-11 resF=1.0855e-13 gcr_res=7.6526e-01 cg_res=3.9999e-01 corrector=4
+step=605 t=98.131768 dt=0.165017447 gcr=45 gmres=933 cg=1096 wall_step=0.3857 wall_time=303.129 res0=7.8481e-11 resF=1.0685e-13 gcr_res=7.3614e-01 cg_res=3.8005e-01 corrector=4
+step=606 t=98.2967854 dt=0.165017444 gcr=58 gmres=1144 cg=1162 wall_step=0.4659 wall_time=303.595 res0=7.7605e-11 resF=1.0631e-13 gcr_res=6.9129e-01 cg_res=3.9654e-01 corrector=4
+step=607 t=98.4618028 dt=0.165017441 gcr=50 gmres=1013 cg=1076 wall_step=0.4109 wall_time=304.006 res0=7.6737e-11 resF=1.0437e-13 gcr_res=7.2523e-01 cg_res=3.6332e-01 corrector=4
+step=608 t=98.6268203 dt=0.165017439 gcr=56 gmres=1109 cg=1164 wall_step=0.4529 wall_time=304.458 res0=7.5881e-11 resF=1.0609e-13 gcr_res=7.8804e-01 cg_res=4.2437e-01 corrector=4
+step=609 t=98.7918377 dt=0.165017436 gcr=61 gmres=1188 cg=1160 wall_step=0.4809 wall_time=304.939 res0=7.5031e-11 resF=1.0549e-13 gcr_res=7.5647e-01 cg_res=3.9854e-01 corrector=4
+step=610 t=98.9568551 dt=0.165017433 gcr=39 gmres=839 cg=1036 wall_step=0.3522 wall_time=305.292 res0=7.4192e-11 resF=1.1042e-13 gcr_res=8.4351e-01 cg_res=3.9201e-01 corrector=4
+step=611 t=99.1218726 dt=0.16501743 gcr=53 gmres=1053 cg=1086 wall_step=0.4320 wall_time=305.724 res0=7.3364e-11 resF=1.0417e-13 gcr_res=7.3922e-01 cg_res=4.2848e-01 corrector=4
+step=612 t=99.28689 dt=0.165017427 gcr=49 gmres=990 cg=1066 wall_step=0.4065 wall_time=306.130 res0=7.2547e-11 resF=1.0597e-13 gcr_res=8.1181e-01 cg_res=4.3150e-01 corrector=4
+step=613 t=99.4519074 dt=0.165017425 gcr=48 gmres=977 cg=1090 wall_step=0.4007 wall_time=306.531 res0=7.1735e-11 resF=1.0798e-13 gcr_res=8.0201e-01 cg_res=3.7024e-01 corrector=4
+step=614 t=99.6169249 dt=0.165017422 gcr=54 gmres=1079 cg=1136 wall_step=0.4430 wall_time=306.974 res0=7.0937e-11 resF=1.0547e-13 gcr_res=7.7910e-01 cg_res=3.8361e-01 corrector=4
+step=615 t=99.7819423 dt=0.165017419 gcr=44 gmres=915 cg=1064 wall_step=0.3819 wall_time=307.356 res0=7.0144e-11 resF=1.0780e-13 gcr_res=7.9419e-01 cg_res=4.1192e-01 corrector=4
+step=616 t=99.9469597 dt=0.165017417 gcr=52 gmres=1035 cg=1134 wall_step=0.4281 wall_time=307.784 res0=6.9358e-11 resF=1.0805e-13 gcr_res=8.1159e-01 cg_res=4.4536e-01 corrector=4
+step=617 t=100.111977 dt=0.165017414 gcr=45 gmres=935 cg=1084 wall_step=0.3846 wall_time=308.168 res0=6.8585e-11 resF=1.0809e-13 gcr_res=8.2544e-01 cg_res=4.4694e-01 corrector=4
+step=618 t=100.276995 dt=0.165017412 gcr=53 gmres=1047 cg=1100 wall_step=0.4267 wall_time=308.595 res0=6.7818e-11 resF=1.0424e-13 gcr_res=7.9201e-01 cg_res=4.2834e-01 corrector=4
+step=619 t=100.442012 dt=0.165017409 gcr=51 gmres=1019 cg=1112 wall_step=0.4192 wall_time=309.014 res0=6.7061e-11 resF=1.0738e-13 gcr_res=7.7902e-01 cg_res=3.9471e-01 corrector=4
+step=620 t=100.607029 dt=0.165017407 gcr=40 gmres=851 cg=1022 wall_step=0.3547 wall_time=309.369 res0=6.6309e-11 resF=1.0924e-13 gcr_res=8.8257e-01 cg_res=4.1792e-01 corrector=4
+step=621 t=100.772047 dt=0.165017404 gcr=53 gmres=1031 cg=1084 wall_step=0.4349 wall_time=309.804 res0=6.5568e-11 resF=1.0591e-13 gcr_res=8.2032e-01 cg_res=4.1869e-01 corrector=4
+step=622 t=100.937064 dt=0.165017402 gcr=52 gmres=1030 cg=1078 wall_step=0.4182 wall_time=310.222 res0=6.4834e-11 resF=1.0732e-13 gcr_res=8.2719e-01 cg_res=4.7456e-01 corrector=4
+step=623 t=101.102082 dt=0.165017399 gcr=48 gmres=964 cg=1064 wall_step=0.3954 wall_time=310.617 res0=6.4111e-11 resF=1.0781e-13 gcr_res=8.0283e-01 cg_res=4.4928e-01 corrector=4
+ptc step=624 du_rel=6.2660e-07 dp_rel=1.1577e-06 res_rel=9.9027e-07 CONVERGED
+NOTE: GPU memory: 0.96 GB used by this run (0.32 GB fixed + 0.64 GB for the gcr.max 200 basis); device 42.41 GB total, 0.50 GB already in use before the run (CUDA context and any other process)
+NOTE: the outer corrector used all 4 of its solves without converging on 8 of 624 time step(s) (reference = max(the step's predicted-state residual, corrector.atol/corrector.rtol)). Momentum/pressure missed control.yaml corrector.rtol=0.001 / corrector.atol=1e-10 on 8 step(s); the worst step ended at residual/reference=1.040e-03. Every step still ended below its reference residual, so this is NOT divergence: each step advanced, it just stopped short of the nonlinear tolerance. Stopping short means the nonlinear system was not solved to its tolerance, so the time-accuracy of the run is bounded by that ratio rather than by the tolerance; raise control.yaml corrector.max (or tighten the linear-solver tolerances feeding it) if you need the stated tolerance. See health.corrector_nonconverged, health.corrector_worst_res_ratio and the energy_corrector_* pair in the JSON summary.
+NOTE: solution written to /work/cases/cavity_re1000/output/solution.vtu

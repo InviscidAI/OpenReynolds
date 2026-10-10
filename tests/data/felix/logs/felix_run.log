@@ -1,0 +1,74 @@
+NOTE: created output directory /case/output
+NOTE: boundary: 13976 surface cell(s) in 5 group(s) (inlet, outlet, walls, sides, cylinder)
+NOTE: mesh /case/mesh.vtu: 13976 nodes, 6765 elements (hex 6765)
+NOTE: boundary conditions: 2550 velocity values, 46 pressure nodes, 0 temperature nodes, 0 nu_tilde nodes, 0 wall faces (time-varying: no)
+NOTE: nu=0.001 dt=0.005 (initial; controlled by ptc.yaml cfl_ramp) nsteps=1500 corrector.max=4
+NOTE: forces on 80 face(s) of cylinder -> /case/output/forces.csv
+step=1 t=0.005 dt=0.005 gcr=21 gmres=53 cg=2962 wall_step=0.3851 wall_time=0.385 res0=1.4395e-04 resF=2.1439e-08 gcr_res=9.5054e-02 cg_res=9.9666e-02 corrector=4
+step=2 t=0.01 dt=0.005 gcr=11 gmres=31 cg=1614 wall_step=0.2069 wall_time=0.592 res0=2.1965e-02 resF=1.8313e-06 gcr_res=9.4933e-02 cg_res=9.8754e-02 corrector=3
+step=3 t=0.0165 dt=0.0065 gcr=5 gmres=19 cg=780 wall_step=0.1018 wall_time=0.694 res0=1.7315e-02 resF=1.5367e-05 gcr_res=6.1086e-02 cg_res=9.9287e-02 corrector=2
+step=4 t=0.02495 dt=0.00845 gcr=11 gmres=38 cg=1538 wall_step=0.1996 wall_time=0.893 res0=8.3336e-03 resF=1.4089e-06 gcr_res=9.0535e-02 cg_res=9.7527e-02 corrector=3
+step=5 t=0.035935 dt=0.010985 gcr=9 gmres=40 cg=1220 wall_step=0.1614 wall_time=1.055 res0=2.7813e-03 resF=7.0546e-07 gcr_res=8.5152e-02 cg_res=9.8868e-02 corrector=3
+step=6 t=0.0502155 dt=0.0142805 gcr=10 gmres=47 cg=1124 wall_step=0.1545 wall_time=1.209 res0=1.0273e-03 resF=4.9919e-07 gcr_res=8.5238e-02 cg_res=9.7404e-02 corrector=3
+step=7 t=0.06878015 dt=0.01856465 gcr=11 gmres=67 cg=1026 wall_step=0.1489 wall_time=1.358 res0=4.1376e-04 resF=1.1568e-07 gcr_res=7.3337e-02 cg_res=9.9976e-02 corrector=3
+step=8 t=0.092914195 dt=0.024134045 gcr=14 gmres=98 cg=1272 wall_step=0.1874 wall_time=1.546 res0=2.1075e-04 resF=7.8384e-08 gcr_res=6.9095e-02 cg_res=9.8639e-02 corrector=3
+step=103 t=17.9431476 dt=0.19663648 gcr=49 gmres=1397 cg=1700 wall_step=0.5254 wall_time=53.907 res0=3.4508e-10 resF=2.4533e-13 gcr_res=7.1187e-01 cg_res=2.7227e-01 corrector=4
+step=104 t=18.139784 dt=0.19663648 gcr=60 gmres=1579 cg=1876 wall_step=0.6092 wall_time=54.516 res0=3.0510e-10 resF=2.8172e-13 gcr_res=7.4147e-01 cg_res=3.2952e-01 corrector=4
+step=105 t=18.3364205 dt=0.196636481 gcr=51 gmres=1352 cg=1440 wall_step=0.4968 wall_time=55.013 res0=2.7016e-10 resF=2.2110e-13 gcr_res=5.8393e-01 cg_res=2.8296e-01 corrector=4
+step=106 t=18.533057 dt=0.19663648 gcr=42 gmres=1175 cg=1428 wall_step=0.4428 wall_time=55.456 res0=2.3956e-10 resF=2.8684e-13 gcr_res=9.3485e-01 cg_res=2.4400e-01 corrector=4
+step=107 t=18.7296935 dt=0.196636481 gcr=36 gmres=1076 cg=1272 wall_step=0.3972 wall_time=55.853 res0=2.1260e-10 resF=2.8780e-13 gcr_res=9.7662e-01 cg_res=2.7134e-01 corrector=4
+step=108 t=18.92633 dt=0.19663648 gcr=40 gmres=1131 cg=1380 wall_step=0.4342 wall_time=56.287 res0=1.8866e-10 resF=2.8093e-13 gcr_res=9.1912e-01 cg_res=2.5202e-01 corrector=4
+step=109 t=19.1229664 dt=0.19663648 gcr=31 gmres=889 cg=1114 wall_step=0.3448 wall_time=56.632 res0=1.6728e-10 resF=2.5097e-13 gcr_res=1.6716e-01 cg_res=2.4080e-01 corrector=3
+step=110 t=19.3196029 dt=0.19663648 gcr=29 gmres=873 cg=1204 wall_step=0.3394 wall_time=56.972 res0=1.4813e-10 resF=2.5392e-13 gcr_res=2.2699e-01 cg_res=2.6196e-01 corrector=3
+ptc step=111 du_rel=1.9209e-07 dp_rel=1.6316e-07 res_rel=9.1011e-07 CONVERGED
+NOTE: GPU memory: 0.44 GB used by this run (0.02 GB fixed + 0.42 GB for the gcr.max 200 basis); device 42.41 GB total, 0.50 GB already in use before the run (CUDA context and any other process)
+NOTE: solution written to /case/output/solution.vtu
+{
+  "id": "6f1c2a9e-1b7d-4c55-9a43-0d2f7c1e8b10",
+  "state": "succeeded",
+  "gpu": "A100",
+  "end_user": "u-123",
+  "wall_limit_s": null,
+  "case_bytes": 1093120,
+  "created_at": "2026-10-07T15:27:02+00:00",
+  "started_at": "2026-10-07T15:27:31+00:00",
+  "ended_at": "2026-10-07T15:28:40+00:00",
+  "billed_s": 69.0,
+  "cost_usd": 0.04025,
+  "usd_per_hour": 2.1,
+  "exit_code": 0,
+  "error": null,
+  "kill_reason": null,
+  "check": null,
+  "summary": {
+    "run": {
+      "wall_time": 57.316,
+      "terminated_step": 111,
+      "snapshots_written": 0,
+      "t_final": 19.51623940338517,
+      "dt_last": 0.1966364805414301,
+      "dt_min": 0.005,
+      "dt_max": 0.1968688192849646
+    },
+    "health": {
+      "corrector_nonconverged": 0,
+      "corrector_worst_res_ratio": 0.0009992067784172483,
+      "energy_corrector_nonconverged": 0,
+      "energy_corrector_worst_res_ratio": 0.0,
+      "sa_corrector_nonconverged": 0,
+      "sa_corrector_worst_res_ratio": 0.0,
+      "gcr_nonconverged": 0,
+      "cg_nonconverged": 0,
+      "sa_gmres_nonconverged": 0,
+      "energy_gmres_nonconverged": 0,
+      "gmres_capped": 0,
+      "gram_breakdowns": 0,
+      "spalding_nonconverged": 0
+    }
+  },
+  "outputs": {
+    "bytes": 1736201
+  },
+  "purged_at": null,
+  "log_lines": 25
+}

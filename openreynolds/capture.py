@@ -51,6 +51,13 @@ class Capture:
         self.client = client
         self.study_id = study_id
         self._warn = warn or (lambda _msg: None)
+        self._opened = threading.Event()
+        """Set once there is a platform study to post to. Until then the worker holds
+        what is queued (`deferred`)."""
+        self._abandoned = False
+        """A deferred capture whose study was never opened: what it held is let go."""
+        if study_id:
+            self._opened.set()
         self._queue: queue.Queue[tuple[str, Callable[[], None]] | None] = queue.Queue()
         self._dropped = 0
         self._lost: list[str] = []
@@ -67,26 +74,58 @@ class Capture:
         *,
         study_id: str | None = None,
         home: str | None = None,
+        solver: str | None = None,
         warn: Callable[[str], None] | None = None,
     ) -> Capture | None:
         """Create the remote study. Returns None if the platform will not have us.
 
         `study_id` is this study's own id, so the platform row, the local directory
-        and the web URL are one string rather than three names for one thing."""
-        try:
-            # Passed only when supplied, so a client without these parameters --
-            # an older service's, or a test's stand-in -- stays callable.
-            extra: dict[str, str] = {}
-            if study_id:
-                extra["study_id"] = study_id
-            if home:
-                extra["home"] = home
-            study_id = client.create_study(title, instance_id, **extra)
-        except Exception as exc:
-            if warn:
-                warn(f"capture off — could not open a study ({exc})")
+        and the web URL are one string rather than three names for one thing.
+        `solver` is passed for a Felix study only (`FoamdClient.create_study`)."""
+        remote = _open(client, title, instance_id, study_id=study_id, home=home,
+                       solver=solver, warn=warn)
+        if remote is None:
             return None
-        return cls(client, study_id, warn=warn)
+        return cls(client, remote, warn=warn)
+
+    @classmethod
+    def deferred(cls, *, warn: Callable[[str], None] | None = None) -> Capture:
+        """A capture for a study the platform does not have yet.
+
+        A study whose solver is the agent's to choose has no workspace and no platform
+        row until the choice is made: the row is opened with the solver, and binds to
+        a workspace of that kind. What is said before then -- the briefing, the
+        person's first words, the choice itself -- is held here and posted, in order,
+        once `open` has made the row. A study that ends before choosing never had a
+        row, and what was held is let go without a warning: nothing was lost that the
+        platform was ever going to have."""
+        return cls(None, "", warn=warn)  # type: ignore[arg-type]
+
+    def open(
+        self,
+        client: FoamdClient,
+        title: str,
+        instance_id: str,
+        *,
+        study_id: str | None = None,
+        home: str | None = None,
+        solver: str | None = None,
+    ) -> bool:
+        """Make the platform row for a `deferred` capture, and let what it holds go."""
+        remote = _open(client, title, instance_id, study_id=study_id, home=home,
+                       solver=solver, warn=self._warn)
+        if remote is None:
+            self._abandoned = True
+        else:
+            self.client = client
+            self.study_id = remote
+        self._opened.set()
+        return remote is not None
+
+    @property
+    def opened(self) -> bool:
+        """Whether there is a platform row behind this capture."""
+        return self._opened.is_set() and not self._abandoned
 
     # -- public surface --------------------------------------------------------
 
@@ -109,6 +148,9 @@ class Capture:
 
     def close(self, timeout: float = 10.0) -> None:
         """Drain what is queued, then stop. Bounded, so it cannot hang an exit."""
+        if not self._opened.is_set():
+            self._abandoned = True
+            self._opened.set()
         self._queue.put(None)
         self._worker.join(timeout=timeout)
         if self._dropped:
@@ -158,12 +200,43 @@ class Capture:
             if item is None:
                 return
             label, task = item
+            self._opened.wait()
+            if self._abandoned:
+                continue
             try:
                 task()
             except Exception:
                 self._dropped += 1
                 if len(self._lost) < _REMEMBER_AT_MOST:
                     self._lost.append(label)
+
+
+def _open(
+    client: FoamdClient,
+    title: str,
+    instance_id: str,
+    *,
+    study_id: str | None,
+    home: str | None,
+    solver: str | None,
+    warn: Callable[[str], None] | None,
+) -> str | None:
+    """Open the platform study; its id, or None (said through `warn`) if refused."""
+    try:
+        # Passed only when supplied, so a client without these parameters -- an
+        # older service's, or a test's stand-in -- stays callable.
+        extra: dict[str, str] = {}
+        if study_id:
+            extra["study_id"] = study_id
+        if home:
+            extra["home"] = home
+        if solver:
+            extra["solver"] = solver
+        return client.create_study(title, instance_id, **extra)
+    except Exception as exc:
+        if warn:
+            warn(f"capture off — could not open a study ({exc})")
+        return None
 
 
 def _cap_content(content: Any) -> Any:

@@ -175,6 +175,11 @@ class View(Protocol):
     def mode(self, mode: str) -> None:
         """The session's mode, at the start and whenever the person switches it."""
 
+    def solver(self, solver: str) -> None:
+        """The study's solver, `openfoam` or `felix`: at the start when it is known,
+        else the moment the agent chooses it (`choose_solver`). Said once; it does
+        not change."""
+
 
 MAX_LISTED = 300
 
