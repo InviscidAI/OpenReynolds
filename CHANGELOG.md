@@ -22,6 +22,30 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A half model's drag is reported for the whole body again, and a coefficient below
+  flat-plate friction is called impossible.** R01, the SUBOFF hull (F-43): 43.74 N on a
+  half model over the whole hull's wetted area delivered Ct 0.00158 against a towing
+  tank's 3.15e-3, beside the agent's own ITTC-57 figure of 0.002907. The fix -- the area
+  halved where the mesh was cut, the friction floor printed on every case -- lived in
+  `snappy_gen.py` and went when it was deleted on 2026-09-07 (`b6ac498`), with nothing
+  failing. It is back as `toolbox/reference_area.py`, which reads the cut off
+  `constant/polyMesh` rather than off the generator that made it: a symmetry patch that
+  shares points with the body patch mirrors it. `results.py` now says, on every force
+  series, how much of the body the mesh holds and the whole body's drag, flags an Aref
+  that is the whole body's area on a part of it (or more area than the body has), and
+  holds Cd to ITTC-57 (Blasius when laminar). `case_gen.py` writes a 3D body's Aref as
+  its own frontal (`--area wetted`) area measured off the mesh -- it had been the
+  characteristic length times the domain's z extent, a 2D formula -- and `--not-mirror`
+  names a double-body waterline. `tests/test_toolbox_reference_area.py` puts R01's mesh
+  shape, built from the hull's published equations, and R01's recorded force through
+  that code and holds the answer to 87.4 N and Ct 3.15e-3.
+- **A pipeline's failure is the command's failure.** `blockMesh | tail` exited 0 over a
+  FOAM FATAL ERROR in production (study 20260921-200946-cb90, #48): a pipeline's status
+  was its last stage's. Every command the model runs, in `bash` and in `job_start`, now
+  goes to the shell with `set -o pipefail` in front, and the tool descriptions say so.
+  The price is SIGPIPE -- a producer cut off by `head` exits 141 -- and `bash` says that
+  in words when it happens.
+
 - **A `bash` command the workspace moved to a job no longer comes back as `exit_code:
   0`; the call waits the job out for the rest of its `timeout_s`, and a command still
   running when that is up says so in its first line.** The hosted service caps a
