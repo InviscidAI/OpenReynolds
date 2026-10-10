@@ -33,8 +33,7 @@ kept there, worth reading and pointless to write to.
 
 Each study works in its own directory under the volume, and your briefing names \
 yours. Commands run there unless you say otherwise, and a new study starts with an \
-empty one. The rest of the volume holds other studies' work, searchable alongside the \
-tutorials.
+empty one. The rest of the volume holds other studies' work.
 
 `{TOOLBOX_DIR}/` holds small scripts, worked templates and reference notes, \
 refreshed from the distribution at the start of each session. They are offered, not \
