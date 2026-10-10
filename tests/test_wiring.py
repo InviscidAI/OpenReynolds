@@ -14,7 +14,9 @@ structural check: whatever is declared has to be read somewhere.
 from __future__ import annotations
 
 import ast
+import os
 import re
+import stat
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,19 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "openreynolds" / "cli.py"
 USER_TEST = ROOT / "scripts" / "user_test.py"
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Git's executable bit is not represented on Windows"
+)
+def test_the_pre_commit_hook_can_run_after_the_documented_setup():
+    """CONTRIBUTING installs this path as the repository's hook directory. A hook
+    checked out without an executable bit makes every commit fail before the suite can
+    run, which is the opposite of the guard the hook exists to provide."""
+    hook = ROOT / ".githooks" / "pre-commit"
+    assert hook.stat().st_mode & stat.S_IXUSR, (
+        "the documented core.hooksPath installs a pre-commit hook Git cannot execute"
+    )
 
 
 def parsed(path: Path) -> ast.Module:
