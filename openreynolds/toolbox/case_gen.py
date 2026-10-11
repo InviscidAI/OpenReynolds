@@ -1464,11 +1464,6 @@ PHI_SOLVER = ["solver          GAMG;", "smoother        DIC;", "tolerance       
               "relTol          0.01;"]
 T_SOLVER = ["solver          PBiCGStab;", "preconditioner  DILU;", "tolerance       1e-10;",
             "relTol          0;", "maxIter         2000;"]
-"""`--heat`'s passive temperature, solved outright on every iteration: an asymmetric
-convection-diffusion matrix, so a Krylov solver, to an absolute tolerance (see the
-relaxationFactors note in `fv_solution`)."""
-T_SOLVER = ["solver          PBiCGStab;", "preconditioner  DILU;", "tolerance       1e-10;",
-            "relTol          0;", "maxIter         2000;"]
 """`--heat`'s temperature, solved to an absolute tolerance every iteration, unrelaxed.
 
 `scalarTransport` solves T as a function object, outside SIMPLE, and `residualControl` does
