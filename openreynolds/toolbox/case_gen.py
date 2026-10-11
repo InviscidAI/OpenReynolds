@@ -1462,6 +1462,20 @@ SMOOTH_SOLVER = ["solver          smoothSolver;", "smoother        symGaussSeide
                  "tolerance       1e-08;", "relTol          0.1;"]
 PHI_SOLVER = ["solver          GAMG;", "smoother        DIC;", "tolerance       1e-06;",
               "relTol          0.01;"]
+T_SOLVER = ["solver          PBiCGStab;", "preconditioner  DILU;", "tolerance       1e-10;",
+            "relTol          0;", "maxIter         2000;"]
+"""`--heat`'s passive temperature, solved outright on every iteration: an asymmetric
+convection-diffusion matrix, so a Krylov solver, to an absolute tolerance (see the
+relaxationFactors note in `fv_solution`)."""
+T_SOLVER = ["solver          PBiCGStab;", "preconditioner  DILU;", "tolerance       1e-10;",
+            "relTol          0;", "maxIter         2000;"]
+"""`--heat`'s temperature, solved to an absolute tolerance every iteration, unrelaxed.
+
+`scalarTransport` solves T as a function object, outside SIMPLE, and `residualControl` does
+not see it: the first heat smoke stopped on p and U at iteration 87 with T's residual still
+6e-3 and the outlet's heat still rising 3-4% an iteration -- every eff it reported was a
+snapshot of a temperature on its way. Solving T fully on each iteration's flow makes it the
+temperature of that flow, so when the flow stops, T has too."""
 """The linear solver `potentialFoam` needs for the velocity-potential Laplace equation.
 
 A steady SIMPLE run started from a uniform field spends its first hundred-odd iterations
@@ -1530,7 +1544,7 @@ def fv_solution(study: str, model: str, reference: bool = False, heat: bool = Fa
     if fields:
         entries.append((f'"({"|".join(fields)})"' if len(fields) > 1 else fields[0], SMOOTH_SOLVER))
     if heat:
-        entries.append(("T", SMOOTH_SOLVER))
+        entries.append(("T", T_SOLVER))
 
     lines = ["solvers", "{"]
     for name, settings in entries:
@@ -1552,13 +1566,11 @@ def fv_solution(study: str, model: str, reference: bool = False, heat: bool = Fa
                   "SIMPLE", "{", "    nNonOrthogonalCorrectors 1;", "    consistent      yes;",
                   *PRESSURE_REFERENCE * reference,
                   "    residualControl", "    {"]
-        # T too when --heat solves it: a run that stops on p and U alone stopped the first
-        # smoke at iteration 87 with the temperature, and so eff, still moving.
-        lines += [f"        {field:<15} {tol:g};"
-                  for field, tol in residual_control(fields) + ([("T", 1e-6)] if heat else [])]
+        lines += [f"        {field:<15} {tol:g};" for field, tol in residual_control(fields)]
         lines += ["    }", "}", "",
                   "relaxationFactors", "{", "    equations", "    {",
-                  '        U               0.9;', '        ".*"            0.9;', "    }", "}"]
+                  '        U               0.9;', *(['        T               1;'] if heat else []),
+                  '        ".*"            0.9;', "    }", "}"]
     return foam_file("dictionary", "fvSolution", "\n".join(lines), "system")
 
 
