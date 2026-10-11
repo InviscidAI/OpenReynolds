@@ -1169,6 +1169,8 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
             "        writeControl    writeTime;",
             "    }",
         ]))
+    if heated(opts):
+        blocks.append(heat_objects(plan, flow, opts))
     if not blocks:
         return ""
     return "\nfunctions\n{\n" + "\n".join(blocks) + "\n}"
@@ -1252,6 +1254,94 @@ def pressure_objects(plan: Plan) -> str:
             "    }",
         ]
     return "\n".join(lines)
+
+
+HEAT_FUNCTIONS = ("heatOutlet", "flowOutlet")
+"""The function objects `--heat` writes on the first outlet: the flux-weighted sum of `T`
+and the volume flux, at every iteration. `score.py` divides the first by the second (its
+`HEAT_FUNCTIONS`): the outlet's mixed-cup temperature, which is the heat the flow took
+away per unit of flow and per unit of the heated-wall temperature."""
+
+DEFAULT_PRANDTL = 0.71
+"""Air near room temperature."""
+
+
+def heated(opts) -> list[str]:
+    """The patches `--heat` names: held at T = 1 while the inlet brings T = 0."""
+    return named(opts, "heat")
+
+
+def heat_objects(plan: Plan, flow: Flow, opts) -> str:
+    """A passive temperature carried by the flow, and what the outlet takes away.
+
+    `scalarTransport` solves `T` as a passive scalar with the constant diffusivity
+    nu / Pr, once per SIMPLE iteration, on the flow as it stands: the temperature of a
+    forced-convection heat exchanger whose properties do not depend on it (no buoyancy,
+    constant nu). The inlet brings T = 0, every `--heat` patch is held at T = 1, every
+    other wall is adiabatic (`field_T`), so `T` reads as the fraction of the wall-to-inlet
+    difference the fluid has reached. On the first outlet, `heatOutlet` sums phi * T and
+    `flowOutlet` sums phi: their ratio is the mixed-cup outlet temperature, and the heat
+    rate is rho cp times the volume flow times that times the temperature difference.
+    """
+    outlet = next((name for name in patch_order(plan.roles) if plan.roles[name].get("kind") == "outlet"), "")
+    if not outlet:
+        raise SystemExit("--heat needs an outlet: the heat the flow takes away is measured there")
+    diffusivity = flow.nu / float(opts.get("prandtl") or DEFAULT_PRANDTL)
+    lines = [
+        "    T", "    {",
+        "        type            scalarTransport;",
+        "        libs            (solverFunctionObjects);",
+        "        field           T;",
+        f"        D               {diffusivity:.6g};   // nu / Pr, Pr = {float(opts.get('prandtl') or DEFAULT_PRANDTL):g}",
+        "        nCorr           1;",
+        "        writeControl    writeTime;",
+        "        log             false;",
+        "    }",
+    ]
+    for function, operation, extra in ((HEAT_FUNCTIONS[0], "weightedSum", ["        weightField     phi;",
+                                                                          "        fields          (T);"]),
+                                       (HEAT_FUNCTIONS[1], "sum", ["        fields          (phi);"])):
+        lines += [
+            f"    {function}", "    {",
+            "        type            surfaceFieldValue;",
+            "        libs            (fieldFunctionObjects);",
+            "        regionType      patch;",
+            f"        name            {outlet};",
+            f"        operation       {operation};",
+            *extra,
+            "        writeFields     false;",
+            "        writeControl    timeStep;",
+            "        writeInterval   1;",
+            "        log             false;",
+            "    }",
+        ]
+    return "\n".join(lines)
+
+
+def field_T(plan: Plan, hot: list[str]) -> str:
+    """The passive temperature: 0 at the inlet, 1 on the heated walls, adiabatic elsewhere."""
+    unknown = [name for name in hot if name not in plan.mesh.patch_faces]
+    if unknown:
+        raise SystemExit(f"--heat names {', '.join(unknown)}, which the mesh does not have; it has "
+                         + ", ".join(sorted(plan.mesh.patch_faces)))
+
+    def entry(name: str, role: dict) -> list[str]:
+        kind = role["kind"]
+        if kind == "empty":
+            return ["type            empty;"]
+        if kind == "symmetry":
+            return ["type            symmetry;"]
+        if name in hot:
+            return ["type            fixedValue;", "value           uniform 1;"]
+        if kind == "inlet":
+            return ["type            fixedValue;", "value           uniform 0;"]
+        if kind == "outlet":
+            return ["type            inletOutlet;", "inletValue      uniform 0;", "value           uniform 0;"]
+        return ["type            zeroGradient;"]
+
+    body = ("dimensions      [0 0 0 0 0 0 0];   // (T - T_inlet) / (T_wall - T_inlet)\n\n"
+            "internalField   uniform 0;\n\n" + boundary_field(plan, entry))
+    return foam_file("volScalarField", "T", body, "0")
 
 
 def purge_write(study: str, opts) -> int:
@@ -1340,7 +1430,7 @@ def control_dict(plan: Plan, flow: Flow, opts, study: str) -> str:
     return foam_file("dictionary", "controlDict", body, "system")
 
 
-def fv_schemes(study: str, model: str) -> str:
+def fv_schemes(study: str, model: str, heat: bool = False) -> str:
     time_scheme = "steadyState" if study != "transient" else "backward"
     # Steady runs keep linearUpwind: bounded and stable is what gets a SIMPLE run to a
     # converged answer. A transient one gets `Gauss linear`, because upwind dissipation
@@ -1356,7 +1446,7 @@ def fv_schemes(study: str, model: str) -> str:
     # `default none` means every convected field has to be named here. Naming the
     # ones this model does not transport is harmless; leaving out one it does
     # transport stops the run on the first iteration.
-    for field in turbulence_fields(model):
+    for field in turbulence_fields(model) + (("T",) if heat else ()):
         lines.append(f"    {f'div(phi,{field})':<16}{prefix}Gauss limitedLinear 1;")
     lines += ["    div((nuEff*dev2(T(grad(U))))) Gauss linear;", "}", "",
               "laplacianSchemes", "{", "    default         Gauss linear corrected;", "}", "",
@@ -1426,7 +1516,7 @@ PRESSURE_REFERENCE = ["    pRefCell        0;", "    pRefValue       0;"]
 pressure is defined only up to a constant and the solver needs one cell to hold."""
 
 
-def fv_solution(study: str, model: str, reference: bool = False) -> str:
+def fv_solution(study: str, model: str, reference: bool = False, heat: bool = False) -> str:
     """The linear solvers.
 
     PIMPLE asks for `pFinal` and `UFinal` by those exact literal names on the last
@@ -1439,6 +1529,8 @@ def fv_solution(study: str, model: str, reference: bool = False) -> str:
     entries = [("p", P_SOLVER), ("U", SMOOTH_SOLVER)]
     if fields:
         entries.append((f'"({"|".join(fields)})"' if len(fields) > 1 else fields[0], SMOOTH_SOLVER))
+    if heat:
+        entries.append(("T", SMOOTH_SOLVER))
 
     lines = ["solvers", "{"]
     for name, settings in entries:
@@ -1550,8 +1642,9 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
     """
     files = {
         "system/controlDict": control_dict(plan, flow, opts, study),
-        "system/fvSchemes": fv_schemes(study, model),
-        "system/fvSolution": fv_solution(study, model, reference=bool(plan.info.get("periodic"))),
+        "system/fvSchemes": fv_schemes(study, model, heat=bool(heated(opts))),
+        "system/fvSolution": fv_solution(study, model, reference=bool(plan.info.get("periodic")),
+                                         heat=bool(heated(opts))),
         "constant/transportProperties": transport_properties(flow),
         "constant/turbulenceProperties": turbulence_properties(model),
     }
@@ -1566,6 +1659,8 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
             indent=1) + "\n"
     files["0/U"] = field_U(plan, flow)
     files["0/p"] = field_p(plan)
+    if heated(opts):
+        files["0/T"] = field_T(plan, heated(opts))
     fields = turbulence_fields(model)
     if fields:
         intensity = free_stream_intensity(plan, opts)
@@ -1755,6 +1850,13 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--periodic-kind", default="auto", dest="periodic_kind",
                          choices=["auto", "cyclic", "cyclicAMI"],
                          help="auto: cyclic when the pair's face counts match, else cyclicAMI.")
+    patches.add_argument("--heat", action="append", default=[],
+                         help="Patches held at T = 1 while the inlet brings T = 0: solves a passive "
+                              "temperature (scalarTransport, D = nu/Pr) and writes the outlet's "
+                              "flux-weighted T and flux into postProcessing/heatOutlet/ and "
+                              "flowOutlet/; score.py reports eff, the mixed-cup outlet temperature.")
+    flow.add_argument("--prandtl", type=float, default=None,
+                      help=f"Prandtl number for --heat (default {DEFAULT_PRANDTL}, air).")
     patches.add_argument("--yplus", action="store_true",
                          help="Add a yPlus function object: min, max and mean y+ per wall "
                               "patch at every write, into postProcessing/yPlus/.")

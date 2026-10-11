@@ -491,6 +491,25 @@ def pressure_drop(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[float |
     return sum(inlet[t] - outlet[t] for t in window) / len(window), len(window)
 
 
+HEAT_FUNCTIONS = ("heatOutlet", "flowOutlet")
+"""`case_gen.py --heat`'s two outlet objects (its `HEAT_FUNCTIONS`): sum(phi T) and sum(phi)."""
+
+
+def heat_effectiveness(case: Path, fraction: float = DEFAULT_WINDOW) -> tuple[float | None, int]:
+    """(`eff` over the tail of the record, rows the mean was taken over): the outlet's
+    mixed-cup temperature, sum(phi T) / sum(phi), formed per time step and then averaged
+    like `dp`. With the inlet at T = 0 and the heated walls at T = 1 it is the fraction of
+    the largest possible temperature rise the flow reached -- at a fixed flow rate, the
+    heat rate in units of rho cp Q (T_wall - T_inlet). (None, 0) without `--heat`."""
+    heat, flow = (pressure_series(case, name) for name in HEAT_FUNCTIONS)
+    times = [t for t in sorted(set(heat) & set(flow)) if flow[t]]
+    if not times:
+        return None, 0
+    keep = max(1, int(round(len(times) * fraction)))
+    window = times[-keep:]
+    return sum(heat[t] / flow[t] for t in window) / len(window), len(window)
+
+
 def periodic_drop(case: Path, log: Path | None,
                   fraction: float = DEFAULT_WINDOW) -> tuple[float | None, int]:
     """(`dp` per period over the tail of the record, rows the mean was taken over).
@@ -515,7 +534,10 @@ def periodic_drop(case: Path, log: Path | None,
 
 
 _BINOPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
-           ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b}
+           ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b, ast.Pow: lambda a, b: a ** b}
+"""`**` too, to a literal exponent within `MAX_POWER`: a heat exchanger is judged at equal
+pumping power, eff / dp ** 0.3333, and `dp ** 99999` is still refused."""
+MAX_POWER = 4
 
 
 class DerivedError(ValueError):
@@ -557,6 +579,14 @@ def derived_names(expression: str) -> list[str]:
                 raise DerivedError(f"{expression!r} reads something that is not a metric name")
             names.append(name)
             return
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            power = node.right.operand if isinstance(node.right, ast.UnaryOp) else node.right
+            if not (isinstance(power, ast.Constant) and isinstance(power.value, (int, float))
+                    and not isinstance(power.value, bool) and abs(power.value) <= MAX_POWER):
+                raise DerivedError(f"{expression!r} raises to something other than a number within "
+                                   f"+-{MAX_POWER}: only a literal exponent, like dp ** 0.3333")
+            walk(node.left)
+            return
         if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
             walk(node.left)
             walk(node.right)
@@ -566,7 +596,7 @@ def derived_names(expression: str) -> list[str]:
             return
         raise DerivedError(
             f"{expression!r} is not arithmetic over metric names: it has a "
-            f"{type(node).__name__}. Only names, numbers, + - * / and parentheses."
+            f"{type(node).__name__}. Only names, numbers, + - * / ** and parentheses."
         )
 
     walk(tree.body)
@@ -592,7 +622,8 @@ def evaluate_derived(expression: str, values: dict[str, float]) -> float | None:
 
     try:
         out = float(run(ast.parse(expression.strip(), mode="eval").body))
-    except (ZeroDivisionError, OverflowError, ValueError):
+    except (ZeroDivisionError, OverflowError, ValueError, TypeError):
+        # TypeError: a fractional power of a negative number is complex.
         return None
     return out if out == out and abs(out) != float("inf") else None
 
@@ -775,6 +806,14 @@ def score(case: Path, lock: dict, run: dict | None = None, *, label: str = "",
         if dp is not None:
             metrics["dp"] = dp
             window = window or dp_window
+        eff, eff_window = heat_effectiveness(case, fraction)
+        if eff is not None:
+            metrics["eff"] = eff
+            window = window or eff_window
+        if not cases_of(lock):
+            # A one-case lock's derived metrics are its own (`score_cases` does them for
+            # several cases, over the namespaced names).
+            metrics.update(derived_metrics(metrics, lock.get("derived")))
         log = read_log(log_path)
         converged, shape, diverged = log["converged"], log["shape"], log["diverged"]
         if transient:
