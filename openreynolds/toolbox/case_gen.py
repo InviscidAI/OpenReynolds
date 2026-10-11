@@ -1552,7 +1552,10 @@ def fv_solution(study: str, model: str, reference: bool = False, heat: bool = Fa
                   "SIMPLE", "{", "    nNonOrthogonalCorrectors 1;", "    consistent      yes;",
                   *PRESSURE_REFERENCE * reference,
                   "    residualControl", "    {"]
-        lines += [f"        {field:<15} {tol:g};" for field, tol in residual_control(fields)]
+        # T too when --heat solves it: a run that stops on p and U alone stopped the first
+        # smoke at iteration 87 with the temperature, and so eff, still moving.
+        lines += [f"        {field:<15} {tol:g};"
+                  for field, tol in residual_control(fields) + ([("T", 1e-6)] if heat else [])]
         lines += ["    }", "}", "",
                   "relaxationFactors", "{", "    equations", "    {",
                   '        U               0.9;', '        ".*"            0.9;', "    }", "}"]
