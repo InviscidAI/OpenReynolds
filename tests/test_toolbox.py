@@ -81,7 +81,10 @@ def test_log_digest_keeps_the_most_recent_continuity_and_courant(tmp_path, log_d
 def test_log_digest_counts_bounding_messages(tmp_path, log_digest):
     log = tmp_path / "log"
     log.write_text(SOLVER_LOG)
-    assert log_digest.digest(log)["bounding"] == {"k": 2}
+    data = log_digest.digest(log)
+    assert data["bounding"] == {"k": 2}
+    # `min: -0.01` and `min: -0.02` against `average: 1`: the median clip is 1.5%.
+    assert data["bounding_depth"] == {"k": pytest.approx(0.015)}
 
 
 def test_log_digest_writes_a_plot(tmp_path, log_digest):

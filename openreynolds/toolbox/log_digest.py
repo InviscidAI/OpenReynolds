@@ -32,6 +32,13 @@ CONTINUITY = re.compile(
     r"global = ([0-9.eE+-]+), cumulative = ([0-9.eE+-]+)"
 )
 BOUNDING = re.compile(r"^bounding (\S+),")
+BOUNDING_VALUES = re.compile(
+    r"^bounding (\S+), min: ([0-9.eE+-]+) max: ([0-9.eE+-]+) average: ([0-9.eE+-]+)"
+)
+"""The same line with its numbers: how far below zero the field was clipped from,
+against its mean. A count alone cannot tell a k that dips to -1e-3 in a few cells of a
+converged run (mean 0.09, on 90% of 1500 steps, measured on the ground-effect section
+2026-09-22) from an omega being held at zero across the domain."""
 COURANT = re.compile(r"Courant Number mean: ([0-9.eE+-]+) max: ([0-9.eE+-]+)")
 EXEC_TIME = re.compile(r"ExecutionTime = ([0-9.eE+-]+) s")
 FATAL = re.compile(r"^--> FOAM FATAL (ERROR|IO ERROR)")
@@ -44,6 +51,7 @@ def digest(path: Path):
     final_residual: dict[str, float] = {}
     iterations: dict[str, int] = {}
     bounding = defaultdict(int)
+    bounding_ratios: dict[str, list[float]] = defaultdict(list)
     continuity = None
     courant = None
     times: list[float] = []
@@ -94,6 +102,11 @@ def digest(path: Path):
             match = BOUNDING.match(line)
             if match:
                 bounding[match.group(1)] += 1
+                values = BOUNDING_VALUES.match(line)
+                if values:
+                    low, average = float(values.group(2)), float(values.group(4))
+                    if average > 0:
+                        bounding_ratios[values.group(1)].append(abs(min(low, 0.0)) / average)
                 continue
             match = EXEC_TIME.search(line)
             if match:
@@ -122,11 +135,23 @@ def digest(path: Path):
         "final_residual": final_residual,
         "iterations": iterations,
         "bounding": dict(bounding),
+        "bounding_depth": {field: _median(ratios) for field, ratios in bounding_ratios.items()},
         "continuity": continuity,
         "courant": courant,
         "times": times,
         "exec_time": exec_time,
     }
+
+
+def _median(values: list[float]) -> float:
+    """The median of the per-step `|min| / average` ratios of one bounded field: the
+    typical depth of the clip over the run, unmoved by the first few wild steps."""
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    middle = n // 2
+    return ordered[middle] if n % 2 else 0.5 * (ordered[middle - 1] + ordered[middle])
 
 
 def plot(residuals, out: Path) -> None:

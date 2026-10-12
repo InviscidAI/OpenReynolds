@@ -164,11 +164,19 @@ class BackendError(Exception):
     to the model verbatim in a tool_result, so they should read as facts.
     """
 
-    def __init__(self, message: str, code: str = "backend_error", status: int | None = None):
+    def __init__(self, message: str, code: str = "backend_error", status: int | None = None,
+                 retry_after: float | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.retry_after = retry_after
+        """Seconds the service asked the caller to wait, off its `Retry-After` header.
+
+        Carried on the error because the caller that has to honour it is usually not
+        the one that made the request: a client retries what it can and then raises,
+        and whatever is above it -- a poll loop, a campaign -- is left guessing how
+        long to wait. `None` means the service did not say."""
 
     def __str__(self) -> str:
         prefix = f"{self.code}"

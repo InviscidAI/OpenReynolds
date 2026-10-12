@@ -48,8 +48,12 @@ def test_every_template_edits_two_numbers_and_says_so():
 
 def test_templates_stick_to_what_the_image_provides():
     """Same rule as the rest of the toolbox (see test_toolbox.py): the standard
-    library and gmsh are on the image; nothing else may be imported at module level."""
-    allowed = set(sys.stdlib_module_names) | {"gmsh", "__future__"}
+    library and gmsh are on the image; nothing else may be imported at module level.
+
+    `design_constants` is the one exception, and it is not a package: it is the file
+    the caller of a parametric round writes beside `build.py`, and `evaluate_steady.py`
+    importing it is the convention `parametric.py` refuses a `build.py` for lacking."""
+    allowed = set(sys.stdlib_module_names) | {"gmsh", "__future__", "design_constants"}
     for script in TEMPLATE_FILES:
         tree = ast.parse(script.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
