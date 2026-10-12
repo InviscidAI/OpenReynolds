@@ -33,7 +33,15 @@ def test_a_symlink_that_leaves_the_workspace_for_the_repo_is_dirty(tmp_path):
     """The exact shape of the sighting that was missed: not a copy, a link."""
     work = tmp_path / "work"
     work.mkdir()
-    (work / ".toolbox").symlink_to(isolation.TOOLBOX_DIR)
+    try:
+        (work / ".toolbox").symlink_to(isolation.TOOLBOX_DIR)
+    except OSError as exc:
+        # Windows refuses a symlink to an account without the privilege (WinError
+        # 1314), and that is a fact about the machine, not about isolation. Linux CI
+        # can always make one, so the test still runs where it gates a merge.
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("this Windows account may not create symlinks")
+        raise
     with pytest.raises(isolation.Dirty):
         isolation.preflight(work, well_known=())
 

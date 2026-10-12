@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 
@@ -7,7 +8,8 @@ import pytest
 
 from openreynolds.backend.base import ExecResult, JobStatus
 from openreynolds.backend.base import WORKSPACE_ROOT
-from openreynolds.tools import TOOLS, ToolContext, dispatch
+from conftest import model_cmd
+from openreynolds.tools import PIPEFAIL, TOOLS, ToolContext, dispatch
 
 
 def test_tool_list_is_deterministic():
@@ -479,6 +481,52 @@ def test_bash_clamps_and_passes_through_timeout(ctx, backend):
     assert backend.last_exec == ("sleep 1", "/work/case", 42)
 
 
+def test_the_shell_gets_pipefail_on_both_paths(ctx, backend):
+    """`blockMesh | tail` exited 0 over a FOAM FATAL ERROR in production (#48). The
+    model's command goes to the shell with `set -o pipefail` in front, in `bash` and
+    in `job_start` alike -- the two shells the tool descriptions call one."""
+    dispatch(ctx, "bash", {"cmd": "blockMesh | tail -5"})
+    dispatch(ctx, "job_start", {"cmd": "simpleFoam"})
+
+    assert backend.raw_execs[-1] == PIPEFAIL + "blockMesh | tail -5"
+    assert backend.started[-1]["raw"] == PIPEFAIL + "simpleFoam"
+
+
+def test_what_is_recorded_is_the_command_the_model_wrote(ctx, backend, store):
+    """The prefix is the shell's business: the session's job record, which a person
+    reads and a resume re-reads, carries the command as written."""
+    dispatch(ctx, "job_start", {"cmd": "simpleFoam", "name": "solve"})
+    (record,) = store.session.jobs.values()
+    assert record.cmd == "simpleFoam"
+
+
+def test_sigpipe_is_said_in_words_where_a_pipe_was_cut(ctx, backend):
+    """The price of pipefail: a producer `head` stopped reading exits 141. Said where
+    it happens so it does not read as the producer having failed."""
+    backend.exec_result = ExecResult(141, "line\n" * 10, False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "cat log.simpleFoam | head -10"})
+    assert "SIGPIPE" in content
+
+    backend.exec_result = ExecResult(141, "", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "./run"})
+    assert "SIGPIPE" not in content, "no pipe, so 141 is the program's own status"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs a bash to run the pipe")
+def test_a_failing_producer_piped_to_tail_fails_in_a_real_shell(tmp_path, ctx):
+    """The acceptance for #48, run rather than asserted: the producer fails, `tail`
+    succeeds, and the command as the shell runs it reports the failure."""
+    from openreynolds.backend.local import LocalBackend
+
+    ctx.backend = LocalBackend(root=tmp_path, bashrc="")
+    ctx.home = str(tmp_path)
+
+    content, _ = dispatch(ctx, "bash", {"cmd": "{ echo 'FOAM FATAL ERROR'; exit 1; } | tail -1"})
+
+    assert content.startswith("exit_code: 1"), content
+    assert "FOAM FATAL ERROR" in content
+
+
 def test_truncation_marker_points_at_the_tail(ctx, backend):
     """The service returns the head of a long log, so the marker offers the far end."""
     backend.exec_result = ExecResult(0, "H" * 5000, True, "/work/.foamd/exec/abc.log")
@@ -910,6 +958,8 @@ def _promotes(backend, clock, *, after=120.0, output="", job_id=PROMOTED_JOB):
     which is running with an empty log until a test says otherwise."""
 
     def exec(cmd, cwd=None, timeout_s=120, *, background=False):
+        backend.raw_execs.append(cmd)
+        cmd = model_cmd(cmd)
         backend.last_exec = (cmd, cwd, timeout_s)
         backend.execs.append(cmd)
         clock.sleep(after)

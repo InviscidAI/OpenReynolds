@@ -62,6 +62,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import log_digest  # noqa: E402
+import preflight  # noqa: E402
+import reference_area  # noqa: E402
 import study_state  # noqa: E402
 
 
@@ -513,6 +515,152 @@ def force_headline(history: dict[str, Any], columns: Sequence[str], fraction: fl
         if key in history.get("meta", {}):
             notes[key] = history["meta"][key]
     return notes
+
+
+# -- is the number possible ----------------------------------------------------------
+
+
+AREA_MATCH = 0.03
+"""How close Aref must be to the whole body's measured area to be read as that area."""
+
+
+def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.25) -> dict[str, str]:
+    """Whether the force here is the whole body's, and whether its Cd can be true.
+
+    R01 (F-43): a half model's 43.74 N over the whole hull's area delivered half the
+    drag, below the flat-plate friction the agent had itself computed. Three readings
+    off the case, none of which needs the model to have remembered anything:
+
+    - a symmetry plane that cuts the body (`reference_area.py`) makes every force in
+      the file 1/factor of the body's, and the whole-body drag is said as a number;
+    - an Aref that is the whole body's area on a mesh holding part of it makes every
+      coefficient 1/factor of the body's -- as does any Aref larger than all the
+      surface the body has as meshed;
+    - a Cd below flat-plate friction at the case's Reynolds number is impossible.
+
+    A reading that cannot be made -- no patches named, a binary mesh, no viscosity --
+    says so rather than passing silently: an all-clear nothing checked is not one.
+    """
+    case = Path(case)
+    notes: dict[str, str] = {}
+    obj = next((o for o in preflight.force_objects_in(case) if o.get("patches")), {})
+    try:
+        mesh = reference_area.load_surface(case)
+        bodies = _resolve_patches(obj.get("patches", []), mesh["boundary"])
+        if not bodies:
+            notes["body check"] = ("not made: no forces object names a patch that is in "
+                                   "the mesh, so whether this is the whole body is unknown")
+            return notes
+        planes = reference_area.cuts(mesh, bodies)
+        factor = reference_area.mirror_factor(planes)
+        wetted = reference_area.wetted_area(mesh, bodies)
+    except reference_area.MeshError as exc:
+        notes["body check"] = f"not made: {exc}"
+        return notes
+
+    for plane in planes:
+        if plane.get("mirrors"):
+            notes[f"mirror {plane['patch']}"] = plane["why"]
+    axis = _drag_axis(obj.get("dragDir", ""))
+    meta = history.get("meta", {})
+    aref = preflight.as_float(meta.get("Aref")) or obj.get("Aref")
+    if factor > 1 and "Cd" in history.get("columns", []):
+        notes["mirrored"] = (f"the mesh holds 1/{factor} of the body: a coefficient here is "
+                             f"the whole body's when Aref ({aref or 'unread'}) is an area of "
+                             f"the part meshed -- its wetted area is {wetted:.6g} m2")
+    elif factor > 1:
+        notes["mirrored"] = (f"the mesh holds 1/{factor} of the body: every force in this "
+                             f"file is 1/{factor} of the whole body's")
+        drag = _drag_series(history, axis)
+        if drag is not None and drag.size:
+            meshed = tail_mean(drag, fraction)
+            notes["whole-body drag"] = (f"{factor} x {meshed:.5g} = {factor * meshed:.5g} "
+                                        f"(tail mean of the {'xyz'[axis]} force, mirrored)")
+
+    if aref:
+        whole = wetted * factor
+        if factor > 1 and abs(aref - whole) <= AREA_MATCH * whole:
+            notes["AREA WRONG"] = (f"Aref {aref:.6g} m2 is the whole body's wetted area, but "
+                                   f"the mesh holds 1/{factor} of it: every coefficient here "
+                                   f"is 1/{factor} of the body's. Aref should be the as-meshed "
+                                   f"{wetted:.6g} m2")
+        elif aref > wetted * (1 + AREA_MATCH):
+            notes["AREA WRONG"] = (f"Aref {aref:.6g} m2 is more than all the surface the body "
+                                   f"has as meshed ({wetted:.6g} m2): coefficients are divided "
+                                   "by area that is not there")
+
+    if "Cd" in history.get("columns", []):
+        u = preflight.as_float(meta.get("magUInf")) or obj.get("magUInf")
+        length = preflight.as_float(meta.get("lRef")) or obj.get("lRef")
+        nu = case_viscosity(case)
+        if not (u and length and nu):
+            notes["friction floor"] = ("not checked: magUInf, lRef and nu are all needed for "
+                                       "the Reynolds number")
+        else:
+            reynolds = u * length / nu
+            cd = tail_mean(column(history, "Cd"), fraction)
+            turbulent = case_is_turbulent(case)
+            floor, name = reference_area.friction_floor(reynolds, turbulent)
+            verdict = reference_area.below_floor(cd, reynolds, turbulent)
+            notes["friction floor"] = ("IMPOSSIBLE: " + verdict) if verdict else (
+                f"Cd {cd:.5g} is above {name} Cf = {floor:.5g} at Re {reynolds:.3g}")
+    return notes
+
+
+def _resolve_patches(names: Sequence[str], boundary: dict) -> list[str]:
+    """Patch names as a forces object gives them -- literal or regex -- against the mesh."""
+    found = []
+    for name in names:
+        try:
+            pattern = re.compile(name)
+        except re.error:
+            pattern = None
+        for patch in boundary:
+            if (patch == name or (pattern and pattern.fullmatch(patch))) and patch not in found:
+                found.append(patch)
+    return found
+
+
+def _drag_axis(drag_dir: str) -> int:
+    values = [preflight.as_float(v) for v in drag_dir.replace("(", " ").replace(")", " ").split()]
+    if len(values) == 3 and all(v is not None for v in values):
+        return int(np.argmax(np.abs(values)))
+    return 0
+
+
+def _drag_series(history: dict[str, Any], axis: int) -> np.ndarray | None:
+    """The drag-direction force: `total_x`, or pressure plus viscous where that is all."""
+    c = "xyz"[axis]
+    columns = history.get("columns", [])
+    for name in (f"total_{c}", f"forces_total_{c}"):
+        if name in columns:
+            return column(history, name)
+    for prefix in ("", "forces_"):
+        parts = [f"{prefix}pressure_{c}", f"{prefix}viscous_{c}"]
+        if all(part in columns for part in parts):
+            return column(history, parts[0]) + column(history, parts[1])
+    return None
+
+
+_NU = re.compile(r"^\s*nu\s+(?:nu\s+)?(?:\[[^\]]*\]\s*)?([-+0-9.eE]+)\s*;", re.M)
+
+
+def case_viscosity(case: Path) -> float | None:
+    """Kinematic viscosity from transportProperties (ESI) or physicalProperties (org)."""
+    for name in ("transportProperties", "physicalProperties"):
+        match = _NU.search(preflight.read_text(Path(case) / "constant" / name))
+        if match:
+            return preflight.as_float(match.group(1))
+    return None
+
+
+def case_is_turbulent(case: Path) -> bool:
+    for name in ("turbulenceProperties", "momentumTransport"):
+        match = re.search(r"\bsimulationType\s+(\w+)\s*;",
+                          preflight.read_text(Path(case) / "constant" / name))
+        if match:
+            return match.group(1) != "laminar"
+    return True
 
 
 # -- the solver log ------------------------------------------------------------------
@@ -1073,6 +1221,7 @@ def produce_forces(ctx, spec: Output):
     if len(history["sources"]) > 1:
         notes["merged from"] = f"{len(history['sources'])} time directories"
     notes.update(force_headline(history, columns))
+    notes.update(body_checks(ctx.case, history))
     if history["ignored"]:
         notes["ignored"] = "; ".join(history["ignored"])
     return out, notes

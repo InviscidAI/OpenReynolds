@@ -224,8 +224,29 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     return sorted([*offered, CHECKPOINT_TOOL], key=lambda tool: tool["name"])
 
 
+PIPEFAIL = "set -o pipefail\n"
+"""Put in front of every command the model runs, in `bash` and in `job_start`.
+
+Without it a pipeline's status is its last stage's, so `blockMesh | tail` reports
+0 over a FOAM FATAL ERROR -- production study 20260921-200946-cb90, where the agent
+happened to read the text and recover, and anything trusting the exit code would
+have gone on without a mesh (F-20260922-06, OpenReynolds#48). Both shells it lands in
+are bash: `LocalBackend` runs `bash -lc`, and so do the service's exec and job paths.
+The price is SIGPIPE: a producer cut off by `head` now exits 141, which `_bash` says
+in words where it happens."""
+
+
+def _shell(cmd: str) -> str:
+    """The command as the shell gets it."""
+    return PIPEFAIL + cmd
+
+
+SIGPIPE_EXIT = 141
+
+
 FRESH_SHELL = (
-    "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
+    "Each call runs in a fresh shell with `pipefail` set: `cwd` carries between calls, "
+    "nothing else does "
     "-- variables you export, files you source and shell options are gone by the next "
     "one. The OpenFOAM environment and the tutorials' `RunFunctions` helpers are "
     "loaded again for you on every call, `bash` and `job_start` alike."
@@ -786,7 +807,8 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
-    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
+    result = ctx.backend.exec(_shell(args["cmd"]), cwd=args.get("cwd") or ctx.home,
+                              timeout_s=asked)
     elapsed = time.monotonic() - started
     if getattr(result, "promoted", False) or getattr(result, "job_id", ""):
         # The command belongs to a job now, and nothing below applies to it: there is
@@ -817,6 +839,12 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"[exit_code -1 means no exit status was reported, which is what happens "
             f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
             "job_start has no time limit.]"
+        )
+    if result.exit_code == SIGPIPE_EXIT and "|" in args["cmd"]:
+        notes.append(
+            "[exit 141 is SIGPIPE: with pipefail set, a stage whose reader stopped "
+            "early (`head`, `grep -q`) reports it. The stage before it may have "
+            "worked; its output says which.]"
         )
     if getattr(result, "stderr", "").strip():
         # The workspace itself, not the command: a working directory that is gone, a
@@ -1211,7 +1239,7 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
                 "is killed only by an actual crash line."
             )
     job_id = ctx.backend.job_start(
-        cmd,
+        _shell(cmd),
         cwd=args.get("cwd") or ctx.home,
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,

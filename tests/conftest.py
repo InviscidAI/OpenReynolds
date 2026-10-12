@@ -20,7 +20,7 @@ from openreynolds.backend.base import (
     Stat,
 )
 from openreynolds.store import Store
-from openreynolds.tools import CORES_PROBE, ToolContext
+from openreynolds.tools import CORES_PROBE, PIPEFAIL, ToolContext
 from openreynolds.view import View
 
 
@@ -56,6 +56,15 @@ needs_a_kernel = pytest.mark.skipif(
     reason="no `bash -lc python3` here, so no kernel can come up in a workspace")
 
 
+def model_cmd(cmd: str) -> str:
+    """The command as the model wrote it: what the tool layer put in front, taken off.
+
+    The fake stands in for the shell, so it records the model's command and keeps the
+    raw one beside it (`raw_execs`, `started[i]["raw"]`); `test_tools.py` asserts on
+    the raw one where the prefix is the point."""
+    return cmd[len(PIPEFAIL):] if cmd.startswith(PIPEFAIL) else cmd
+
+
 class FakeBackend(Backend):
     """An in-memory workspace. No network, no service."""
 
@@ -73,6 +82,9 @@ class FakeBackend(Backend):
             CORES_PROBE: ExecResult(0, "8\n4\n", False, None),
         }
         self.execs: list[str] = []
+        self.raw_execs: list[str] = []
+        """What the shell was handed, `pipefail` line included. `execs` holds the
+        command the model wrote, which is what nearly every test asserts on."""
         self.exec_background: list[bool] = []
         """Whether each exec declared itself a poll. Separate from `execs` so the
         many tests that assert on the commands are not disturbed by it."""
@@ -86,6 +98,8 @@ class FakeBackend(Backend):
         self.get_tree_calls: list[dict] = []
 
     def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
+        self.raw_execs.append(cmd)
+        cmd = model_cmd(cmd)
         self.last_exec = (cmd, cwd, timeout_s)
         self.execs.append(cmd)
         self.exec_background.append(background)
@@ -138,7 +152,8 @@ class FakeBackend(Backend):
 
     def job_start(self, cmd, cwd=None, name=None, kill_on=None):
         job_id = f"job-{len(self.jobs) + 1}"
-        self.started.append({"cmd": cmd, "cwd": cwd, "name": name, "kill_on": kill_on})
+        self.started.append({"cmd": model_cmd(cmd), "raw": cmd, "cwd": cwd, "name": name,
+                             "kill_on": kill_on})
         self.jobs[job_id] = JobStatus(job_id=job_id, status="running", name=name)
         self.logs[job_id] = b""
         return job_id

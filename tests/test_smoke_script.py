@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FakeBackend
+from conftest import FakeBackend, model_cmd
 from openreynolds.backend.base import ExecResult, JobStatus, Stat
 
 PNG_HEADER = base64.b64decode(
@@ -93,7 +93,7 @@ r/geometry.png
     def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
         if "WM_PROJECT_VERSION" in cmd:
             return ExecResult(0, "hello\n2512\n", False, None)
-        if cmd.strip() == "exit 7":
+        if model_cmd(cmd).strip() == "exit 7":
             return ExecResult(7, "", False, None)
         if "200000" in cmd.replace(" ", ""):
             return ExecResult(0, "B" * 200_000, True, self.BIG_LOG)
