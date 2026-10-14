@@ -636,7 +636,7 @@ def draw(case: Path, internal, surfaces: dict, out_png: Path, two_d: bool,
     def patches_panel(title: str) -> None:
         plotter.add_text(title, font_size=9)
         if two_d and internal is not None:
-            plotter.add_mesh(internal.extract_surface(), color="#ececec",
+            plotter.add_mesh(internal.extract_surface(algorithm="dataset_surface"), color="#ececec",
                              show_edges=False, lighting=False)
         for name, surface in shown.items():
             faint = name in enclosure
@@ -671,7 +671,7 @@ def draw(case: Path, internal, surfaces: dict, out_png: Path, two_d: bool,
             plotter.add_mesh(cut, color="#dddddd", show_edges=True, edge_color="#3b3b3b",
                              line_width=1)
         except Exception:  # noqa: BLE001
-            plotter.add_mesh(internal.extract_surface(), color="#dddddd", show_edges=True)
+            plotter.add_mesh(internal.extract_surface(algorithm="dataset_surface"), color="#dddddd", show_edges=True)
         frame({"x": "yz", "y": "zx", "z": "xy"}[normal])
 
     if two_d:
@@ -789,7 +789,7 @@ def draw_views(case: Path, internal, surfaces: dict, out_dir: Path, two_d: bool,
 
     def add_patches(plotter, legend: bool) -> None:
         if two_d and internal is not None:
-            plotter.add_mesh(internal.extract_surface(), color="#ececec",
+            plotter.add_mesh(internal.extract_surface(algorithm="dataset_surface"), color="#ececec",
                              show_edges=False, lighting=False)
         for name, surface in shown.items():
             if two_d:
@@ -823,7 +823,7 @@ def draw_views(case: Path, internal, surfaces: dict, out_dir: Path, two_d: bool,
             plotter.add_mesh(cut, color="#dddddd", show_edges=True, edge_color="#3b3b3b",
                              line_width=1)
         except Exception:  # noqa: BLE001
-            plotter.add_mesh(internal.extract_surface(), color="#dddddd", show_edges=True)
+            plotter.add_mesh(internal.extract_surface(algorithm="dataset_surface"), color="#dddddd", show_edges=True)
 
     def composite(name: str, shape: tuple, size: tuple, panels: list) -> None:
         """One PNG of `panels`, each `(row, col, title, fill)`; a panel that fails is

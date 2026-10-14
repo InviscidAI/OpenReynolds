@@ -8,6 +8,7 @@ report a person actually reads.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -402,6 +403,26 @@ def test_patch_normals_keep_the_surface_extractor_they_were_measured_with():
 
     assert called["algorithm"] == "dataset_surface"
     assert row["normal"] == [0.0, 0.0, 1.0]
+
+
+def test_every_surface_extraction_keeps_the_current_pyvista_algorithm():
+    """The same changing PyVista default is used by the review render fallbacks.
+    Those pictures must not change after an otherwise unrelated dependency update."""
+    tree = ast.parse((TOOLBOX / "mesh_look.py").read_text(encoding="utf-8"))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "extract_surface"
+    ]
+
+    assert calls
+    assert all(
+        any(keyword.arg == "algorithm" and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "dataset_surface"
+            for keyword in call.keywords)
+        for call in calls
+    ), "every extract_surface call must preserve PyVista's current algorithm"
 
 
 # -- several views, for a reviewer who did not build it ------------------------
