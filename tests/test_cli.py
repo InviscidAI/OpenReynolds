@@ -1995,22 +1995,105 @@ def _service_refusal(status, body):
         return exc
 
 
-@pytest.mark.parametrize("body", [
-    {"error": "allowance_exhausted", "message": "this period's Starter allowance is used up.",
-     "tier": "starter", "period_end": "2026-12-01T00:00:00+00:00", "can_enable_overage": True},
-    {"error": "budget_exhausted", "message": "credit exhausted"},  # a service before plans
-])
-def test_a_spent_allowance_blocks_and_says_why(loop, view, heard_console, body):
+def _days_from_now(days):
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
+_SOON = _days_from_now(20)
+_GONE = _days_from_now(-3)
+
+# The 402 `allowance_exhausted` bodies a D15 service sends, one per kind of account, and
+# what the person must and must not be told for each. `period_end` is null when the
+# renewal is not ahead; an older server may still send a day that has passed.
+_ALLOWANCE_CASES = {
+    "monthly, overage allowed": (
+        {"tier": "starter", "period_end": _SOON, "can_enable_overage": True,
+         "can_buy_credits": True, "past_due": False},
+        ["buying credits", "turning on overage (billed to your card)", f"renews on {_SOON[:10]}"],
+        ["payment failed"]),
+    "annual, overage allowed": (
+        {"tier": "pro", "period_end": _SOON, "can_enable_overage": True,
+         "can_buy_credits": True, "past_due": False},
+        ["buying credits", "turning on overage (billed to your card)", f"renews on {_SOON[:10]}"],
+        ["payment failed"]),
+    "trial": (
+        {"tier": "starter", "period_end": _SOON, "can_enable_overage": False,
+         "can_buy_credits": True, "past_due": False},
+        ["buying credits", "a bigger plan"],
+        ["overage", "payment failed"]),
+    "past due": (
+        {"tier": "starter", "period_end": _SOON, "can_enable_overage": False,
+         "can_buy_credits": True, "past_due": True},
+        ["your last payment failed", "update your card on the account page", "buying credits"],
+        ["overage", "renews"]),
+    "no plan": (
+        {"tier": None, "period_end": None, "can_enable_overage": False,
+         "can_buy_credits": True, "past_due": False},
+        ["no active plan", "buying credits", "picking a plan"],
+        ["overage", "renews", "payment failed"]),
+    "staff, or billing not configured": (
+        {"tier": "max", "period_end": None, "can_enable_overage": False,
+         "can_buy_credits": False, "past_due": False},
+        ["a bigger plan"],
+        ["credits", "overage", "renews", "payment failed"]),
+    "an older server, a period that has passed": (
+        {"tier": "starter", "period_end": _GONE, "can_enable_overage": False},
+        ["a bigger plan"],
+        ["renews", "credits", "overage", _GONE[:10]]),
+}
+
+
+@pytest.mark.parametrize("case", list(_ALLOWANCE_CASES))
+def test_a_spent_allowance_offers_only_what_the_account_can_do(loop, view, heard_console, case):
+    """The 402's fields decide each offer (D15): credits when they can be bought,
+    overage only when it can be turned on, a renewal day only while it is ahead, and
+    the card when the last payment failed -- never one sentence for every account."""
+    fields, said_in, never = _ALLOWANCE_CASES[case]
+    body = {"error": "allowance_exhausted", "message": "this period's allowance is used up.",
+            **fields}
     loop.run = lambda: (_ for _ in ()).throw(_service_refusal(402, body))
 
     assert cli._run_turn(loop, view) is False
     assert loop.blocked_reason and "402" in loop.blocked_reason
-    said = heard_console.file.getvalue()
-    if body["error"] == "allowance_exhausted":
-        assert "plan: Starter" in loop.blocked_reason and "renews 2026-12-01" in loop.blocked_reason
-        assert "this period's plan allowance is used up" in said
-    else:
-        assert "a budget or a usage cap" in said
+    said = " ".join(heard_console.file.getvalue().split())
+    for words in said_in:
+        assert words in said, (case, words, said)
+    for words in never:
+        assert words not in said, (case, words, said)
+
+
+@pytest.mark.parametrize("case", list(_ALLOWANCE_CASES))
+def test_the_facts_beside_the_message_follow_the_same_fields(case):
+    """`extra_note`, said beside the service's message on every workspace call and model
+    call, makes the same offers in a few words."""
+    from openreynolds.backend.base import extra_note
+
+    fields, _, _ = _ALLOWANCE_CASES[case]
+    note = extra_note(fields)
+    assert ("credits can be bought" in note) == bool(fields.get("can_buy_credits"))
+    assert ("overage (billed to your card) can be turned on" in note) == bool(
+        fields.get("can_enable_overage"))
+    assert ("last payment failed; update your card" in note) == bool(fields.get("past_due"))
+    renews = fields["period_end"] == _SOON and not fields.get("past_due")
+    assert ("renews" in note) == renews, note
+    if renews:
+        assert f"renews {_SOON[:10]}" in note
+
+
+def test_a_renewal_day_that_is_not_a_date_is_left_out():
+    from openreynolds.backend.base import extra_note
+
+    assert extra_note({"tier": "starter", "period_end": "soon"}) == "plan: Starter"
+
+
+def test_a_service_before_plans_still_says_budget(loop, view, heard_console):
+    body = {"error": "budget_exhausted", "message": "credit exhausted"}
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(402, body))
+
+    assert cli._run_turn(loop, view) is False
+    assert "a budget or a usage cap" in heard_console.file.getvalue()
 
 
 def test_a_plan_limit_on_a_model_call_blocks_and_names_the_upgrade(loop, view, heard_console):

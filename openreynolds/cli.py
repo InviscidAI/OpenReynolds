@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
-from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note
+from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day
 from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
@@ -3283,14 +3283,38 @@ _REFUSALS = {
 }
 
 _REFUSAL_CODES = {
-    "allowance_exhausted": "this period's plan allowance is used up -- it renews at the "
-                           "period's end, or turning on overage or a bigger plan lets "
-                           "work go on now",
     "budget_exhausted": _REFUSALS[402],  # a service from before plans
     "plan_limit": "the plan does not allow this call -- a bigger plan does",
 }
 """What a refusal from the workspace service's model proxy means, by its `error` code,
-where the code says more than the status does."""
+where the code says more than the status does. `allowance_exhausted` is said from its
+fields instead (`_allowance_refusal`)."""
+
+
+def _allowance_refusal(body: dict[str, Any]) -> str:
+    """What a 402 `allowance_exhausted` means for this account, from its fields (D15).
+
+    Each way on is offered only when the body says it is open: credits when
+    `can_buy_credits`, postpaid overage when `can_enable_overage`, a renewal day only
+    while `period_end` is ahead, and the card when `past_due`. One sentence for every
+    account told a trial to turn on overage it could not have, and named renewals that
+    had passed. A service from before D15 sends no `can_buy_credits` and gets no
+    credit offer; its fields otherwise read the same."""
+    planned = bool(body.get("tier"))
+    said = ("this period's plan allowance is used up" if planned
+            else "there is no allowance left and no active plan")
+    if body.get("past_due"):
+        said += " and your last payment failed (update your card on the account page)"
+    ways = []
+    if body.get("can_buy_credits"):
+        ways.append("buying credits")
+    if body.get("can_enable_overage"):
+        ways.append("turning on overage (billed to your card)")
+    ways.append("a bigger plan" if planned else "picking a plan")
+    on = ways[0] if len(ways) == 1 else f"{', '.join(ways[:-1])} or {ways[-1]}"
+    day = renewal_day(body)
+    renews = f"it renews on {day}, or " if day else ""
+    return f"{said} -- {renews}{on} lets work go on now"
 
 
 def _run_turn(loop: Loop, view: View) -> bool:
@@ -3309,6 +3333,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
     """
     status: int | None = None
     refusal_code = ""
+    refusal_body: dict[str, Any] = {}
     said = ""
     exc_message = ""
     attempt = 0
@@ -3341,6 +3366,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
                 return False
             status = exc.status_code
             refusal_code = exc.code
+            refusal_body = exc.body
             exc_message = exc.message or ""
             # The service fronting the model says which plan and what to upgrade to
             # in fields beside its message (402 `allowance_exhausted`, 403
@@ -3411,8 +3437,11 @@ def _run_turn(loop: Loop, view: View) -> bool:
     study = loop.store.session.study_id
     if refused:
         loop.blocked_reason = said
-        because = _REFUSAL_CODES.get(refusal_code) or _REFUSALS.get(
-            status, "the service refused the request")
+        if refusal_code == "allowance_exhausted":
+            because = _allowance_refusal(refusal_body)
+        else:
+            because = _REFUSAL_CODES.get(refusal_code) or _REFUSALS.get(
+                status, "the service refused the request")
         console.print(
             f"[yellow]That is a refusal, not a hiccup: {because}. Waiting will not "
             "change it, so nothing more will be sent until you say something.[/]\n"

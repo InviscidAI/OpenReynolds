@@ -9,6 +9,7 @@ modules in this package may. `tests/test_negative_obligation.py` enforces that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -173,7 +174,7 @@ class BackendError(Exception):
         self.extra: dict[str, Any] = dict(extra or {})
         """Every other top-level field of the service's error body. The pricing errors
         carry their facts here -- 402 `allowance_exhausted` (tier, period_end,
-        can_enable_overage), 403 `plan_limit` (limit, value, allowed, tier,
+        can_enable_overage, can_buy_credits, past_due), 403 `plan_limit` (limit, value, allowed, tier,
         upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents) -- and a
         reader branches on these, never on the prose in `message`."""
 
@@ -189,9 +190,30 @@ def _tier_name(tier: Any) -> str:
     return str(tier).replace("_", " ").title()
 
 
+def renewal_day(extra: dict[str, Any] | None, now: datetime | None = None) -> str | None:
+    """The day a spent allowance renews (`YYYY-MM-DD`), or None when none is coming.
+
+    Only a `period_end` still ahead of `now` is a renewal: a service from before D15
+    sent the stored period's end even when it had passed, and a past-due account's
+    renewal is waiting on a payment that failed. An unreadable date is no date."""
+    if not extra or extra.get("past_due") or not extra.get("period_end"):
+        return None
+    try:
+        end = datetime.fromisoformat(str(extra["period_end"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if end <= (now or datetime.now(timezone.utc)):
+        return None
+    return end.date().isoformat()
+
+
 def extra_note(extra: dict[str, Any] | None) -> str:
     """The pricing fields of an error body, said in a few words: which plan, what to
-    upgrade to, when the allowance renews, what a study has spent of its ceiling.
+    upgrade to, when the allowance renews (only while that day is ahead), whether
+    credits can be bought or postpaid overage turned on, a payment that failed, what a
+    study has spent of its ceiling.
 
     Said beside the service's own message rather than instead of it, because that
     message is prose and may change; these are the fields the contract fixes. Empty
@@ -209,10 +231,15 @@ def extra_note(extra: dict[str, Any] | None) -> str:
         parts.append(f"{extra['limit']} allowed up to {extra['allowed']}")
     if extra.get("upgrade_to"):
         parts.append(f"upgrade to {_tier_name(extra['upgrade_to'])}")
-    if extra.get("period_end"):
-        parts.append(f"renews {str(extra['period_end'])[:10]}")
+    if extra.get("past_due"):
+        parts.append("the last payment failed; update your card on the account page")
+    day = renewal_day(extra)
+    if day:
+        parts.append(f"renews {day}")
+    if extra.get("can_buy_credits"):
+        parts.append("credits can be bought")
     if extra.get("can_enable_overage"):
-        parts.append("overage can be turned on")
+        parts.append("overage (billed to your card) can be turned on")
     if isinstance(extra.get("spent_cents"), (int, float)) and isinstance(
             extra.get("cap_cents"), (int, float)):
         parts.append(f"spent ${extra['spent_cents'] / 100:.2f} of a "
