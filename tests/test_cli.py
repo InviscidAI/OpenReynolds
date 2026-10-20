@@ -1969,6 +1969,61 @@ def test_a_refusal_stops_the_harness_asking_again(loop, view, quiet_console):
         quiet_console.file, "getvalue") else True
 
 
+@pytest.fixture
+def heard_console(monkeypatch):
+    import io
+
+    from rich.console import Console
+
+    console = Console(file=io.StringIO(), force_terminal=False, width=400)
+    monkeypatch.setattr(cli, "console", console)
+    return console
+
+
+def _service_refusal(status, body):
+    """A model call refused by foamd's proxy, carrying its body as the SDK hands it on."""
+    import anthropic
+    import httpx as real_httpx
+    from openreynolds.llm import ProviderError
+
+    response = real_httpx.Response(status, json=body, request=real_httpx.Request(
+        "POST", "https://svc.example/v1/llm/v1/messages"))
+    sdk = anthropic.APIStatusError(body["message"], response=response, body=body)
+    try:
+        raise ProviderError(body["message"], status) from sdk
+    except ProviderError as exc:
+        return exc
+
+
+@pytest.mark.parametrize("body", [
+    {"error": "allowance_exhausted", "message": "this period's Starter allowance is used up.",
+     "tier": "starter", "period_end": "2026-12-01T00:00:00+00:00", "can_enable_overage": True},
+    {"error": "budget_exhausted", "message": "credit exhausted"},  # a service before plans
+])
+def test_a_spent_allowance_blocks_and_says_why(loop, view, heard_console, body):
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(402, body))
+
+    assert cli._run_turn(loop, view) is False
+    assert loop.blocked_reason and "402" in loop.blocked_reason
+    said = heard_console.file.getvalue()
+    if body["error"] == "allowance_exhausted":
+        assert "plan: Starter" in loop.blocked_reason and "renews 2026-12-01" in loop.blocked_reason
+        assert "this period's plan allowance is used up" in said
+    else:
+        assert "a budget or a usage cap" in said
+
+
+def test_a_plan_limit_on_a_model_call_blocks_and_names_the_upgrade(loop, view, heard_console):
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(403, {
+        "error": "plan_limit", "message": "max_concurrent 2 is over the limit.",
+        "limit": "max_concurrent", "value": 2, "allowed": 1, "tier": "starter",
+        "upgrade_to": "pro"}))
+
+    assert cli._run_turn(loop, view) is False
+    assert "upgrade to Pro" in loop.blocked_reason
+    assert "the plan does not allow this" in heard_console.file.getvalue()
+
+
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 413])
 def test_every_refusal_status_blocks(loop, view, quiet_console, status):
     loop.run = lambda: (_ for _ in ()).throw(_api_error(status))

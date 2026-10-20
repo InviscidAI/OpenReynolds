@@ -1386,6 +1386,12 @@ def session(
                     instance_id or store.session.instance_id or None,
                     **_kind(settled),
                 )
+            if resuming and store.session.remote_study_id:
+                # A resume knows its study before its workspace is up, so the start
+                # names it (`FoamdClient.study_id`) and is tagged exactly; a new study
+                # is named once its row is opened, and the service moves the open
+                # meter row to it then.
+                client.study_id = store.session.remote_study_id
             starter.start()
             pending = starter.pending()
             backend = pending
@@ -3276,6 +3282,16 @@ _REFUSALS = {
     413: "the request was too large to accept",
 }
 
+_REFUSAL_CODES = {
+    "allowance_exhausted": "this period's plan allowance is used up -- it renews at the "
+                           "period's end, or turning on overage or a bigger plan lets "
+                           "work go on now",
+    "budget_exhausted": _REFUSALS[402],  # a service from before plans
+    "plan_limit": "the plan does not allow this call -- a bigger plan does",
+}
+"""What a refusal from the workspace service's model proxy means, by its `error` code,
+where the code says more than the status does."""
+
 
 def _run_turn(loop: Loop, view: View) -> bool:
     """Run a turn, surviving a model-API failure. Returns whether it completed.
@@ -3292,6 +3308,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
     says something.
     """
     status: int | None = None
+    refusal_code = ""
     said = ""
     exc_message = ""
     attempt = 0
@@ -3323,6 +3340,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
                 view.info("waiting for you - the study is paused at its spending ceiling")
                 return False
             status = exc.status_code
+            refusal_code = exc.code
             exc_message = exc.message or ""
             # The service fronting the model says which plan and what to upgrade to
             # in fields beside its message (402 `allowance_exhausted`, 403
@@ -3393,7 +3411,8 @@ def _run_turn(loop: Loop, view: View) -> bool:
     study = loop.store.session.study_id
     if refused:
         loop.blocked_reason = said
-        because = _REFUSALS.get(status, "the service refused the request")
+        because = _REFUSAL_CODES.get(refusal_code) or _REFUSALS.get(
+            status, "the service refused the request")
         console.print(
             f"[yellow]That is a refusal, not a hiccup: {because}. Waiting will not "
             "change it, so nothing more will be sent until you say something.[/]\n"

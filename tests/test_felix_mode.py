@@ -394,7 +394,7 @@ def test_tools_felix_job_start_describes_felix_run(felix):
     text = job_start["description"]
     for fact in ("felix run", "--gpu", "--wall", "felix continue", "stdout", "stderr",
                  "Exit 0", "output.every", "output.previous", "warm_start", "symlink",
-                 "budget_exhausted"):
+                 "402 allowance_exhausted", "403 plan_limit", "409 study_paused"):
         assert fact in text, fact
     for openfoam in ("trapFpe", "decomposePar", "startFrom", "OpenFOAM", "mpirun"):
         assert openfoam not in text, openfoam

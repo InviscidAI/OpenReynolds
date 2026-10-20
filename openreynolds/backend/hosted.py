@@ -54,6 +54,10 @@ say nothing of the kind -- the work may have been done and only the answer lost 
 neither does a read timeout."""
 
 _NO_RETRY_CODES = frozenset({"modal_auth_failed"})
+
+STUDY_HEADER = "X-Study-Id"
+"""Names the study a request is for (`FoamdClient.study_id`); the model calls send it
+too (`loop.py`, `switch.py`)."""
 """Coded errors that are never worth trying again, whatever their status says.
 
 `_RETRY_STATUSES` is keyed on the status code, which is the bluntest thing a response
@@ -584,6 +588,14 @@ class FoamdClient:
             # and not the guarantee.
             follow_redirects=False,
         )
+        self.study_id: str | None = None
+        """The study this client's calls are for, named to the service in
+        `X-Study-Id` on every request once it is known (`HostedBackend.study_id` sets
+        it). foamd tags new spend with that study and judges it against the study's
+        ceiling (`409 study_paused`); without it a sandbox start is tagged with the
+        workspace's newest study, which on a reused workspace is the previous one.
+        A header naming a study the caller does not own is ignored, so naming it on a
+        call that spends nothing costs nothing."""
 
     def close(self) -> None:
         """Close the HTTP connection pool. Nothing else lives here: the kernel is the
@@ -632,6 +644,8 @@ class FoamdClient:
         repeat_ok = (
             method.upper() in _REPEATABLE_METHODS if repeatable is None else repeatable
         )
+        if self.study_id:
+            kwargs["headers"] = {STUDY_HEADER: self.study_id, **(kwargs.get("headers") or {})}
         attempts = int(max_attempts) if max_attempts else _MAX_ATTEMPTS
         last_error: BackendError | None = None
         # Counted separately from `attempt`, because a vanished Sandbox is its own
@@ -786,13 +800,18 @@ class FoamdClient:
 
     def get_study(self, study_id: str) -> dict[str, Any]:
         """One study as the platform holds it: title, instance_id, home, created_at --
-        and, from the per-study ceiling on, `cap_cents` and `spent_cents`."""
+        and, from the per-study ceiling on, `style`, `cap_cents` (the ceiling in force,
+        the style's default when none was set), `spent_cents` and `paused` (both None
+        when the service could not read the study's ledgers)."""
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
 
     def raise_study_cap(self, study_id: str, cap_cents: int) -> dict[str, Any]:
         """`POST /v1/studies/{id}/cap`: set the study's spending ceiling, which lifts a
         `409 study_paused` once 80% of it is above what is spent. Owner only, and the
-        service refuses a ceiling that does not exceed the spend.
+        service refuses a ceiling that does not exceed the spend (409 `conflict`).
+        One above the spend but under spend/0.8 is taken and answered `paused: true`
+        beside `cap_cents`, `spent_cents` and `pause_at_cents`; `ceiling.resolve`
+        reads that and asks again.
 
         Repeatable although a POST: it sets a value rather than adding a row, so a
         second copy of the same request leaves the same ceiling."""
@@ -905,11 +924,20 @@ class HostedBackend(KernelHost, Backend):
 
         0 means nobody counted rather than "the account holds none": `acquire` given
         an explicit instance id never lists, because there was no choice to make."""
-        self.study_id: str | None = None
+
+    @property
+    def study_id(self) -> str | None:
         """Which study this session is serving, as the platform names it. Set by the
         session once it has opened or resumed the study's row (`cli.session`). Carried
-        for the study-scoped routes; `list_stored` asks the instance's own route and
+        for the study-scoped routes, and handed to the client so every workspace call
+        from then on names it (`FoamdClient.study_id`) -- start, exec, files and jobs,
+        a Felix solve's job among them. `list_stored` asks the instance's own route and
         needs no study id (see `FoamdClient.list_files` for why)."""
+        return getattr(self._client, "study_id", None)
+
+    @study_id.setter
+    def study_id(self, value: str | None) -> None:
+        self._client.study_id = value or None
 
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""

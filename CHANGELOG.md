@@ -25,6 +25,16 @@ All notable changes to this project are recorded here. The format follows
   overage of a 402 `allowance_exhausted`, the spend and ceiling of a 409
   `study_paused` -- and the error's text names the plan and the tier to upgrade to.
 
+- **Workspace calls name their study.** Once a session knows its study, every call
+  to the hosted service carries `X-Study-Id` -- sandbox start, exec, files and jobs, a
+  Felix solve's job among them -- so the service tags that spend to the study and its
+  pause is exact; a resumed study names itself on the start too. A raise of the
+  ceiling the service answers `paused: true` (its own count still past 80%) is asked
+  again at once instead of retrying the paused call. The Felix prompt and `job_start`
+  name `402 allowance_exhausted`, `403 plan_limit` and `409 study_paused`, and a
+  model call refused with `allowance_exhausted` or `plan_limit` says what that means
+  (`budget_exhausted`, from an older service, still blocks as a 402).
+
 - **A session's system prompt and tool list no longer change mid-conversation.** A study
   whose solver is `auto` used to start the agent on a solver-choosing prompt with only
   `choose_solver`, and swap both once it was called; through the service's Bedrock

@@ -3,7 +3,8 @@
 The workspace service gives every study a ceiling and pauses it at 80%: from then on
 the study's new sandboxes, model calls and GPU solves answer `409 study_paused` with
 `{error, message, study_id, spent_cents, cap_cents}`, and `POST /v1/studies/{id}/cap
-{cap_cents}` raises it (owner only; it must exceed what is spent). Default ceilings are
+{cap_cents}` raises it (owner only; it must exceed what is spent, and one still under
+spend/0.8 is taken but answered `paused: true`). Default ceilings are
 the service's: 1000 cents for a quick study, 5000 for a full one.
 
 Two things are done with that here, and nothing else:
@@ -172,6 +173,10 @@ def preamble(ctx: Any, tool_input: dict[str, Any]) -> str | None:
              f"{dollars(cap * PAUSE_AT)}")
     if isinstance(spent, (int, float)):
         said += f" (spent so far {dollars(spent)})"
+    if row.get("paused") is True:
+        # foamd's `paused` (None when it could not read the ledgers): the solve about
+        # to start will meet the pause, so it is said here first.
+        said += "; it is paused now, so the solve will ask to raise the ceiling"
     return said + "."
 
 
@@ -249,28 +254,40 @@ def resolve(ctx: Any, exc: BaseException | Paused) -> bool:
     if approver is None or ceiling is None:
         ctx.stopped = stop_message(info, asked=False, study_id=study_id)
         return False
-    least = least_useful_cents(info.spent_cents)
-    proposed = max(int(info.cap_cents * 2), least)
     note = ""
     while True:
-        title, detail = _question(info, ctx, proposed, note)
-        decision = approver.ask("ceiling", title, detail)
-        if decision.approved:
-            cents = proposed
-        else:
-            cents = typed_cap_cents(decision.note)
-            if cents is None:
-                ctx.stopped = stop_message(info, asked=True)
-                return False
-        if cents >= least:
+        least = least_useful_cents(info.spent_cents)
+        proposed = max(int(info.cap_cents * 2), least)
+        while True:
+            title, detail = _question(info, ctx, proposed, note)
+            decision = approver.ask("ceiling", title, detail)
+            if decision.approved:
+                cents = proposed
+            else:
+                cents = typed_cap_cents(decision.note)
+                if cents is None:
+                    ctx.stopped = stop_message(info, asked=True)
+                    return False
+            if cents >= least:
+                break
+            note = (f"{dollars(cents)} would pause again at once: the ceiling has to be "
+                    f"at least {dollars(least)} for 80% of it to be above what is spent.")
+        try:
+            answer = ceiling.raise_cap(study_id, cents)
+        except Exception as error:  # noqa: BLE001 - see docstring
+            ctx.stopped = stop_message(info, asked=True, error=str(error))
+            return False
+        if not (isinstance(answer, dict) and answer.get("paused") is True):
             break
-        note = (f"{dollars(cents)} would pause again at once: the ceiling has to be at "
-                f"least {dollars(least)} for 80% of it to be above what is spent.")
-    try:
-        ceiling.raise_cap(study_id, cents)
-    except Exception as error:  # noqa: BLE001 - see docstring
-        ctx.stopped = stop_message(info, asked=True, error=str(error))
-        return False
+        # The service takes any ceiling above the spend and says `paused: true` when
+        # its own count -- open sandboxes priced to now, calls this side has not seen
+        # -- is still past 80% of it. Asked again from that count, rather than sending
+        # the paused call into a pause already known to be there.
+        spent = answer.get("spent_cents")
+        info = Paused(study_id, float(spent) if isinstance(spent, (int, float))
+                      else info.spent_cents, float(cents), info.message)
+        note = (f"The service took the {dollars(cents)} ceiling but counts "
+                f"{dollars(info.spent_cents)} spent, so the study is still paused.")
     view = getattr(ctx, "view", None)
     if view is not None:
         view.notice(f"The study's ceiling is now {dollars(cents)}; carrying on.")

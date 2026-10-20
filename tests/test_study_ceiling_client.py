@@ -29,6 +29,7 @@ from conftest import RecordingView, ScriptedReader, install_model, message, text
 from openreynolds import ceiling, cli
 from openreynolds.approval import Approver
 from openreynolds.backend.base import BackendError
+from openreynolds.backend import hosted
 from openreynolds.backend.hosted import FoamdClient, HostedBackend, _decode_error
 from openreynolds.config import Config
 from openreynolds.llm.base import ProviderError
@@ -59,6 +60,11 @@ class FakeFoamd:
         self.caps_posted: list[int] = []
         self.execs: list[str] = []
         self.paused_answers = 0
+        self.study_headers: list[tuple[str, str, str | None]] = []
+        """(method, path, X-Study-Id) of every request, as the middleware reads it."""
+        self.spend_at_raise: int | None = None
+        """What the study has spent by the time a raise lands, when the service counts
+        spend this side has not seen (an open sandbox priced to now)."""
 
     @property
     def paused(self) -> bool:
@@ -79,23 +85,42 @@ class FakeFoamd:
         path = request.url.path
         if request.headers.get("authorization") != f"Bearer {self.key}":
             return httpx.Response(401, json={"error": "unauthorized", "message": "no key"})
+        self.study_headers.append((request.method, path, request.headers.get("x-study-id")))
         if path == f"/v1/studies/{STUDY}" and request.method == "GET":
+            # foamd's get_study: the public row plus study_ceiling.view() -- style, the
+            # cap in force, and spent/paused (None when the ledgers cannot be read).
             return httpx.Response(200, json={
                 "id": STUDY, "title": "pipe", "solver": "openfoam", "style": self.style,
                 "cap_cents": self.cap_cents, "spent_cents": self.spent_cents,
+                "paused": self.paused if self.spent_cents is not None else None,
             })
         if path == f"/v1/studies/{STUDY}/cap" and request.method == "POST":
             cents = json.loads(request.content)["cap_cents"]
             self.caps_posted.append(cents)
+            if self.spend_at_raise is not None:
+                self.spent_cents = self.spend_at_raise
             if cents <= self.spent_cents:
                 return httpx.Response(409, json={
                     "error": "conflict",
-                    "message": "the new ceiling must exceed what the study has spent",
+                    "message": (f"the new ceiling must exceed what the study has spent "
+                                f"(${self.spent_cents / 100:.2f}); asked for "
+                                f"${cents / 100:.2f}"),
                 })
             self.cap_cents = cents
+            # Accepted above the spend even when the spend is still past 80% of it,
+            # answered `paused: true` (study_ceiling.set_cap).
             return httpx.Response(200, json={
                 "study_id": STUDY, "cap_cents": cents, "spent_cents": self.spent_cents,
+                "pause_at_cents": round(cents * 0.8, 2), "paused": self.paused,
             })
+        if path == "/v1/instances/inst-1/start":
+            return httpx.Response(200, json={"id": "inst-1", "started_new": True})
+        if path == "/v1/instances/inst-1/files":
+            if request.method == "PUT":
+                return httpx.Response(200, json={"ok": True})
+            return httpx.Response(200, content=b"hello")
+        if path == "/v1/instances/inst-1/jobs" and request.method == "POST":
+            return httpx.Response(201, json={"job_id": "job-1"})
         if path.endswith("/exec"):
             self.execs.append(json.loads(request.content)["cmd"])
             if self.paused:
@@ -481,3 +506,96 @@ def test_a_side_question_never_puts_the_ceiling_to_the_person(tmp_path):
     side = _side_ctx(ctx)
     assert side.approver is None and side.ceiling is None
     assert ctx.approver is not None and ctx.ceiling is not None
+
+
+# -- 4. the study rides on every workspace call --------------------------------------
+
+
+def _named(foamd, method, suffix):
+    return [header for m, path, header in foamd.study_headers
+            if m == method and path.endswith(suffix)]
+
+
+def test_workspace_calls_name_the_study_once_the_session_knows_it():
+    """foamd tags a sandbox start, and judges it against the study's ceiling, by the
+    `X-Study-Id` it names; without one a start is tagged with the workspace's newest
+    study, which on a reused workspace is the previous one."""
+    foamd = FakeFoamd(spent_cents=0)
+    client = foamd.client()
+    backend = HostedBackend(client, "inst-1")
+    backend.exec("true")
+    assert _named(foamd, "POST", "/exec") == [None], "no study yet, none named"
+
+    backend.study_id = STUDY
+    backend.exec("ls")
+    backend.put_file("/work/a.txt", b"a")
+    backend.get_file("/work/a.txt")
+    backend.job_start("felix run case --gpu A100")
+    client.start_instance("inst-1")
+
+    assert _named(foamd, "POST", "/exec")[-1] == STUDY
+    assert _named(foamd, "PUT", "/files") == [STUDY]
+    assert _named(foamd, "GET", "/files") == [STUDY]
+    assert _named(foamd, "POST", "/jobs") == [STUDY], "a solve's job names its study"
+    assert _named(foamd, "POST", "/start") == [STUDY]
+
+
+def test_a_workspace_still_starting_hands_the_study_on_to_its_calls():
+    from openreynolds.backend.pending import PendingBackend
+
+    foamd = FakeFoamd(spent_cents=0)
+    pending = PendingBackend("inst-1")
+    pending.study_id = STUDY
+    pending.resolve(HostedBackend(foamd.client(), "inst-1"))
+    pending.exec("ls")
+    assert _named(foamd, "POST", "/exec") == [STUDY]
+
+
+def test_a_resumed_study_names_itself_on_the_start_too():
+    """A resume knows its study before the workspace is started, so the start is
+    exact rather than the service's guess."""
+    foamd = FakeFoamd(spent_cents=0)
+    client = foamd.client()
+    client.study_id = STUDY
+    hosted.Starter(client, "inst-1").result(timeout=5)
+    assert _named(foamd, "POST", "/start") == [STUDY]
+
+
+# -- 5. what foamd's study routes answer now --------------------------------------------
+
+
+def test_a_raise_the_service_still_counts_as_paused_is_put_again_not_retried(tmp_path):
+    """foamd takes a ceiling above the spend even when the spend is still past 80% of
+    it -- spend this side had not seen, an open sandbox priced to now -- and answers
+    `paused: true`. That is asked again at once, not met as a second 409."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd.spend_at_raise = 900
+    loop, ctx, view, _ = _session(tmp_path, foamd, "11", "/yes")
+    install_model(loop, [
+        message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
+        message([text_block("meshed")]),
+    ])
+    loop.say("mesh it")
+    loop.run()
+
+    assert foamd.caps_posted == [1100, 2200]
+    assert len(view.questions) == 2
+    again = view.questions[1][3]
+    assert "$9.00" in again and "$11.00" in again, "says the service still counts it paused"
+    assert foamd.execs == ["blockMesh", "blockMesh"], "no call went out into a known pause"
+    assert not any("$11.00; carrying on" in n for n in view.notices)
+    assert ctx.stopped is None
+
+
+def test_the_preamble_reads_the_study_record_foamd_sends(tmp_path):
+    """`spent_cents` and `paused` are None when foamd cannot read the ledgers."""
+    foamd = FakeFoamd(spent_cents=None, cap_cents=5000, style="full")
+    ctx = SimpleNamespace(ceiling=ceiling.Ceiling(client=foamd.client(), study_id=STUDY))
+    said = ceiling.preamble(ctx, {"estimate_usd": 12})
+    assert "$12.00" in said and "$50.00" in said and "spent so far" not in said
+
+    foamd = FakeFoamd(spent_cents=850, cap_cents=1000)
+    ctx = SimpleNamespace(ceiling=ceiling.Ceiling(client=foamd.client(), study_id=STUDY))
+    said = ceiling.preamble(ctx, {"estimate_usd": 3})
+    assert "$8.50" in said and "paused" in said.split("pauses at")[-1], \
+        "a study already paused says so before the solve meets it"
