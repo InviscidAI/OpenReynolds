@@ -2041,7 +2041,8 @@ _ALLOWANCE_CASES = {
     "past due": (
         {"tier": "starter", "period_end": _SOON, "renews_at": None,
          "can_enable_overage": False, "can_buy_credits": True, "past_due": True},
-        ["your last payment failed", "update your card on the account page", "buying credits"],
+        ["your last payment failed",
+         "update your card from the account page at https://app.tryreynolds.com", "buying credits"],
         ["overage", "renews", _SOON[:10]], None),
     "no plan": (
         {"tier": None, "period_end": None, "renews_at": None, "can_enable_overage": False,
@@ -2066,7 +2067,7 @@ _ALLOWANCE_CASES = {
     "an older server without renews_at, past due": (
         {"tier": "starter", "period_end": _SOON, "can_enable_overage": False,
          "can_buy_credits": True, "past_due": True},
-        ["your last payment failed"],
+        ["your last payment failed", "account page at https://app.tryreynolds.com"],
         ["renews", _SOON[:10]], None),
     "an older server, a period that has passed": (
         {"tier": "starter", "period_end": _GONE, "can_enable_overage": False},
@@ -2107,7 +2108,8 @@ def test_the_facts_beside_the_message_follow_the_same_fields(case):
     assert ("credits can be bought" in note) == bool(fields.get("can_buy_credits"))
     assert ("pay-as-you-go overage (billed to your card) can be turned on" in note) == bool(
         fields.get("can_enable_overage"))
-    assert ("last payment failed; update your card" in note) == bool(fields.get("past_due"))
+    assert ("last payment failed; update your card from the account page at "
+            "https://app.tryreynolds.com" in note) == bool(fields.get("past_due"))
     assert ("renews" in note) == bool(day), note
     if day:
         assert f"renews {day}" in note

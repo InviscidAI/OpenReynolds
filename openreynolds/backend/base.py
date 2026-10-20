@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ..config import ACCOUNT_PAGE_URL
+
 if TYPE_CHECKING:  # the cell channel's machinery, and only its names, live next door
     from .kernel import CellResult
 
@@ -238,7 +240,8 @@ def extra_note(extra: dict[str, Any] | None) -> str:
     if extra.get("upgrade_to"):
         parts.append(f"upgrade to {_tier_name(extra['upgrade_to'])}")
     if extra.get("past_due"):
-        parts.append("the last payment failed; update your card on the account page")
+        parts.append("the last payment failed; update your card from the account page at "
+                     f"{ACCOUNT_PAGE_URL}")
     day = renewal_day(extra)
     if day:
         parts.append(f"renews {day}")

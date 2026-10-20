@@ -30,7 +30,7 @@ from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
-from .config import Config, config_path
+from .config import ACCOUNT_PAGE_URL, Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
@@ -3304,7 +3304,8 @@ def _allowance_refusal(body: dict[str, Any]) -> str:
     said = ("this period's plan allowance is used up" if planned
             else "there is no allowance left and no active plan")
     if body.get("past_due"):
-        said += " and your last payment failed (update your card on the account page)"
+        said += (" and your last payment failed (update your card from the account page at"
+                 f" {ACCOUNT_PAGE_URL})")
     ways = []
     if body.get("can_buy_credits"):
         ways.append("buying credits")
