@@ -147,8 +147,9 @@ the way a 429 or a cold-start 503 is."""
 def _decode_error(response: httpx.Response) -> BackendError:
     """Decode either error shape the service produces.
 
-    Application errors use `{"error", "message"}`; request-validation failures come from
-    the web framework as a 422 `{"detail": [...]}`.
+    Application errors use `{"error", "message", ...}`, the rest kept as
+    `BackendError.extra`; request-validation failures come from the web framework as a
+    422 `{"detail": [...]}`.
     """
     status = response.status_code
     try:
@@ -158,10 +159,15 @@ def _decode_error(response: httpx.Response) -> BackendError:
         return BackendError(text or f"HTTP {status}", code="http_error", status=status)
 
     if isinstance(body, dict) and "error" in body:
+        # Every field beyond the two is kept: the pricing errors (402
+        # `allowance_exhausted`, 403 `plan_limit`, 409 `study_paused`) carry the facts a
+        # reader acts on there -- the tier to upgrade to, what a study has spent of its
+        # ceiling -- and dropping them left only prose to go on.
         return BackendError(
             str(body.get("message") or body["error"]),
             code=str(body["error"]),
             status=status,
+            extra={k: v for k, v in body.items() if k not in ("error", "message")},
         )
 
     if isinstance(body, dict) and "detail" in body:
@@ -779,8 +785,19 @@ class FoamdClient:
         return _json(self.request("POST", "/v1/studies", json=payload))["study_id"]
 
     def get_study(self, study_id: str) -> dict[str, Any]:
-        """One study as the platform holds it: title, instance_id, home, created_at."""
+        """One study as the platform holds it: title, instance_id, home, created_at --
+        and, from the per-study ceiling on, `cap_cents` and `spent_cents`."""
         return _json(self.request("GET", f"/v1/studies/{study_id}"))
+
+    def raise_study_cap(self, study_id: str, cap_cents: int) -> dict[str, Any]:
+        """`POST /v1/studies/{id}/cap`: set the study's spending ceiling, which lifts a
+        `409 study_paused` once 80% of it is above what is spent. Owner only, and the
+        service refuses a ceiling that does not exceed the spend.
+
+        Repeatable although a POST: it sets a value rather than adding a row, so a
+        second copy of the same request leaves the same ceiling."""
+        return _json(self.request("POST", f"/v1/studies/{study_id}/cap",
+                                  json={"cap_cents": int(cap_cents)}, repeatable=True))
 
     def list_files(self, instance_id: str, path: str) -> dict[str, Any]:
         """The tree under `path`, scoped to the instance: `GET /v1/instances/{id}/

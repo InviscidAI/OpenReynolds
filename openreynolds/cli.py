@@ -21,13 +21,13 @@ from concurrent.futures import ThreadPoolExecutor
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
-from .backend.base import Backend, BackendError, WORKSPACE_ROOT
+from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note
 from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
-from . import convergence, modes, solvers
+from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import Config, config_path
@@ -1480,6 +1480,15 @@ def session(
         mode=cfg.mode,
         solver=settled,
     )
+    if cfg.capture and not local and cfg.foamd_url and cfg.foamd_api_key:
+        # The study's spending ceiling lives on the platform's row for it, so only a
+        # study that has one can meet it. Read late on purpose: a study still choosing
+        # its solver has no row and no client yet, and most never meet a pause.
+        ctx.ceiling = ceiling.Ceiling(
+            client,
+            connect=lambda: hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key),
+            study_id=lambda: store.session.remote_study_id,
+        )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
     # Delivery rides on the mirror: every render that arrives is surfaced into one
@@ -1818,6 +1827,8 @@ def session(
     finally:
         with _timed("close.mirror_stop"):
             live_mirror.stop()
+        if ctx.ceiling is not None:
+            ctx.ceiling.close()
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
         # It runs before anything is stopped: the work comes home first — and it
@@ -3288,16 +3299,42 @@ def _run_turn(loop: Loop, view: View) -> bool:
         try:
             loop.run()
             loop.api_failures = 0
-            loop.blocked_reason = None
+            # A stop at the study's ceiling is a refusal waiting cannot fix, like the
+            # ones below: held until the person speaks (`ceiling.resolve`).
+            loop.blocked_reason = getattr(getattr(loop, "ctx", None), "stopped", None)
             loop.images_dropped = False
             return True
         except ProviderError as exc:
+            pause = ceiling.paused(exc)
+            if pause is not None:
+                # The study met its spending ceiling at the model call itself: the
+                # person's question, not a conflict to wait out (409 is otherwise
+                # transient). Raised, the request goes again at once.
+                loop.settle()
+                if ceiling.resolve(loop.ctx, pause):
+                    continue
+                stopped = loop.ctx.stopped
+                console.print(f"\n[yellow]{stopped}[/]")
+                view.notice(stopped)
+                event = getattr(loop, "event", None)
+                if event is not None:
+                    event(stopped)
+                loop.blocked_reason = stopped
+                view.info("waiting for you - the study is paused at its spending ceiling")
+                return False
             status = exc.status_code
             exc_message = exc.message or ""
+            # The service fronting the model says which plan and what to upgrade to
+            # in fields beside its message (402 `allowance_exhausted`, 403
+            # `plan_limit`); they are said here too, as a workspace call says them.
+            note = extra_note({k: v for k, v in exc.body.items()
+                               if k not in ("error", "message")}) if exc.code else ""
+            if note:
+                exc_message = f"{exc_message} ({note})"
             if status:
-                said = f"The model API returned {status}: {exc.message}"
+                said = f"The model API returned {status}: {exc_message}"
             else:
-                said = f"Could not reach the model API: {exc.message}"
+                said = f"Could not reach the model API: {exc_message}"
             delay = llm_base.retry_delay(exc, attempt)
             console.print()
             console.print(f"[red]{said}[/]")

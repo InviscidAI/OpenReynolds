@@ -6,7 +6,24 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A study's spending ceiling is the person's question.** When the hosted service
+  pauses a study at 80% of its ceiling (`409 study_paused`), on a workspace call or on
+  a model call, the person is asked in any mode: yes doubles the ceiling (`POST
+  /v1/studies/{id}/cap`) and the paused call runs again, a dollar amount sets that
+  ceiling, no stops the study with a final message and asks the model nothing more.
+  Before the first solve the agent's estimate (`job_start`'s new `estimate_usd`) and
+  the study's ceiling are shown; in ask-before-compute mode they are part of the
+  job's question. See docs/modes.md.
+
 ### Changed
+
+- **The service's pricing errors keep their fields.** `BackendError.extra` (and a
+  model call's `ProviderError.body`) carry everything a 4xx body says beyond `error`
+  and `message` -- the tier and `upgrade_to` of a 403 `plan_limit`, the period and
+  overage of a 402 `allowance_exhausted`, the spend and ceiling of a 409
+  `study_paused` -- and the error's text names the plan and the tier to upgrade to.
 
 - **A session's system prompt and tool list no longer change mid-conversation.** A study
   whose solver is `auto` used to start the agent on a solver-choosing prompt with only

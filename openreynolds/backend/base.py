@@ -164,17 +164,60 @@ class BackendError(Exception):
     to the model verbatim in a tool_result, so they should read as facts.
     """
 
-    def __init__(self, message: str, code: str = "backend_error", status: int | None = None):
+    def __init__(self, message: str, code: str = "backend_error", status: int | None = None,
+                 extra: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.extra: dict[str, Any] = dict(extra or {})
+        """Every other top-level field of the service's error body. The pricing errors
+        carry their facts here -- 402 `allowance_exhausted` (tier, period_end,
+        can_enable_overage), 403 `plan_limit` (limit, value, allowed, tier,
+        upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents) -- and a
+        reader branches on these, never on the prose in `message`."""
 
     def __str__(self) -> str:
         prefix = f"{self.code}"
         if self.status is not None:
             prefix += f" ({self.status})"
-        return f"{prefix}: {self.message}"
+        note = extra_note(self.extra)
+        return f"{prefix}: {self.message}" + (f" ({note})" if note else "")
+
+
+def _tier_name(tier: Any) -> str:
+    return str(tier).replace("_", " ").title()
+
+
+def extra_note(extra: dict[str, Any] | None) -> str:
+    """The pricing fields of an error body, said in a few words: which plan, what to
+    upgrade to, when the allowance renews, what a study has spent of its ceiling.
+
+    Said beside the service's own message rather than instead of it, because that
+    message is prose and may change; these are the fields the contract fixes. Empty
+    for a body that carries none of them, so every other error reads as it always did.
+    Shared by `BackendError` and the model path (`cli._run_turn`), whose refusals come
+    from the same service."""
+    if not extra:
+        return ""
+    parts = []
+    if extra.get("tier"):
+        parts.append(f"plan: {_tier_name(extra['tier'])}")
+    elif "tier" in extra and ("can_enable_overage" in extra or "upgrade_to" in extra):
+        parts.append("no plan")
+    if extra.get("limit") and extra.get("allowed") is not None:
+        parts.append(f"{extra['limit']} allowed up to {extra['allowed']}")
+    if extra.get("upgrade_to"):
+        parts.append(f"upgrade to {_tier_name(extra['upgrade_to'])}")
+    if extra.get("period_end"):
+        parts.append(f"renews {str(extra['period_end'])[:10]}")
+    if extra.get("can_enable_overage"):
+        parts.append("overage can be turned on")
+    if isinstance(extra.get("spent_cents"), (int, float)) and isinstance(
+            extra.get("cap_cents"), (int, float)):
+        parts.append(f"spent ${extra['spent_cents'] / 100:.2f} of a "
+                     f"${extra['cap_cents'] / 100:.2f} ceiling")
+    return "; ".join(parts)
 
 
 @runtime_checkable

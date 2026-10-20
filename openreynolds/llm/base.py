@@ -31,6 +31,32 @@ class ProviderError(Exception):
         self.message = message
         self.status_code = status_code
 
+    @property
+    def body(self) -> dict[str, Any]:
+        """The JSON error body the API answered with, or {} when there was none.
+
+        Read off the SDK error this was raised from (every provider raises `from` it,
+        the same chain `retry_after` reads), so no provider has to carry it across. It
+        matters on the `reynolds` preset, where the model is fronted by the workspace
+        service and a refusal is one of its own: 402 `allowance_exhausted`, 403
+        `plan_limit`, 409 `study_paused`, each with fields beyond the message."""
+        cause = self.__cause__
+        response = getattr(cause, "response", None)
+        try:
+            parsed = response.json() if response is not None else None
+        except Exception:  # noqa: BLE001 - a body that is not JSON is simply no body
+            parsed = None
+        if not isinstance(parsed, dict):
+            parsed = getattr(cause, "body", None)
+        return parsed if isinstance(parsed, dict) else {}
+
+    @property
+    def code(self) -> str:
+        """The service's machine-readable `error` token, when it sent one as a string
+        (the workspace service does; a vendor's `error` is an object, and is not one)."""
+        code = self.body.get("error")
+        return code if isinstance(code, str) else ""
+
 
 TRANSIENT_STATUSES = frozenset({408, 409, 425, 429})
 """The 4xx answers worth asking again: a timeout, a conflict, a rate limit. Every other
@@ -54,8 +80,18 @@ MAX_RETRY_AFTER = 300.0
 """The most a `Retry-After` header may stretch one wait to."""
 
 
+NOT_TRANSIENT_CODES = frozenset({"study_paused"})
+"""Service error codes that waiting does not change, whatever their status says.
+
+`study_paused` is a 409, and a 409 is in `TRANSIENT_STATUSES`; but a study paused at
+its spending ceiling stays paused until a person raises the ceiling, so asking again
+over four minutes would only be refused five more times (`ceiling.py`)."""
+
+
 def transient(exc: ProviderError) -> bool:
     """Whether asking again could get a different answer."""
+    if getattr(exc, "code", "") in NOT_TRANSIENT_CODES:
+        return False
     status = exc.status_code
     return status is None or status >= 500 or status in TRANSIENT_STATUSES
 

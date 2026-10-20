@@ -14,7 +14,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from typing import Any, Callable
 
-from . import modes, solvers
+from . import ceiling, modes, solvers
 from .config import CONTEXT_REFRESH_FRACTION, CONTEXT_WINDOW_TOKENS, Config
 from .llm import BadRequest, Listener, Turn, make_provider, refusal_line
 from .prompt import system_prompt
@@ -64,6 +64,12 @@ NOT_RUN_LEFT = "This call did not run: the person ended the session."
 """The result of a tool call the model asked for and the turn did not start, because the
 person had left by the time it was reached. The shape `settle` gives an interrupted
 turn's calls, so the thread stays one the API would accept."""
+
+
+NOT_RUN_STOPPED = ("This call did not run: the study met its spending ceiling and the "
+                   "ceiling was not raised, so the study stopped.")
+"""The result of a call the turn did not start because an earlier one in the batch met
+the study's ceiling and the person did not raise it (`ceiling.resolve`)."""
 
 
 class Loop:
@@ -355,6 +361,10 @@ class Loop:
         # the side chat's `forward`, and to anything asking whether the agent is busy.
         with self._posted_lock:
             self.running = True
+        # A stop at the ceiling is this turn's, not the session's: the person speaking
+        # again is what starts the next one, and if the study is still paused the
+        # first call says so and the question is asked again.
+        self.ctx.stopped = None
         try:
             if getattr(self.ctx, "solver", None) == solvers.AUTO and self.router is not None:
                 self._route()
@@ -455,6 +465,12 @@ class Loop:
                         self.view.tool(block.name, _summarize(block.input))
                         results.append(self._result(block, NOT_RUN_LEFT, True))
                         continue
+                    if getattr(self.ctx, "stopped", None):
+                        # An earlier call in this batch met the ceiling and it was
+                        # not raised: the rest are answered, not run.
+                        self.view.tool(block.name, _summarize(block.input))
+                        results.append(self._result(block, NOT_RUN_STOPPED, True))
+                        continue
                     results.append(self._run_tool(block))
 
                 # One round of think-then-act is over. Marking where each ends is what
@@ -474,6 +490,11 @@ class Loop:
                     results.append({"type": "text", "text": said})
                     self.view.interjection(said)
                     self._record("user", said)
+                stopped = getattr(self.ctx, "stopped", None)
+                if stopped:
+                    # In the thread after the results, so a resume reads why the turn
+                    # ended, and in the transcript as an event.
+                    self.tell(stopped)
                 if self.leaving:
                     # Said once, here, where the turn actually stops: in the thread as
                     # a harness note after this batch's results, and in the transcript
@@ -485,6 +506,13 @@ class Loop:
                 self._mid_turn = False
 
             self.messages.append({"role": "user", "content": results})
+
+            if getattr(self.ctx, "stopped", None):
+                # The study met its ceiling and it was not raised. Every later request
+                # would be refused at the service's proxy, so the model is not asked
+                # again; the final word is the harness's.
+                self.view.notice(self.ctx.stopped)
+                return response
 
             if self.leaving:
                 # The turn ends here rather than at the model's next reply. The thread
@@ -739,7 +767,7 @@ class Loop:
         self._account(response)
         return response
 
-    def _consult(self, name: str, tool_input: dict[str, Any]) -> str | None:
+    def _consult(self, name: str, tool_input: dict[str, Any], before: str = "") -> str | None:
         """None when this call may run; otherwise the tool result saying why it did not.
 
         The only place a tool call is ever held, and it holds only what the person
@@ -756,6 +784,8 @@ class Loop:
             return (f"This {name} call did not run: the session is in ask-before-compute "
                     "mode and nobody is here to answer.")
         title, detail = _question(name, tool_input, self.ctx.home)
+        if before:
+            detail = f"{before}\n{detail}"
         self._busy("waiting")
         try:
             decision = self.approver.ask("job", title, detail)
@@ -773,7 +803,8 @@ class Loop:
         self.view.tool(block.name, _summarize(block.input))
         tool_input = dict(block.input)
         offered = block.name in {tool["name"] for tool in tools_for(self.ctx)}
-        refused = self._consult(block.name, tool_input) if offered else None
+        before = self._before_first_solve(block.name, tool_input) if offered else ""
+        refused = self._consult(block.name, tool_input, before) if offered else None
         if not offered:
             # Not offered is not served: the same answer as a tool that does not exist.
             # Before the solver is chosen this is every machine tool, and serving one
@@ -792,6 +823,22 @@ class Loop:
         else:
             content, is_error = self._dispatch(block, tool_input)
         return self._result(block, content, is_error)
+
+    def _before_first_solve(self, name: str, tool_input: dict[str, Any]) -> str:
+        """The estimate and the study's ceiling, said before the session's first solve
+        (`ceiling.preamble`). A message in the transcript, not a question -- unless the
+        person chose to approve compute, when it is returned to go in the job's
+        question instead. Empty when there is nothing to say."""
+        if name != "job_start":
+            return ""
+        line = ceiling.preamble(self.ctx, tool_input)
+        if not line:
+            return ""
+        if self.ctx.mode == modes.PARTIAL and self.approver is not None:
+            return line
+        self.view.notice(line)
+        self._record("event", line)
+        return ""
 
     def _dispatch(self, block: Any, tool_input: dict[str, Any]) -> tuple[Any, bool]:
         self._busy(

@@ -197,7 +197,7 @@ class View(Protocol):
 
     def approval(self, request_id: str, kind: str, title: str, detail: str, choices: list[str]) -> None:
         """A question for the person, because they chose to be consulted (`modes.py`).
-        `kind` is job or checkpoint. The answer arrives as a typed line; the view
+        `kind` is job, checkpoint or ceiling. The answer arrives as a typed line; the view
         only has to make the question impossible to miss."""
 
     def approval_done(self, request_id: str, outcome: str, note: str = "") -> None:
@@ -519,6 +519,8 @@ class ConsoleView(View):
         answer = "y approve / n decline (or say why) / a approve all"
         if kind == "checkpoint":
             answer = "y approve / n or say what to change / a approve all"
+        elif kind == "ceiling":
+            answer = "y raise it / a dollar amount for another ceiling / n stop the study"
         self.console.print(f"[yellow]{answer}[/]", highlight=False)
         self.console.print(f"[bold yellow]{rule}[/]", highlight=False)
 

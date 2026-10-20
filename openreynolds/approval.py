@@ -25,7 +25,7 @@ from typing import Any, Callable
 
 from . import commands
 
-KINDS = ("job", "checkpoint")
+KINDS = ("job", "checkpoint", "ceiling")
 
 APPROVED = "approved"
 DECLINED = "declined"
@@ -68,6 +68,11 @@ class Decision:
 def choices_for(kind: str) -> list[str]:
     if kind == "checkpoint":
         return ["approve", "ask for changes", "approve all"]
+    if kind == "ceiling":
+        # A study paused at its spending ceiling (`ceiling.py`). Asked in every mode,
+        # since it is the person's money; "all" means no more than yes here, and a
+        # typed dollar amount is a ceiling of their own.
+        return ["raise the ceiling", "stop the study"]
     return ["approve", "decline", "approve all"]
 
 

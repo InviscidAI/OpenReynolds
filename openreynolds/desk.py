@@ -513,12 +513,15 @@ def _side_ctx(ctx: Any) -> Any:
     """The main tool context, for a side call: the same workspace and store, none of
     the main thread's own bookkeeping. `echoes` is the main thread's record of what it
     has been shown; a side read entered there would make the main agent's next read of
-    the same bytes answer with a pointer to a call it never saw."""
+    the same bytes answer with a pointer to a call it never saw. Nor does a side call
+    put a study's spending ceiling to the person (`ceiling.resolve`): that question
+    belongs to the conversation, and a side read that meets the pause just says so."""
     if not dataclasses.is_dataclass(ctx):
         return ctx
     return dataclasses.replace(
         ctx, echoes={}, calls=0, view=None, on_render=None, on_fetch=None,
         on_wait_input=None, on_leaving=None, on_tokens=None, on_mode=None,
+        approver=None, ceiling=None,
     )
 
 
