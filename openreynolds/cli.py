@@ -3295,10 +3295,10 @@ def _allowance_refusal(body: dict[str, Any]) -> str:
     """What a 402 `allowance_exhausted` means for this account, from its fields (D15).
 
     Each way on is offered only when the body says it is open: credits when
-    `can_buy_credits`, postpaid overage when `can_enable_overage`, a renewal day only
-    while `period_end` is ahead, and the card when `past_due`. One sentence for every
-    account told a trial to turn on overage it could not have, and named renewals that
-    had passed. A service from before D15 sends no `can_buy_credits` and gets no
+    `can_buy_credits`, pay-as-you-go overage when `can_enable_overage`, a renewal day
+    only from `renews_at` (D18, `renewal_day`), and the card when `past_due`. One
+    sentence for every account told a trial to turn on overage it could not have, and
+    named renewals that had passed or would never come. A service from before D15 sends no `can_buy_credits` and gets no
     credit offer; its fields otherwise read the same."""
     planned = bool(body.get("tier"))
     said = ("this period's plan allowance is used up" if planned
@@ -3309,7 +3309,7 @@ def _allowance_refusal(body: dict[str, Any]) -> str:
     if body.get("can_buy_credits"):
         ways.append("buying credits")
     if body.get("can_enable_overage"):
-        ways.append("turning on overage (billed to your card)")
+        ways.append("turning on pay-as-you-go overage (billed to your card)")
     ways.append("a bigger plan" if planned else "picking a plan")
     on = ways[0] if len(ways) == 1 else f"{', '.join(ways[:-1])} or {ways[-1]}"
     day = renewal_day(body)

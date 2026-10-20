@@ -191,8 +191,8 @@ def test_a_402_keeps_the_tier_the_period_and_whether_overage_can_be_turned_on():
     from datetime import datetime, timedelta, timezone
 
     ends = (datetime.now(timezone.utc) + timedelta(days=20)).isoformat()
-    fields = {"tier": "starter", "period_end": ends, "can_enable_overage": True,
-              "can_buy_credits": True, "past_due": False}
+    fields = {"tier": "starter", "period_end": ends, "renews_at": ends,
+              "can_enable_overage": True, "can_buy_credits": True, "past_due": False}
     error = _decode_error(_response(402, {
         "error": "allowance_exhausted",
         "message": "this period's Starter allowance is used up.", **fields,
@@ -201,7 +201,8 @@ def test_a_402_keeps_the_tier_the_period_and_whether_overage_can_be_turned_on():
     assert error.extra == fields
     said = str(error)
     assert "Starter" in said and ends[:10] in said
-    assert "credits can be bought" in said and "overage (billed to your card)" in said
+    assert "credits can be bought" in said
+    assert "pay-as-you-go overage (billed to your card)" in said
 
 
 def test_a_403_plan_limit_names_the_tier_to_upgrade_to():

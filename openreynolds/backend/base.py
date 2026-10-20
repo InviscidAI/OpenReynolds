@@ -174,7 +174,7 @@ class BackendError(Exception):
         self.extra: dict[str, Any] = dict(extra or {})
         """Every other top-level field of the service's error body. The pricing errors
         carry their facts here -- 402 `allowance_exhausted` (tier, period_end,
-        can_enable_overage, can_buy_credits, past_due), 403 `plan_limit` (limit, value, allowed, tier,
+        renews_at, can_enable_overage, can_buy_credits, past_due), 403 `plan_limit` (limit, value, allowed, tier,
         upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents) -- and a
         reader branches on these, never on the prose in `message`."""
 
@@ -193,13 +193,19 @@ def _tier_name(tier: Any) -> str:
 def renewal_day(extra: dict[str, Any] | None, now: datetime | None = None) -> str | None:
     """The day a spent allowance renews (`YYYY-MM-DD`), or None when none is coming.
 
-    Only a `period_end` still ahead of `now` is a renewal: a service from before D15
-    sent the stored period's end even when it had passed, and a past-due account's
-    renewal is waiting on a payment that failed. An unreadable date is no date."""
-    if not extra or extra.get("past_due") or not extra.get("period_end"):
+    Named only from `renews_at` (D18): the day the allowance refills on its own, which
+    the service leaves null for a work trial, a plan set to cancel, a past-due account
+    and no plan at all. `period_end` is that period's end, not a promise -- a work trial
+    and a cancel-scheduled plan were told "it renews on" it. A service from before D18
+    sends no `renews_at`, and only then is `period_end` read, while it is still ahead
+    and the account is not past due. A day not ahead of `now`, or not a date, is none."""
+    if not extra or extra.get("past_due"):
+        return None
+    when = extra["renews_at"] if "renews_at" in extra else extra.get("period_end")
+    if not when:
         return None
     try:
-        end = datetime.fromisoformat(str(extra["period_end"]).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(when).replace("Z", "+00:00"))
     except ValueError:
         return None
     if end.tzinfo is None:
@@ -212,7 +218,7 @@ def renewal_day(extra: dict[str, Any] | None, now: datetime | None = None) -> st
 def extra_note(extra: dict[str, Any] | None) -> str:
     """The pricing fields of an error body, said in a few words: which plan, what to
     upgrade to, when the allowance renews (only while that day is ahead), whether
-    credits can be bought or postpaid overage turned on, a payment that failed, what a
+    credits can be bought or pay-as-you-go overage turned on, a payment that failed, what a
     study has spent of its ceiling.
 
     Said beside the service's own message rather than instead of it, because that
@@ -239,7 +245,7 @@ def extra_note(extra: dict[str, Any] | None) -> str:
     if extra.get("can_buy_credits"):
         parts.append("credits can be bought")
     if extra.get("can_enable_overage"):
-        parts.append("overage (billed to your card) can be turned on")
+        parts.append("pay-as-you-go overage (billed to your card) can be turned on")
     if isinstance(extra.get("spent_cents"), (int, float)) and isinstance(
             extra.get("cap_cents"), (int, float)):
         parts.append(f"spent ${extra['spent_cents'] / 100:.2f} of a "

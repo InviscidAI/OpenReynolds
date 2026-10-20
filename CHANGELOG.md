@@ -24,6 +24,10 @@ All notable changes to this project are recorded here. The format follows
   and `message` -- the tier and `upgrade_to` of a 403 `plan_limit`, the period and
   overage of a 402 `allowance_exhausted`, the spend and ceiling of a 409
   `study_paused` -- and the error's text names the plan and the tier to upgrade to.
+  A spent allowance names a renewal day only from the 402's `renews_at`, so a work
+  trial, a plan set to cancel and a past-due account are no longer told it renews
+  (an older service without `renews_at` falls back to a `period_end` still ahead);
+  the postpaid mode is called pay-as-you-go overage and the prepaid one credits.
 
 - **Workspace calls name their study.** Once a session knows its study, every call
   to the hosted service carries `X-Study-Id` -- sandbox start, exec, files and jobs, a
