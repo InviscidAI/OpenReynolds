@@ -40,8 +40,8 @@ def _felix_job(backend, store, text: str, *, status: str = "running", exit_code=
     return job_id
 
 
-def _expected(text: str, nsteps: int | None = 30) -> list[str]:
-    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), nsteps)
+def _expected(text: str, last_step: int | None = 30) -> list[str]:
+    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), last_step)
 
 
 @pytest.fixture
@@ -68,6 +68,15 @@ def test_job_check_gives_a_felix_job_the_felix_reading(felix, backend, store, fi
 
 def test_job_check_reads_nsteps_from_the_case_control_yaml(felix, backend, store):
     job_id = _felix_job(backend, store, _log("cavity_small.stderr"))
+    content, _ = dispatch(felix, "job_check", {"job_id": job_id})
+    assert "step 30 / 30" in content
+
+
+def test_job_check_counts_a_continued_job_against_the_whole_run(felix, backend, store):
+    """`felix continue` left `nsteps` at what remains; the step in the log is the run's."""
+    job_id = _felix_job(backend, store, _log("cavity_small.stderr"))
+    backend.files[f"{CASE}/control.yaml"] = b"dt: 0.05\nnsteps: 10\n"
+    backend.files[f"{CASE}/io.yaml"] = b"warm_start: output/snapshot_000020.vtu\n"
     content, _ = dispatch(felix, "job_check", {"job_id": job_id})
     assert "step 30 / 30" in content
 

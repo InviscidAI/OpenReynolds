@@ -279,8 +279,8 @@ def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
     """A Felix solve's job in a few lines (`felix_progress.summary_lines`), for
     `job_check` and the job-end wake; None for any other command.
 
-    The log is the job's own; `nsteps` is the case's control.yaml, found from the
-    `felix run|continue <case>` in the command."""
+    The log is the job's own; the step it runs to is the case's (`last_step`), found
+    from the `felix run|continue <case>` in the command."""
     from . import felix_progress
 
     if not felix_progress.is_felix_cmd(cmd):
@@ -290,15 +290,16 @@ def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
         text, _next, _eof = backend.job_tail(job_id, offset=max(0, size - FELIX_LOG_TAIL_BYTES))
     except BackendError:
         return None
-    nsteps = None
-    case_dir = felix_progress.case_dir_from_felix_cmd(cmd, cwd)
-    if case_dir:
+
+    def read(path: str) -> str | None:
         try:
-            control = backend.get_file(f"{case_dir}/control.yaml", limit=32_000)
+            return backend.get_file(path, limit=32_000).decode("utf-8", "replace")
         except (BackendError, OSError, KeyError):
-            control = b""
-        nsteps = felix_progress.nsteps_from_control(control.decode("utf-8", "replace"))
-    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), nsteps)
+            return None
+
+    case_dir = felix_progress.case_dir_from_felix_cmd(cmd, cwd)
+    last_step = felix_progress.last_step(read, case_dir) if case_dir else None
+    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), last_step)
 
 
 def phase_from_cmd(cmd: str) -> tuple[str, str]:
@@ -382,7 +383,8 @@ class JobProgress:
     step: int | None = None
     """A Felix job's last completed step; Felix counts steps, not an end time."""
     end_step: int | None = None
-    """control.yaml `nsteps` of a Felix job (a PTC run may stop before it)."""
+    """The step a Felix job runs to: control.yaml `nsteps` past the warm start's step
+    (`felix_progress.last_step`). A PTC run may stop before it."""
     felix: Any = None
     """The `felix_progress.FelixFacts` of a Felix job, for the wake line."""
 
@@ -640,42 +642,54 @@ class Tracker:
         return progress
 
     def _felix_bounds(self, record: Any, progress: JobProgress) -> None:
-        """A Felix job's step against control.yaml `nsteps`, and the time left at
-        the solver's own wall time per step -- labelled an estimate, like the
-        OpenFOAM one. Felix's case has no controlDict; its bound is a step count."""
+        """A Felix job's step against the step its run ends at (`last_step`), and the
+        time left at the solver's own wall time per step -- labelled an estimate,
+        like the OpenFOAM one. Felix's case has no controlDict; its bound is a step
+        count."""
         from . import felix_progress
 
         felix = progress.felix
         case_dir = felix_progress.case_dir_from_felix_cmd(
             record.cmd, getattr(record, "cwd", "") or self.home)
         if case_dir:
-            progress.end_step = self._felix_nsteps(case_dir)
+            progress.end_step = self._felix_last_step(record.job_id, case_dir)
+        if progress.end_step and felix is not None and felix.step is not None \
+                and felix.step > progress.end_step:
+            # A step past the end means the case was misread (a warm start not
+            # named snapshot_<step>.vtu, YAML the line reader does not follow): say
+            # the step alone rather than a total it has already passed.
+            progress.end_step = None
         if progress.end_step and felix is not None and felix.step is not None:
             progress.fraction = max(0.0, min(1.0, felix.step / progress.end_step))
-            if felix.wall_time and 0 < felix.step < progress.end_step \
+            if felix.wall_step_mean and felix.step < progress.end_step \
                     and felix.outcome == "running":
-                progress.eta_s = (progress.end_step - felix.step) * felix.wall_time / felix.step
+                progress.eta_s = (progress.end_step - felix.step) * felix.wall_step_mean
 
-    def _felix_nsteps(self, case_dir: str) -> int | None:
-        """`nsteps` from the case's control.yaml, from the mirror when it is here,
-        else from the instance; remembered like a controlDict."""
+    def _felix_last_step(self, job_id: str, case_dir: str) -> int | None:
+        """`felix_progress.last_step` for a job's case, from the mirror when it is
+        here, else from the instance. Remembered per job, not per case: a case is
+        edited between its solves (`felix continue` rewrites `nsteps` and
+        `warm_start`), and one job's reading is not the next one's."""
         from . import felix_progress
 
         now = time.monotonic()
-        key = f"felix:{case_dir}"
+        key = f"felix:{job_id}:{case_dir}"
         cached = self._control.get(key)
         if cached and now - cached[0] < CONTROL_DICT_TTL_S:
-            return cached[1].get("nsteps")
-        path = f"{case_dir}/control.yaml"
-        text = self._read_local(path)
-        if text is None and self.backend is not None:
-            try:
-                text = self.backend.get_file(path, limit=32_000).decode("utf-8", "replace")
-            except (BackendError, OSError):
-                text = None
-        nsteps = felix_progress.nsteps_from_control(text) if text else None
-        self._control[key] = (now, {"nsteps": nsteps})
-        return nsteps
+            return cached[1]["last_step"]
+
+        def read(path: str) -> str | None:
+            text = self._read_local(path)
+            if text is None and self.backend is not None:
+                try:
+                    text = self.backend.get_file(path, limit=32_000).decode("utf-8", "replace")
+                except (BackendError, OSError):
+                    text = None
+            return text
+
+        last = felix_progress.last_step(read, case_dir)
+        self._control[key] = (now, {"last_step": last})
+        return last
 
     def _estimate(self, progress: JobProgress) -> None:
         """Fraction and time left, from what the log and the controlDict say.
