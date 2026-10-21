@@ -40,8 +40,8 @@ def _felix_job(backend, store, text: str, *, status: str = "running", exit_code=
     return job_id
 
 
-def _expected(text: str, nsteps: int | None = 30) -> list[str]:
-    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), nsteps)
+def _expected(text: str, last_step: int | None = 30) -> list[str]:
+    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), last_step)
 
 
 @pytest.fixture

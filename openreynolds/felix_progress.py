@@ -246,8 +246,11 @@ def last_step(read: Any, case_dir: str) -> int | None:
     has it. `case.yaml` names the control and io files; control.yaml and io.yaml
     when it does not."""
     case = read(f"{case_dir}/case.yaml") or ""
-    control = read(posixpath.join(case_dir, _top_value("control", case) or "control.yaml"))
+    # io before control: `prepare_restart` writes them in that order, so a reading
+    # that falls between its two writes pairs the old warm start with the new
+    # nsteps (short) rather than the new warm start with the old nsteps (long).
     io = read(posixpath.join(case_dir, _top_value("io", case) or "io.yaml"))
+    control = read(posixpath.join(case_dir, _top_value("control", case) or "control.yaml"))
     nsteps = nsteps_from_control(control) if control else None
     if nsteps is None:
         return None

@@ -653,6 +653,12 @@ class Tracker:
             record.cmd, getattr(record, "cwd", "") or self.home)
         if case_dir:
             progress.end_step = self._felix_last_step(record.job_id, case_dir)
+        if progress.end_step and felix is not None and felix.step is not None \
+                and felix.step > progress.end_step:
+            # A step past the end means the case was misread (a warm start not
+            # named snapshot_<step>.vtu, YAML the line reader does not follow): say
+            # the step alone rather than a total it has already passed.
+            progress.end_step = None
         if progress.end_step and felix is not None and felix.step is not None:
             progress.fraction = max(0.0, min(1.0, felix.step / progress.end_step))
             if felix.wall_step_mean and felix.step < progress.end_step \

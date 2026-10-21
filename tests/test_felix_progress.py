@@ -348,6 +348,26 @@ def test_a_continued_felix_job_counts_against_the_whole_run(backend, store, view
     assert "step 20 / 30" in tracker.snapshot().headline
 
 
+def test_a_step_past_the_total_shows_no_total(backend, store, view):
+    """A warm start the reader cannot place counts the run from 0; when the log has
+    already passed that total, the bar shows the step and no percentage, rather than
+    the 100% of ui#44."""
+    from openreynolds.progress import Tracker
+
+    steps = [ln for ln in log("cavity_small.stderr").splitlines() if ln.startswith("step=")]
+    backend.files[f"{HOME}/cavity/control.yaml"] = b"dt: 0.05\nnsteps: 15\n"
+    backend.files[f"{HOME}/cavity/io.yaml"] = b"warm_start: initial_state.vtu\n"
+    start_felix(backend, store, "\n".join(steps[15:20]) + "\n")
+    tracker = Tracker(view, backend=backend, store=store, home=HOME)
+
+    [job] = tracker.refresh_jobs(force=True)
+
+    assert job.step == 20 and job.end_step is None
+    assert job.fraction is None and job.eta_s is None
+    assert "step 20" in tracker.snapshot().headline
+    assert "/ 15" not in tracker.snapshot().headline
+
+
 def test_a_felix_job_tells_the_wake_its_step_and_any_error(backend, store, view):
     from openreynolds.progress import Tracker
 
