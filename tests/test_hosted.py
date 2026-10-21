@@ -1586,3 +1586,37 @@ def test_acquire_creates_one_workspace_when_the_account_holds_none(monkeypatch):
     assert chosen == "iid-new"
     assert client.created == 1
     assert backend.instances_held == 1
+
+
+# -- End's checkpoint (#51) ---------------------------------------------------------
+
+
+def test_a_checkpoint_asks_for_the_paths_and_waits_for_the_copy():
+    import json as _json
+
+    from openreynolds.backend.hosted import HostedBackend
+
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"id": "inst-1", "status": "running", "checkpoint": {
+            "files": 4, "manifest_key": "ws/manifest.json", "taken_at": "2026-10-21T10:00:00Z"}})
+
+    backend = HostedBackend(_client_against(httpx.MockTransport(handler)), "inst-1")
+    answer = backend.checkpoint(["/work/s1"], timeout_s=60)
+    assert answer["checkpoint"]["taken_at"] == "2026-10-21T10:00:00Z"
+    assert [(r.method, r.url.path) for r in seen] == [("POST", "/v1/instances/inst-1/checkpoint")]
+    assert _json.loads(seen[0].content) == {"paths": ["/work/s1"], "timeout_s": 60}
+
+
+def test_a_checkpoint_that_failed_is_raised_with_the_services_reason():
+    from openreynolds.backend.base import BackendError
+    from openreynolds.backend.hosted import HostedBackend
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(502, json={
+        "error": "checkpoint_failed", "message": "the workspace could not be copied: S3 AccessDenied"}))
+    backend = HostedBackend(_client_against(transport), "inst-1")
+    with pytest.raises(BackendError) as raised:
+        backend.checkpoint(["/work/s1"], timeout_s=60)
+    assert "AccessDenied" in raised.value.message

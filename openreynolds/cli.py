@@ -2745,6 +2745,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
 
     live = store.live_jobs()
     if keep_alive:
+        _checkpoint_the_study(backend, store)
         if live:
             names = ", ".join(job.name or job.job_id[:8] for job in live)
             console.print(f"[yellow]{len(live)} job(s) still running:[/] {names}")
@@ -2795,6 +2796,11 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     model or on its person): its next call starts a fresh container, the volume and its
     files untouched. Only a study with no directory of its own, which the probe cannot
     tell apart from anyone else's, still leaves a joined workspace up."""
+    if shared or running:
+        # Left up, so nothing but this copies the study now; a workspace put down
+        # below is copied in full by its own stop, and asking first would only queue
+        # behind the full pass the daemon starts when the stopped jobs end.
+        _checkpoint_the_study(backend, store)
     if shared:
         # Somebody else's session is working on this workspace right now (or, for a study
         # with no directory of its own, had it up and cannot be ruled out), so it is
@@ -2846,8 +2852,80 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
         except BackendError as exc:
             console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
+            # Still up, so its stop's full copy has not happened either.
+            _checkpoint_the_study(backend, store)
 
     console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+
+
+END_CHECKPOINT_TIMEOUT_S = 45.0
+"""How long End asks the service to wait for the workspace's durable copy. A study
+directory whose report is the only thing new copies in seconds; what takes longer is
+a case still being written, which the next checkpoint overtakes anyway. Kept short
+because the hosted runner's End has to fit, with its own copy to the studies bucket,
+inside the 110 s a fleet drain gives it."""
+
+UNSUPPORTED_CHECKPOINT = frozenset({404, 501})
+"""A service without the route (404) or with no copy to bring up to date (501, a
+Modal workspace): said once, quietly, and recorded, not raised as an alarm on every
+End -- what it means is that End is as it was before the route existed."""
+
+
+def _checkpoint_the_study(backend: Backend, store: Store) -> None:
+    """Copy this study's directory to the service's durable copy before End says the
+    files are kept, and record what that established (OpenReynolds#51).
+
+    The workspace volume is not that copy. At a session cap above one the hosted End
+    leaves the workspace up for the reaper, and the service copied a workspace to S3
+    only while jobs ran and when it was stopped -- so a report the agent wrote in its
+    last turn sat on the volume alone until the reaper came, five minutes in one
+    production study, and an instance lost in that time would have taken it along.
+
+    Asked for the study's home, not the workspace: a study's End has no business
+    waiting on a neighbour's case. A backend with nothing to copy to (a local
+    workspace is the directory itself) is not asked. A copy that fails or runs out of
+    time is said plainly and recorded as such, never taken as done; the files are
+    still on the volume, which End never deletes."""
+    checkpoint = getattr(backend, "checkpoint", None)
+    if checkpoint is None:
+        return
+    home = store.session.home or WORKSPACE_ROOT
+    record: dict[str, Any] = {"asked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    try:
+        answer = checkpoint([home], timeout_s=END_CHECKPOINT_TIMEOUT_S)
+    except BackendError as exc:
+        if exc.status in UNSUPPORTED_CHECKPOINT:
+            record["unsupported"] = True
+            console.print("[dim]the service cannot copy a workspace on request; "
+                          "the files are on the workspace volume[/]")
+            store.session.checkpoint = record
+            store.save()
+            return
+        record["error"] = exc.message
+        console.print(
+            "[yellow]could not confirm this study's files reached durable storage "
+            f"({exc.message}); they are still on the workspace volume[/]"
+        )
+    else:
+        if answer is None:
+            return
+        copied = answer.get("checkpoint") or {}
+        if answer.get("status") == "stopped":
+            record["stopped"] = True
+            console.print("[dim]the workspace was already stopped; nothing has written to it since its stop[/]")
+        elif not copied.get("manifest_key"):
+            record["error"] = "the service answered without a checkpoint"
+            console.print(
+                "[yellow]could not confirm this study's files reached durable storage "
+                "(the service answered without a checkpoint); they are still on the workspace volume[/]"
+            )
+        else:
+            # `files` is the whole workspace as the copy's listing counts it;
+            # `uploaded` is what this copy actually sent.
+            record.update({key: copied.get(key) for key in ("taken_at", "manifest_key", "files", "uploaded")})
+            console.print(f"[dim]files copied to durable storage at {copied.get('taken_at') or 'an unrecorded time'}[/]")
+    store.session.checkpoint = record
+    store.save()
 
 
 def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: bool = False) -> None:

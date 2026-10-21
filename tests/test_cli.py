@@ -975,6 +975,138 @@ def test_keep_alive_leaves_it_up_and_says_what_it_is_choosing(store, quiet_conso
     assert store.live_jobs(), "the job is still going, which is the point of the flag"
 
 
+class Checkpointing(Stoppable):
+    """A hosted-shaped backend that also copies to durable storage on request."""
+
+    def __init__(self, answer=None, error=None, order=None, **kwargs):
+        super().__init__(**kwargs)
+        self.answer = answer if answer is not None else {"id": "i", "status": "running", "checkpoint": {
+            "files": 9, "manifest_key": "ws/manifest.json", "taken_at": "2026-10-21T10:00:00Z"}}
+        self.error = error
+        self.asked: list[tuple[list[str], float]] = []
+        self.order = order if order is not None else []
+
+    def checkpoint(self, paths, timeout_s=90.0):
+        self.order.append("checkpoint")
+        self.asked.append((paths, timeout_s))
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+    def shutdown(self):
+        self.order.append("shutdown")
+        super().shutdown()
+
+
+def _recorded(store):
+    import json as _json
+    return _json.loads((store.dir / "session.json").read_text())["checkpoint"]
+
+
+def test_a_hosted_end_copies_the_study_to_durable_storage_and_records_when(store, quiet_console):
+    """#51: at a session cap above one End leaves the workspace up for the reaper, and
+    nothing else copied the report written in the last turn until the reaper's stop.
+    So End asks for the study's own directory to be copied first, waits for it, and
+    the record says which copy it was."""
+    backend = Checkpointing()
+    cli._close_down(backend, _with_a_home(store), keep_alive=True)
+    assert backend.asked == [([f"{WORKSPACE_ROOT}/study-test"], cli.END_CHECKPOINT_TIMEOUT_S)]
+    assert backend.stopped == 0
+    record = _recorded(store)
+    assert record["taken_at"] == "2026-10-21T10:00:00Z" and record["manifest_key"] == "ws/manifest.json"
+    assert record["files"] == 9 and record["asked_at"] and "error" not in record
+
+
+def test_an_end_that_leaves_the_workspace_up_for_a_running_job_copies_the_study(store, quiet_console, monkeypatch):
+    backend = Checkpointing()
+    monkeypatch.setattr(cli, "_still_running_on_the_instance", lambda b, s: [{"id": "j9", "name": "other"}])
+    cli._close_down(backend, _with_a_home(store))
+    assert backend.stopped == 0 and len(backend.asked) == 1
+
+
+def test_an_end_that_puts_the_workspace_down_leaves_the_copy_to_the_stop(store, quiet_console):
+    """The stop copies the whole workspace before the instance goes, so a scoped copy
+    first would only queue behind the full pass the daemon starts when the stopped
+    jobs end."""
+    order: list[str] = []
+    backend = Checkpointing(order=order)
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+    cli._close_down(backend, _with_a_home(store))
+    assert not store.live_jobs() and order == ["shutdown"]
+
+
+def test_a_stop_that_fails_still_gets_the_study_copied(store, quiet_console):
+    order: list[str] = []
+
+    class Unstoppable(Checkpointing):
+        def shutdown(self):
+            raise BackendError("service unavailable", code="unavailable", status=503)
+
+    backend = Unstoppable(order=order)
+    cli._close_down(backend, _with_a_home(store))
+    assert order == ["checkpoint"] and _recorded(store)["taken_at"]
+
+
+def test_a_service_that_cannot_copy_on_request_is_recorded_quietly(store, monkeypatch):
+    import io as _io
+
+    from rich.console import Console
+
+    for status in (404, 501):
+        said = _io.StringIO()
+        monkeypatch.setattr(cli, "console", Console(file=said, force_terminal=False, width=200))
+        backend = Checkpointing(error=BackendError("Not Found", code="http_error", status=status))
+        cli._close_down(backend, _with_a_home(store), keep_alive=True)
+        assert _recorded(store) == {"asked_at": _recorded(store)["asked_at"], "unsupported": True}
+        assert "could not confirm" not in said.getvalue()
+
+
+def test_the_pending_stand_in_forwards_the_copy_once_the_workspace_is_here():
+    from openreynolds.backend.pending import PendingBackend
+
+    pending = PendingBackend.__new__(PendingBackend)
+    pending._live = None
+    assert pending.checkpoint(["/work/s"]) is None, "no workspace yet, nothing to ask"
+    pending._live = Checkpointing()
+    assert pending.checkpoint(["/work/s"], timeout_s=45)["checkpoint"]["taken_at"]
+    assert pending._live.asked == [(["/work/s"], 45)]
+    pending._live = Stoppable()
+    assert pending.checkpoint(["/work/s"]) is None, "a local workspace keeps no copy to bring up to date"
+
+
+def test_a_copy_that_could_not_be_made_is_said_and_recorded_not_assumed(store, monkeypatch):
+    import io as _io
+
+    from rich.console import Console
+
+    said = _io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=said, force_terminal=False, width=200))
+    backend = Checkpointing(error=BackendError("the workspace could not be copied: S3 AccessDenied",
+                                               code="checkpoint_failed", status=502))
+    cli._close_down(backend, _with_a_home(store), keep_alive=True)
+    assert "could not confirm this study's files reached durable storage" in said.getvalue()
+    assert "AccessDenied" in said.getvalue()
+    assert "AccessDenied" in _recorded(store)["error"] and "taken_at" not in _recorded(store)
+
+
+def test_an_answer_with_no_copy_in_it_is_not_taken_for_one(store, quiet_console):
+    backend = Checkpointing(answer={"id": "i", "status": "running", "checkpoint": {}})
+    cli._close_down(backend, _with_a_home(store), keep_alive=True)
+    assert "without a checkpoint" in _recorded(store)["error"]
+
+
+def test_a_workspace_already_stopped_is_recorded_as_such(store, quiet_console):
+    backend = Checkpointing(answer={"id": "i", "status": "stopped", "checkpoint": None})
+    cli._close_down(backend, _with_a_home(store), keep_alive=True)
+    assert _recorded(store)["stopped"] is True
+
+
+def test_a_local_workspace_is_not_asked_to_copy_itself(store, quiet_console):
+    cli._close_down(Stoppable(), _with_a_home(store), keep_alive=True)
+    assert _recorded(store) is None
+
+
 def test_a_borrowed_instance_is_handed_back(quiet_console):
     """Listing files lazy-starts a container as a side effect of asking a question.
     Leaving it up afterwards is fifteen minutes of somebody's bill per question."""

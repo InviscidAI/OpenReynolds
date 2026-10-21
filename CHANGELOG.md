@@ -56,6 +56,16 @@ All notable changes to this project are recorded here. The format follows
   whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
   is unchanged byte for byte.
 
+### Fixed
+
+- **End copies the study to durable storage before saying its files are kept (#51).** A
+  hosted End leaves the workspace up for the reaper, and the service copied a workspace
+  to S3 only while jobs ran and when it was stopped, so a report written in the last
+  turn sat on the volume alone for minutes. End now asks the service to copy the study's
+  own directory (`POST /v1/instances/{id}/checkpoint`) and waits up to 90 s. It records
+  the copy's `taken_at` and manifest in `session.json` under `checkpoint`. A copy that
+  fails or times out is said plainly and recorded as an `error`, never assumed.
+
 ## [0.3.2] - 2026-10-05
 
 ### Fixed

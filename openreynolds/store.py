@@ -74,6 +74,11 @@ class Session:
     created_at: str = ""
     title: str = ""
     capture_seq: int = 0
+    checkpoint: dict[str, Any] | None = None
+    """What the last End established about the workspace's durable copy
+    (`cli._checkpoint_the_study`): `asked_at`, and then `taken_at`, `manifest_key` and
+    `files` for a copy that landed, `stopped` for a workspace already down, or `error`
+    for one that could not be made. None until a session has ended."""
     jobs: dict[str, JobRecord] = field(default_factory=dict)
 
 
