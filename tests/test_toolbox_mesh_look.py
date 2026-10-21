@@ -8,6 +8,7 @@ report a person actually reads.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -368,6 +369,60 @@ def test_a_patchs_normal_is_reported_out_of_the_fluid(tmp_path):
     for patch in payload["patches"]:
         if patch.get("inward"):
             assert patch["inward"] == -1, "a measured normal must point out of the fluid"
+
+
+def test_patch_normals_keep_the_surface_extractor_they_were_measured_with():
+    """PyVista 0.49 warned that its implicit default will change from
+    `dataset_surface` to automatic selection. A dependency update must not silently
+    choose a different extractor for this geometry measurement."""
+    called = {}
+
+    class Normals:
+        cell_data = {"Normals": [[0.0, 0.0, 1.0]]}
+
+        def compute_normals(self, **kwargs):
+            return self
+
+    class Surface:
+        n_cells = 1
+        points = []
+
+        def compute_cell_sizes(self, **kwargs):
+            return type("Sizes", (), {"cell_data": {"Area": [1.0]}})()
+
+        def cell_centers(self):
+            return type("Centres", (), {"points": [[0.0, 0.0, 0.0]]})()
+
+        def extract_surface(self, **kwargs):
+            called.update(kwargs)
+            return Normals()
+
+    row = mesh_look.measure_patches(
+        [{"name": "inlet"}], {"inlet": Surface()}, internal=None
+    )[0]
+
+    assert called["algorithm"] == "dataset_surface"
+    assert row["normal"] == [0.0, 0.0, 1.0]
+
+
+def test_every_surface_extraction_keeps_the_current_pyvista_algorithm():
+    """The same changing PyVista default is used by the review render fallbacks.
+    Those pictures must not change after an otherwise unrelated dependency update."""
+    tree = ast.parse((TOOLBOX / "mesh_look.py").read_text(encoding="utf-8"))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "extract_surface"
+    ]
+
+    assert calls
+    assert all(
+        any(keyword.arg == "algorithm" and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "dataset_surface"
+            for keyword in call.keywords)
+        for call in calls
+    ), "every extract_surface call must preserve PyVista's current algorithm"
 
 
 # -- several views, for a reviewer who did not build it ------------------------
