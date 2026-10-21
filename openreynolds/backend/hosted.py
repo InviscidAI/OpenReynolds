@@ -745,6 +745,21 @@ class FoamdClient:
             self.request("POST", f"/v1/instances/{instance_id}/stop", timeout=120.0)
         )
 
+    def checkpoint_instance(self, instance_id: str, paths: list[str],
+                            timeout_s: float) -> dict[str, Any]:
+        """Copy `paths` to the workspace's durable copy now and wait for it, the
+        instance left running: `{id, status, checkpoint}`. Tried once: End is waiting
+        on it, and a second try would double End's worst case for a copy the next
+        checkpoint makes anyway. A failure is reported, not retried."""
+        return _json(self.request(
+            "POST", f"/v1/instances/{instance_id}/checkpoint",
+            json={"paths": paths, "timeout_s": timeout_s},
+            # The service's worst case is its wait, one more daemon call (which it
+            # allows 30 s past that wait) and the lookup before it: past this, the
+            # 502 that says why would be lost to a bare timeout.
+            timeout=timeout_s + 45.0, repeatable=True, max_attempts=1,
+        ))
+
     def start_instance(self, instance_id: str) -> dict[str, Any]:
         return _json(self.request("POST", f"/v1/instances/{instance_id}/start", timeout=180.0))
 
@@ -897,6 +912,14 @@ class HostedBackend(KernelHost, Backend):
     def shutdown(self) -> None:
         """Put the container down. The volume is untouched, so nothing is lost."""
         self._client.stop_instance(self.instance_id)
+
+    def checkpoint(self, paths: list[str], timeout_s: float = 90.0) -> dict[str, Any]:
+        """Copy `paths` to the service's durable copy of the workspace now, and wait.
+        `{id, status, checkpoint}`: `checkpoint.taken_at` is when the copy finished,
+        and `status: stopped` with no checkpoint says no machine was running (its stop
+        copied everything). Raises BackendError when the copy failed or the service
+        has no such route, which the caller reports rather than assumes away."""
+        return self._client.checkpoint_instance(self.instance_id, paths, timeout_s)
 
     def list_stored(self, path: str, depth: int) -> StoredListing | None:
         """The files under `path` as the service lists them, cut to `depth`. None

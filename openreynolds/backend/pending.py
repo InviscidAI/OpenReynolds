@@ -291,6 +291,13 @@ class PendingBackend(Backend):
         stored = getattr(live, "list_stored", None)
         return stored(path, depth) if stored is not None else None
 
+    def checkpoint(self, paths: list[str], timeout_s: float = 90.0) -> dict[str, Any] | None:
+        """The live backend's checkpoint, or None while there is no live backend or
+        it keeps no copy to bring up to date (a local workspace is the directory)."""
+        live = self._live
+        checkpoint = getattr(live, "checkpoint", None) if live is not None else None
+        return checkpoint(paths, timeout_s=timeout_s) if checkpoint is not None else None
+
     def shutdown(self) -> None:
         """Put the workspace down -- once it is up.
 
