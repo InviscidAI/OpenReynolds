@@ -72,6 +72,15 @@ def test_job_check_reads_nsteps_from_the_case_control_yaml(felix, backend, store
     assert "step 30 / 30" in content
 
 
+def test_job_check_counts_a_continued_job_against_the_whole_run(felix, backend, store):
+    """`felix continue` left `nsteps` at what remains; the step in the log is the run's."""
+    job_id = _felix_job(backend, store, _log("cavity_small.stderr"))
+    backend.files[f"{CASE}/control.yaml"] = b"dt: 0.05\nnsteps: 10\n"
+    backend.files[f"{CASE}/io.yaml"] = b"warm_start: output/snapshot_000020.vtu\n"
+    content, _ = dispatch(felix, "job_check", {"job_id": job_id})
+    assert "step 30 / 30" in content
+
+
 def test_job_check_of_a_felix_job_says_nothing_of_cores(felix, backend, store):
     """`_running_on` is about ranks on the workspace's cores; a Felix solve runs on a
     cloud GPU and the workspace's cores are not what it is spending."""

@@ -93,6 +93,10 @@ class FelixFacts:
     dt: float | None = None
     wall_time: float | None = None
     wall_step: float | None = None
+    wall_step_mean: float | None = None
+    """The mean `wall_step` over the steps in the window read: the pace to estimate
+    from, and this solve's own, where `wall_time / step` is not once a solve
+    continues another (the step counts from the warm start, the clock from zero)."""
     residuals: dict[str, float] = field(default_factory=dict)
     iterations: dict[str, int] = field(default_factory=dict)
     corrector: int | None = None
@@ -215,6 +219,41 @@ def nsteps_from_control(text: str) -> int | None:
     return int(found[-1]) if found else None
 
 
+def _top_value(key: str, text: str) -> str | None:
+    found = re.findall(rf"^{key}\s*:\s*(\S+?)\s*(?:#.*)?$", text or "", re.M)
+    return found[-1].strip("'\"") if found else None
+
+
+_SNAPSHOT = re.compile(r"^snapshot_(\d+)\.vtu$")
+
+
+def warm_start_step(io_text: str) -> int | None:
+    """The step an io.yaml's `warm_start:` starts from, read off the snapshot's name
+    (`snapshot_<step>.vtu`, which is what `felix continue` points it at); None for a
+    cold start or a warm-start file named otherwise."""
+    value = _top_value("warm_start", io_text)
+    found = _SNAPSHOT.match(posixpath.basename(value)) if value else None
+    return int(found.group(1)) if found else None
+
+
+def last_step(read: Any, case_dir: str) -> int | None:
+    """The step the solve of the case in `case_dir` ends at, on the log's count;
+    `read(path)` returns a file's text or None.
+
+    Felix counts steps from the warm start's, so a `felix continue` from step 15000
+    logs steps on from there while control.yaml's `nsteps` is what is left (15000 of an
+    original 30000): the run ends at start + nsteps, as felixd's `prepare_restart`
+    has it. `case.yaml` names the control and io files; control.yaml and io.yaml
+    when it does not."""
+    case = read(f"{case_dir}/case.yaml") or ""
+    control = read(posixpath.join(case_dir, _top_value("control", case) or "control.yaml"))
+    io = read(posixpath.join(case_dir, _top_value("io", case) or "io.yaml"))
+    nsteps = nsteps_from_control(control) if control else None
+    if nsteps is None:
+        return None
+    return ((warm_start_step(io) if io else None) or 0) + nsteps
+
+
 # -- the log --------------------------------------------------------------------------
 
 
@@ -305,6 +344,7 @@ def parse_felix_log(text: str) -> FelixFacts:
     if lines and not lines[0].startswith(("step=", "ptc step=") + _PREFIXES):
         lines = lines[1:]
     res0: list[float] = []
+    wall_steps: list[float] = []
     for kind, msg in _messages(lines):
         if kind == "step":
             record = parse_step_line(msg)
@@ -321,6 +361,8 @@ def parse_felix_log(text: str) -> FelixFacts:
             facts.corrector = int(record["corrector"]) if "corrector" in record else None
             if "res0" in record:
                 res0.append(record["res0"])
+            if math.isfinite(record.get("wall_step", math.nan)):
+                wall_steps.append(record["wall_step"])
         elif kind == "ptc":
             record = parse_step_line(msg.replace("ptc ", "", 1))
             if "CONVERGED" in msg and "step" in record:
@@ -336,6 +378,8 @@ def parse_felix_log(text: str) -> FelixFacts:
         elif kind == "NOTE":
             _read_note(facts, msg)
     facts.trend = _trend(res0)
+    if wall_steps:
+        facts.wall_step_mean = sum(wall_steps) / len(wall_steps)
     whole = [ln.strip() for ln in lines if ln.strip()]
     facts.last_line = whole[-1] if whole else ""
     return facts
@@ -427,13 +471,14 @@ def _gb(value: float) -> str:
     return f"{value:g} GB"
 
 
-def headline(facts: FelixFacts, nsteps: int | None = None) -> str:
-    """One line: where the run is."""
+def headline(facts: FelixFacts, last_step: int | None = None) -> str:
+    """One line: where the run is. `last_step` is the step it ends at (`last_step`),
+    on the same count as the log's: not `nsteps` once the run is a continuation."""
     if facts.step is None:
         return "no step completed yet"
     line = f"step {facts.step}"
-    if nsteps:
-        line += f" / {nsteps}"
+    if last_step:
+        line += f" / {last_step}"
     if facts.sim_time is not None:
         line += f", t = {facts.sim_time:g}"
     if facts.dt is not None:
@@ -451,10 +496,10 @@ def oom_line(oom: OutOfMemory) -> str:
     return line
 
 
-def summary_lines(facts: FelixFacts, nsteps: int | None = None) -> list[str]:
+def summary_lines(facts: FelixFacts, last_step: int | None = None) -> list[str]:
     """What the job did, in a few lines: state, step, residuals and their trend, how
     it ended, every error, the warnings by their first sentence."""
-    lines = [f"felix: {facts.outcome} -- {headline(facts, nsteps)}"]
+    lines = [f"felix: {facts.outcome} -- {headline(facts, last_step)}"]
     if facts.residuals:
         shown = "  ".join(f"{k} {v:.2e}" for k, v in facts.residuals.items())
         lines.append(f"last step: {shown}"
@@ -511,10 +556,10 @@ def _status_line(status: dict[str, Any]) -> str:
     return line
 
 
-def wake_line(name: str, facts: FelixFacts, nsteps: int | None = None) -> str:
+def wake_line(name: str, facts: FelixFacts, last_step: int | None = None) -> str:
     """The job in one line for the narration wake: where it is and, when it ended
     badly, the error that says why -- the out-of-memory figures in full."""
-    line = f"{name}: felix {facts.outcome}, {headline(facts, nsteps)}"
+    line = f"{name}: felix {facts.outcome}, {headline(facts, last_step)}"
     if facts.oom is not None:
         line += f"; ERROR: {facts.oom.line}"
     elif facts.errors:

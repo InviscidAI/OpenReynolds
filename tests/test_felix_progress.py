@@ -80,6 +80,36 @@ def test_nsteps_is_read_from_control_yaml():
     assert fp.nsteps_from_control("dt: 0.01\ncfl:\n  target: 1\n") is None
 
 
+def test_a_warm_start_s_step_is_read_off_its_snapshot_name():
+    assert fp.warm_start_step("output:\n  every: 1000\nwarm_start: output/snapshot_015000.vtu\n") == 15000
+    assert fp.warm_start_step("warm_start: '../chunk1/output/snapshot_000120.vtu'\n") == 120
+    assert fp.warm_start_step("output:\n  every: 1000\n") is None
+    assert fp.warm_start_step("warm_start: initial.vtu\n") is None
+
+
+def test_a_continued_run_ends_at_its_warm_start_plus_nsteps():
+    """ui#44: `felix continue` sets `nsteps` to what is left (15000 of 30000) while
+    the log counts on from the snapshot's step, so the run ends at 30000, not 15000."""
+    files = {
+        "/c/case.yaml": "mesh: mesh.vtu\ncontrol: control.yaml\nio: io.yaml\n",
+        "/c/control.yaml": "dt: 0.2\nnsteps: 15000\n",
+        "/c/io.yaml": "output:\n  every: 1000\nwarm_start: output/snapshot_015000.vtu\n",
+    }
+    assert fp.last_step(files.get, "/c") == 30000
+
+
+def test_a_cold_run_ends_at_nsteps_and_case_yaml_names_the_files():
+    files = {
+        "/c/case.yaml": "control: ctl.yaml\nio: felixd_restart_io.yaml\n",
+        "/c/ctl.yaml": "nsteps: 400\n",
+        "/c/control.yaml": "nsteps: 9\n",
+        "/c/felixd_restart_io.yaml": "warm_start: output/snapshot_000100.vtu\n",
+    }
+    assert fp.last_step(files.get, "/c") == 500
+    assert fp.last_step({"/c/control.yaml": "nsteps: 60\n"}.get, "/c") == 60
+    assert fp.last_step({}.get, "/c") is None
+
+
 # -- a run that finished ---------------------------------------------------------
 
 
@@ -110,7 +140,7 @@ def test_a_ptc_run_that_converged_says_so():
     assert facts.ptc_converged_step == 624
     assert facts.finished
     assert facts.gpu_memory_gb == pytest.approx(0.96)
-    lines = "\n".join(fp.summary_lines(facts, nsteps=3000))
+    lines = "\n".join(fp.summary_lines(facts, last_step=3000))
     assert "PTC converged at step 624" in lines
     assert "623" in lines and "3000" in lines
 
@@ -293,6 +323,29 @@ def test_a_felix_job_shows_its_step_against_nsteps(backend, store, view):
     snap = tracker.snapshot()
     assert "step 30 / 60" in snap.headline
     assert "res0" in snap.detail
+
+
+def test_a_continued_felix_job_counts_against_the_whole_run(backend, store, view):
+    """ui#44, on the cavity: 30 steps, continued from snapshot 15, so `felix continue`
+    left `nsteps: 15`. At step 20 the bar is two thirds of the way to 30 -- not past
+    100% of 15 -- and the time left is ten steps at this solve's own pace."""
+    from openreynolds.progress import Tracker
+
+    steps = [ln for ln in log("cavity_small.stderr").splitlines() if ln.startswith("step=")]
+    running = "\n".join(steps[15:20]) + "\n"
+    backend.files[f"{HOME}/cavity/control.yaml"] = b"dt: 0.05\nnsteps: 15\n"
+    backend.files[f"{HOME}/cavity/io.yaml"] = (
+        b"output:\n  every: 5\nwarm_start: output/snapshot_000015.vtu\n")
+    start_felix(backend, store, running, cmd="felix continue cavity --gpu A100")
+    tracker = Tracker(view, backend=backend, store=store, home=HOME)
+
+    [job] = tracker.refresh_jobs(force=True)
+
+    assert job.step == 20 and job.end_step == 30
+    assert job.fraction == pytest.approx(20 / 30)
+    paces = [fp.parse_step_line(ln)["wall_step"] for ln in steps[15:20]]
+    assert job.eta_s == pytest.approx(10 * sum(paces) / len(paces))
+    assert "step 20 / 30" in tracker.snapshot().headline
 
 
 def test_a_felix_job_tells_the_wake_its_step_and_any_error(backend, store, view):
