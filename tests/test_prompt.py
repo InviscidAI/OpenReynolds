@@ -8,10 +8,13 @@ reviewed by memory.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 from openreynolds.prompt import SYSTEM_PROMPT, system_prompt
+
+TOOLBOX = Path(__file__).resolve().parents[1] / "openreynolds" / "toolbox"
 
 IMPERATIVE_PATTERNS = [
     r"\balways\b",
@@ -85,10 +88,33 @@ def test_honesty_is_a_fact_about_the_number_not_a_verdict_on_the_run():
     assert "a run still moving when its number was read" in SYSTEM_PROMPT
 
 
+# What the prompt could offer without naming the script that does it, and that script.
+# Each word is fine in the prompt once its script is in the toolbox.
+CAPABILITY_SCRIPTS = {"search": "search.py", "corpus": "corpus.py"}
+
+
 def test_prompt_does_not_promise_tools_the_image_lacks():
-    """The A4 run wasted a detour on foamToC, which the prompt claimed was there."""
+    """The A4 run wasted a detour on foamToC, which the prompt claimed was there.
+
+    It came back with search (#27). The prompt said the rest of the volume was
+    "searchable alongside the tutorials" -- the corpus index and its query script on
+    `pr22-corpus` -- on a `main` that had neither, and this guard, checking only the
+    foamToC strings, passed. So a script the prompt names has to be in the toolbox, and
+    so does the script behind something it offers without naming one; once that script
+    lands, the word is allowed back.
+    """
     assert "`foamToC` is available" not in SYSTEM_PROMPT
     assert "not** in this image" in SYSTEM_PROMPT or "not in this image" in SYSTEM_PROMPT
+    for name in re.findall(r"[\w-]+\.py\b", SYSTEM_PROMPT):
+        assert (TOOLBOX / name).is_file(), (
+            f"the prompt names {name}, and there is no such script in the toolbox"
+        )
+    for word, script in CAPABILITY_SCRIPTS.items():
+        said = re.search(rf"\b{word}\w*", SYSTEM_PROMPT, re.IGNORECASE)
+        if said:
+            assert (TOOLBOX / script).is_file(), (
+                f"the prompt says {said.group(0)!r}, and the toolbox has no {script}"
+            )
 
 
 def test_prompt_says_mpi_is_already_arranged():
@@ -119,12 +145,13 @@ def test_the_prompt_says_a_study_has_a_directory_of_its_own():
 
 # -- Felix mode (docs/felix-mode-acceptance.md, A2) ------------------------------
 
-OPENFOAM_PROMPT_SHA256 = "4c3406a11756d284c19b2c2708eed9578fe2286ef6826a5890eb120136d7b50b"
-"""The OpenFOAM prompt as it was before Felix mode. It is the cache prefix of every
-OpenFOAM study, and a second solver is no reason for it to move by one byte."""
+OPENFOAM_PROMPT_SHA256 = "28fd68e9c109343984ca18e93e9d350c59cc72e37d55113800b1eef12e59236b"
+"""The OpenFOAM prompt, pinned. It is the cache prefix of every OpenFOAM study, so it
+moves only on purpose: not for a second solver (Felix mode left it byte-identical),
+and last when the "searchable" claim with no search tool behind it came out (#27)."""
 
 
-def test_the_openfoam_prompt_is_byte_identical_to_before_felix():
+def test_the_openfoam_prompt_moves_only_on_purpose():
     import hashlib
 
     assert hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest() == OPENFOAM_PROMPT_SHA256
