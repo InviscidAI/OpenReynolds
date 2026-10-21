@@ -248,7 +248,8 @@ FRESH_SHELL = (
     "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
     "-- variables you export, files you source and shell options are gone by the next "
     "one. The OpenFOAM environment and the tutorials' `RunFunctions` helpers are "
-    "loaded again for you on every call, `bash` and `job_start` alike."
+    "loaded again for you on every call, `bash` and `job_start` alike. A piped "
+    "command runs under `set -o pipefail`."
 )
 """The shell contract, said once and repeated verbatim in both tools that run one.
 
@@ -812,7 +813,8 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
-    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
+    result = ctx.backend.exec(_pipefail(args["cmd"]), cwd=args.get("cwd") or ctx.home,
+                              timeout_s=asked)
     elapsed = time.monotonic() - started
     if getattr(result, "promoted", False) or getattr(result, "job_id", ""):
         # The command belongs to a job now, and nothing below applies to it: there is
@@ -843,6 +845,12 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"[exit_code -1 means no exit status was reported, which is what happens "
             f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
             "job_start has no time limit.]"
+        )
+    if result.exit_code == SIGPIPE_EXIT and _PIPE.search(args["cmd"]):
+        notes.append(
+            f"[exit_code {SIGPIPE_EXIT} is SIGPIPE: piped commands run with "
+            "`set -o pipefail`, and a stage was cut off when the one after it stopped "
+            "reading (as `head` does). The output shown is what that reader took.]"
         )
     if getattr(result, "stderr", "").strip():
         # The workspace itself, not the command: a working directory that is gone, a
@@ -1190,6 +1198,27 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
     ]
 
 
+def _pipefail(cmd: str) -> str:
+    """`cmd` with `set -o pipefail` ahead of it, when it has a pipe in it.
+
+    Without it a pipeline's status is its last stage's, and `blockMesh | tail -40`
+    returned exit_code 0 from a FOAM FATAL ERROR because `tail` succeeded (#48). The
+    model read the text that time and recovered; nothing that trusts the exit code
+    would have. Both workspaces hand commands to `bash -lc`. A command without a pipe
+    goes as written."""
+    if not _PIPE.search(cmd):
+        return cmd
+    return f"set -o pipefail\n{cmd}"
+
+
+_PIPE = re.compile(r"(?<!\|)\|(?!\|)")
+"""A `|` or `|&` that is not half of `||`."""
+
+SIGPIPE_EXIT = 141
+"""128 + SIGPIPE: what `pipefail` makes of `grep ... | head` when `head` stops reading
+first and `grep` is killed for writing on."""
+
+
 def _stdio_redirected(cmd: str) -> bool:
     """Whether `cmd` hides stdout/stderr from the job capture that `job_check` reads.
 
@@ -1237,7 +1266,7 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
                 "is killed only by an actual crash line."
             )
     job_id = ctx.backend.job_start(
-        cmd,
+        _pipefail(cmd),
         cwd=args.get("cwd") or ctx.home,
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,
