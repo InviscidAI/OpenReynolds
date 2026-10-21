@@ -13,7 +13,8 @@ All notable changes to this project are recorded here. The format follows
   `dataset_surface` to automatic selection, which chooses a different algorithm for
   most inputs. The patch table relies on stable face ordering to compute a mean normal,
   so it now selects `dataset_surface` explicitly instead of changing with a dependency
-  update. This also removes the repeated warning from the toolbox tests. (#46)
+  update. This also removes the repeated warning from the toolbox tests. The `algorithm`
+  keyword is new in PyVista 0.47, so that is now the floor. (#46)
 - **A `bash` command the workspace moved to a job no longer comes back as `exit_code:
   0`; the call waits the job out for the rest of its `timeout_s`, and a command still
   running when that is up says so in its first line.** The hosted service caps a

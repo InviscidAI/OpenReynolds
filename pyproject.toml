@@ -47,7 +47,7 @@ dev = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "pandas>=2.0",
-    "pyvista>=0.43",
+    "pyvista>=0.47",  # extract_surface(algorithm=...) is new in 0.47
     # The kernel channel's own tests run a real kernel against `LocalBackend`.
     "ipykernel>=6.29",
     "jupyter_client>=8.6",
@@ -69,7 +69,7 @@ toolbox = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "pandas>=2.0",
-    "pyvista>=0.43",
+    "pyvista>=0.47",  # extract_surface(algorithm=...) is new in 0.47
 ]
 [project.scripts]
 openreynolds = "openreynolds.cli:main"
