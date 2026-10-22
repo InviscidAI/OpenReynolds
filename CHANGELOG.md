@@ -61,8 +61,10 @@ All notable changes to this project are recorded here. The format follows
 - **A piped command fails when any stage of it does (#48).** `blockMesh | tail -40`
   reported exit_code 0 from a FOAM FATAL ERROR because `tail` succeeded. `bash` and
   `job_start` now run a command that has a pipe in it under `set -o pipefail`; one
-  without a pipe goes as written. An exit of 141 from a pipe is said to be SIGPIPE, which
-  is what `grep ... | head` can now return when `head` stops reading first.
+  without a pipe goes as written. The cost is SIGPIPE: a stage cut off by `head` or
+  `grep -q` now exits 141, so `if cat long.log | grep -q OK` can take its else branch.
+  The tool descriptions say so, and `bash` and `job_check` say what a 141 from a piped
+  command is.
 
 - **End copies the study to durable storage before saying its files are kept (#51).** A
   hosted End leaves the workspace up for the reaper, and the service copied a workspace

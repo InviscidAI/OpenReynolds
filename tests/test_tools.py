@@ -1405,3 +1405,20 @@ def test_a_piped_job_runs_with_pipefail_and_is_recorded_as_asked(ctx, backend, s
     assert backend.started[-1]["cmd"] == "set -o pipefail\nfoamRun | grep -v '^$'"
     record = next(iter(store.session.jobs.values()))
     assert record.cmd == "foamRun | grep -v '^$'"
+
+
+def test_a_promoted_pipe_that_exits_141_is_explained(ctx, backend, clock):
+    _promotes(backend, clock)
+    _ends_after(backend, 2, exit_code=141, log=b"Time = 1\n")
+    content, _ = dispatch(ctx, "bash", {"cmd": "foamRun | head -1", "timeout_s": 300})
+    assert content.startswith("exit_code: 141\n")
+    assert "exit_code 141 is SIGPIPE" in content
+
+
+def test_a_piped_job_that_exits_141_is_explained_by_job_check(ctx, backend):
+    dispatch(ctx, "job_start", {"cmd": "foamRun | grep -m1 Time"})
+    job_id = next(iter(backend.jobs))
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", exit_code=141,
+                                     end_reason="failed", log_size=0)
+    content, _ = dispatch(ctx, "job_check", {"job_id": job_id})
+    assert "exit_code 141 is SIGPIPE" in content
