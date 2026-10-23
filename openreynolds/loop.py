@@ -858,9 +858,7 @@ class Loop:
             "carry forward can go on disk now; the next message starts a fresh thread."
         )
         self.run()
-        self.messages = []
-        self.context_tokens = 0
-        self.brief(blurb)
+        self.restart(blurb)
         # A switch that was waiting for a smaller thread can go ahead at the next run.
         self.refresh_due = False
 
@@ -973,9 +971,21 @@ class Loop:
         switch.strip_thinking(self.messages[index + 1:])
 
     def restart(self, blurb: str) -> None:
-        """Begin a fresh thread from a factual situation blurb."""
+        """Begin a fresh thread from a factual situation blurb.
+
+        Everything the old thread carried goes here, and `ctx.echoes` is part of what
+        it carried. The echo table maps a digest to the call whose bytes are still in
+        the conversation, and it is the one piece of thread state that does not live
+        on the thread: `ToolContext` is built once a session and never replaced. Left
+        standing, every digest recorded before the reset stays matchable after it, so
+        the first thing a freshly briefed model does -- go back and read the solver
+        log it no longer remembers -- is answered with a pointer to a call that is no
+        longer in any conversation, and asking again returns the same pointer for the
+        rest of the session.
+        """
         self.messages = []
         self.context_tokens = 0
+        self.ctx.echoes.clear()
         self.brief(blurb)
 
     # -- capture ---------------------------------------------------------------
