@@ -248,7 +248,8 @@ FRESH_SHELL = (
     "Each call runs in a fresh shell: `cwd` carries between calls, nothing else does "
     "-- variables you export, files you source and shell options are gone by the next "
     "one. The OpenFOAM environment and the tutorials' `RunFunctions` helpers are "
-    "loaded again for you on every call, `bash` and `job_start` alike."
+    "loaded again for you on every call, `bash` and `job_start` alike. Pipes run "
+    "under `set -o pipefail`: a stage cut off by `head` or `grep -q` exits 141."
 )
 """The shell contract, said once and repeated verbatim in both tools that run one.
 
@@ -812,7 +813,8 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
-    result = ctx.backend.exec(args["cmd"], cwd=args.get("cwd") or ctx.home, timeout_s=asked)
+    result = ctx.backend.exec(_pipefail(args["cmd"]), cwd=args.get("cwd") or ctx.home,
+                              timeout_s=asked)
     elapsed = time.monotonic() - started
     if getattr(result, "promoted", False) or getattr(result, "job_id", ""):
         # The command belongs to a job now, and nothing below applies to it: there is
@@ -844,6 +846,9 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
             f"when a command outruns its timeout_s (this one ran with {ran_with}s). "
             "job_start has no time limit.]"
         )
+    sigpipe = _sigpipe_note(result.exit_code, args["cmd"])
+    if sigpipe:
+        notes.append(sigpipe)
     if getattr(result, "stderr", "").strip():
         # The workspace itself, not the command: a working directory that is gone, a
         # capture-sync that failed. Surfaced so a platform failure is legible as one
@@ -968,6 +973,9 @@ def _promoted(ctx: ToolContext, args: dict[str, Any], result: Any, *, asked: int
             f"The exit code and output here are the job's]"
         )
         lines.extend(notes)
+        sigpipe = _sigpipe_note(status.exit_code, args["cmd"])
+        if sigpipe:
+            lines.append(sigpipe)
         if trouble:
             lines.append(trouble)
         if status.exit_code is not None:
@@ -1190,6 +1198,40 @@ def _read_image(ctx: ToolContext, path: str, info: Any, media: str) -> str | lis
     ]
 
 
+def _pipefail(cmd: str) -> str:
+    """`cmd` with `set -o pipefail` ahead of it, when it has a pipe in it.
+
+    Without it a pipeline's status is its last stage's, and `blockMesh | tail -40`
+    returned exit_code 0 from a FOAM FATAL ERROR because `tail` succeeded (#48). The
+    model read the text that time and recovered; nothing that trusts the exit code
+    would have. Both workspaces hand commands to `bash -lc`. A command without a pipe
+    goes as written."""
+    if not _PIPE.search(cmd):
+        return cmd
+    return f"set -o pipefail\n{cmd}"
+
+
+_PIPE = re.compile(r"(?<!\|)\|(?!\|)")
+"""A `|` or `|&` that is not half of `||`."""
+
+SIGPIPE_EXIT = 141
+"""128 + SIGPIPE: what `pipefail` makes of `grep ... | head` when `head` stops reading
+first and `grep` is killed for writing on."""
+
+
+def _sigpipe_note(exit_code: int | None, cmd: str) -> str:
+    """What a 141 from a piped command is, where its exit code is shown.
+
+    The same thing happens inside a condition, where nothing shows it:
+    `if cat log | grep -q OK` takes the else branch when `grep -q` stops reading a
+    long log first. `FRESH_SHELL` states that for the model ahead of time."""
+    if exit_code != SIGPIPE_EXIT or not _PIPE.search(cmd):
+        return ""
+    return (f"[exit_code {SIGPIPE_EXIT} is SIGPIPE: piped commands run with "
+            "`set -o pipefail`, and a stage was cut off when the one after it stopped "
+            "reading (as `head` and `grep -q` do).]")
+
+
 def _stdio_redirected(cmd: str) -> bool:
     """Whether `cmd` hides stdout/stderr from the job capture that `job_check` reads.
 
@@ -1237,7 +1279,7 @@ def _job_start(ctx: ToolContext, args: dict[str, Any]) -> str:
                 "is killed only by an actual crash line."
             )
     job_id = ctx.backend.job_start(
-        cmd,
+        _pipefail(cmd),
         cwd=args.get("cwd") or ctx.home,
         name=args.get("name"),
         kill_on=args.get("kill_on") or None,
@@ -1594,6 +1636,9 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
         header += " " + waited_note
     header += _running_on(ctx, record, status)
     if record is not None:
+        sigpipe = _sigpipe_note(status.exit_code, record.cmd)
+        if sigpipe:
+            header += "\n" + sigpipe
         felix = felix_job_summary(ctx.backend, record.cmd, record.cwd or ctx.home,
                                   job_id, status.log_size)
         if felix:

@@ -958,7 +958,8 @@ def test_a_promoted_command_is_waited_out_and_answers_with_the_jobs_result(ctx, 
     assert PROMOTED_JOB in content and "moved to job" in content, "it names the job it followed"
     assert "Time = 0.5\nEnd" in content, "the job's log is the command's output"
     assert "[took 130s]" in content, "120 s in the exec, two polls of 5 s waiting"
-    assert backend.last_exec == ("sleep 240; ls -R mesh | head -40", WORKSPACE_ROOT, 300)
+    assert backend.last_exec == (
+        "set -o pipefail\nsleep 240; ls -R mesh | head -40", WORKSPACE_ROOT, 300)
     record = store.session.jobs[PROMOTED_JOB]
     assert record.status == "exited" and record.exit_code == 0
     assert record.cmd == "sleep 240; ls -R mesh | head -40"
@@ -1360,3 +1361,64 @@ def test_the_same_failure_twice_is_still_reported_twice(ctx):
     second, error2 = dispatch(ctx, "bash", {"cmd": "go"})
     assert error1 and error2
     assert first == second and "identical" not in second
+
+
+def test_a_piped_command_runs_with_pipefail(ctx, backend):
+    """`blockMesh | tail` returned 0 from a FOAM FATAL ERROR because `tail` did (#48)."""
+    dispatch(ctx, "bash", {"cmd": "blockMesh | tail -40"})
+    assert backend.execs[-1] == "set -o pipefail\nblockMesh | tail -40"
+
+
+@pytest.mark.parametrize("cmd", ["blockMesh", "test -f a || touch a", "ls > out"])
+def test_a_command_without_a_pipe_goes_as_written(ctx, backend, cmd):
+    dispatch(ctx, "bash", {"cmd": cmd})
+    assert backend.execs[-1] == cmd
+
+
+def test_pipefail_makes_a_failing_producer_fail_the_pipeline():
+    """Against real bash, the shell both workspaces hand commands to."""
+    import shutil
+    import subprocess
+
+    from openreynolds.tools import _pipefail
+
+    import sys
+
+    if sys.platform == "win32" or not shutil.which("bash"):
+        pytest.skip("no bash of the workspace's kind here")
+    cmd = "(echo 'FOAM FATAL ERROR'; exit 1) | tail -1"
+    assert subprocess.run(["bash", "-c", cmd]).returncode == 0
+    assert subprocess.run(["bash", "-c", _pipefail(cmd)]).returncode == 1
+
+
+def test_a_sigpipe_exit_is_explained(ctx, backend):
+    backend.exec_result = ExecResult(141, "line 1", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "grep -r U . | head -1"})
+    assert "exit_code 141 is SIGPIPE" in content
+    backend.exec_result = ExecResult(141, "", False, None)
+    content, _ = dispatch(ctx, "bash", {"cmd": "kill -PIPE $$"})
+    assert "SIGPIPE" not in content
+
+
+def test_a_piped_job_runs_with_pipefail_and_is_recorded_as_asked(ctx, backend, store):
+    dispatch(ctx, "job_start", {"cmd": "foamRun | grep -v '^$'", "name": "run"})
+    assert backend.started[-1]["cmd"] == "set -o pipefail\nfoamRun | grep -v '^$'"
+    record = next(iter(store.session.jobs.values()))
+    assert record.cmd == "foamRun | grep -v '^$'"
+
+
+def test_a_promoted_pipe_that_exits_141_is_explained(ctx, backend, clock):
+    _promotes(backend, clock)
+    _ends_after(backend, 2, exit_code=141, log=b"Time = 1\n")
+    content, _ = dispatch(ctx, "bash", {"cmd": "foamRun | head -1", "timeout_s": 300})
+    assert content.startswith("exit_code: 141\n")
+    assert "exit_code 141 is SIGPIPE" in content
+
+
+def test_a_piped_job_that_exits_141_is_explained_by_job_check(ctx, backend):
+    dispatch(ctx, "job_start", {"cmd": "foamRun | grep -m1 Time"})
+    job_id = next(iter(backend.jobs))
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", exit_code=141,
+                                     end_reason="failed", log_size=0)
+    content, _ = dispatch(ctx, "job_check", {"job_id": job_id})
+    assert "exit_code 141 is SIGPIPE" in content
