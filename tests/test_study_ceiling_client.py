@@ -65,6 +65,10 @@ class FakeFoamd:
         self.spend_at_raise: int | None = None
         """What the study has spent by the time a raise lands, when the service counts
         spend this side has not seen (an open sandbox priced to now)."""
+        self.start_pauses = False
+        """Whether a workspace start naming a paused study is refused with the pause,
+        as foamd judges a resumed study's start against its ceiling."""
+        self.starts = 0
 
     @property
     def paused(self) -> bool:
@@ -114,6 +118,9 @@ class FakeFoamd:
                 "pause_at_cents": round(cents * 0.8, 2), "paused": self.paused,
             })
         if path == "/v1/instances/inst-1/start":
+            self.starts += 1
+            if self.start_pauses and self.paused and request.headers.get("x-study-id"):
+                return httpx.Response(409, json=self.paused_body())
             return httpx.Response(200, json={"id": "inst-1", "started_new": True})
         if path == "/v1/instances/inst-1/files":
             if request.method == "PUT":
@@ -604,3 +611,93 @@ def test_the_preamble_reads_the_study_record_foamd_sends(tmp_path):
     said = ceiling.preamble(ctx, {"estimate_usd": 3})
     assert "$8.50" in said and "paused" in said.split("pauses at")[-1], \
         "a study already paused says so before the solve meets it"
+
+
+# -- 6. a resumed study whose workspace start met the ceiling -----------------------------
+
+
+class _Bar:
+    """The progress bar's two workspace calls, recorded."""
+
+    def __init__(self):
+        self.said = []
+
+    def workspace_starting(self, eta_s=0.0):
+        self.said.append("starting")
+
+    def workspace_ready(self):
+        self.said.append("ready")
+
+
+def _resumed_start(tmp_path, monkeypatch, foamd, *answers):
+    """A resume's start as `session` makes it: the study named on the client before
+    the start, a `PendingBackend` the tools hold, and `_bring_up` settling it."""
+    monkeypatch.setattr(cli, "_sync_toolbox_timed", lambda *a, **k: None)
+    client = foamd.client()
+    client.study_id = STUDY
+    starter = hosted.Starter(client, "inst-1")
+    starter.start()
+    pending = starter.pending()
+    loop, ctx, view, store = _session(tmp_path, foamd, *answers, backend=pending)
+    bar = _Bar()
+    cli._bring_up(pending, starter, store, view, loop, bar, None, True)
+    return loop, ctx, view, pending, bar
+
+
+def test_a_resumed_start_paused_at_its_ceiling_starts_again_once_it_is_raised(
+    tmp_path, monkeypatch
+):
+    """foamd refuses a resumed study's workspace start with `409 study_paused`. The
+    first tool call puts the pause to the person; yes raises the ceiling, the start is
+    sent again, and the call runs on the workspace that comes -- not on the start's
+    stored refusal, asked three times and then every call after it."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd.start_pauses = True
+    loop, ctx, view, pending, bar = _resumed_start(tmp_path, monkeypatch, foamd, "/yes")
+    assert pending.failed and foamd.starts == 1, "the start met the pause"
+
+    fake = install_model(loop, [
+        message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
+        message([tool_block("bash", {"cmd": "checkMesh"})], stop_reason="tool_use"),
+        message([text_block("meshed")]),
+    ])
+    loop.say("carry on")
+    loop.run()
+
+    assert len(view.questions) == 1, "asked once"
+    assert foamd.caps_posted == [2000], "and raised once"
+    assert foamd.starts == 2, "the start went again after the raise"
+    assert pending.ready() and not pending.failed
+    assert [c for c in foamd.execs if c in ("blockMesh", "checkMesh")] == ["blockMesh", "checkMesh"]
+    results = [block for m in loop.messages if m["role"] == "user"
+               and isinstance(m["content"], list) for block in m["content"]
+               if isinstance(block, dict) and block.get("type") == "tool_result"]
+    assert len(results) == 2
+    for result in results:
+        assert not result.get("is_error") and "ran" in str(result["content"])
+    assert ctx.stopped is None and ctx.on_ceiling_raised is None
+    assert bar.said == ["ready", "starting", "ready"], "the bar was told it was coming again"
+    assert len(fake.calls) == 3
+
+
+def test_a_start_refused_for_another_reason_is_not_started_again(tmp_path, monkeypatch):
+    """Only the pause is mended by a raise: any other refusal of the start stands, and
+    nothing is set to start it again."""
+    foamd = FakeFoamd(spent_cents=0)
+    real = foamd.handler
+
+    def no_capacity(request):
+        if request.url.path.endswith("/start"):
+            foamd.starts += 1
+            return httpx.Response(402, json={"error": "allowance_exhausted",
+                                             "message": "this period's allowance is used up."})
+        return real(request)
+
+    foamd.handler = no_capacity
+    loop, ctx, view, pending, _bar = _resumed_start(tmp_path, monkeypatch, foamd)
+    assert pending.failed and pending.error.code == "allowance_exhausted"
+    assert ctx.on_ceiling_raised is None
+    assert "until the session is resumed" in loop._posted[-1], "said as it always was"
+    with pytest.raises(BackendError):
+        pending.exec("ls")
+    assert foamd.starts == 1

@@ -291,4 +291,12 @@ def resolve(ctx: Any, exc: BaseException | Paused) -> bool:
     view = getattr(ctx, "view", None)
     if view is not None:
         view.notice(f"The study's ceiling is now {dollars(cents)}; carrying on.")
+    raised = getattr(ctx, "on_ceiling_raised", None)
+    if callable(raised):
+        # A workspace whose start met the pause is started again here, so the call
+        # that goes again waits for it instead of meeting the stored refusal.
+        try:
+            raised()
+        except Exception:  # noqa: BLE001 - see docstring
+            pass
     return True

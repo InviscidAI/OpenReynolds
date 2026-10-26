@@ -1574,6 +1574,20 @@ class Starter:
         finally:
             self._done.set()
 
+    def restart(self) -> bool:
+        """Send the start again, after one that answered with an error -- a study
+        paused at its ceiling, whose ceiling has since been raised. True when a new
+        start is under way; False when the last one has not answered, succeeded, or
+        was called off, none of which a second start would mend."""
+        if not self._done.is_set() or self._error is None or self._cancelled:
+            return False
+        self._thread = None
+        self._backend = None
+        self._error = None
+        self._done.clear()
+        self.start()
+        return True
+
     def cancel(self) -> bool:
         """Call the start off. True only if it had not begun -- a start that is under
         way is the service's now, and `PendingBackend.shutdown` is the way to undo

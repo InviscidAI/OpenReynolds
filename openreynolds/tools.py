@@ -202,6 +202,11 @@ class ToolContext:
     """Why the study stopped in this turn, when it met its ceiling and the ceiling was
     not raised (`ceiling.resolve`). The loop ends the turn after the call in flight
     and asks the model nothing more; cleared when the next turn starts."""
+    on_ceiling_raised: Callable[[], None] | None = None
+    """Called once a raise has lifted a pause (`ceiling.resolve`), before the paused
+    call goes again. Set while the workspace's own start is what met the pause
+    (`cli._bring_up`): the start is sent again, so the call goes to a workspace that
+    is coming rather than to the start's stored refusal."""
     solver: str = solvers.OPENFOAM
     """This study's solver (`solvers.py`): `openfoam` or `felix`. It decides the tool
     list (`tools_for`), how `job_start` reads a launch, and the system prompt the loop

@@ -2425,6 +2425,23 @@ def _bring_up(
             tracker.workspace_ready()
             console.print(f"[red]Could not start the workspace:[/] {exc}")
             view.notice(f"the workspace could not be started: {exc}")
+            if ceiling.paused(exc) is not None:
+                # The study is paused at its ceiling (a resumed study names itself on
+                # the start, and foamd judges the start against it). That is the one
+                # refusal a raise mends: the next call that waits on the workspace
+                # puts it to the person (`tools._handled`), and once it is raised the
+                # start is sent again (`_start_again`), so the call goes to a
+                # workspace that is coming instead of to this stored error again.
+                loop.ctx.on_ceiling_raised = lambda: _start_again(
+                    pending, starter, store, view, loop, tracker, browser, resuming,
+                )
+                loop.post(
+                    f"The workspace could not be started: the study is paused at its "
+                    f"spending ceiling ({exc}). A tool call that needs the workspace "
+                    "asks the person to raise the ceiling, and the workspace is "
+                    "started again once it is raised."
+                )
+                return
             loop.post(
                 f"The workspace could not be started ({exc}). Every tool call will "
                 "fail with that error until the session is resumed."
@@ -2460,6 +2477,43 @@ def _bring_up(
             view.warn(f"the workspace could not be set up: {exc}")
         except Exception:  # noqa: BLE001
             pass
+
+
+def _start_again(
+    pending: PendingBackend,
+    starter: Any,
+    store: Store,
+    view: View,
+    loop: Loop,
+    tracker: Any,
+    browser: Browser | None,
+    resuming: bool,
+) -> None:
+    """Send a workspace start that met the study's ceiling again, now it is raised.
+
+    Called from `ceiling.resolve` (as `ToolContext.on_ceiling_raised`) before the
+    paused call goes again. The pending backend is reopened here, on the caller's
+    thread, so that call waits for the new start instead of raising the old error;
+    the rest is the ordinary start: the bar says the workspace is coming, and
+    `_bring_up` makes it this study's, resolves the waiting calls and tells the view.
+    Once only: a start that meets the ceiling again sets it up again (`_bring_up`)."""
+    loop.ctx.on_ceiling_raised = None
+    restart = getattr(starter, "restart", None)
+    refused = pending.error
+    if restart is None or refused is None or not pending.reopen():
+        return
+    if not restart():
+        # Nothing was sent, so nothing is coming: the calls fail as they did.
+        pending.fail(refused)
+        return
+    tracker.workspace_starting(getattr(loop.cfg, "workspace_eta_s", 0.0))
+    view.notice("starting the workspace again now that the ceiling is raised")
+    threading.Thread(
+        target=_bring_up,
+        args=(pending, starter, store, view, loop, tracker, browser, resuming),
+        name="workspace-ready",
+        daemon=True,
+    ).start()
 
 
 def _with_mode(blurb: str, loop: Loop) -> str:

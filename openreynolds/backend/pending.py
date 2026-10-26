@@ -146,12 +146,30 @@ class PendingBackend(Backend):
         self._settled_at = time.monotonic()
         self.ready_event.set()
 
+    def reopen(self) -> bool:
+        """The workspace is coming after all: a start that failed is being sent
+        again. From here calls wait for it as they did for the first one, instead of
+        raising the first one's error. True when it was failed and is now pending
+        again; False when there was nothing to reopen (up already, or never failed)."""
+        if self._live is not None or self._error is None:
+            return False
+        self.ready_event.clear()
+        self._error = None
+        self._settled_at = None
+        self._since = time.monotonic()
+        return True
+
     def ready(self) -> bool:
         return self._live is not None
 
     @property
     def failed(self) -> bool:
         return self._error is not None
+
+    @property
+    def error(self) -> BackendError | None:
+        """Why the workspace did not come up; None while it is coming, or is here."""
+        return self._error
 
     @property
     def elapsed_s(self) -> float:
