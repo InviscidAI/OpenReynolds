@@ -21,7 +21,7 @@ import json
 from types import SimpleNamespace
 
 import anthropic
-import httpx as real_httpx
+import httpx2 as real_httpx
 import httpx2 as httpx
 import pytest
 

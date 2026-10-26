@@ -1983,7 +1983,7 @@ def heard_console(monkeypatch):
 def _service_refusal(status, body):
     """A model call refused by foamd's proxy, carrying its body as the SDK hands it on."""
     import anthropic
-    import httpx as real_httpx
+    import httpx2 as real_httpx
     from openreynolds.llm import ProviderError
 
     response = real_httpx.Response(status, json=body, request=real_httpx.Request(
