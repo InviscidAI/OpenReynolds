@@ -3659,6 +3659,11 @@ def _run_interactive(
                     if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
+                if wake.kind == "job" and not _finished_job_can_wake(loop, view, wake.text):
+                    # Keep the job's report in the thread for the eventual resume,
+                    # but do not send it to a model after the person stopped here.
+                    loop.inform(wake.text)
+                    continue
                 loop.inform(wake.text)
             elif wake.kind == "user":
                 # A person speaking is the one thing that can change a refusal:
@@ -3773,6 +3778,9 @@ def _run_one_shot(
             return "timeout"
         if wake.kind != "job":
             break
+        if not _finished_job_can_wake(loop, view, wake.text):
+            loop.inform(wake.text)
+            break
         loop.inform(wake.text)
         if not _run_turn(loop, view):
             return "failed"
@@ -3781,6 +3789,28 @@ def _run_one_shot(
         if loop.needs_refresh:
             loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
+
+
+def _finished_job_can_wake(loop: Any, view: View, report: str) -> bool:
+    """Whether a finished job's report may be sent on to the model.
+
+    A Felix GPU refusal reaches this seam as text rather than an exception. Put a
+    current study pause to the person before a bring-your-own-key model is woken: its
+    next request goes directly to the model provider and cannot discover the pause.
+    """
+    if getattr(loop.ctx, "solver", solvers.OPENFOAM) != solvers.FELIX:
+        return True
+    decided = ceiling.resolve_job_pause(loop.ctx, report)
+    if decided is not False:
+        return True
+    stopped = loop.ctx.stopped
+    view.notice(stopped)
+    event = getattr(loop, "event", None)
+    if event is not None:
+        event(stopped)
+    loop.blocked_reason = stopped
+    view.info("waiting for you - the study is paused at its spending ceiling")
+    return False
 
 
 def _take_forwarded(loop: Any) -> list[tuple[str, str]]:

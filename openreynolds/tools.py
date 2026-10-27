@@ -1694,6 +1694,13 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
                                   job_id, status.log_size)
         if felix:
             header += "\n" + "\n".join(felix)
+            pause = (
+                ceiling.resolve_job_pause(ctx, "\n".join(felix))
+                if not status.running else None
+            )
+            if pause is True:
+                header += ("\nThe study's ceiling was raised. This refused job is "
+                           "finished; no replacement solve was started.")
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"

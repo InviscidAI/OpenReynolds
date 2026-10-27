@@ -84,6 +84,51 @@ def paused(exc: BaseException) -> Paused | None:
         return Paused("", 0.0, 0.0, message)
 
 
+_JOB_PAUSE = re.compile(r"(?<![\w-])(?:409\s+)?study_paused(?![\w-])")
+
+
+def job_pause(ctx: Any, report: str) -> Paused | None:
+    """A pause printed by a finished Felix job, against the service's current row.
+
+    `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
+    exits 1 and prints the 409 into that job's log instead of raising the
+    `BackendError` that `tools._handled` sees. The log proves which refusal happened;
+    the study row supplies the live spend and ceiling rather than parsing money out
+    of prose. Requiring `paused: true` also makes an old refused job harmless after
+    the ceiling has already been raised.
+    """
+    if not _JOB_PAUSE.search(report or ""):
+        return None
+    service = getattr(ctx, "ceiling", None)
+    try:
+        row = service.study() if service is not None else None
+    except BackendError:
+        return None
+    if not isinstance(row, dict) or row.get("paused") is not True:
+        return None
+    spent = row.get("spent_cents")
+    cap = row.get("cap_cents")
+    if not isinstance(spent, (int, float)) or not isinstance(cap, (int, float)):
+        return None
+    return Paused(
+        str(row.get("id") or row.get("study_id") or service.study_id),
+        float(spent),
+        float(cap),
+        report,
+    )
+
+
+def resolve_job_pause(ctx: Any, report: str) -> bool | None:
+    """Resolve a pause carried in Felix job output.
+
+    None means the report is not a current pause, True that the person raised the
+    ceiling, and False that the study stopped. The tri-state lets callers distinguish
+    a declined pause from an ordinary finished job.
+    """
+    info = job_pause(ctx, report)
+    return None if info is None else resolve(ctx, info)
+
+
 class Ceiling:
     """The service's view of one study's ceiling: read it, raise it.
 
