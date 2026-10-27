@@ -1744,9 +1744,13 @@ def session(
                 store.session.solver = chosen.solver
                 store.save()
                 view.solver(chosen.solver)
-                view.notice(routed_notice(chosen))
+                # A choice made is background, not an alarm: notice is the "!" row
+                # the web app keeps for refusals. A choice that failed still is one.
                 if chosen.failed:
+                    view.notice(routed_notice(chosen))
                     console.print(f"[yellow]{routed_notice(chosen)}[/]")
+                else:
+                    view.info(routed_notice(chosen))
                 started = begin_workspace(chosen.solver)
                 with _timed("situation_brief"):
                     briefing = _situation_brief(

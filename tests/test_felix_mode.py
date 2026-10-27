@@ -630,7 +630,8 @@ def test_solver_auto_routes_the_first_message_before_the_first_main_request(monk
     assert "choose_solver" not in names and "cad" not in names and "job_start" in names
     assert Store(run.cfg.studies_dir, _study_dir(run).name).session.solver == "felix"
     # The reason reaches the person and the agent.
-    assert any("Felix, chosen from your first message" in n for n in run.view.notices)
+    assert any("Felix, chosen from your first message" in n for n in run.view.infos)
+    assert not any("chosen from your first message" in n for n in run.view.notices), "a choice made is no alarm"
     briefing = calls[1]["messages"][0]["content"]
     assert "chosen from the person's first message" in briefing
     assert "the flow is incompressible and the mesh is large" in briefing
