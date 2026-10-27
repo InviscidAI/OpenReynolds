@@ -2101,6 +2101,187 @@ def test_a_refusal_stops_the_harness_asking_again(loop, view, quiet_console):
         quiet_console.file, "getvalue") else True
 
 
+@pytest.fixture
+def heard_console(monkeypatch):
+    import io
+
+    from rich.console import Console
+
+    console = Console(file=io.StringIO(), force_terminal=False, width=400)
+    monkeypatch.setattr(cli, "console", console)
+    return console
+
+
+def _service_refusal(status, body):
+    """A model call refused by foamd's proxy, carrying its body as the SDK hands it on."""
+    import anthropic
+    import httpx2 as real_httpx
+    from openreynolds.llm import ProviderError
+
+    response = real_httpx.Response(status, json=body, request=real_httpx.Request(
+        "POST", "https://svc.example/v1/llm/v1/messages"))
+    sdk = anthropic.APIStatusError(body["message"], response=response, body=body)
+    try:
+        raise ProviderError(body["message"], status) from sdk
+    except ProviderError as exc:
+        return exc
+
+
+def _days_from_now(days):
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
+_SOON = _days_from_now(20)
+_LATER = _days_from_now(200)
+_GONE = _days_from_now(-3)
+
+_PAYG = "turning on pay-as-you-go overage (billed to your card)"
+
+# The 402 `allowance_exhausted` bodies a D18 service sends, one per kind of account: what
+# the person must and must not be told for each, and the renewal day that may be named.
+# `renews_at` is the day the allowance refills on its own (D18) and the only one a
+# renewal is named from; `period_end` is said only by a server that sends no
+# `renews_at`, and then only while it is ahead and the account is not past due.
+_ALLOWANCE_CASES = {
+    "monthly, overage allowed": (
+        {"tier": "starter", "period_end": _SOON, "renews_at": _SOON,
+         "can_enable_overage": True, "can_buy_credits": True, "past_due": False},
+        ["buying credits", _PAYG, f"renews on {_SOON[:10]}"],
+        ["payment failed"], _SOON[:10]),
+    "annual paid, overage allowed": (
+        {"tier": "pro", "period_end": _LATER, "renews_at": _LATER,
+         "can_enable_overage": True, "can_buy_credits": True, "past_due": False},
+        ["buying credits", _PAYG, f"renews on {_LATER[:10]}"],
+        ["payment failed"], _LATER[:10]),
+    "personal trial, renews into Starter": (
+        {"tier": "starter", "period_end": _SOON, "renews_at": _SOON,
+         "can_enable_overage": False, "can_buy_credits": True, "past_due": False},
+        ["buying credits", "a bigger plan", f"renews on {_SOON[:10]}"],
+        ["overage", "payment failed"], _SOON[:10]),
+    "work trial": (
+        {"tier": "pro", "period_end": _SOON, "renews_at": None,
+         "can_enable_overage": False, "can_buy_credits": True, "past_due": False},
+        ["buying credits", "a bigger plan"],
+        ["renews", _SOON[:10], "overage", "payment failed"], None),
+    "cancel scheduled": (
+        {"tier": "starter", "period_end": _SOON, "renews_at": None,
+         "can_enable_overage": True, "can_buy_credits": True, "past_due": False},
+        ["buying credits", _PAYG],
+        ["renews", _SOON[:10], "payment failed"], None),
+    "past due": (
+        {"tier": "starter", "period_end": _SOON, "renews_at": None,
+         "can_enable_overage": False, "can_buy_credits": True, "past_due": True},
+        ["your last payment failed",
+         "update your card from the account page at https://app.tryreynolds.com", "buying credits"],
+        ["overage", "renews", _SOON[:10]], None),
+    "no plan": (
+        {"tier": None, "period_end": None, "renews_at": None, "can_enable_overage": False,
+         "can_buy_credits": True, "past_due": False},
+        ["no active plan", "buying credits", "picking a plan"],
+        ["overage", "renews", "payment failed"], None),
+    "staff, or billing not configured": (
+        {"tier": "max", "period_end": None, "renews_at": None, "can_enable_overage": False,
+         "can_buy_credits": False, "past_due": False},
+        ["a bigger plan"],
+        ["credits", "overage", "renews", "payment failed"], None),
+    "a renewal sent that has already passed": (
+        {"tier": "starter", "period_end": _GONE, "renews_at": _GONE,
+         "can_enable_overage": False, "can_buy_credits": True, "past_due": False},
+        ["a bigger plan"],
+        ["renews", _GONE[:10]], None),
+    "an older server without renews_at, a period ahead": (
+        {"tier": "starter", "period_end": _SOON, "can_enable_overage": True,
+         "can_buy_credits": True, "past_due": False},
+        ["buying credits", _PAYG, f"renews on {_SOON[:10]}"],
+        ["payment failed"], _SOON[:10]),
+    "an older server without renews_at, past due": (
+        {"tier": "starter", "period_end": _SOON, "can_enable_overage": False,
+         "can_buy_credits": True, "past_due": True},
+        ["your last payment failed", "account page at https://app.tryreynolds.com"],
+        ["renews", _SOON[:10]], None),
+    "an older server, a period that has passed": (
+        {"tier": "starter", "period_end": _GONE, "can_enable_overage": False},
+        ["a bigger plan"],
+        ["renews", "credits", "overage", _GONE[:10]], None),
+}
+
+
+@pytest.mark.parametrize("case", list(_ALLOWANCE_CASES))
+def test_a_spent_allowance_offers_only_what_the_account_can_do(loop, view, heard_console, case):
+    """The 402's fields decide each offer (D15, D18, D19): credits when they can be
+    bought, pay-as-you-go overage only when it can be turned on, a renewal day only from
+    `renews_at`, and the card when the last payment failed -- never one sentence for
+    every account. A work trial and a plan set to cancel were told "it renews on" a day
+    their allowance would never refill."""
+    fields, said_in, never, _ = _ALLOWANCE_CASES[case]
+    body = {"error": "allowance_exhausted", "message": "this period's allowance is used up.",
+            **fields}
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(402, body))
+
+    assert cli._run_turn(loop, view) is False
+    assert loop.blocked_reason and "402" in loop.blocked_reason
+    said = " ".join(heard_console.file.getvalue().split())
+    for words in said_in:
+        assert words in said, (case, words, said)
+    for words in never:
+        assert words not in said, (case, words, said)
+
+
+@pytest.mark.parametrize("case", list(_ALLOWANCE_CASES))
+def test_the_facts_beside_the_message_follow_the_same_fields(case):
+    """`extra_note`, said beside the service's message on every workspace call and model
+    call, makes the same offers in a few words."""
+    from openreynolds.backend.base import extra_note
+
+    fields, _, _, day = _ALLOWANCE_CASES[case]
+    note = extra_note(fields)
+    assert ("credits can be bought" in note) == bool(fields.get("can_buy_credits"))
+    assert ("pay-as-you-go overage (billed to your card) can be turned on" in note) == bool(
+        fields.get("can_enable_overage"))
+    assert ("last payment failed; update your card from the account page at "
+            "https://app.tryreynolds.com" in note) == bool(fields.get("past_due"))
+    assert ("renews" in note) == bool(day), note
+    if day:
+        assert f"renews {day}" in note
+
+
+def test_a_renewal_is_named_from_renews_at_when_it_differs_from_the_period():
+    """`renews_at` is the day the allowance refills; `period_end` stays as it was and
+    is not a renewal when `renews_at` says otherwise."""
+    from openreynolds.backend.base import renewal_day
+
+    assert renewal_day({"period_end": _SOON, "renews_at": _LATER}) == _LATER[:10]
+    assert renewal_day({"period_end": _SOON, "renews_at": None}) is None
+    assert renewal_day({"period_end": _SOON, "renews_at": "soon"}) is None
+
+
+def test_a_renewal_day_that_is_not_a_date_is_left_out():
+    from openreynolds.backend.base import extra_note
+
+    assert extra_note({"tier": "starter", "period_end": "soon"}) == "plan: Starter"
+
+
+def test_a_service_before_plans_still_says_budget(loop, view, heard_console):
+    body = {"error": "budget_exhausted", "message": "credit exhausted"}
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(402, body))
+
+    assert cli._run_turn(loop, view) is False
+    assert "a budget or a usage cap" in heard_console.file.getvalue()
+
+
+def test_a_plan_limit_on_a_model_call_blocks_and_names_the_upgrade(loop, view, heard_console):
+    loop.run = lambda: (_ for _ in ()).throw(_service_refusal(403, {
+        "error": "plan_limit", "message": "max_concurrent 2 is over the limit.",
+        "limit": "max_concurrent", "value": 2, "allowed": 1, "tier": "starter",
+        "upgrade_to": "pro"}))
+
+    assert cli._run_turn(loop, view) is False
+    assert "upgrade to Pro" in loop.blocked_reason
+    assert "the plan does not allow this" in heard_console.file.getvalue()
+
+
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 413])
 def test_every_refusal_status_blocks(loop, view, quiet_console, status):
     loop.run = lambda: (_ for _ in ()).throw(_api_error(status))

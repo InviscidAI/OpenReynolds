@@ -29,6 +29,10 @@ DEFAULT_FOAMD_URL = "https://api.tryreynolds.com"
 `openreynolds login` belongs to whichever service issued it, so the two are saved
 together."""
 
+ACCOUNT_PAGE_URL = "https://app.tryreynolds.com"
+"""The web app's account page: plans, credits, overage and the card (Update card).
+Named wherever a refusal sends someone to fix their billing."""
+
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_EFFORT = "high"
 DEFAULT_MAX_TOOL_OUTPUT = 48_000

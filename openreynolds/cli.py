@@ -21,16 +21,16 @@ from concurrent.futures import ThreadPoolExecutor
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
-from .backend.base import Backend, BackendError, WORKSPACE_ROOT
+from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day
 from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
-from . import convergence, modes, solvers
+from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
-from .config import Config, config_path
+from .config import ACCOUNT_PAGE_URL, Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
@@ -1386,6 +1386,12 @@ def session(
                     instance_id or store.session.instance_id or None,
                     **_kind(settled),
                 )
+            if resuming and store.session.remote_study_id:
+                # A resume knows its study before its workspace is up, so the start
+                # names it (`FoamdClient.study_id`) and is tagged exactly; a new study
+                # is named once its row is opened, and the service moves the open
+                # meter row to it then.
+                client.study_id = store.session.remote_study_id
             starter.start()
             pending = starter.pending()
             backend = pending
@@ -1480,6 +1486,15 @@ def session(
         mode=cfg.mode,
         solver=settled,
     )
+    if cfg.capture and not local and cfg.foamd_url and cfg.foamd_api_key:
+        # The study's spending ceiling lives on the platform's row for it, so only a
+        # study that has one can meet it. Read late on purpose: a study still choosing
+        # its solver has no row and no client yet, and most never meet a pause.
+        ctx.ceiling = ceiling.Ceiling(
+            client,
+            connect=lambda: hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key),
+            study_id=lambda: store.session.remote_study_id,
+        )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)
     # Delivery rides on the mirror: every render that arrives is surfaced into one
@@ -1818,6 +1833,8 @@ def session(
     finally:
         with _timed("close.mirror_stop"):
             live_mirror.stop()
+        if ctx.ceiling is not None:
+            ctx.ceiling.close()
         # The interface is gone by now, so this reports to the plain console. A
         # one-shot run never had turn ends to sync at, which makes this its only one.
         # It runs before anything is stopped: the work comes home first — and it
@@ -2408,6 +2425,23 @@ def _bring_up(
             tracker.workspace_ready()
             console.print(f"[red]Could not start the workspace:[/] {exc}")
             view.notice(f"the workspace could not be started: {exc}")
+            if ceiling.paused(exc) is not None:
+                # The study is paused at its ceiling (a resumed study names itself on
+                # the start, and foamd judges the start against it). That is the one
+                # refusal a raise mends: the next call that waits on the workspace
+                # puts it to the person (`tools._handled`), and once it is raised the
+                # start is sent again (`_start_again`), so the call goes to a
+                # workspace that is coming instead of to this stored error again.
+                loop.ctx.on_ceiling_raised = lambda: _start_again(
+                    pending, starter, store, view, loop, tracker, browser, resuming,
+                )
+                loop.post(
+                    f"The workspace could not be started: the study is paused at its "
+                    f"spending ceiling ({exc}). A tool call that needs the workspace "
+                    "asks the person to raise the ceiling, and the workspace is "
+                    "started again once it is raised."
+                )
+                return
             loop.post(
                 f"The workspace could not be started ({exc}). Every tool call will "
                 "fail with that error until the session is resumed."
@@ -2443,6 +2477,43 @@ def _bring_up(
             view.warn(f"the workspace could not be set up: {exc}")
         except Exception:  # noqa: BLE001
             pass
+
+
+def _start_again(
+    pending: PendingBackend,
+    starter: Any,
+    store: Store,
+    view: View,
+    loop: Loop,
+    tracker: Any,
+    browser: Browser | None,
+    resuming: bool,
+) -> None:
+    """Send a workspace start that met the study's ceiling again, now it is raised.
+
+    Called from `ceiling.resolve` (as `ToolContext.on_ceiling_raised`) before the
+    paused call goes again. The pending backend is reopened here, on the caller's
+    thread, so that call waits for the new start instead of raising the old error;
+    the rest is the ordinary start: the bar says the workspace is coming, and
+    `_bring_up` makes it this study's, resolves the waiting calls and tells the view.
+    Once only: a start that meets the ceiling again sets it up again (`_bring_up`)."""
+    loop.ctx.on_ceiling_raised = None
+    restart = getattr(starter, "restart", None)
+    refused = pending.error
+    if restart is None or refused is None or not pending.reopen():
+        return
+    if not restart():
+        # Nothing was sent, so nothing is coming: the calls fail as they did.
+        pending.fail(refused)
+        return
+    tracker.workspace_starting(getattr(loop.cfg, "workspace_eta_s", 0.0))
+    view.notice("starting the workspace again now that the ceiling is raised")
+    threading.Thread(
+        target=_bring_up,
+        args=(pending, starter, store, view, loop, tracker, browser, resuming),
+        name="workspace-ready",
+        daemon=True,
+    ).start()
 
 
 def _with_mode(blurb: str, loop: Loop) -> str:
@@ -3343,6 +3414,41 @@ _REFUSALS = {
     413: "the request was too large to accept",
 }
 
+_REFUSAL_CODES = {
+    "budget_exhausted": _REFUSALS[402],  # a service from before plans
+    "plan_limit": "the plan does not allow this call -- a bigger plan does",
+}
+"""What a refusal from the workspace service's model proxy means, by its `error` code,
+where the code says more than the status does. `allowance_exhausted` is said from its
+fields instead (`_allowance_refusal`)."""
+
+
+def _allowance_refusal(body: dict[str, Any]) -> str:
+    """What a 402 `allowance_exhausted` means for this account, from its fields (D15).
+
+    Each way on is offered only when the body says it is open: credits when
+    `can_buy_credits`, pay-as-you-go overage when `can_enable_overage`, a renewal day
+    only from `renews_at` (D18, `renewal_day`), and the card when `past_due`. One
+    sentence for every account told a trial to turn on overage it could not have, and
+    named renewals that had passed or would never come. A service from before D15 sends no `can_buy_credits` and gets no
+    credit offer; its fields otherwise read the same."""
+    planned = bool(body.get("tier"))
+    said = ("this period's plan allowance is used up" if planned
+            else "there is no allowance left and no active plan")
+    if body.get("past_due"):
+        said += (" and your last payment failed (update your card from the account page at"
+                 f" {ACCOUNT_PAGE_URL})")
+    ways = []
+    if body.get("can_buy_credits"):
+        ways.append("buying credits")
+    if body.get("can_enable_overage"):
+        ways.append("turning on pay-as-you-go overage (billed to your card)")
+    ways.append("a bigger plan" if planned else "picking a plan")
+    on = ways[0] if len(ways) == 1 else f"{', '.join(ways[:-1])} or {ways[-1]}"
+    day = renewal_day(body)
+    renews = f"it renews on {day}, or " if day else ""
+    return f"{said} -- {renews}{on} lets work go on now"
+
 
 def _run_turn(loop: Loop, view: View) -> bool:
     """Run a turn, surviving a model-API failure. Returns whether it completed.
@@ -3359,6 +3465,8 @@ def _run_turn(loop: Loop, view: View) -> bool:
     says something.
     """
     status: int | None = None
+    refusal_code = ""
+    refusal_body: dict[str, Any] = {}
     said = ""
     exc_message = ""
     attempt = 0
@@ -3366,16 +3474,44 @@ def _run_turn(loop: Loop, view: View) -> bool:
         try:
             loop.run()
             loop.api_failures = 0
-            loop.blocked_reason = None
+            # A stop at the study's ceiling is a refusal waiting cannot fix, like the
+            # ones below: held until the person speaks (`ceiling.resolve`).
+            loop.blocked_reason = getattr(getattr(loop, "ctx", None), "stopped", None)
             loop.images_dropped = False
             return True
         except ProviderError as exc:
+            pause = ceiling.paused(exc)
+            if pause is not None:
+                # The study met its spending ceiling at the model call itself: the
+                # person's question, not a conflict to wait out (409 is otherwise
+                # transient). Raised, the request goes again at once.
+                loop.settle()
+                if ceiling.resolve(loop.ctx, pause):
+                    continue
+                stopped = loop.ctx.stopped
+                console.print(f"\n[yellow]{stopped}[/]")
+                view.notice(stopped)
+                event = getattr(loop, "event", None)
+                if event is not None:
+                    event(stopped)
+                loop.blocked_reason = stopped
+                view.info("waiting for you - the study is paused at its spending ceiling")
+                return False
             status = exc.status_code
+            refusal_code = exc.code
+            refusal_body = exc.body
             exc_message = exc.message or ""
+            # The service fronting the model says which plan and what to upgrade to
+            # in fields beside its message (402 `allowance_exhausted`, 403
+            # `plan_limit`); they are said here too, as a workspace call says them.
+            note = extra_note({k: v for k, v in exc.body.items()
+                               if k not in ("error", "message")}) if exc.code else ""
+            if note:
+                exc_message = f"{exc_message} ({note})"
             if status:
-                said = f"The model API returned {status}: {exc.message}"
+                said = f"The model API returned {status}: {exc_message}"
             else:
-                said = f"Could not reach the model API: {exc.message}"
+                said = f"Could not reach the model API: {exc_message}"
             delay = llm_base.retry_delay(exc, attempt)
             console.print()
             console.print(f"[red]{said}[/]")
@@ -3434,7 +3570,11 @@ def _run_turn(loop: Loop, view: View) -> bool:
     study = loop.store.session.study_id
     if refused:
         loop.blocked_reason = said
-        because = _REFUSALS.get(status, "the service refused the request")
+        if refusal_code == "allowance_exhausted":
+            because = _allowance_refusal(refusal_body)
+        else:
+            because = _REFUSAL_CODES.get(refusal_code) or _REFUSALS.get(
+                status, "the service refused the request")
         console.print(
             f"[yellow]That is a refusal, not a hiccup: {because}. Waiting will not "
             "change it, so nothing more will be sent until you say something.[/]\n"

@@ -133,6 +133,34 @@ list, which rewrites the prompt cache once. That cost is paid only when you swit
 If you switch while a question is already open, that question still waits for your
 answer.
 
+## The study's spending ceiling
+
+On the hosted service every study has a spending ceiling, and the service pauses the
+study at 80% of it. This question is asked in every mode, full auto included, because
+it is about your money rather than the agent's plan:
+
+```
+Study paused at its spending ceiling
+  Spent $8.00 of a $10.00 ceiling (it pauses at 80%).
+  The estimate before the first solve was $6.00.
+  yes raises the ceiling to $20.00 (it would pause again at $16.00); a dollar amount
+  sets a different ceiling; no stops the study here.
+```
+
+Yes doubles the ceiling and the call that met the pause runs again. A dollar amount
+(`35`, `$35`) sets that ceiling instead, as long as 80% of it is above what is spent.
+No stops the study: the turn ends after the calls in flight, a final message says
+why, and nothing more is sent to the model until you say something. With nobody to
+ask (`-p`), the study stops the same way and the message says how to raise the
+ceiling.
+
+Before a study's first solve the agent states its estimate in dollars (`job_start`'s
+`estimate_usd`), and you are told it beside the study's ceiling. In full auto and
+structured mode that is a message; in ask before compute it is part of the job's
+question.
+
+In the stream the pause is an `approval` event with `kind: "ceiling"`.
+
 ## In the hosted app
 
 *New study* has a mode choice (Full auto, Ask before compute, Structured), remembered

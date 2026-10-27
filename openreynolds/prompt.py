@@ -173,10 +173,11 @@ the solve, then the solver's own lines as they are written (`ERROR:`, `WARNING:`
 `NOTE:`, one `step=` record per step). Its stdout is the solve's final status as JSON \
 (`state`, `gpu`, `billed_s`, `cost_usd`, `exit_code`, `error`). Exit 0 means the solve \
 succeeded; 1 that it failed, was killed, or was refused by the service (one `ERROR:` \
-line with the status, `402 budget_exhausted` for a spent budget); 2 that `felix` \
-refused the case here, before sending anything, with one `ERROR:` line. `--wall` caps \
-the wall time in seconds, else the service's 24-hour cap applies. `job_kill` stops a \
-solve on its GPU, and what it wrote so far still comes back.
+line with the status: `402 allowance_exhausted`, `403 plan_limit` for a GPU the plan \
+lacks, `409 study_paused` at the study's ceiling); 2 that `felix` refused the case \
+here, before sending anything, with one `ERROR:` line. `--wall` caps the wall time in \
+seconds, else the service's 24-hour cap applies. `job_kill` stops a solve on its GPU, \
+and what it wrote so far still comes back.
 
 `felix` refuses a case whose `io.yaml` has `output.every` 0 or unset, since a snapshot \
 is what a stopped or preempted solve continues from; also a case missing `case.yaml` or \

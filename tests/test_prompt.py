@@ -219,7 +219,9 @@ def test_nothing_per_session_is_baked_into_the_felix_prompt(shape):
         "out of GPU memory",
         "output.previous",          # what `felix run` does with an earlier output/
         "usd_per_hour",             # what `felix gpus` answers
-        "402 budget_exhausted",     # a refusal by the service
+        "402 allowance_exhausted",  # a refusal by the service: the allowance is spent
+        "403 plan_limit",           # the plan does not allow that GPU
+        "409 study_paused",         # the study met its ceiling
         "warm_start",               # what `felix continue` rewrites
         "FELIX_",                   # the mesh tools refuse to run with one set
         "/work",

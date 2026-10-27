@@ -9,8 +9,11 @@ modules in this package may. `tests/test_negative_obligation.py` enforces that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+from ..config import ACCOUNT_PAGE_URL
 
 if TYPE_CHECKING:  # the cell channel's machinery, and only its names, live next door
     from .kernel import CellResult
@@ -164,17 +167,93 @@ class BackendError(Exception):
     to the model verbatim in a tool_result, so they should read as facts.
     """
 
-    def __init__(self, message: str, code: str = "backend_error", status: int | None = None):
+    def __init__(self, message: str, code: str = "backend_error", status: int | None = None,
+                 extra: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.extra: dict[str, Any] = dict(extra or {})
+        """Every other top-level field of the service's error body. The pricing errors
+        carry their facts here -- 402 `allowance_exhausted` (tier, period_end,
+        renews_at, can_enable_overage, can_buy_credits, past_due), 403 `plan_limit` (limit, value, allowed, tier,
+        upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents) -- and a
+        reader branches on these, never on the prose in `message`."""
 
     def __str__(self) -> str:
         prefix = f"{self.code}"
         if self.status is not None:
             prefix += f" ({self.status})"
-        return f"{prefix}: {self.message}"
+        note = extra_note(self.extra)
+        return f"{prefix}: {self.message}" + (f" ({note})" if note else "")
+
+
+def _tier_name(tier: Any) -> str:
+    return str(tier).replace("_", " ").title()
+
+
+def renewal_day(extra: dict[str, Any] | None, now: datetime | None = None) -> str | None:
+    """The day a spent allowance renews (`YYYY-MM-DD`), or None when none is coming.
+
+    Named only from `renews_at` (D18): the day the allowance refills on its own, which
+    the service leaves null for a work trial, a plan set to cancel, a past-due account
+    and no plan at all. `period_end` is that period's end, not a promise -- a work trial
+    and a cancel-scheduled plan were told "it renews on" it. A service from before D18
+    sends no `renews_at`, and only then is `period_end` read, while it is still ahead
+    and the account is not past due. A day not ahead of `now`, or not a date, is none."""
+    if not extra or extra.get("past_due"):
+        return None
+    when = extra["renews_at"] if "renews_at" in extra else extra.get("period_end")
+    if not when:
+        return None
+    try:
+        end = datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if end <= (now or datetime.now(timezone.utc)):
+        return None
+    return end.date().isoformat()
+
+
+def extra_note(extra: dict[str, Any] | None) -> str:
+    """The pricing fields of an error body, said in a few words: which plan, what to
+    upgrade to, when the allowance renews (only while that day is ahead), whether
+    credits can be bought or pay-as-you-go overage turned on, a payment that failed, what a
+    study has spent of its ceiling.
+
+    Said beside the service's own message rather than instead of it, because that
+    message is prose and may change; these are the fields the contract fixes. Empty
+    for a body that carries none of them, so every other error reads as it always did.
+    Shared by `BackendError` and the model path (`cli._run_turn`), whose refusals come
+    from the same service."""
+    if not extra:
+        return ""
+    parts = []
+    if extra.get("tier"):
+        parts.append(f"plan: {_tier_name(extra['tier'])}")
+    elif "tier" in extra and ("can_enable_overage" in extra or "upgrade_to" in extra):
+        parts.append("no plan")
+    if extra.get("limit") and extra.get("allowed") is not None:
+        parts.append(f"{extra['limit']} allowed up to {extra['allowed']}")
+    if extra.get("upgrade_to"):
+        parts.append(f"upgrade to {_tier_name(extra['upgrade_to'])}")
+    if extra.get("past_due"):
+        parts.append("the last payment failed; update your card from the account page at "
+                     f"{ACCOUNT_PAGE_URL}")
+    day = renewal_day(extra)
+    if day:
+        parts.append(f"renews {day}")
+    if extra.get("can_buy_credits"):
+        parts.append("credits can be bought")
+    if extra.get("can_enable_overage"):
+        parts.append("pay-as-you-go overage (billed to your card) can be turned on")
+    if isinstance(extra.get("spent_cents"), (int, float)) and isinstance(
+            extra.get("cap_cents"), (int, float)):
+        parts.append(f"spent ${extra['spent_cents'] / 100:.2f} of a "
+                     f"${extra['cap_cents'] / 100:.2f} ceiling")
+    return "; ".join(parts)
 
 
 @runtime_checkable

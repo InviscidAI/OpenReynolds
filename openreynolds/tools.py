@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import convergence, images
+from . import ceiling, convergence, images
 from . import solvers, trace
 from .progress import (
     case_dir_from_cmd,
@@ -189,6 +189,24 @@ class ToolContext:
     on_mode: Callable[[str], None] | None = None
     """Switches the session's mode (`Loop.set_mode`), for a checkpoint answered with
     "approve all"."""
+    ceiling: Any = None
+    """The study's spending ceiling on the hosted service (`ceiling.Ceiling`). None
+    when no service is behind the session: then there is no ceiling to meet, and
+    nothing is announced before the first solve."""
+    estimate_cents: float | None = None
+    """The last `estimate_usd` a `job_start` carried, in cents: shown before the first
+    solve and again if the study meets its ceiling."""
+    estimated: bool = False
+    """Whether the line before the first solve has been said this session."""
+    stopped: str | None = None
+    """Why the study stopped in this turn, when it met its ceiling and the ceiling was
+    not raised (`ceiling.resolve`). The loop ends the turn after the call in flight
+    and asks the model nothing more; cleared when the next turn starts."""
+    on_ceiling_raised: Callable[[], None] | None = None
+    """Called once a raise has lifted a pause (`ceiling.resolve`), before the paused
+    call goes again. Set while the workspace's own start is what met the pause
+    (`cli._bring_up`): the start is sent again, so the call goes to a workspace that
+    is coming rather than to the start's stored refusal."""
     solver: str = solvers.OPENFOAM
     """This study's solver (`solvers.py`): `openfoam` or `felix`. It decides the tool
     list (`tools_for`), how `job_start` reads a launch, and the system prompt the loop
@@ -267,6 +285,19 @@ do is the same class of bug as a listing that does not say it was cut short.
 Identical in both descriptions on purpose. They are read independently -- a model
 looking at `job_start` alone must get the whole fact -- and one wording repeated is
 cheaper to keep true than two that drift."""
+
+
+ESTIMATE_PROPERTY: dict[str, Any] = {
+    "type": "number",
+    "description": (
+        "Your estimate of what this job will cost, in US dollars: compute, GPU and the "
+        "model time it will take you to see it through. Before a study's first solve "
+        "it is shown to the person beside the study's spending ceiling, and again if "
+        "the study meets that ceiling, so give it with the first solve at least."
+    ),
+}
+"""`job_start`'s `estimate_usd`, in both solvers' variants: the estimate the person is
+shown before the first solve (`ceiling.preamble`)."""
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -488,6 +519,7 @@ TOOLS: list[dict[str, Any]] = [
                         "launch is refused instead."
                     ),
                 },
+                "estimate_usd": ESTIMATE_PROPERTY,
             },
             "required": ["cmd"],
         },
@@ -636,7 +668,8 @@ FELIX_JOB_START: dict[str, Any] = {
         "moved to `output.previous/`), and stdout is the solve's final status as JSON "
         "(`state`, `gpu`, `billed_s`, `cost_usd`, `exit_code`, `error`). Exit 0: the "
         "solve succeeded; 1: it failed, was killed, or was refused by the service "
-        "(one `ERROR:` line with the status, e.g. `402 budget_exhausted`); 2: refused "
+        "(one `ERROR:` line with the status, e.g. `402 allowance_exhausted`, "
+        "`403 plan_limit` or `409 study_paused`); 2: refused "
         "here before anything was sent, with one `ERROR:` line -- a case whose "
         "`output.every` is 0 or unset (a solve writes snapshots so that it can be "
         "continued), one missing `case.yaml` or its mesh, or one holding a symlink. "
@@ -665,6 +698,7 @@ FELIX_JOB_START: dict[str, Any] = {
                     "the job and the matching line is reported back. Optional."
                 ),
             },
+            "estimate_usd": ESTIMATE_PROPERTY,
         },
         "required": ["cmd"],
     },
@@ -782,7 +816,7 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
     started = time.monotonic() if trace.on else 0.0
     ok, size = True, 0
     try:
-        result = handler(ctx, tool_input)
+        result = _handled(ctx, handler, tool_input)
         if trace.on:
             size = _traced_size(result)
         # Only text is collapsed, and only when it repeats exactly. An image is already
@@ -805,6 +839,23 @@ def dispatch(ctx: ToolContext, name: str, tool_input: dict[str, Any],
                 tool_use_id=call_id,
                 result={"ok": ok, "bytes": size},
             )
+
+
+def _handled(ctx: ToolContext, handler: Callable[[ToolContext, dict[str, Any]], Any],
+             tool_input: dict[str, Any]) -> Any:
+    """Run `handler`, putting a `409 study_paused` to the person and running it again
+    once the ceiling is raised (`ceiling.resolve`).
+
+    Again from the top, because the pause is the service refusing before it did
+    anything: a new sandbox, a model call or a GPU solve that never began. A pause
+    left standing is raised as it came, and the model reads it as any failed call."""
+    for _ in range(ceiling.MAX_RAISES_PER_CALL):
+        try:
+            return handler(ctx, tool_input)
+        except BackendError as exc:
+            if ceiling.paused(exc) is None or not ceiling.resolve(ctx, exc):
+                raise
+    return handler(ctx, tool_input)
 
 
 # -- handlers ------------------------------------------------------------------

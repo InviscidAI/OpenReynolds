@@ -6,7 +6,38 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A study's spending ceiling is the person's question.** When the hosted service
+  pauses a study at 80% of its ceiling (`409 study_paused`), on a workspace call or on
+  a model call, the person is asked in any mode: yes doubles the ceiling (`POST
+  /v1/studies/{id}/cap`) and the paused call runs again, a dollar amount sets that
+  ceiling, no stops the study with a final message and asks the model nothing more.
+  Before the first solve the agent's estimate (`job_start`'s new `estimate_usd`) and
+  the study's ceiling are shown; in ask-before-compute mode they are part of the
+  job's question. See docs/modes.md.
+
 ### Changed
+
+- **The service's pricing errors keep their fields.** `BackendError.extra` (and a
+  model call's `ProviderError.body`) carry everything a 4xx body says beyond `error`
+  and `message` -- the tier and `upgrade_to` of a 403 `plan_limit`, the period and
+  overage of a 402 `allowance_exhausted`, the spend and ceiling of a 409
+  `study_paused` -- and the error's text names the plan and the tier to upgrade to.
+  A spent allowance names a renewal day only from the 402's `renews_at`, so a work
+  trial, a plan set to cancel and a past-due account are no longer told it renews
+  (an older service without `renews_at` falls back to a `period_end` still ahead);
+  the postpaid mode is called pay-as-you-go overage and the prepaid one credits.
+
+- **Workspace calls name their study.** Once a session knows its study, every call
+  to the hosted service carries `X-Study-Id` -- sandbox start, exec, files and jobs, a
+  Felix solve's job among them -- so the service tags that spend to the study and its
+  pause is exact; a resumed study names itself on the start too. A raise of the
+  ceiling the service answers `paused: true` (its own count still past 80%) is asked
+  again at once instead of retrying the paused call. The Felix prompt and `job_start`
+  name `402 allowance_exhausted`, `403 plan_limit` and `409 study_paused`, and a
+  model call refused with `allowance_exhausted` or `plan_limit` says what that means
+  (`budget_exhausted`, from an older service, still blocks as a 402).
 
 - **A session's system prompt and tool list no longer change mid-conversation.** A study
   whose solver is `auto` used to start the agent on a solver-choosing prompt with only
