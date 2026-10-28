@@ -870,8 +870,9 @@ class Tracker:
             if line == self._narrated:
                 return
             self._narrated = line
-        if not line:
-            return
+        # An empty line is said too, once, when the last one stops being true: a view
+        # holds what it was told, and "waiting for the workspace to start" stayed on
+        # the web page after the start had failed (#48 on the web app).
         narrate = getattr(self.view, "narration", None)
         if narrate is None:
             return

@@ -141,6 +141,8 @@ class Loop:
         person's first message, before the first request (`desk.route`, wired by
         `cli.session`), and returns the briefing the thread opens with. None for a
         study whose solver is known, which is every study once this has run."""
+        self.routed: str | None = None
+        """The briefing `route_ahead` already wrote, waiting for the first message."""
 
         headers = {"X-Study-Id": store.session.study_id}
         # Without a timeout a stalled connection is indistinguishable from a model
@@ -366,7 +368,9 @@ class Loop:
         # first call says so and the question is asked again.
         self.ctx.stopped = None
         try:
-            if getattr(self.ctx, "solver", None) == solvers.AUTO and self.router is not None:
+            if self.routed is not None or (
+                getattr(self.ctx, "solver", None) == solvers.AUTO and self.router is not None
+            ):
                 self._route()
             return self._turns()
         finally:
@@ -388,6 +392,11 @@ class Loop:
             "",
         )
         router, self.router = self.router, None
+        if self.routed is not None:
+            briefing, self.routed = self.routed, None
+            self.messages.insert(0, {"role": "user", "content": briefing})
+            self._record("event", briefing)
+            return
         # Said, because nothing else is: the routing request and the workspace's
         # reservation take seconds -- 14 in the first production study routed this way
         # (20261019-013223-f805) -- before the first streamed token, which is what used
@@ -404,6 +413,30 @@ class Loop:
         if briefing:
             self.messages.insert(0, {"role": "user", "content": briefing})
             self._record("event", briefing)
+
+    def route_ahead(self, said: str) -> None:
+        """Settle an open solver now, from words the person has said that are held back
+        from the model: a first message waiting for its attachments to upload, or for
+        a gallery case to be copied in. Both wait for the workspace, and the workspace
+        waited for the solver, which was chosen from that very message -- so nothing
+        moved (#61 on the web app). Routed here, the workspace starts at once, and the
+        briefing waits for the message to arrive (`_route`), as if it had come with it.
+
+        A routing that raises is left for the first message to try again."""
+        if self.router is None or not said.strip():
+            return
+        router = self.router
+        self.view.working(ROUTING_STAGE)
+        self._busy(ROUTING_STAGE)
+        try:
+            self.routed = router(said)
+        except Exception:  # noqa: BLE001 - the first message routes as it always did
+            return
+        finally:
+            self._unbusy()
+            # Nothing streams after this one: the message it was for is still held.
+            self.view.stage("")
+        self.router = None
 
     def _turns(self) -> Turn:
         step = 0
