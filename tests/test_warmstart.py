@@ -445,6 +445,20 @@ def test_the_bar_says_the_workspace_is_starting_and_what_a_tool_is_waiting_for(v
     assert not tracker.workspace_pending
 
 
+def test_the_waiting_line_is_taken_back_once_the_wait_is_over(view):
+    """#48 on the web app: the page holds the last line it was told, and the tracker
+    never said an empty one -- so "waiting for the workspace to start" stayed after a
+    start that had failed. Said once, and only when a line is taken back."""
+    tracker = Tracker(view)
+    tracker.idle()
+    assert view.narrations == [], "nothing to take back yet"
+    tracker.workspace_starting(30.0)
+    assert view.narrations == ["waiting for the workspace to start"]
+    tracker.workspace_ready()
+    tracker.idle()
+    assert view.narrations == ["waiting for the workspace to start", ""]
+
+
 # -- the briefing -----------------------------------------------------------------------
 
 
@@ -546,6 +560,7 @@ class _WatchingView(RecordingView):
         self.hold = hold
         self.header_while_starting = None
         self.ready = []
+        self.failed = []
         self.on_tool = None
         self.before_step = None
 
@@ -568,6 +583,9 @@ class _WatchingView(RecordingView):
 
     def workspace_ready(self, instance_id, seconds):
         self.ready.append((instance_id, seconds))
+
+    def workspace_failed(self, reason):
+        self.failed.append(reason)
 
 
 def _config(tmp_path):
@@ -755,6 +773,7 @@ def test_a_start_that_fails_tells_the_view_and_the_model_and_keeps_the_conversat
 
     assert any("could not be started" in n for n in view.notices)
     assert view.ready == [], "a workspace that never came is never said to be ready"
+    assert len(view.failed) == 1 and "no capacity" in view.failed[0], "it is said to have failed"
     (loop,) = loops
     assert backend.execs == [], "nothing ran"
     assert any("unavailable" in e for e in view.tool_errors), "the tool call failed with the start's own error"

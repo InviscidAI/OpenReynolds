@@ -121,6 +121,13 @@ class View(Protocol):
         session, `seconds` after the session began asking for it; the header has
         long since named the instance, so a view showing "starting" stops."""
 
+    def workspace_failed(self, reason: str) -> None:
+        """The workspace will not come: its start was refused or failed, or it came up
+        and could not be set up. Said in place of `workspace_ready`, beside the notice
+        that says why, so a view showing "starting" stops counting (#48 on the web
+        app: a refused start read "workspace starting" for ten minutes). A start sent
+        again later -- a ceiling raised -- ends in `workspace_ready` as usual."""
+
     def show_files(self, path: str = "", depth: int = 0) -> None:
         """Show what is in the workspace. Answered locally; the model is not told."""
 
