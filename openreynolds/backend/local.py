@@ -362,12 +362,17 @@ class LocalBackend(KernelHost, Backend):
     def job_kill(self, job_id: str, signal: str = "TERM") -> JobStatus:
         job = self._job(job_id)
         if job.process.poll() is None:
-            job.end_reason = "killed_by_client"
             self._terminate(job, signal)
             try:
-                job.process.wait(timeout=10)
+                code = job.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self._terminate(job, "KILL")
+                code = job.process.wait()
+            # Only a death by the signal sent is a stop. A job that exited on its own
+            # in the moment before it landed keeps the ending its code says; a status
+            # read in between that took this signal for an outside one is corrected.
+            if job.end_reason in (None, "killed_externally") and code in (-9, -15, 137, 143):
+                job.end_reason = "killed_by_client"
         return self.job_status(job_id)
 
     # -- lifecycle -------------------------------------------------------------

@@ -272,3 +272,27 @@ def stop_everything(
 
     report.survivors = survivors
     return report
+
+
+def settle_after_shutdown(backend: Backend, store: Store) -> None:
+    """After a session's end has put its workspace down: a job the record still calls
+    running ended with it -- one whose kill was not delivered (still starting, the
+    service answered 409 `kill_not_delivered`) and that nothing has looked at since.
+
+    Each is asked once, now that the service has closed its row. One that had ended on
+    its own keeps that ending; one the stop ended (`sandbox_expired` with the service's
+    `machine_stopped` sentence, or still unanswered) is recorded as the stop it was,
+    rather than left running or shown as a job that ended unexpectedly."""
+    for record in store.live_jobs():
+        try:
+            status = backend.job_status(record.job_id)
+        except BackendError:
+            status = None
+        ours = (status is None or status.status in ("running", "unknown")
+                or (status.end_reason == "sandbox_expired"
+                    and (status.killed_by or "").startswith("machine_stopped")))
+        if ours:
+            store.update_job(record.job_id, status="killed", end_reason="killed_by_client")
+        else:
+            store.update_job(record.job_id, status=status.status,
+                             end_reason=status.end_reason, exit_code=status.exit_code)
