@@ -329,15 +329,18 @@ class LocalBackend(KernelHost, Backend):
         else:
             if job.ended_at is None:
                 job.ended_at = _now()
-                # As the service words it: a signal death this side did not send (a
-                # negative code, or 137/143 from the `bash -lc` wrapper around a
-                # killed solver) is killed_externally, any other non-zero exit failed.
+                # As the service words it: a KILL or TERM this side did not send (-9
+                # or -15, or 137/143 from the `bash -lc` wrapper around the solver) is
+                # killed_externally; any other non-zero exit, a segfault included, is
+                # the job's own failure.
                 job.end_reason = job.end_reason or (
                     "completed" if code == 0
-                    else "killed_externally" if code < 0 or code in (137, 143)
+                    else "killed_externally" if code in (-9, -15, 137, 143)
                     else "failed"
                 )
-            status = "killed" if job.end_reason == "killed_by_client" else "exited"
+            # `exited` for an exit the job reached, `killed` for a stop or a kill_on.
+            status = ("exited" if job.end_reason in ("completed", "failed", "killed_externally")
+                      else "killed")
             reason = job.end_reason
         return JobStatus(
             job_id=job_id, status=status, name=job.name,

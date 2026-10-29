@@ -31,6 +31,8 @@ STOP_PASSES = 4
 @dataclass
 class StopReport:
     killed: list[str] = field(default_factory=list)
+    ended: list[tuple[str, str]] = field(default_factory=list)
+    """Jobs the record called running that had already ended on their own, with how."""
     escalated: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     survivors: list[str] = field(default_factory=list)
@@ -46,6 +48,8 @@ class StopReport:
         out = []
         for name in self.killed:
             out.append(f"stopped {name}")
+        for name, how in self.ended:
+            out.append(f"{name} had already ended ({how})")
         for name in self.escalated:
             out.append(f"stopped {name} (it ignored the first signal)")
         for name, why in self.failed:
@@ -208,6 +212,7 @@ def stop_everything(
     """A home of `/work` is every study's directory at once (studies that predate homes
     keep the volume root), so it distinguishes nothing and is treated as unscoped."""
 
+    stopped = []
     for record in store.live_jobs():
         label = record.name or record.job_id[:8]
         try:
@@ -215,14 +220,16 @@ def stop_everything(
         except BackendError as exc:
             report.failed.append((label, str(exc)))
             continue
-        if ended.status != "running" and ended.end_reason not in (None, "", "killed_by_client"):
+        if ended.status in ("exited", "killed") and ended.end_reason not in (None, "", "killed_by_client"):
             # It had already ended on its own -- a solver that crashed a moment before
             # -- and the kill answered with that ending. Recorded as it is, and not
             # reported as stopped: writing `killed_by_client` over it showed a crash
             # as a stop.
             store.update_job(record.job_id, status=ended.status, end_reason=ended.end_reason)
+            report.ended.append((label, ended.end_reason))
             continue
         report.killed.append(label)
+        stopped.append(record)
         store.update_job(record.job_id, status="killed", end_reason="killed_by_client")
 
     if report.killed:
@@ -238,9 +245,9 @@ def stop_everything(
     survivors, leftovers = look()
     if survivors:
         # A second signal, this time one that cannot be ignored.
-        for record in list(store.session.jobs.values()):
-            if record.job_id in [r.job_id for r in store.live_jobs()]:
-                continue
+        # Only the jobs this stop signalled: one that had already ended on its own is
+        # not sent a KILL and reported as having ignored the first signal.
+        for record in stopped:
             try:
                 backend.job_kill(record.job_id, signal="KILL")
                 report.escalated.append(record.name or record.job_id[:8])

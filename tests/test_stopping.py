@@ -88,6 +88,24 @@ def test_a_job_that_had_already_crashed_keeps_its_ending_rather_than_reading_sto
     record = store.session.jobs[job_id]
     assert (record.status, record.end_reason) == ("exited", "failed")
     assert report.killed == []
+    assert "solve had already ended (failed)" in report.lines()
+
+
+def test_a_job_that_had_already_ended_is_not_sent_the_escalated_kill(backend, store):
+    """Survivors bring a KILL to the jobs this stop signalled; sending it to one that
+    had already crashed reported the crash as a stop that ignored its first signal."""
+    with_jobs(backend, store, "solve")
+    processes(backend, "simpleFoam")
+    (job_id,) = store.session.jobs
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", name="solve",
+                                     exit_code=1, end_reason="failed")
+    sent = []
+    backend.job_kill = lambda jid, signal="TERM": sent.append(signal) or backend.jobs[jid]
+
+    report = stop_everything(backend, store)
+
+    assert sent == ["TERM"]
+    assert report.escalated == []
 
 
 @pytest.mark.parametrize("answer", [
@@ -510,6 +528,7 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     ("exit 1", ("exited", "failed")),
     ("exit 137", ("exited", "killed_externally")),
     ("kill -KILL $$", ("exited", "killed_externally")),
+    ("kill -SEGV $$", ("exited", "failed")),
 ])
 def test_a_local_job_ends_in_the_services_words(tmp_path, script, ending):
     """A signal death nobody asked for (an OOM kill, a segfault, reported by the
