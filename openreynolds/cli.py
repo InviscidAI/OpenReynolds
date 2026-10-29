@@ -2939,7 +2939,8 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
                 shutdown()
-                settle_after_shutdown(backend, store)
+                for name in settle_after_shutdown(backend, store, report):
+                    console.print(f"[dim]{name} was still starting; it stopped with the instance[/]")
                 if not started_it_here:
                     console.print(
                         "[dim]this session joined a running workspace, and nothing else "
