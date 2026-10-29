@@ -858,8 +858,8 @@ class Loop:
         return self._result(block, content, is_error)
 
     def _before_first_solve(self, name: str, tool_input: dict[str, Any]) -> str:
-        """The estimate and the study's ceiling, said before the session's first solve
-        (`ceiling.preamble`). A message in the transcript, not a question -- unless the
+        """The estimate and the study's ceiling (the estimate alone for an exempt
+        study), said before the session's first solve (`ceiling.preamble`). A message in the transcript, not a question -- unless the
         person chose to approve compute, when it is returned to go in the job's
         question instead. Empty when there is nothing to say."""
         if name != "job_start":
