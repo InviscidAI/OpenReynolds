@@ -20,6 +20,8 @@ Two things are done with that here, and nothing else:
 - **The first solve is announced.** Before the session's first `job_start` the person
   is told the agent's estimate in dollars and the study's ceiling, as a message -- or
   as part of the job's question, when they chose to approve compute (`modes.PARTIAL`).
+  A study foamd reads as `exempt` (a staff owner, whom no ceiling holds) is told the
+  estimate alone.
 """
 
 from __future__ import annotations
@@ -295,8 +297,9 @@ def preamble(ctx: Any, tool_input: dict[str, Any]) -> str | None:
     """The line said before this session's first solve: the estimate and the ceiling.
 
     None when there is no ceiling to speak of (no hosted service behind the session)
-    or when it has been said already. Records the estimate on `ctx` either way, so a
-    later pause can show it."""
+    or when it has been said already. An `exempt` study (a staff owner, foamd D11) is
+    told the estimate alone, and nothing when there is none. Records the estimate on
+    `ctx` either way, so a later pause can show it."""
     cents = estimate_cents(tool_input)
     if cents is not None:
         ctx.estimate_cents = cents
@@ -309,6 +312,9 @@ def preamble(ctx: Any, tool_input: dict[str, Any]) -> str | None:
     else:
         said = "Before the first solve: the agent gave no estimate of its cost."
     row = ceiling.study() or {}
+    if row.get("exempt") is True:
+        # A staff owner (foamd D11): no ceiling ever holds the study, so none is named.
+        return said if cents is not None else None
     cap = row.get("cap_cents")
     spent = row.get("spent_cents")
     if not isinstance(cap, (int, float)):

@@ -39,7 +39,7 @@ from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
 from .progress import Tracker, felix_job_facts
-from .stopping import running_solvers, stop_everything
+from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
 from . import trace
@@ -1173,12 +1173,19 @@ def session(
     mode_explicit: bool | None = None,
     model_explicit: bool | None = None,
     solver: str | None = None,
+    route_on: str | None = None,
 ) -> str | None:
     """Run one study to its end.
 
     `solver` is `auto`, `openfoam` or `felix` (`solvers.py`), as `--solver` gives it;
     None reads `OPENREYNOLDS_SOLVER`, and with neither the agent chooses (`auto`). A
     resumed study keeps the solver it has (`_settle_solver`).
+
+    `route_on` is the person's first message, given ahead of it by an embedder that
+    holds the message back until something the message names is in the workspace --
+    its attachments, a gallery case. A study whose solver is open has it chosen from
+    these words at once (`Loop.route_ahead`), so the workspace those things wait for
+    starts; the message itself still reaches the agent only when it is sent.
 
     `interface`, when given, is a callable that takes `drive` -- the one-session
     function below, `drive(view, reader)` -- and runs it against an interface of its
@@ -1693,6 +1700,7 @@ def session(
                     pending.fail(exc)
                     console.print(f"[red]Could not reach the workspace service:[/] {exc}")
                     view.notice(f"the workspace could not be started: {exc}")
+                    _say_workspace_failed(view, str(exc))
                     return (
                         f"The workspace could not be reserved ({exc}); every tool call "
                         "will fail with that error until the session is resumed."
@@ -1767,6 +1775,8 @@ def session(
                 return "\n".join([*lines, rest] if rest else lines)
 
             loop.router = route_study
+            if route_on:
+                loop.route_ahead(route_on)
         else:
             # The workspace is coming up on its own thread; this one runs the
             # conversation. When it is here, `_bring_up` makes it this study's --
@@ -2397,6 +2407,14 @@ def _say_workspace_ready(view: View, instance_id: str, seconds: float) -> None:
         pass
 
 
+def _say_workspace_failed(view: View, reason: str) -> None:
+    """`view.workspace_failed`, never raising, for the same reason as above."""
+    try:
+        view.workspace_failed(reason)
+    except Exception:  # noqa: BLE001 - see `_say_workspace_ready`
+        pass
+
+
 def _bring_up(
     pending: PendingBackend,
     starter: Any,
@@ -2429,6 +2447,7 @@ def _bring_up(
             tracker.workspace_ready()
             console.print(f"[red]Could not start the workspace:[/] {exc}")
             view.notice(f"the workspace could not be started: {exc}")
+            _say_workspace_failed(view, str(exc))
             if ceiling.paused(exc) is not None:
                 # The study is paused at its ceiling (a resumed study names itself on
                 # the start, and foamd judges the start against it). That is the one
@@ -2479,6 +2498,7 @@ def _bring_up(
         try:
             tracker.workspace_ready()
             view.warn(f"the workspace could not be set up: {exc}")
+            _say_workspace_failed(view, str(exc))
         except Exception:  # noqa: BLE001
             pass
 
@@ -2919,6 +2939,8 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
                 shutdown()
+                for name in settle_after_shutdown(backend, store, report):
+                    console.print(f"[dim]{name} was still starting; it stopped with the instance[/]")
                 if not started_it_here:
                     console.print(
                         "[dim]this session joined a running workspace, and nothing else "

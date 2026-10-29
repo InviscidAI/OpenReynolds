@@ -511,7 +511,7 @@ class _Platform:
 
 
 def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=None,
-                  lines=("go",), env=None):
+                  lines=("go",), env=None, route_on=None):
     """One session end to end against a scripted model and a fake service, with the
     solver as the CLI hands it over. Returns what the test looks at."""
     from openreynolds.backend import pending as pending_mod
@@ -532,9 +532,12 @@ def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=N
     reserves: list[dict] = []
     loops: list[Loop] = []
 
+    reader = ScriptedReader(list(lines))
+
     def reserve(url, key, iid=None, **kwargs):
         reserves.append({"iid": iid, "model_calls": sum(len(l.fake.calls) for l in loops),
-                         "recorded": _recorded_solvers(studies), **kwargs})
+                         "recorded": _recorded_solvers(studies),
+                         "lines_unread": len(reader._lines), **kwargs})
         return platform, "iid-9", ReadyStarter(backend, "iid-9")
 
     class ScriptedLoop(Loop):
@@ -567,10 +570,12 @@ def _auto_session(monkeypatch, tmp_path, responses, *, solver="auto", study_id=N
     view = SolverView()
 
     def interface(drive):
-        drive(view, ScriptedReader(list(lines)))
+        drive(view, reader)
         return False
 
     kwargs = {} if solver is None else {"solver": solver}
+    if route_on is not None:
+        kwargs["route_on"] = route_on
     cli.session(cfg, study_id=study_id, instance_id=None, one_shot=None,
                 interface=interface, **kwargs)
     return SimpleNamespace(reserves=reserves, platform=platform, backend=backend,
@@ -635,6 +640,29 @@ def test_solver_auto_routes_the_first_message_before_the_first_main_request(monk
     briefing = calls[1]["messages"][0]["content"]
     assert "chosen from the person's first message" in briefing
     assert "the flow is incompressible and the mesh is large" in briefing
+
+
+def test_solver_auto_routes_ahead_on_words_whose_message_is_held(monkeypatch, tmp_path):
+    """#61 on the web app: a first message held until its attachments upload, or a
+    gallery case is copied in, waits for the workspace -- and the workspace of an open
+    solver waited for that message. Given the words ahead (`route_on`), the solver is
+    chosen and the workspace reserved before the message is read; when it comes, it
+    opens the thread behind the same briefing, with no second routing request."""
+    from openreynolds.prompt import FELIX_PROMPT
+
+    run = _auto_session(monkeypatch, tmp_path, [_choose("felix"), _done()], route_on="go")
+
+    calls = run.loop.fake.calls
+    assert _names(calls[0]["tools"]) == ["choose_solver"]
+    assert calls[0]["messages"] == [{"role": "user", "content": "go"}]
+    assert len(run.reserves) == 1 and run.reserves[0]["lines_unread"] == 1, \
+        "reserved before the message was read"
+    assert run.reserves[0].get("solver") == "felix"
+    assert len(calls) == 2, "routed once"
+    assert _system_text(calls[1]) == FELIX_PROMPT
+    briefing, said = calls[1]["messages"][:2]
+    assert "chosen from the person's first message" in briefing["content"]
+    assert said == {"role": "user", "content": "go"}
 
 
 def test_solver_routing_reads_as_the_agent_working_not_the_persons_turn(monkeypatch, tmp_path):

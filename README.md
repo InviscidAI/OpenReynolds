@@ -422,6 +422,7 @@ three cases exit code `1` alone cannot tell apart. In between:
 | --- | --- |
 | `workspace` | The study's own directory on the instance. The second object of every session. |
 | `workspace_ready` | The workspace is up and set up, so tool calls run at once from here: `instance_id` and `seconds` since the session began. `session_start` names the instance while it may still be coming up; until this arrives a tool call waits for it rather than failing, and the model has been told so. |
+| `workspace_failed` | The workspace will not come: its start was refused or failed, or it could not be set up. `reason` is the error; a `notice` before it says the same in words. Said in place of `workspace_ready`, so a reader showing "starting" stops. A start sent again after a ceiling is raised ends in `workspace_ready`. |
 | `thinking_begin` | The model started thinking; `thinking` carries what it thought. |
 | `text` / `thinking` | Model output as it arrives, coalesced to a line rather than a token. |
 | `message` | The whole assistant message once the turn ends, `text` and `thinking` in full. |

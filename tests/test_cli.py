@@ -964,6 +964,26 @@ def test_ending_a_session_stops_the_jobs_and_the_instance(store, quiet_console):
     assert not store.live_jobs(), "and the work was stopped first"
 
 
+def test_a_job_the_end_could_not_signal_is_recorded_as_stopped_with_the_instance(
+    store, quiet_console
+):
+    """A job still starting answers its kill `409 kill_not_delivered`; the instance went
+    down anyway and the record said running, then the service's `sandbox_expired`."""
+    backend = Stoppable()
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
+
+    def not_delivered(job_id, signal="TERM"):
+        raise BackendError("no process group to signal", code="kill_not_delivered")
+
+    backend.job_kill = not_delivered
+    cli._close_down(backend, store)
+
+    assert backend.stopped == 1
+    record = store.session.jobs["job-1"]
+    assert (record.status, record.end_reason) == ("killed", "killed_by_client")
+
+
 def test_keep_alive_leaves_it_up_and_says_what_it_is_choosing(store, quiet_console, capsys):
     backend = Stoppable()
     store.record_job("job-1", cmd="simpleFoam", name="solve")

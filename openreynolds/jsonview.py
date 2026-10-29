@@ -271,6 +271,9 @@ class JsonView(View):
         a `bash` will answer at once rather than after the start reads this."""
         self.emit("workspace_ready", instance_id=instance_id, seconds=round(seconds, 3))
 
+    def workspace_failed(self, reason: str) -> None:
+        self.emit("workspace_failed", reason=reason)
+
     def show_files(self, path: str = "", depth: int = 0) -> None:
         if self._browser is None:
             self.emit("files", path=path, depth=depth, entries=[], error="no workspace")

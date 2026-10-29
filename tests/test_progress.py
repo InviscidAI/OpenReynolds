@@ -528,4 +528,5 @@ def test_the_now_line_comes_from_the_tracker_with_no_model_and_no_clock():
     tracker.idle()
     tracker.begin("writing")
 
-    assert told == ["thinking", "running bash: blockMesh", "writing"]
+    # Idle takes the line back: a view holds what it was told (#48 on the web app).
+    assert told == ["thinking", "running bash: blockMesh", "", "writing"]

@@ -28,11 +28,24 @@ STOP_PASSES = 4
 """How many times to look again before giving up and saying what is still there."""
 
 
+KILL_NOT_DELIVERED = "kill_not_delivered"
+"""foamd's code for a kill that found no process group to signal (app/jobs.py)."""
+
+MACHINE_STOPPED = "machine_stopped:"
+"""How foamd's `killed_by` begins for a job that ended because the service put its
+workspace down on purpose (app/jobs.py MACHINE_STOPPED)."""
+
+
 @dataclass
 class StopReport:
     killed: list[str] = field(default_factory=list)
+    ended: list[tuple[str, str]] = field(default_factory=list)
+    """Jobs the record called running that had already ended on their own, with how."""
     escalated: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    undelivered: list[tuple[str, str]] = field(default_factory=list)
+    """(job id, name) of the jobs whose kill the service answered `kill_not_delivered`:
+    no process group to signal yet (a job still starting). Also in `failed`."""
     survivors: list[str] = field(default_factory=list)
     """Solver processes still running once every job was signalled."""
     passes: int = 0
@@ -46,6 +59,8 @@ class StopReport:
         out = []
         for name in self.killed:
             out.append(f"stopped {name}")
+        for name, how in self.ended:
+            out.append(f"{name} had already ended ({how})")
         for name in self.escalated:
             out.append(f"stopped {name} (it ignored the first signal)")
         for name, why in self.failed:
@@ -208,14 +223,26 @@ def stop_everything(
     """A home of `/work` is every study's directory at once (studies that predate homes
     keep the volume root), so it distinguishes nothing and is treated as unscoped."""
 
+    stopped = []
     for record in store.live_jobs():
         label = record.name or record.job_id[:8]
         try:
-            backend.job_kill(record.job_id)
-            report.killed.append(label)
+            ended = backend.job_kill(record.job_id)
         except BackendError as exc:
             report.failed.append((label, str(exc)))
+            if exc.code == KILL_NOT_DELIVERED:
+                report.undelivered.append((record.job_id, label))
             continue
+        if ended.status in ("exited", "killed") and ended.end_reason not in (None, "", "killed_by_client"):
+            # It had already ended on its own -- a solver that crashed a moment before
+            # -- and the kill answered with that ending. Recorded as it is, and not
+            # reported as stopped: writing `killed_by_client` over it showed a crash
+            # as a stop.
+            store.update_job(record.job_id, status=ended.status, end_reason=ended.end_reason)
+            report.ended.append((label, ended.end_reason))
+            continue
+        report.killed.append(label)
+        stopped.append(record)
         store.update_job(record.job_id, status="killed", end_reason="killed_by_client")
 
     if report.killed:
@@ -231,9 +258,9 @@ def stop_everything(
     survivors, leftovers = look()
     if survivors:
         # A second signal, this time one that cannot be ignored.
-        for record in list(store.session.jobs.values()):
-            if record.job_id in [r.job_id for r in store.live_jobs()]:
-                continue
+        # Only the jobs this stop signalled: one that had already ended on its own is
+        # not sent a KILL and reported as having ignored the first signal.
+        for record in stopped:
             try:
                 backend.job_kill(record.job_id, signal="KILL")
                 report.escalated.append(record.name or record.job_id[:8])
@@ -258,3 +285,33 @@ def stop_everything(
 
     report.survivors = survivors
     return report
+
+
+def settle_after_shutdown(backend: Backend, store: Store, report: StopReport) -> list[str]:
+    """After a session's end has put its workspace down, record the jobs it took down
+    with it that `stop_everything` could not signal (`report.undelivered`): a job still
+    starting answers its kill `kill_not_delivered`, does not keep the workspace up, and
+    went on reading running in the record, then as an unexpected `sandbox_expired`.
+
+    Each is asked once, now that the service has closed its row. One that had ended on
+    its own keeps that ending; one the stop ended (`machine_stopped`, still running, or
+    unanswerable) is recorded as the stop it was. Returns the names recorded stopped.
+    Only for a workspace that was really put down: a local one's shutdown stops nothing."""
+    stopped = []
+    live = {record.job_id for record in store.live_jobs()}
+    for job_id, label in report.undelivered:
+        if job_id not in live:
+            continue
+        try:
+            status = backend.job_status(job_id)
+        except BackendError:
+            status = None
+        if (status is None or status.status in ("running", "unknown")
+                or (status.end_reason == "sandbox_expired"
+                    and (status.killed_by or "").startswith(MACHINE_STOPPED))):
+            store.update_job(job_id, status="killed", end_reason="killed_by_client")
+            stopped.append(label)
+        else:
+            store.update_job(job_id, status=status.status,
+                             end_reason=status.end_reason, exit_code=status.exit_code)
+    return stopped
