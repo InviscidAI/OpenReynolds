@@ -212,15 +212,18 @@ def stop_everything(
         label = record.name or record.job_id[:8]
         try:
             ended = backend.job_kill(record.job_id)
-            report.killed.append(label)
         except BackendError as exc:
             report.failed.append((label, str(exc)))
             continue
-        # What the kill answered, not `killed_by_client` regardless: a job that had
-        # already ended (a solver that crashed a moment before) comes back with its real
-        # ending, and recording it as stopped on purpose would show a crash as a stop.
-        store.update_job(record.job_id, status=ended.status or "killed",
-                         end_reason=ended.end_reason or "killed_by_client")
+        if ended.status != "running" and ended.end_reason not in (None, "", "killed_by_client"):
+            # It had already ended on its own -- a solver that crashed a moment before
+            # -- and the kill answered with that ending. Recorded as it is, and not
+            # reported as stopped: writing `killed_by_client` over it showed a crash
+            # as a stop.
+            store.update_job(record.job_id, status=ended.status, end_reason=ended.end_reason)
+            continue
+        report.killed.append(label)
+        store.update_job(record.job_id, status="killed", end_reason="killed_by_client")
 
     if report.killed:
         time.sleep(SETTLE_S)

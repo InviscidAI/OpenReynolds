@@ -74,7 +74,8 @@ def test_a_job_that_had_already_crashed_keeps_its_ending_rather_than_reading_sto
     backend, store
 ):
     """The service answers a kill on an ended job with the job's real ending; writing
-    `killed_by_client` over it showed a crash as a stop."""
+    `killed_by_client` over it showed a crash as a stop, and the report said it was
+    stopped."""
     with_jobs(backend, store, "solve")
     processes(backend)
     (job_id,) = store.session.jobs
@@ -82,10 +83,33 @@ def test_a_job_that_had_already_crashed_keeps_its_ending_rather_than_reading_sto
                                      exit_code=1, end_reason="failed")
     backend.job_kill = lambda jid, signal="TERM": backend.jobs[jid]
 
-    stop_everything(backend, store)
+    report = stop_everything(backend, store)
 
     record = store.session.jobs[job_id]
     assert (record.status, record.end_reason) == ("exited", "failed")
+    assert report.killed == []
+
+
+@pytest.mark.parametrize("answer", [
+    {"status": "running", "end_reason": None},
+    {"status": "exited", "end_reason": None},
+])
+def test_a_kill_answer_that_names_no_ending_is_recorded_as_the_stop_it_was(
+    backend, store, answer
+):
+    """Still running a moment after TERM, or an answer with no end_reason: the kill was
+    sent, so the record says stopped rather than running or a half-written ending."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+    (job_id,) = store.session.jobs
+    backend.job_kill = lambda jid, signal="TERM": JobStatus(job_id=jid, name="solve", **answer)
+
+    report = stop_everything(backend, store)
+
+    record = store.session.jobs[job_id]
+    assert (record.status, record.end_reason) == ("killed", "killed_by_client")
+    assert report.killed == ["solve"]
+    assert store.live_jobs() == []
 
 
 def test_nothing_running_is_not_a_failure(backend, store):
@@ -481,23 +505,32 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
 
 
-def test_a_local_job_killed_from_outside_is_not_recorded_as_stopped_on_purpose(tmp_path):
-    """A signal death nobody asked for (an OOM kill, a segfault) used to read as
-    `killed_by_client`, which the app shows as a deliberate stop."""
-    import os
-    import signal as signals
-    import time as clock
-
+@pytest.mark.parametrize("script, ending", [
+    ("exit 0", ("exited", "completed")),
+    ("exit 1", ("exited", "failed")),
+    ("exit 137", ("exited", "killed_externally")),
+    ("kill -KILL $$", ("exited", "killed_externally")),
+])
+def test_a_local_job_ends_in_the_services_words(tmp_path, script, ending):
+    """A signal death nobody asked for (an OOM kill, a segfault, reported by the
+    `bash -lc` wrapper as 137) used to read as `killed_by_client` or `completed`, and a
+    solver's own error as `completed`."""
     from openreynolds.backend.local import LocalBackend
 
     local = LocalBackend(root=tmp_path)
-    outside = local.job_start("sleep 30", name="outside")
-    asked = local.job_start("sleep 30", name="asked")
-    os.killpg(os.getpgid(local._job(outside).process.pid), signals.SIGKILL)
-    for _ in range(50):
-        if local._job(outside).process.poll() is not None:
-            break
-        clock.sleep(0.1)
+    job_id = local.job_start(script, name="solve")
+    local._job(job_id).process.wait(timeout=30)
+    status = local.job_status(job_id)
+    assert (status.status, status.end_reason) == ending
 
-    assert local.job_status(outside).end_reason == "killed_externally"
-    assert local.job_kill(asked).end_reason == "killed_by_client"
+
+def test_a_local_job_stopped_through_job_kill_reads_as_stopped(tmp_path):
+    from openreynolds.backend.local import LocalBackend
+
+    local = LocalBackend(root=tmp_path)
+    job_id = local.job_start("sleep 30", name="solve")
+    try:
+        status = local.job_kill(job_id)
+    finally:
+        local._terminate(local._job(job_id), "KILL")
+    assert (status.status, status.end_reason) == ("killed", "killed_by_client")
