@@ -1691,20 +1691,14 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
         sigpipe = _sigpipe_note(status.exit_code, record.cmd)
         if sigpipe:
             header += "\n" + sigpipe
+        facts = felix_job_facts(ctx.backend, record.cmd, job_id, status.log_size)
         felix = felix_job_summary(ctx.backend, record.cmd, record.cwd or ctx.home,
-                                  job_id, status.log_size)
+                                  job_id, status.log_size, facts=facts)
         if felix:
             header += "\n" + "\n".join(felix)
-            pause = None
-            if (not status.running and status.exit_code not in (None, 0)
-                    and not record.ceiling_pause_handled):
-                facts = felix_job_facts(ctx.backend, record.cmd, job_id, status.log_size)
-                pause, handled = ceiling.resolve_job_pause(ctx, facts)
-                if handled:
-                    ctx.store.update_job(job_id, ceiling_pause_handled=True)
-            if pause is True:
-                header += ("\nThe study's ceiling was raised. This refused job is "
-                           "finished; no replacement solve was started.")
+            pause = ceiling.handle_finished_felix_job(ctx, record, status, facts)
+            if pause.note:
+                header += "\n" + pause.note
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"

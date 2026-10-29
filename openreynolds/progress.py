@@ -273,6 +273,8 @@ FELIX_LOG_TAIL_BYTES = 256_000
 """How much of a Felix job's log is read for its summary: the end, which is where the
 last `step=` records, the errors and the final status are."""
 
+_READ_FELIX_FACTS = object()
+
 
 def felix_job_facts(backend: Any, cmd: str, job_id: str,
                     log_size: int | None) -> Any | None:
@@ -292,7 +294,8 @@ def felix_job_facts(backend: Any, cmd: str, job_id: str,
 
 
 def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
-                      log_size: int | None) -> list[str] | None:
+                      log_size: int | None, *, facts: Any = _READ_FELIX_FACTS
+                      ) -> list[str] | None:
     """A Felix solve's job in a few lines (`felix_progress.summary_lines`), for
     `job_check` and the job-end wake; None for any other command.
 
@@ -300,7 +303,8 @@ def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
     from the `felix run|continue <case>` in the command."""
     from . import felix_progress
 
-    facts = felix_job_facts(backend, cmd, job_id, log_size)
+    if facts is _READ_FELIX_FACTS:
+        facts = felix_job_facts(backend, cmd, job_id, log_size)
     if facts is None:
         return None
 

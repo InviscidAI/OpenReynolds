@@ -477,6 +477,70 @@ def test_a_felix_job_refused_at_the_ceiling_stops_when_declined(tmp_path, backen
     assert len(view.questions) == 1, "the same job is put to the person only once"
 
 
+def test_a_felix_refusal_still_matches_after_spend_moves_forward(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.spent_cents = 803
+
+    _answer, is_error = dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert not is_error
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert "$8.03" in view.questions[0][3]
+
+
+def test_a_truncated_refusal_stays_eligible_until_its_amount_can_be_read(
+    tmp_path, backend
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    full_log = backend.logs[job_id]
+    partial_log = (
+        b"ERROR: 409 study_paused: the refusal text was truncated\n"
+        b'{"state":"rejected","exit_code":1,"error":"409 study_paused"}\n'
+    )
+    backend.logs[job_id] = partial_log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", end_reason="failed",
+        exit_code=1, log_size=len(partial_log),
+    )
+
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert view.questions == []
+    assert store.session.jobs[job_id].ceiling_pause_handled is False
+
+    backend.logs[job_id] = full_log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", end_reason="failed",
+        exit_code=1, log_size=len(full_log),
+    )
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+
+
+def test_an_unavailable_ledger_stays_eligible_until_it_can_be_read(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.spent_cents = None
+
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert view.questions == []
+    assert store.session.jobs[job_id].ceiling_pause_handled is False
+
+    foamd.spent_cents = 803
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+
+
 def test_an_old_felix_pause_does_not_ask_again_after_the_ceiling_is_clear(
     tmp_path, backend
 ):
@@ -488,7 +552,9 @@ def test_an_old_felix_pause_does_not_ask_again_after_the_ceiling_is_clear(
     answer, is_error = dispatch(ctx, "job_check", {"job_id": job_id})
 
     assert not is_error and "study_paused" in answer
+    assert "no longer paused at its spending ceiling" in answer
     assert view.questions == [] and ctx.stopped is None
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
 
     foamd.spent_cents = 1600
     dispatch(ctx, "job_check", {"job_id": job_id})
@@ -523,6 +589,45 @@ def test_a_raised_ceiling_is_in_the_watch_report_the_model_receives(tmp_path, ba
     assert wake is not None and "ceiling was raised" in wake
     assert "409 study_paused" in wake
     assert foamd.caps_posted == [2000]
+
+
+def test_watch_uses_the_finished_felix_facts_even_while_solver_is_auto(
+    tmp_path, backend, monkeypatch
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    ctx.solver = solvers.AUTO
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
+
+    def unexpected_status(*_args, **_kwargs):
+        raise AssertionError("watch already passed the finished status")
+
+    def unexpected_tail(*_args, **_kwargs):
+        raise AssertionError("watch already passed the parsed Felix tail")
+
+    monkeypatch.setattr(backend, "job_status", unexpected_status)
+    monkeypatch.setattr(backend, "job_tail", unexpected_tail)
+
+    wake = cli._finished_job_wake(loop, view, report, tuple(finished))
+
+    assert wake is None
+    assert [question[1] for question in view.questions] == ["ceiling"]
+
+
+def test_an_external_raise_is_explained_in_the_watch_report(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.cap_cents = 2000
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
+
+    wake = cli._finished_job_wake(loop, view, report, tuple(finished))
+
+    assert wake is not None and "no longer paused at its spending ceiling" in wake
+    assert view.questions == [] and ctx.stopped is None
 
 
 def test_unrelated_failed_output_cannot_trigger_the_ceiling_question(tmp_path, backend):

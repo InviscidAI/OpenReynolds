@@ -38,7 +38,7 @@ from .loop import Loop, forwarded_note
 from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
-from .progress import Tracker, felix_job_facts, is_felix_solve
+from .progress import Tracker, felix_job_facts
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
@@ -46,7 +46,7 @@ from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
-from .watch import NOTHING, LineReader, NullReader, situation, watch
+from .watch import FinishedJob, NOTHING, LineReader, NullReader, situation, watch
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
@@ -3652,7 +3652,7 @@ def _run_interactive(
                     if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
-                report = (_finished_job_wake(loop, view, wake.text)
+                report = (_finished_job_wake(loop, view, wake.text, wake.finished)
                           if wake.kind == "job" else wake.text)
                 if wake.kind == "job" and report is None:
                     # Keep the job's report in the thread for the eventual resume,
@@ -3773,7 +3773,7 @@ def _run_one_shot(
             return "timeout"
         if wake.kind != "job":
             break
-        report = _finished_job_wake(loop, view, wake.text)
+        report = _finished_job_wake(loop, view, wake.text, wake.finished)
         if report is None:
             loop.inform(wake.text)
             return "failed" if loop.ctx.stopped else "ok"
@@ -3799,7 +3799,12 @@ def _stopped_at_ceiling(loop: Any, view: View) -> None:
     view.info("waiting for you - the study is paused at its spending ceiling")
 
 
-def _finished_job_wake(loop: Any, view: View, report: str) -> str | None:
+def _finished_job_wake(
+    loop: Any,
+    view: View,
+    report: str,
+    finished: tuple[FinishedJob, ...] = (),
+) -> str | None:
     """The finished-job facts to send to the model, or None after a ceiling stop.
 
     Only a failed `felix run|continue` job named by this wake can carry a refusal. Its
@@ -3807,30 +3812,30 @@ def _finished_job_wake(loop: Any, view: View, report: str) -> str | None:
     accounted for once in the persisted record. A raised ceiling is appended to the
     same facts the model receives, so it does not read an old 409 as still current.
     """
-    if getattr(loop.ctx, "solver", solvers.OPENFOAM) != solvers.FELIX:
-        return report
     updated = report
-    for record in loop.store.session.jobs.values():
-        if (f"job {record.job_id} " not in report
-                or record.status == "running"
-                or record.exit_code in (None, 0)
-                or record.ceiling_pause_handled
-                or not is_felix_solve(record.cmd)):
-            continue
-        try:
-            status = loop.ctx.backend.job_status(record.job_id)
-        except BackendError:
-            continue
-        facts = felix_job_facts(
-            loop.ctx.backend, record.cmd, record.job_id, status.log_size
+    observations = list(finished)
+    if not observations:
+        # Compatibility for direct callers and synthetic wakes. Ordinary watch wakes
+        # carry the status and parsed tail they already read above.
+        for record in loop.store.session.jobs.values():
+            if f"job {record.job_id} " not in report:
+                continue
+            try:
+                status = loop.ctx.backend.job_status(record.job_id)
+            except BackendError:
+                continue
+            facts = felix_job_facts(
+                loop.ctx.backend, record.cmd, record.job_id, status.log_size
+            )
+            observations.append(FinishedJob(record, status, facts))
+    for observation in observations:
+        record = observation.record
+        pause = ceiling.handle_finished_felix_job(
+            loop.ctx, record, observation.status, observation.facts
         )
-        decided, handled = ceiling.resolve_job_pause(loop.ctx, facts)
-        if handled:
-            loop.store.update_job(record.job_id, ceiling_pause_handled=True)
-        if decided is True:
-            updated += (f"\njob {record.job_id}: the study's ceiling was raised. This "
-                        "refused job is finished; no replacement solve was started.")
-        if decided is False:
+        if pause.note:
+            updated += f"\njob {record.job_id}: {pause.note}"
+        if pause.decision is False:
             _stopped_at_ceiling(loop, view)
             return None
     return updated

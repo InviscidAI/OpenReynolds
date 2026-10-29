@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .backend.base import BackendError
@@ -90,7 +91,52 @@ _JOB_PAUSE_AMOUNT = re.compile(
 )
 
 
-def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool]:
+@dataclass(frozen=True)
+class JobPauseResolution:
+    """What handling one finished Felix job changed."""
+
+    decision: bool | None = None
+    """True when raised, False when stopped, None when no question was needed."""
+    handled: bool = False
+    """Whether this job's refusal is conclusively accounted for."""
+    note: str = ""
+    """A fact to append to the job report sent back to the model."""
+
+
+_RAISED_JOB_NOTE = (
+    "The study's ceiling was raised. This refused job is finished; no replacement "
+    "solve was started."
+)
+_CLEARED_JOB_NOTE = (
+    "The study is no longer paused at its spending ceiling. This refused job is "
+    "finished; no replacement solve was started."
+)
+_CHANGED_JOB_NOTE = (
+    "The study's ceiling changed after this job was refused. This old refusal is no "
+    "longer current; the study is paused again under its current ceiling. No "
+    "replacement solve was started."
+)
+
+
+def _amount_cents(value: str) -> int | None:
+    """A printed dollar amount in exact cents, without binary-float rounding."""
+    try:
+        cents = Decimal(value.replace(",", "")) * 100
+    except (InvalidOperation, ValueError):
+        return None
+    return int(cents) if cents == cents.to_integral_value() else None
+
+
+def _row_cents(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return None
+
+
+def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
     """A structured Felix rejection against the service's current study row.
 
     `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
@@ -101,49 +147,87 @@ def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool]:
     an old refusal from being mistaken for a later pause.
 
     The bool says the job is conclusively accounted for. False leaves it eligible for
-    a later read because the study row could not be read; True with no Paused value
-    means this was a real rejection, but not the study's current pause.
+    a later read because the log or study row was incomplete. The final string tells
+    the model when a real refusal is stale because the ceiling changed elsewhere.
     """
     status = getattr(facts, "status", None)
     if not isinstance(status, dict) or status.get("state") != "rejected":
-        return None, False
+        return None, False, ""
     if str(status.get("error") or "").strip() != "409 study_paused":
-        return None, False
+        return None, False, ""
     message = "\n".join(getattr(facts, "errors", []) or [])
     amounts = _JOB_PAUSE_AMOUNT.findall(message)
     if not amounts:
-        return None, True
-    refused_spent = round(float(amounts[-1][0].replace(",", "")) * 100)
-    refused_cap = round(float(amounts[-1][1].replace(",", "")) * 100)
+        return None, False, ""
+    refused_spent = _amount_cents(amounts[-1][0])
+    refused_cap = _amount_cents(amounts[-1][1])
+    if refused_spent is None or refused_cap is None:
+        return None, False, ""
     service = getattr(ctx, "ceiling", None)
     row = service.study() if service is not None else None
     if row is None:
-        return None, False
-    if not isinstance(row, dict) or row.get("paused") is not True:
-        return None, True
-    spent = row.get("spent_cents")
-    cap = row.get("cap_cents")
-    if not isinstance(spent, (int, float)) or not isinstance(cap, (int, float)):
-        return None, True
-    if round(float(spent)) != refused_spent or round(float(cap)) != refused_cap:
-        return None, True
+        return None, False, ""
+    if not isinstance(row, dict):
+        return None, False, ""
+    spent = _row_cents(row.get("spent_cents"))
+    cap = _row_cents(row.get("cap_cents"))
+    paused_now = row.get("paused")
+    # A transient ledger failure reports all three as None. It is not evidence that
+    # the refusal is stale, so leave the job eligible for the next read.
+    if (spent is None or cap is None
+            or (paused_now is not True and paused_now is not False)):
+        return None, False, ""
+    # Spend is monotonic while the workspace is up. The row may therefore be above
+    # the amount printed at refusal time, but it cannot be below it and still prove
+    # this is the same event.
+    if spent < refused_spent:
+        return None, False, ""
+    if paused_now is False:
+        return None, True, _CLEARED_JOB_NOTE
+    if cap != refused_cap:
+        return None, True, _CHANGED_JOB_NOTE
     return Paused(
         str(row.get("id") or row.get("study_id") or service.study_id),
         float(spent),
         float(cap),
         message,
-    ), True
+    ), True, ""
 
 
-def resolve_job_pause(ctx: Any, facts: Any) -> tuple[bool | None, bool]:
+def resolve_job_pause(ctx: Any, facts: Any) -> JobPauseResolution:
     """Resolve a pause carried in Felix job output.
 
-    The first value is None for no current pause, True when the person raised the
-    ceiling, and False when the study stopped. The second says this job should not ask
-    again; it stays False only when the live study row could not be read.
+    A current pause is put to the person. A stale, externally cleared refusal is
+    returned as a note for the model. Incomplete evidence remains unhandled so a
+    later read can try again.
     """
-    info, handled = job_pause(ctx, facts)
-    return (None if info is None else resolve(ctx, info)), handled
+    info, handled, note = job_pause(ctx, facts)
+    if info is None:
+        return JobPauseResolution(handled=handled, note=note)
+    decision = resolve(ctx, info)
+    return JobPauseResolution(
+        decision=decision,
+        handled=handled,
+        note=_RAISED_JOB_NOTE if decision else "",
+    )
+
+
+def handle_finished_felix_job(
+    ctx: Any, record: Any, status: Any, facts: Any
+) -> JobPauseResolution:
+    """Account for a failed Felix solve once, for both tool and watch paths."""
+    from .felix_progress import is_felix_cmd
+
+    if (record is None
+            or getattr(status, "running", False)
+            or getattr(status, "exit_code", None) in (None, 0)
+            or getattr(record, "ceiling_pause_handled", False)
+            or not is_felix_cmd(getattr(record, "cmd", ""))):
+        return JobPauseResolution()
+    result = resolve_job_pause(ctx, facts)
+    if result.handled:
+        ctx.store.update_job(record.job_id, ceiling_pause_handled=True)
+    return result
 
 
 class Ceiling:
