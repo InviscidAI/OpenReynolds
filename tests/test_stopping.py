@@ -12,7 +12,13 @@ import pytest
 
 from shellprobe import Machine, Process
 from openreynolds.backend.base import BackendError, ExecResult, JobStatus
-from openreynolds.stopping import StopReport, own_solvers, running_solvers, stop_everything
+from openreynolds.stopping import (
+    StopReport,
+    own_solvers,
+    running_solvers,
+    settle_after_shutdown,
+    stop_everything,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +74,66 @@ def test_it_stops_every_job_and_records_them_stopped(backend, store):
     assert report.clean
     assert store.live_jobs() == []
     assert all(j.end_reason == "killed_by_client" for j in store.session.jobs.values())
+
+
+def test_a_job_that_had_already_crashed_keeps_its_ending_rather_than_reading_stopped(
+    backend, store
+):
+    """The service answers a kill on an ended job with the job's real ending; writing
+    `killed_by_client` over it showed a crash as a stop, and the report said it was
+    stopped."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+    (job_id,) = store.session.jobs
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", name="solve",
+                                     exit_code=1, end_reason="failed")
+    backend.job_kill = lambda jid, signal="TERM": backend.jobs[jid]
+
+    report = stop_everything(backend, store)
+
+    record = store.session.jobs[job_id]
+    assert (record.status, record.end_reason) == ("exited", "failed")
+    assert report.killed == []
+    assert "solve had already ended (failed)" in report.lines()
+
+
+def test_a_job_that_had_already_ended_is_not_sent_the_escalated_kill(backend, store):
+    """Survivors bring a KILL to the jobs this stop signalled; sending it to one that
+    had already crashed reported the crash as a stop that ignored its first signal."""
+    with_jobs(backend, store, "solve")
+    processes(backend, "simpleFoam")
+    (job_id,) = store.session.jobs
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", name="solve",
+                                     exit_code=1, end_reason="failed")
+    sent = []
+    backend.job_kill = lambda jid, signal="TERM": sent.append(signal) or backend.jobs[jid]
+
+    report = stop_everything(backend, store)
+
+    assert sent == ["TERM"]
+    assert report.escalated == []
+
+
+@pytest.mark.parametrize("answer", [
+    {"status": "running", "end_reason": None},
+    {"status": "exited", "end_reason": None},
+])
+def test_a_kill_answer_that_names_no_ending_is_recorded_as_the_stop_it_was(
+    backend, store, answer
+):
+    """Still running a moment after TERM, or an answer with no end_reason: the kill was
+    sent, so the record says stopped rather than running or a half-written ending."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+    (job_id,) = store.session.jobs
+    backend.job_kill = lambda jid, signal="TERM": JobStatus(job_id=jid, name="solve", **answer)
+
+    report = stop_everything(backend, store)
+
+    record = store.session.jobs[job_id]
+    assert (record.status, record.end_reason) == ("killed", "killed_by_client")
+    assert report.killed == ["solve"]
+    assert store.live_jobs() == []
 
 
 def test_nothing_running_is_not_a_failure(backend, store):
@@ -461,3 +527,102 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     assert report.clean
     assert report.survivors == []
     assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
+
+
+@pytest.mark.parametrize("script, ending", [
+    ("exit 0", ("exited", "completed")),
+    ("exit 1", ("exited", "failed")),
+    ("exit 137", ("exited", "killed_externally")),
+    ("kill -KILL $$", ("exited", "killed_externally")),
+    ("kill -SEGV $$", ("exited", "failed")),
+])
+def test_a_local_job_ends_in_the_services_words(tmp_path, script, ending):
+    """A signal death nobody asked for (an OOM kill, a segfault, reported by the
+    `bash -lc` wrapper as 137) used to read as `killed_by_client` or `completed`, and a
+    solver's own error as `completed`."""
+    from openreynolds.backend.local import LocalBackend
+
+    local = LocalBackend(root=tmp_path)
+    job_id = local.job_start(script, name="solve")
+    local._job(job_id).process.wait(timeout=30)
+    status = local.job_status(job_id)
+    assert (status.status, status.end_reason) == ending
+
+
+def test_a_local_job_stopped_through_job_kill_reads_as_stopped(tmp_path):
+    from openreynolds.backend.local import LocalBackend
+
+    local = LocalBackend(root=tmp_path)
+    job_id = local.job_start("sleep 30", name="solve")
+    try:
+        status = local.job_kill(job_id)
+    finally:
+        local._terminate(local._job(job_id), "KILL")
+    assert (status.status, status.end_reason) == ("killed", "killed_by_client")
+
+
+MACHINE_STOPPED = "machine_stopped: this service ended the workspace's compute on purpose"
+
+
+def _undelivered(backend, store):
+    """A stop whose one kill the service answered `kill_not_delivered`."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+    (job_id,) = store.session.jobs
+
+    def not_delivered(jid, signal="TERM"):
+        raise BackendError("no process group to signal", code="kill_not_delivered")
+
+    backend.job_kill = not_delivered
+    return job_id, stop_everything(backend, store)
+
+
+@pytest.mark.parametrize("answer, recorded", [
+    ({"status": "killed", "end_reason": "sandbox_expired", "killed_by": MACHINE_STOPPED},
+     ("killed", "killed_by_client")),
+    ({"status": "running"}, ("killed", "killed_by_client")),
+    ({"status": "exited", "end_reason": "failed", "exit_code": 1}, ("exited", "failed")),
+    ({"status": "killed", "end_reason": "sandbox_expired", "killed_by": "container_gone: ..."},
+     ("killed", "sandbox_expired")),
+])
+def test_a_job_the_ended_session_took_down_with_it_is_recorded_as_stopped(
+    backend, store, answer, recorded
+):
+    """A job whose kill was not delivered (still starting) stayed running in the
+    record after End put the workspace down, then read as ending unexpectedly."""
+    job_id, report = _undelivered(backend, store)
+    backend.job_status = lambda jid: JobStatus(job_id=jid, name="solve", **answer)
+
+    stopped = settle_after_shutdown(backend, store, report)
+
+    record = store.session.jobs[job_id]
+    assert (record.status, record.end_reason) == recorded
+    assert stopped == (["solve"] if recorded[1] == "killed_by_client" else [])
+    assert store.live_jobs() == []
+
+
+def test_a_job_that_cannot_be_asked_after_the_end_is_recorded_as_stopped(backend, store):
+    job_id, report = _undelivered(backend, store)
+
+    def refuse(jid):
+        raise BackendError("gone", code="not_found")
+
+    backend.job_status = refuse
+    settle_after_shutdown(backend, store, report)
+    assert store.session.jobs[job_id].end_reason == "killed_by_client"
+
+
+def test_only_a_kill_that_was_not_delivered_is_settled_by_the_shutdown(backend, store):
+    """A kill that failed any other way (a 503, a job a resumed local backend cannot
+    see) is left as the record had it: nothing says the shutdown ended that job."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+
+    def unavailable(jid, signal="TERM"):
+        raise BackendError("try again", code="http_error")
+
+    backend.job_kill = unavailable
+    report = stop_everything(backend, store)
+
+    assert settle_after_shutdown(backend, store, report) == []
+    assert [r.name for r in store.live_jobs()] == ["solve"]

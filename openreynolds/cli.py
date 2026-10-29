@@ -39,7 +39,7 @@ from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
 from .progress import Tracker
-from .stopping import running_solvers, stop_everything
+from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
 from . import trace
@@ -2939,6 +2939,8 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
                 shutdown()
+                for name in settle_after_shutdown(backend, store, report):
+                    console.print(f"[dim]{name} was still starting; it stopped with the instance[/]")
                 if not started_it_here:
                     console.print(
                         "[dim]this session joined a running workspace, and nothing else "
