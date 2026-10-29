@@ -292,8 +292,9 @@ ESTIMATE_PROPERTY: dict[str, Any] = {
     "description": (
         "Your estimate of what this job will cost, in US dollars: compute, GPU and the "
         "model time it will take you to see it through. Before a study's first solve "
-        "it is shown to the person beside the study's spending ceiling, and again if "
-        "the study meets that ceiling, so give it with the first solve at least."
+        "it is shown to the person, beside the study's spending ceiling when it has "
+        "one, and again if the study meets that ceiling, so give it with the first "
+        "solve at least."
     ),
 }
 """`job_start`'s `estimate_usd`, in both solvers' variants: the estimate the person is

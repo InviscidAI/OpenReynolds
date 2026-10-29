@@ -619,8 +619,12 @@ def test_the_preamble_names_no_ceiling_for_an_exempt_study():
     row = {"style": "quick", "cap_cents": 1000, "spent_cents": 24, "paused": False, "exempt": True}
     ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row))
     assert ceiling.preamble(ctx, {"estimate_usd": 1.5}) == "Estimate before the first solve: about $1.50."
+    assert ctx.estimate_cents == 150 and ceiling.preamble(ctx, {"estimate_usd": 2}) is None, "said once"
+    quiet = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row))
+    assert ceiling.preamble(quiet, {}) is None, "no estimate and no ceiling: nothing to say"
     ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: {**row, "exempt": False}))
-    assert "ceiling is $10.00" in ceiling.preamble(ctx, {"estimate_usd": 1.5}), "a customer's still says it"
+    said = ceiling.preamble(ctx, {"estimate_usd": 1.5})
+    assert said is not None and "ceiling is $10.00" in said, "a customer's still says it"
 
 
 # -- 6. a resumed study whose workspace start met the ceiling -----------------------------
