@@ -38,7 +38,7 @@ from .loop import Loop, forwarded_note
 from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
-from .progress import Tracker
+from .progress import Tracker, felix_job_facts, is_felix_solve
 from .stopping import running_solvers, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
@@ -3492,14 +3492,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
                 loop.settle()
                 if ceiling.resolve(loop.ctx, pause):
                     continue
-                stopped = loop.ctx.stopped
-                console.print(f"\n[yellow]{stopped}[/]")
-                view.notice(stopped)
-                event = getattr(loop, "event", None)
-                if event is not None:
-                    event(stopped)
-                loop.blocked_reason = stopped
-                view.info("waiting for you - the study is paused at its spending ceiling")
+                _stopped_at_ceiling(loop, view)
                 return False
             status = exc.status_code
             refusal_code = exc.code
@@ -3659,12 +3652,14 @@ def _run_interactive(
                     if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
-                if wake.kind == "job" and not _finished_job_can_wake(loop, view, wake.text):
+                report = (_finished_job_wake(loop, view, wake.text)
+                          if wake.kind == "job" else wake.text)
+                if wake.kind == "job" and report is None:
                     # Keep the job's report in the thread for the eventual resume,
                     # but do not send it to a model after the person stopped here.
                     loop.inform(wake.text)
                     continue
-                loop.inform(wake.text)
+                loop.inform(report)
             elif wake.kind == "user":
                 # A person speaking is the one thing that can change a refusal:
                 # they have topped the account up, fixed the key, or want to hear
@@ -3778,10 +3773,11 @@ def _run_one_shot(
             return "timeout"
         if wake.kind != "job":
             break
-        if not _finished_job_can_wake(loop, view, wake.text):
+        report = _finished_job_wake(loop, view, wake.text)
+        if report is None:
             loop.inform(wake.text)
-            break
-        loop.inform(wake.text)
+            return "failed" if loop.ctx.stopped else "ok"
+        loop.inform(report)
         if not _run_turn(loop, view):
             return "failed"
         if live is not None and not _no_workspace_yet(loop):
@@ -3791,26 +3787,53 @@ def _run_one_shot(
     return "ok"
 
 
-def _finished_job_can_wake(loop: Any, view: View, report: str) -> bool:
-    """Whether a finished job's report may be sent on to the model.
-
-    A Felix GPU refusal reaches this seam as text rather than an exception. Put a
-    current study pause to the person before a bring-your-own-key model is woken: its
-    next request goes directly to the model provider and cannot discover the pause.
-    """
-    if getattr(loop.ctx, "solver", solvers.OPENFOAM) != solvers.FELIX:
-        return True
-    decided = ceiling.resolve_job_pause(loop.ctx, report)
-    if decided is not False:
-        return True
+def _stopped_at_ceiling(loop: Any, view: View) -> None:
+    """Record one spending-ceiling stop in every place a session exposes it."""
     stopped = loop.ctx.stopped
+    console.print(f"\n[yellow]{stopped}[/]")
     view.notice(stopped)
     event = getattr(loop, "event", None)
     if event is not None:
         event(stopped)
     loop.blocked_reason = stopped
     view.info("waiting for you - the study is paused at its spending ceiling")
-    return False
+
+
+def _finished_job_wake(loop: Any, view: View, report: str) -> str | None:
+    """The finished-job facts to send to the model, or None after a ceiling stop.
+
+    Only a failed `felix run|continue` job named by this wake can carry a refusal. Its
+    structured final status is checked against the current study row, and each job is
+    accounted for once in the persisted record. A raised ceiling is appended to the
+    same facts the model receives, so it does not read an old 409 as still current.
+    """
+    if getattr(loop.ctx, "solver", solvers.OPENFOAM) != solvers.FELIX:
+        return report
+    updated = report
+    for record in loop.store.session.jobs.values():
+        if (f"job {record.job_id} " not in report
+                or record.status == "running"
+                or record.exit_code in (None, 0)
+                or record.ceiling_pause_handled
+                or not is_felix_solve(record.cmd)):
+            continue
+        try:
+            status = loop.ctx.backend.job_status(record.job_id)
+        except BackendError:
+            continue
+        facts = felix_job_facts(
+            loop.ctx.backend, record.cmd, record.job_id, status.log_size
+        )
+        decided, handled = ceiling.resolve_job_pause(loop.ctx, facts)
+        if handled:
+            loop.store.update_job(record.job_id, ceiling_pause_handled=True)
+        if decided is True:
+            updated += (f"\njob {record.job_id}: the study's ceiling was raised. This "
+                        "refused job is finished; no replacement solve was started.")
+        if decided is False:
+            _stopped_at_ceiling(loop, view)
+            return None
+    return updated
 
 
 def _take_forwarded(loop: Any) -> list[tuple[str, str]]:

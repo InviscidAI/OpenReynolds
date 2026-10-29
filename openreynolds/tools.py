@@ -49,6 +49,7 @@ from . import ceiling, convergence, images
 from . import solvers, trace
 from .progress import (
     case_dir_from_cmd,
+    felix_job_facts,
     felix_job_summary,
     is_felix_solve,
     parse_control_dict,
@@ -1694,10 +1695,13 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
                                   job_id, status.log_size)
         if felix:
             header += "\n" + "\n".join(felix)
-            pause = (
-                ceiling.resolve_job_pause(ctx, "\n".join(felix))
-                if not status.running else None
-            )
+            pause = None
+            if (not status.running and status.exit_code not in (None, 0)
+                    and not record.ceiling_pause_handled):
+                facts = felix_job_facts(ctx.backend, record.cmd, job_id, status.log_size)
+                pause, handled = ceiling.resolve_job_pause(ctx, facts)
+                if handled:
+                    ctx.store.update_job(job_id, ceiling_pause_handled=True)
             if pause is True:
                 header += ("\nThe study's ceiling was raised. This refused job is "
                            "finished; no replacement solve was started.")

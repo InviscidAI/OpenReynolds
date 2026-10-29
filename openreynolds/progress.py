@@ -274,6 +274,23 @@ FELIX_LOG_TAIL_BYTES = 256_000
 last `step=` records, the errors and the final status are."""
 
 
+def felix_job_facts(backend: Any, cmd: str, job_id: str,
+                    log_size: int | None) -> Any | None:
+    """The structured facts at the end of one Felix solve job, when it is one."""
+    from . import felix_progress
+
+    if not felix_progress.is_felix_cmd(cmd):
+        return None
+    size = log_size or 0
+    try:
+        text, _next, _eof = backend.job_tail(
+            job_id, offset=max(0, size - FELIX_LOG_TAIL_BYTES)
+        )
+    except BackendError:
+        return None
+    return felix_progress.parse_felix_log(text)
+
+
 def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
                       log_size: int | None) -> list[str] | None:
     """A Felix solve's job in a few lines (`felix_progress.summary_lines`), for
@@ -283,12 +300,8 @@ def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
     from the `felix run|continue <case>` in the command."""
     from . import felix_progress
 
-    if not felix_progress.is_felix_cmd(cmd):
-        return None
-    size = log_size or 0
-    try:
-        text, _next, _eof = backend.job_tail(job_id, offset=max(0, size - FELIX_LOG_TAIL_BYTES))
-    except BackendError:
+    facts = felix_job_facts(backend, cmd, job_id, log_size)
+    if facts is None:
         return None
 
     def read(path: str) -> str | None:
@@ -299,7 +312,7 @@ def felix_job_summary(backend: Any, cmd: str, cwd: str, job_id: str,
 
     case_dir = felix_progress.case_dir_from_felix_cmd(cmd, cwd)
     last_step = felix_progress.last_step(read, case_dir) if case_dir else None
-    return felix_progress.summary_lines(felix_progress.parse_felix_log(text), last_step)
+    return felix_progress.summary_lines(facts, last_step)
 
 
 def phase_from_cmd(cmd: str) -> tuple[str, str]:

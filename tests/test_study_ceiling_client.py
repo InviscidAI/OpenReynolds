@@ -35,6 +35,7 @@ from openreynolds.config import Config
 from openreynolds.llm.base import ProviderError
 from openreynolds.loop import Loop
 from openreynolds.tools import ToolContext, dispatch
+from openreynolds.watch import Wake, _collect_finished, _job_report
 from test_cli import finishing_jobs
 
 pytestmark = pytest.mark.usefixtures("fast_polling")
@@ -472,39 +473,114 @@ def test_a_felix_job_refused_at_the_ceiling_stops_when_declined(tmp_path, backen
     assert foamd.caps_posted == []
     assert ctx.stopped and "$8.00" in ctx.stopped and "$10.00" in ctx.stopped
 
+    dispatch(ctx, "job_check", {"job_id": job_id})
+    assert len(view.questions) == 1, "the same job is put to the person only once"
+
 
 def test_an_old_felix_pause_does_not_ask_again_after_the_ceiling_is_clear(
     tmp_path, backend
 ):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=2000)
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     _loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.cap_cents = 2000
 
     answer, is_error = dispatch(ctx, "job_check", {"job_id": job_id})
 
     assert not is_error and "study_paused" in answer
     assert view.questions == [] and ctx.stopped is None
 
+    foamd.spent_cents = 1600
+    dispatch(ctx, "job_check", {"job_id": job_id})
+    assert view.questions == [], "the old refusal is not a later pause at the new cap"
+
 
 def test_a_finished_felix_pause_is_put_to_the_person_before_watch_wakes_the_model(
-    tmp_path
+    tmp_path, backend
 ):
     """#79's ordinary path is watch mode, after the detached solve exits."""
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
-    loop, ctx, view, _store = _session(tmp_path, foamd, "/no")
-    ctx.solver = solvers.FELIX
-    report = (
-        "felix: failed -- no step records\n"
-        "ERROR: 409 study_paused: the solve was refused\n"
-        "solve rejected, exit 1; error: 409 study_paused"
-    )
+    loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    report = _collect_finished(backend, store, view)
 
-    may_wake = cli._finished_job_can_wake(loop, view, report)
+    wake = cli._finished_job_wake(loop, view, report)
 
-    assert may_wake is False
+    assert wake is None
     assert [question[1] for question in view.questions] == ["ceiling"]
     assert loop.blocked_reason == ctx.stopped
     assert any(ctx.stopped in notice for notice in view.notices)
+
+
+def test_a_raised_ceiling_is_in_the_watch_report_the_model_receives(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/yes", backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    report = _collect_finished(backend, store, view)
+
+    wake = cli._finished_job_wake(loop, view, report)
+
+    assert wake is not None and "ceiling was raised" in wake
+    assert "409 study_paused" in wake
+    assert foamd.caps_posted == [2000]
+
+
+def test_unrelated_failed_output_cannot_trigger_the_ceiling_question(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    ctx.solver = solvers.FELIX
+    job_id = backend.job_start("printf study_paused", cwd="/work", name="grep")
+    store.record_job(job_id, cmd="printf study_paused", name="grep", cwd="/work")
+    backend.logs[job_id] = b"409 study_paused\n"
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="grep", exit_code=1, log_size=17,
+    )
+    report = _collect_finished(backend, store, view)
+
+    assert cli._finished_job_wake(loop, view, report) == report
+    assert view.questions == []
+
+
+def test_felix_prose_without_a_rejected_final_status_cannot_ask(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    ctx.solver = solvers.FELIX
+    cmd = "felix run cavity --gpu H100"
+    job_id = backend.job_start(cmd, cwd="/work", name="cavity")
+    store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work")
+    log = b"ERROR: notes mention 409 study_paused, but this is not a final status\n"
+    backend.logs[job_id] = log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", exit_code=1,
+        log_size=len(log),
+    )
+    report = _collect_finished(backend, store, view)
+
+    assert cli._finished_job_wake(loop, view, report) == report
+    assert view.questions == []
+
+
+def test_one_shot_returns_failed_when_the_person_stops_at_a_job_pause(
+    tmp_path, backend, monkeypatch
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+
+    def finish(*_args, **_kwargs):
+        status = backend.job_status(job_id)
+        store.update_job(job_id, status=status.status, end_reason=status.end_reason,
+                         exit_code=status.exit_code)
+        return Wake("job", _job_report(backend, status, store.session.jobs[job_id]))
+
+    monkeypatch.setattr(cli, "_run_turn", lambda *_args: True)
+    monkeypatch.setattr(cli, "watch", finish)
+
+    result = cli._run_one_shot(loop, backend, store, "solve", view,
+                               ScriptedReader([]))
+
+    assert result == "failed"
+    assert len(view.questions) == 1
 
 
 # -- 3. the estimate before the first solve ----------------------------------------------

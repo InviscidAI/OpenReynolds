@@ -84,49 +84,66 @@ def paused(exc: BaseException) -> Paused | None:
         return Paused("", 0.0, 0.0, message)
 
 
-_JOB_PAUSE = re.compile(r"(?<![\w-])(?:409\s+)?study_paused(?![\w-])")
+_JOB_PAUSE_AMOUNT = re.compile(
+    r"has spent \$([\d,]+(?:\.\d{1,2})?) of (?:its |a )?\$([\d,]+(?:\.\d{1,2})?) ceiling",
+    re.IGNORECASE,
+)
 
 
-def job_pause(ctx: Any, report: str) -> Paused | None:
-    """A pause printed by a finished Felix job, against the service's current row.
+def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool]:
+    """A structured Felix rejection against the service's current study row.
 
     `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
-    exits 1 and prints the 409 into that job's log instead of raising the
-    `BackendError` that `tools._handled` sees. The log proves which refusal happened;
-    the study row supplies the live spend and ceiling rather than parsing money out
-    of prose. Requiring `paused: true` also makes an old refused job harmless after
-    the ceiling has already been raised.
+    exits 1 and prints a final JSON status instead of raising the `BackendError` that
+    `tools._handled` sees. The status proves this was a rejected Felix solve, rather
+    than arbitrary output containing `study_paused`. Its ERROR line identifies the
+    spend and ceiling that refusal saw; matching both against the live row prevents
+    an old refusal from being mistaken for a later pause.
+
+    The bool says the job is conclusively accounted for. False leaves it eligible for
+    a later read because the study row could not be read; True with no Paused value
+    means this was a real rejection, but not the study's current pause.
     """
-    if not _JOB_PAUSE.search(report or ""):
-        return None
+    status = getattr(facts, "status", None)
+    if not isinstance(status, dict) or status.get("state") != "rejected":
+        return None, False
+    if str(status.get("error") or "").strip() != "409 study_paused":
+        return None, False
+    message = "\n".join(getattr(facts, "errors", []) or [])
+    amounts = _JOB_PAUSE_AMOUNT.findall(message)
+    if not amounts:
+        return None, True
+    refused_spent = round(float(amounts[-1][0].replace(",", "")) * 100)
+    refused_cap = round(float(amounts[-1][1].replace(",", "")) * 100)
     service = getattr(ctx, "ceiling", None)
-    try:
-        row = service.study() if service is not None else None
-    except BackendError:
-        return None
+    row = service.study() if service is not None else None
+    if row is None:
+        return None, False
     if not isinstance(row, dict) or row.get("paused") is not True:
-        return None
+        return None, True
     spent = row.get("spent_cents")
     cap = row.get("cap_cents")
     if not isinstance(spent, (int, float)) or not isinstance(cap, (int, float)):
-        return None
+        return None, True
+    if round(float(spent)) != refused_spent or round(float(cap)) != refused_cap:
+        return None, True
     return Paused(
         str(row.get("id") or row.get("study_id") or service.study_id),
         float(spent),
         float(cap),
-        report,
-    )
+        message,
+    ), True
 
 
-def resolve_job_pause(ctx: Any, report: str) -> bool | None:
+def resolve_job_pause(ctx: Any, facts: Any) -> tuple[bool | None, bool]:
     """Resolve a pause carried in Felix job output.
 
-    None means the report is not a current pause, True that the person raised the
-    ceiling, and False that the study stopped. The tri-state lets callers distinguish
-    a declined pause from an ordinary finished job.
+    The first value is None for no current pause, True when the person raised the
+    ceiling, and False when the study stopped. The second says this job should not ask
+    again; it stays False only when the live study row could not be read.
     """
-    info = job_pause(ctx, report)
-    return None if info is None else resolve(ctx, info)
+    info, handled = job_pause(ctx, facts)
+    return (None if info is None else resolve(ctx, info)), handled
 
 
 class Ceiling:
