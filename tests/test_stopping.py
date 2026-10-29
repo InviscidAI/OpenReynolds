@@ -70,6 +70,24 @@ def test_it_stops_every_job_and_records_them_stopped(backend, store):
     assert all(j.end_reason == "killed_by_client" for j in store.session.jobs.values())
 
 
+def test_a_job_that_had_already_crashed_keeps_its_ending_rather_than_reading_stopped(
+    backend, store
+):
+    """The service answers a kill on an ended job with the job's real ending; writing
+    `killed_by_client` over it showed a crash as a stop."""
+    with_jobs(backend, store, "solve")
+    processes(backend)
+    (job_id,) = store.session.jobs
+    backend.jobs[job_id] = JobStatus(job_id=job_id, status="exited", name="solve",
+                                     exit_code=1, end_reason="failed")
+    backend.job_kill = lambda jid, signal="TERM": backend.jobs[jid]
+
+    stop_everything(backend, store)
+
+    record = store.session.jobs[job_id]
+    assert (record.status, record.end_reason) == ("exited", "failed")
+
+
 def test_nothing_running_is_not_a_failure(backend, store):
     processes(backend)
     report = stop_everything(backend, store)
@@ -461,3 +479,25 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     assert report.clean
     assert report.survivors == []
     assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
+
+
+def test_a_local_job_killed_from_outside_is_not_recorded_as_stopped_on_purpose(tmp_path):
+    """A signal death nobody asked for (an OOM kill, a segfault) used to read as
+    `killed_by_client`, which the app shows as a deliberate stop."""
+    import os
+    import signal as signals
+    import time as clock
+
+    from openreynolds.backend.local import LocalBackend
+
+    local = LocalBackend(root=tmp_path)
+    outside = local.job_start("sleep 30", name="outside")
+    asked = local.job_start("sleep 30", name="asked")
+    os.killpg(os.getpgid(local._job(outside).process.pid), signals.SIGKILL)
+    for _ in range(50):
+        if local._job(outside).process.poll() is not None:
+            break
+        clock.sleep(0.1)
+
+    assert local.job_status(outside).end_reason == "killed_externally"
+    assert local.job_kill(asked).end_reason == "killed_by_client"

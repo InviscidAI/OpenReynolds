@@ -330,7 +330,7 @@ class LocalBackend(KernelHost, Backend):
             if job.ended_at is None:
                 job.ended_at = _now()
                 job.end_reason = job.end_reason or (
-                    "completed" if code == 0 else "killed_by_client" if code < 0 else "completed"
+                    "completed" if code == 0 else "killed_externally" if code < 0 else "completed"
                 )
             status = "exited" if code >= 0 and job.end_reason == "completed" else "killed"
             reason = job.end_reason
