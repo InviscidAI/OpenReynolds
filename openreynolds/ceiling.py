@@ -163,6 +163,9 @@ def preamble(ctx: Any, tool_input: dict[str, Any]) -> str | None:
     else:
         said = "Before the first solve: the agent gave no estimate of its cost."
     row = ceiling.study() or {}
+    if row.get("exempt") is True:
+        # A staff owner (foamd D11): no ceiling ever holds the study, so none is named.
+        return said
     cap = row.get("cap_cents")
     spent = row.get("spent_cents")
     if not isinstance(cap, (int, float)):

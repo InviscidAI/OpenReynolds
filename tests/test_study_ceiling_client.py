@@ -613,6 +613,16 @@ def test_the_preamble_reads_the_study_record_foamd_sends(tmp_path):
         "a study already paused says so before the solve meets it"
 
 
+def test_the_preamble_names_no_ceiling_for_an_exempt_study():
+    """OFI#81: a staff study was told "This study's ceiling is $10.00; it pauses at
+    $8.00", a pause that never applies to it. foamd's `exempt` says so."""
+    row = {"style": "quick", "cap_cents": 1000, "spent_cents": 24, "paused": False, "exempt": True}
+    ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row))
+    assert ceiling.preamble(ctx, {"estimate_usd": 1.5}) == "Estimate before the first solve: about $1.50."
+    ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: {**row, "exempt": False}))
+    assert "ceiling is $10.00" in ceiling.preamble(ctx, {"estimate_usd": 1.5}), "a customer's still says it"
+
+
 # -- 6. a resumed study whose workspace start met the ceiling -----------------------------
 
 
