@@ -48,6 +48,14 @@ from .base import (
     split_result,
 )
 
+class StreamCut(Exception):
+    """A stream that closed without its `response.completed` event.
+
+    The SDK says so with a bare RuntimeError from `get_final_response`, which no
+    handler caught: on prod (2026-10-30, gpt-6.1-sol) one such stream ended the whole
+    session. It is a dropped stream by another name, and retried as one."""
+
+
 MIN_OUTPUT_TOKENS = 16
 """The API's own floor. A probe asking for fewer is a 400 about the wrong thing."""
 
@@ -248,7 +256,7 @@ class ResponsesProvider(Provider):
                 turn = self._stream_once(kwargs, listener, progress)
                 turn.model = turn.model or model
                 return turn
-            except transport as exc:
+            except (*transport, StreamCut) as exc:
                 # A reset mid-stream used to end the whole session: nothing between here
                 # and the top of the loop caught it, so one dropped connection threw away
                 # an hour of solved case and the report that went with it. Nothing has
@@ -289,9 +297,11 @@ class ResponsesProvider(Provider):
         opened = False
         if progress is None:
             progress = {}
+        last = ""
         with self.client.responses.stream(**kwargs) as stream:
             for event in stream:
                 kind = getattr(event, "type", "")
+                last = kind or last
                 if kind == "response.output_text.delta":
                     progress["emitted"] = True
                     listener.on_text(getattr(event, "delta", "") or "")
@@ -300,7 +310,12 @@ class ResponsesProvider(Provider):
                         opened = True
                         listener.on_thinking_begin()
                     listener.on_thinking(getattr(event, "delta", "") or "")
-            final = stream.get_final_response()
+            try:
+                final = stream.get_final_response()
+            except RuntimeError as exc:
+                # The SDK's words for a stream that closed without `response.completed`.
+                raise StreamCut(f"the stream closed after {last or 'no events'} "
+                                "without response.completed") from exc
         return self._turn(final)
 
     def _turn(self, response: Any) -> Turn:

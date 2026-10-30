@@ -975,6 +975,42 @@ def test_responses_gives_up_on_a_connection_that_keeps_dying(monkeypatch):
     assert len(calls) == 3
 
 
+class _UnfinishedStream(_DyingStream):
+    """Every event arrives, the connection closes cleanly, and `response.completed`
+    never does: the SDK's RuntimeError, as prod saw it on 2026-10-30."""
+
+    def __iter__(self):
+        yield SimpleNamespace(type="response.reasoning_summary_text.delta", delta="thinking")
+
+    def get_final_response(self):
+        if self.fail:
+            raise RuntimeError("Didn't receive a `response.completed` event.")
+        return super().get_final_response()
+
+
+def test_responses_retries_a_stream_that_closes_without_completing(monkeypatch):
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return _UnfinishedStream(fail=len(calls) == 1, error=RuntimeError)
+
+    provider.client = SimpleNamespace(responses=SimpleNamespace(stream=stream))
+    turn = provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                           max_tokens=500, listener=Listener())
+    assert len(calls) == 2 and turn.text == "done"
+
+    calls.clear()
+    provider.client = SimpleNamespace(responses=SimpleNamespace(
+        stream=lambda **kw: calls.append(kw) or _UnfinishedStream(fail=True, error=RuntimeError)))
+    with pytest.raises(ProviderError, match="without response.completed"):
+        provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                        max_tokens=500, listener=Listener())
+    assert len(calls) == 3, "a ProviderError the caller retries, not a RuntimeError that ends the session"
+
+
 def test_reynolds_maps_retired_ids_and_prices_what_it_serves():
     from openreynolds.llm.presets import (KNOWN_MODELS, context_window_for, desk_model_for,
                                           prices, successor)
