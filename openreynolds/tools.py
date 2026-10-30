@@ -575,8 +575,9 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Read a window of a file as text, or list a directory. Byte offsets, so "
             "arbitrarily large files are readable a piece at a time. A path ending in "
-            ".png, .jpg, .gif or .webp comes back as the picture itself, so anything "
-            "you render you can also look at."
+            ".png, .jpg, .gif or .webp comes back as the picture itself, whole, "
+            "whatever offset or limit is given, so anything you render you can also "
+            "look at."
         ),
         "input_schema": {
             "type": "object",
@@ -1106,20 +1107,6 @@ def _written_run_shape(args: dict[str, Any]) -> str:
     return f" [{', '.join(parts)}]"
 
 
-def _whole_file(args: dict[str, Any], size: int) -> bool:
-    """Whether a read asks for all of the file rather than a window of it.
-
-    No offset and no limit is the plain case. But `offset: 0` with a limit at least the
-    file's size is the same request spelled out, and a model that fills in every
-    optional argument (GPT does; Claude leaves them out) spells it out every time --
-    which read a 250 KB render as 48 KB of PNG bytes, and the model reported the plot
-    "not visually inspected". A window that starts later, or stops short, is still
-    asking for bytes."""
-    offset = int(args.get("offset") or 0)
-    limit = args.get("limit")
-    return offset == 0 and (not limit or int(limit) >= size)
-
-
 def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
     path = args["path"]
     info = ctx.backend.stat(path, timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
@@ -1127,8 +1114,13 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, A
         listing = "\n".join(info.entries) if info.entries else "(empty)"
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
 
+    # An image is always the picture, whatever window was asked for. Its bytes tell a
+    # model nothing the picture's own line does not (format, dimensions, size), and GPT
+    # fills in every optional argument: it read a 250 KB render with `offset: 0` and a
+    # 48 KB limit and reported the plot "not visually inspected", and on prod
+    # (2026-10-30) a `limit: 1000` read of a PNG sent NUL bytes into the transcript.
     media = images.media_type(path)
-    if media is not None and _whole_file(args, info.size):
+    if media is not None:
         return _read_image(ctx, path, info, media)
 
     offset = max(0, int(args.get("offset") or 0))

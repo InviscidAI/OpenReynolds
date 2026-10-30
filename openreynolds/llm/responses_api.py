@@ -113,22 +113,23 @@ class ResponsesProvider(Provider):
                 text, images = split_result(block.get("content"))
                 if block.get("is_error"):
                     text = f"error: {text}" if text else "error"
+                # A picture rides inside the output of the call that drew it, as the
+                # API's own image part, not in a user turn after it: a user turn reads
+                # as the person speaking, and it sits between the call and the model's
+                # next step. Through the service (Azure, gpt-6.1-sol, 2026-10-30) both
+                # shapes were read correctly; this is the one the API defines.
+                output: str | list[dict[str, Any]] = text or "(no output)"
+                if images:
+                    output = [_image_part(image) for image in images]
+                    if text:
+                        output.append({"type": "input_text", "text": text})
                 items.append(
                     {
                         "type": "function_call_output",
                         "call_id": block.get("tool_use_id", ""),
-                        "output": text or "(no output)",
+                        "output": output,
                     }
                 )
-                # Unlike a `tool` message in Chat Completions, a `function_call_output`
-                # carries no picture either, so the render still rides in a following
-                # user turn -- named, so the model can tell which call drew it.
-                for image in images:
-                    trailing.append(
-                        {"type": "input_text",
-                         "text": f"(image returned by tool call {block.get('tool_use_id', '')})"}
-                    )
-                    trailing.append(_image_part(image))
             elif kind == "text":
                 trailing.append({"type": "input_text", "text": block.get("text", "")})
             elif kind == "image":

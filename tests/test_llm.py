@@ -776,17 +776,22 @@ def test_responses_rebuilds_another_providers_turn_and_loses_only_the_reasoning(
                            "arguments": '{"source": "1"}'}
 
 
-def test_responses_renders_a_tool_result_as_function_call_output_with_the_image_after_it():
-    """`function_call_output` carries no picture, exactly as a `tool` message does not."""
+def test_responses_puts_a_tool_results_image_inside_its_function_call_output():
+    """The picture rides in the output of the call that drew it, not in a user turn
+    after it, which would read as the person speaking."""
     provider = ResponsesProvider("k")
     rendered = provider.render([{ "role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "c1",
-         "content": [{"type": "text", "text": "meshed"},
-                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}}]},
+         "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}},
+                     {"type": "text", "text": "plot.png — 1x1 image/png"}]},
+        {"type": "tool_result", "tool_use_id": "c2", "content": "meshed"},
     ]}])
-    assert rendered[0] == {"type": "function_call_output", "call_id": "c1", "output": "meshed"}
-    assert rendered[1]["role"] == "user"
-    assert rendered[1]["content"][1] == {"type": "input_image", "image_url": "data:image/png;base64,AAA"}
+    assert rendered == [
+        {"type": "function_call_output", "call_id": "c1",
+         "output": [{"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+                    {"type": "input_text", "text": "plot.png — 1x1 image/png"}]},
+        {"type": "function_call_output", "call_id": "c2", "output": "meshed"},
+    ]
 
 
 def test_responses_turn_reads_the_reasoning_summary_and_the_tool_call():

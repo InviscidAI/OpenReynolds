@@ -74,26 +74,19 @@ def test_the_suffix_is_matched_whatever_its_case(ctx):
     assert isinstance(content, list)
 
 
-def test_an_explicit_byte_window_still_reads_bytes(ctx):
-    """Asking for an offset means asking for the file, not for a look at it."""
+def test_an_image_is_the_picture_whatever_window_is_asked_for(ctx):
+    """GPT fills in optional arguments, and its bytes are nothing a model can use: on
+    prod a `limit: 1000` read of a PNG came back as text full of NUL bytes, and a
+    48 KB window of a 250 KB render left the plot "not visually inspected"."""
     ctx.backend.files["/work/a.png"] = PNG
-    content, _ = dispatch(ctx, "read_file", {"path": "/work/a.png", "offset": 0, "limit": 8})
-    assert isinstance(content, str)
-    assert "bytes 0" in content
-
-
-def test_the_whole_file_asked_for_by_window_is_still_a_picture(ctx):
-    """GPT fills in optional arguments: `offset: 0` with a limit past the end is the
-    whole file, and the whole of a render is a picture, not its bytes."""
-    ctx.backend.files["/work/a.png"] = PNG
-    for args in ({"offset": 0, "limit": 1_000_000}, {"offset": 0, "limit": len(PNG)},
-                 {"limit": 1_000_000}, {"offset": 0}):
+    for args in ({}, {"offset": 0, "limit": 1_000_000}, {"offset": 0, "limit": len(PNG)},
+                 {"limit": 1_000_000}, {"offset": 0}, {"offset": 0, "limit": 8},
+                 {"limit": 1000}, {"offset": 1, "limit": 1_000_000},
+                 {"offset": 0, "limit": len(PNG) - 1}):
         content, is_error = dispatch(ctx, "read_file", {"path": "/work/a.png", **args})
         assert not is_error and isinstance(content, list), args
-        assert any(b["type"] == "image" for b in content), args
-    for args in ({"offset": 1, "limit": 1_000_000}, {"offset": 0, "limit": len(PNG) - 1}):
-        content, _ = dispatch(ctx, "read_file", {"path": "/work/a.png", **args})
-        assert isinstance(content, str), args
+        image = next(b for b in content if b["type"] == "image")
+        assert base64.b64decode(image["source"]["data"]) == PNG, args
 
 
 def test_an_oversized_image_reports_its_size_rather_than_vanishing(ctx):
