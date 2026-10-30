@@ -3490,6 +3490,12 @@ def _run_turn(loop: Loop, view: View) -> bool:
     is that distinction, and it is the caller's cue to stop asking until a person
     says something.
     """
+    pending = _pending_finished_felix_jobs(loop, view)
+    if pending is None:
+        return False
+    if pending:
+        loop.tell(pending)
+
     status: int | None = None
     refusal_code = ""
     refusal_body: dict[str, Any] = {}
@@ -3858,9 +3864,42 @@ def _finished_job_wake(
         if pause.note:
             updated += f"\njob {record.job_id}: {pause.note}"
         if pause.decision is False:
+            loop.tell(loop.ctx.stopped)
             _stopped_at_ceiling(loop, view)
             return None
-    return updated
+    return updated[1:] if not report and updated.startswith("\n") else updated
+
+
+def _pending_finished_felix_jobs(loop: Any, view: View) -> str | None:
+    """Retry unhandled Felix refusals before every model turn.
+
+    A refusal may finish while the session is away, while another refusal blocks
+    model calls, or while the study row cannot be read. Finished jobs are no longer
+    watched, so their persisted `ceiling_pause_handled` flag is the retry queue.
+    """
+    from .felix_progress import is_felix_cmd
+
+    store = getattr(loop, "store", None)
+    ctx = getattr(loop, "ctx", None)
+    backend = getattr(ctx, "backend", None)
+    if store is None or ctx is None or backend is None:
+        return ""
+    observations = []
+    for record in store.session.jobs.values():
+        if (record.status == "running"
+                or record.ceiling_pause_handled
+                or record.exit_code in (None, 0)
+                or not is_felix_cmd(record.cmd)):
+            continue
+        try:
+            status = backend.job_status(record.job_id)
+        except BackendError:
+            continue
+        facts = felix_job_facts(backend, record.cmd, record.job_id, status.log_size)
+        observations.append(FinishedJob(record, status, facts))
+    if not observations:
+        return ""
+    return _finished_job_wake(loop, view, "", tuple(observations))
 
 
 def _take_forwarded(loop: Any) -> list[tuple[str, str]]:

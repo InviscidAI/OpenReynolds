@@ -435,8 +435,9 @@ def _finished_paused_felix_job(ctx, backend, store, foamd):
     store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work/study")
     body = foamd.paused_body()
     log = (
-        f"ERROR: 409 study_paused: {body['message']}\n"
-        '{"state":"rejected","exit_code":1,"error":"409 study_paused"}\n'
+        f"ERROR: {body['message']} (409 study_paused)\n"
+        '{"state":"refused","status":409,"error":"study_paused",'
+        f'"message":{json.dumps(body["message"])}' + "}\n"
     ).encode()
     backend.logs[job_id] = log
     backend.jobs[job_id] = JobStatus(
@@ -490,36 +491,26 @@ def test_a_felix_refusal_still_matches_after_spend_moves_forward(tmp_path, backe
     assert "$8.03" in view.questions[0][3]
 
 
-def test_a_truncated_refusal_stays_eligible_until_its_amount_can_be_read(
+def test_the_question_uses_the_live_row_not_amounts_parsed_from_the_message(
     tmp_path, backend
 ):
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
-    full_log = backend.logs[job_id]
-    partial_log = (
-        b"ERROR: 409 study_paused: the refusal text was truncated\n"
-        b'{"state":"rejected","exit_code":1,"error":"409 study_paused"}\n'
+    log = (
+        b"ERROR: the refusal text changed and has no dollar amounts (409 study_paused)\n"
+        b'{"state":"refused","status":409,"error":"study_paused"}\n'
     )
-    backend.logs[job_id] = partial_log
+    backend.logs[job_id] = log
     backend.jobs[job_id] = JobStatus(
         job_id=job_id, status="exited", name="cavity", end_reason="failed",
-        exit_code=1, log_size=len(partial_log),
+        exit_code=1, log_size=len(log),
     )
 
-    dispatch(ctx, "job_check", {"job_id": job_id})
-
-    assert view.questions == []
-    assert store.session.jobs[job_id].ceiling_pause_handled is False
-
-    backend.logs[job_id] = full_log
-    backend.jobs[job_id] = JobStatus(
-        job_id=job_id, status="exited", name="cavity", end_reason="failed",
-        exit_code=1, log_size=len(full_log),
-    )
     dispatch(ctx, "job_check", {"job_id": job_id})
 
     assert [question[1] for question in view.questions] == ["ceiling"]
+    assert "$8.00" in view.questions[0][3] and "$10.00" in view.questions[0][3]
     assert store.session.jobs[job_id].ceiling_pause_handled is True
 
 
@@ -561,6 +552,21 @@ def test_an_old_felix_pause_does_not_ask_again_after_the_ceiling_is_clear(
     assert view.questions == [], "the old refusal is not a later pause at the new cap"
 
 
+def test_a_current_pause_under_a_different_cap_is_still_put_to_the_person(
+    tmp_path, backend
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.spent_cents = 1600
+    foamd.cap_cents = 2000
+
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert "$16.00" in view.questions[0][3] and "$20.00" in view.questions[0][3]
+
+
 def test_a_finished_felix_pause_is_put_to_the_person_before_watch_wakes_the_model(
     tmp_path, backend
 ):
@@ -576,6 +582,29 @@ def test_a_finished_felix_pause_is_put_to_the_person_before_watch_wakes_the_mode
     assert [question[1] for question in view.questions] == ["ceiling"]
     assert loop.blocked_reason == ctx.stopped
     assert any(ctx.stopped in notice for notice in view.notices)
+    assert any(ctx.stopped in str(message["content"]) for message in loop.messages)
+
+
+def test_an_unhandled_finished_refusal_is_retried_before_the_next_turn(
+    tmp_path, backend
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/yes", backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    foamd.spent_cents = None
+    report = _collect_finished(backend, store, view)
+
+    assert cli._finished_job_wake(loop, view, report) == report
+    assert store.session.jobs[job_id].ceiling_pause_handled is False
+
+    foamd.spent_cents = 800
+    install_model(loop, [message([text_block("continuing")])])
+    loop.say("continue")
+
+    assert cli._run_turn(loop, view) is True
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+    assert foamd.caps_posted == [2000]
 
 
 def test_a_raised_ceiling_is_in_the_watch_report_the_model_receives(tmp_path, backend):
@@ -654,6 +683,25 @@ def test_felix_prose_without_a_rejected_final_status_cannot_ask(tmp_path, backen
     job_id = backend.job_start(cmd, cwd="/work", name="cavity")
     store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work")
     log = b"ERROR: notes mention 409 study_paused, but this is not a final status\n"
+    backend.logs[job_id] = log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", exit_code=1,
+        log_size=len(log),
+    )
+    report = _collect_finished(backend, store, view)
+
+    assert cli._finished_job_wake(loop, view, report) == report
+    assert view.questions == []
+
+
+def test_a_felixd_rejection_is_not_foamd_refusing_the_study(tmp_path, backend):
+    """`rejected` is felixd declining a created solve, not foamd's raw 409."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    cmd = "felix run cavity --gpu H100"
+    job_id = backend.job_start(cmd, cwd="/work", name="cavity")
+    store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work")
+    log = b'{"state":"rejected","status":409,"error":"study_paused"}\n'
     backend.logs[job_id] = log
     backend.jobs[job_id] = JobStatus(
         job_id=job_id, status="exited", name="cavity", exit_code=1,

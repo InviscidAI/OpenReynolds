@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .backend.base import BackendError
@@ -87,12 +86,6 @@ def paused(exc: BaseException) -> Paused | None:
         return Paused("", 0.0, 0.0, message)
 
 
-_JOB_PAUSE_AMOUNT = re.compile(
-    r"has spent \$([\d,]+(?:\.\d{1,2})?) of (?:its |a )?\$([\d,]+(?:\.\d{1,2})?) ceiling",
-    re.IGNORECASE,
-)
-
-
 @dataclass(frozen=True)
 class JobPauseResolution:
     """What handling one finished Felix job changed."""
@@ -113,86 +106,44 @@ _CLEARED_JOB_NOTE = (
     "The study is no longer paused at its spending ceiling. This refused job is "
     "finished; no replacement solve was started."
 )
-_CHANGED_JOB_NOTE = (
-    "The study's ceiling changed after this job was refused. This old refusal is no "
-    "longer current; the study is paused again under its current ceiling. No "
-    "replacement solve was started."
-)
-
-
-def _amount_cents(value: str) -> int | None:
-    """A printed dollar amount in exact cents, without binary-float rounding."""
-    try:
-        cents = Decimal(value.replace(",", "")) * 100
-    except (InvalidOperation, ValueError):
-        return None
-    return int(cents) if cents == cents.to_integral_value() else None
-
-
-def _row_cents(value: Any) -> Decimal | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        return Decimal(str(value))
-    except InvalidOperation:
-        return None
 
 
 def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
-    """A structured Felix rejection against the service's current study row.
+    """A foamd refusal from Felix against the service's current study row.
 
     `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
     exits 1 and prints a final JSON status instead of raising the `BackendError` that
-    `tools._handled` sees. The status proves this was a rejected Felix solve, rather
-    than arbitrary output containing `study_paused`. Its ERROR line identifies the
-    spend and ceiling that refusal saw; matching both against the live row prevents
-    an old refusal from being mistaken for a later pause.
+    `tools._handled` sees. The raw `refused` status proves foamd returned the 409,
+    rather than a felixd solve rejection or arbitrary output mentioning the error.
+    The current study row is authoritative after that: a live pause is the person's
+    question, and a cleared pause is a fact for the model.
 
     The bool says the job is conclusively accounted for. False leaves it eligible for
-    a later read because the log or study row was incomplete. The final string tells
-    the model when a real refusal is stale because the ceiling changed elsewhere.
+    a later read because the final status or study row was incomplete.
     """
     status = getattr(facts, "status", None)
-    if not isinstance(status, dict) or status.get("state") != "rejected":
+    if not isinstance(status, dict) or status.get("state") != "refused":
         return None, False, ""
-    if str(status.get("error") or "").strip() != "409 study_paused":
-        return None, False, ""
-    message = "\n".join(getattr(facts, "errors", []) or [])
-    amounts = _JOB_PAUSE_AMOUNT.findall(message)
-    if not amounts:
-        return None, False, ""
-    refused_spent = _amount_cents(amounts[-1][0])
-    refused_cap = _amount_cents(amounts[-1][1])
-    if refused_spent is None or refused_cap is None:
+    if status.get("status") != 409 or status.get("error") != STUDY_PAUSED:
         return None, False, ""
     service = getattr(ctx, "ceiling", None)
     row = service.study() if service is not None else None
-    if row is None:
-        return None, False, ""
     if not isinstance(row, dict):
         return None, False, ""
-    spent = _row_cents(row.get("spent_cents"))
-    cap = _row_cents(row.get("cap_cents"))
     paused_now = row.get("paused")
-    # A transient ledger failure reports all three as None. It is not evidence that
-    # the refusal is stale, so leave the job eligible for the next read.
-    if (spent is None or cap is None
-            or (paused_now is not True and paused_now is not False)):
-        return None, False, ""
-    # Spend is monotonic while the workspace is up. The row may therefore be above
-    # the amount printed at refusal time, but it cannot be below it and still prove
-    # this is the same event.
-    if spent < refused_spent:
-        return None, False, ""
     if paused_now is False:
         return None, True, _CLEARED_JOB_NOTE
-    if cap != refused_cap:
-        return None, True, _CHANGED_JOB_NOTE
+    spent = row.get("spent_cents")
+    cap = row.get("cap_cents")
+    if (paused_now is not True
+            or isinstance(spent, bool) or not isinstance(spent, (int, float))
+            or isinstance(cap, bool) or not isinstance(cap, (int, float))):
+        return None, False, ""
     return Paused(
         str(row.get("id") or row.get("study_id") or service.study_id),
         float(spent),
         float(cap),
-        message,
+        str(status.get("message") or ""),
     ), True, ""
 
 
