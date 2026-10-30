@@ -8,6 +8,8 @@ going. Everything here exists because of that.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from shellprobe import Machine, Process
@@ -529,6 +531,12 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     assert not any(c.startswith(("pkill", "kill -9")) for c in backend.execs)
 
 
+# The local backend signals a process group (`os.killpg`) and runs jobs under `bash -lc`,
+# both POSIX only; the tests that start a real local job say so rather than failing Windows.
+posix_only = pytest.mark.skipif(
+    os.name != "posix", reason="the local backend runs jobs in a POSIX process group")
+
+
 @pytest.mark.parametrize("script, ending", [
     ("exit 0", ("exited", "completed")),
     ("exit 1", ("exited", "failed")),
@@ -536,6 +544,7 @@ def test_another_studys_solver_under_the_same_volume_is_still_out_of_reach(backe
     ("kill -KILL $$", ("exited", "killed_externally")),
     ("kill -SEGV $$", ("exited", "failed")),
 ])
+@posix_only
 def test_a_local_job_ends_in_the_services_words(tmp_path, script, ending):
     """A signal death nobody asked for (an OOM kill, a segfault, reported by the
     `bash -lc` wrapper as 137) used to read as `killed_by_client` or `completed`, and a
@@ -549,6 +558,7 @@ def test_a_local_job_ends_in_the_services_words(tmp_path, script, ending):
     assert (status.status, status.end_reason) == ending
 
 
+@posix_only
 def test_a_local_job_stopped_through_job_kill_reads_as_stopped(tmp_path):
     from openreynolds.backend.local import LocalBackend
 
