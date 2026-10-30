@@ -10,10 +10,11 @@ import pytest
 
 from openreynolds import llm
 from openreynolds.llm.anthropic_api import AnthropicProvider
-from openreynolds.llm.base import (Listener, ProviderError, TextBlock, ToolUseBlock, Turn,
+from openreynolds.llm.base import (BadRequest, Listener, ProviderError, TextBlock, ToolUseBlock, Turn,
                                    neutral_blocks, split_result)
 from openreynolds.llm.openai_api import OpenAIProvider
 from openreynolds.llm.responses_api import ResponsesProvider
+from openreynolds.llm.base import transient
 
 from conftest import FakeMessages, message, text_block, tool_block
 
@@ -776,17 +777,22 @@ def test_responses_rebuilds_another_providers_turn_and_loses_only_the_reasoning(
                            "arguments": '{"source": "1"}'}
 
 
-def test_responses_renders_a_tool_result_as_function_call_output_with_the_image_after_it():
-    """`function_call_output` carries no picture, exactly as a `tool` message does not."""
+def test_responses_puts_a_tool_results_image_inside_its_function_call_output():
+    """The picture rides in the output of the call that drew it, not in a user turn
+    after it, which would read as the person speaking."""
     provider = ResponsesProvider("k")
     rendered = provider.render([{ "role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "c1",
-         "content": [{"type": "text", "text": "meshed"},
-                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}}]},
+         "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}},
+                     {"type": "text", "text": "plot.png — 1x1 image/png"}]},
+        {"type": "tool_result", "tool_use_id": "c2", "content": "meshed"},
     ]}])
-    assert rendered[0] == {"type": "function_call_output", "call_id": "c1", "output": "meshed"}
-    assert rendered[1]["role"] == "user"
-    assert rendered[1]["content"][1] == {"type": "input_image", "image_url": "data:image/png;base64,AAA"}
+    assert rendered == [
+        {"type": "function_call_output", "call_id": "c1",
+         "output": [{"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+                    {"type": "input_text", "text": "plot.png — 1x1 image/png"}]},
+        {"type": "function_call_output", "call_id": "c2", "output": "meshed"},
+    ]
 
 
 def test_responses_turn_reads_the_reasoning_summary_and_the_tool_call():
@@ -973,6 +979,95 @@ def test_responses_gives_up_on_a_connection_that_keeps_dying(monkeypatch):
         provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
                         max_tokens=500, listener=Listener())
     assert len(calls) == 3
+
+
+class _UnfinishedStream(_DyingStream):
+    """Every event arrives, the connection closes cleanly, and `response.completed`
+    never does: the SDK's RuntimeError, as prod saw it on 2026-10-30."""
+
+    def __iter__(self):
+        yield SimpleNamespace(type="response.reasoning_summary_text.delta", delta="thinking")
+
+    def get_final_response(self):
+        if self.fail:
+            raise RuntimeError("Didn't receive a `response.completed` event.")
+        return super().get_final_response()
+
+
+def test_responses_retries_a_stream_that_closes_without_completing(monkeypatch):
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return _UnfinishedStream(fail=len(calls) == 1, error=RuntimeError)
+
+    provider.client = SimpleNamespace(responses=SimpleNamespace(stream=stream))
+    turn = provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                           max_tokens=500, listener=Listener())
+    assert len(calls) == 2 and turn.text == "done"
+
+    calls.clear()
+    provider.client = SimpleNamespace(responses=SimpleNamespace(
+        stream=lambda **kw: calls.append(kw) or _UnfinishedStream(fail=True, error=RuntimeError)))
+    with pytest.raises(ProviderError, match="without response.completed"):
+        provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                        max_tokens=500, listener=Listener())
+    assert len(calls) == 3, "a ProviderError the caller retries, not a RuntimeError that ends the session"
+
+
+class _EndedStream(_DyingStream):
+    """A reply the API ended itself: `response.incomplete` or `response.failed`, then a
+    clean close. The SDK keeps a final response only for `response.completed`."""
+
+    def __init__(self, response):
+        super().__init__(fail=False, error=RuntimeError)
+        self.response = response
+
+    def __iter__(self):
+        yield SimpleNamespace(type=f"response.{self.response.status}", response=self.response)
+
+    def get_final_response(self):
+        raise RuntimeError("Didn't receive a `response.completed` event.")
+
+
+def test_responses_takes_an_incomplete_or_failed_reply_without_sending_it_again(monkeypatch):
+    """Sending again gets the same ending, billed in full each time."""
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def serve(response):
+        provider.client = SimpleNamespace(responses=SimpleNamespace(
+            stream=lambda **kw: calls.append(kw) or _EndedStream(response)))
+
+    def ask():
+        return provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                               max_tokens=500, listener=Listener())
+
+    serve(SimpleNamespace(
+        status="incomplete", incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[_item(type="message", content=[SimpleNamespace(type="output_text", text="half")])],
+        usage=SimpleNamespace(input_tokens=100, output_tokens=500,
+                              input_tokens_details=SimpleNamespace(cached_tokens=0))))
+    turn = ask()
+    assert len(calls) == 1 and turn.stop_reason == "max_tokens" and turn.text == "half"
+
+    calls.clear()
+    serve(SimpleNamespace(status="failed", output=[], usage=None,
+                          error=SimpleNamespace(code="invalid_image", message="unreadable")))
+    with pytest.raises(BadRequest, match="invalid_image"):
+        ask()
+    assert len(calls) == 1
+
+    calls.clear()
+    serve(SimpleNamespace(status="failed", output=[], usage=None,
+                          error=SimpleNamespace(code="server_error", message="try again")))
+    with pytest.raises(ProviderError, match="server_error") as caught:
+        ask()
+    assert len(calls) == 1 and not isinstance(caught.value, BadRequest)
+    assert transient(caught.value), "the turn's own retries wait and ask again"
 
 
 def test_reynolds_maps_retired_ids_and_prices_what_it_serves():

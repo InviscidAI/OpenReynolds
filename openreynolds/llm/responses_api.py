@@ -48,6 +48,19 @@ from .base import (
     split_result,
 )
 
+class StreamCut(Exception):
+    """A stream that closed without its `response.completed` event.
+
+    The SDK says so with a bare RuntimeError from `get_final_response`, which no
+    handler caught: on prod (2026-10-30, gpt-6.1-sol) one such stream ended the whole
+    session. It is a dropped stream by another name, and retried as one."""
+
+
+_TRANSIENT_FAILURES = frozenset({"server_error", "rate_limit_exceeded", "vector_store_timeout"})
+"""`response.failed` codes that asking again can change. The rest (an invalid prompt,
+an image the API cannot read) fail the same way every time."""
+
+
 MIN_OUTPUT_TOKENS = 16
 """The API's own floor. A probe asking for fewer is a 400 about the wrong thing."""
 
@@ -105,22 +118,23 @@ class ResponsesProvider(Provider):
                 text, images = split_result(block.get("content"))
                 if block.get("is_error"):
                     text = f"error: {text}" if text else "error"
+                # A picture rides inside the output of the call that drew it, as the
+                # API's own image part, not in a user turn after it: a user turn reads
+                # as the person speaking, and it sits between the call and the model's
+                # next step. Through the service (Azure, gpt-6.1-sol, 2026-10-30) both
+                # shapes were read correctly; this is the one the API defines.
+                output: str | list[dict[str, Any]] = text or "(no output)"
+                if images:
+                    output = [_image_part(image) for image in images]
+                    if text:
+                        output.append({"type": "input_text", "text": text})
                 items.append(
                     {
                         "type": "function_call_output",
                         "call_id": block.get("tool_use_id", ""),
-                        "output": text or "(no output)",
+                        "output": output,
                     }
                 )
-                # Unlike a `tool` message in Chat Completions, a `function_call_output`
-                # carries no picture either, so the render still rides in a following
-                # user turn -- named, so the model can tell which call drew it.
-                for image in images:
-                    trailing.append(
-                        {"type": "input_text",
-                         "text": f"(image returned by tool call {block.get('tool_use_id', '')})"}
-                    )
-                    trailing.append(_image_part(image))
             elif kind == "text":
                 trailing.append({"type": "input_text", "text": block.get("text", "")})
             elif kind == "image":
@@ -248,7 +262,7 @@ class ResponsesProvider(Provider):
                 turn = self._stream_once(kwargs, listener, progress)
                 turn.model = turn.model or model
                 return turn
-            except transport as exc:
+            except (*transport, StreamCut) as exc:
                 # A reset mid-stream used to end the whole session: nothing between here
                 # and the top of the loop caught it, so one dropped connection threw away
                 # an hour of solved case and the report that went with it. Nothing has
@@ -289,9 +303,14 @@ class ResponsesProvider(Provider):
         opened = False
         if progress is None:
             progress = {}
+        last = ""
+        ended: Any = None
         with self.client.responses.stream(**kwargs) as stream:
             for event in stream:
                 kind = getattr(event, "type", "")
+                last = kind or last
+                if kind in ("response.incomplete", "response.failed"):
+                    ended = getattr(event, "response", None)
                 if kind == "response.output_text.delta":
                     progress["emitted"] = True
                     listener.on_text(getattr(event, "delta", "") or "")
@@ -300,8 +319,34 @@ class ResponsesProvider(Provider):
                         opened = True
                         listener.on_thinking_begin()
                     listener.on_thinking(getattr(event, "delta", "") or "")
-            final = stream.get_final_response()
+            try:
+                final = stream.get_final_response()
+            except RuntimeError as exc:
+                # The SDK's words for a stream that closed without `response.completed`.
+                # It says the same for a reply that did end -- `response.incomplete` at
+                # the output cap or a content filter, `response.failed` -- and sending
+                # those again gets the same ending, each one billed in full.
+                if ended is not None:
+                    return self._ended(ended)
+                raise StreamCut(f"the stream closed after {last or 'no events'} "
+                                "without response.completed") from exc
         return self._turn(final)
+
+    def _ended(self, response: Any) -> Turn:
+        """A reply the API ended itself, short of `response.completed`.
+
+        An incomplete one is a turn like any other -- `_turn` reads its reason -- and a
+        failed one is an error: a retry upstairs only for the codes waiting can change,
+        and a `BadRequest` otherwise, which is also what lets an image the API refused
+        be taken out of the thread (`cli._run_turn`)."""
+        if getattr(response, "status", "") != "failed":
+            return self._turn(response)
+        error = getattr(response, "error", None)
+        code = getattr(error, "code", "") or ""
+        text = f"the response failed: {code or 'no code'}: {getattr(error, 'message', '') or ''}"
+        if code in _TRANSIENT_FAILURES:
+            raise ProviderError(text)
+        raise BadRequest(text)
 
     def _turn(self, response: Any) -> Turn:
         content: list[Any] = []
