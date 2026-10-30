@@ -10,10 +10,11 @@ import pytest
 
 from openreynolds import llm
 from openreynolds.llm.anthropic_api import AnthropicProvider
-from openreynolds.llm.base import (Listener, ProviderError, TextBlock, ToolUseBlock, Turn,
+from openreynolds.llm.base import (BadRequest, Listener, ProviderError, TextBlock, ToolUseBlock, Turn,
                                    neutral_blocks, split_result)
 from openreynolds.llm.openai_api import OpenAIProvider
 from openreynolds.llm.responses_api import ResponsesProvider
+from openreynolds.llm.base import transient
 
 from conftest import FakeMessages, message, text_block, tool_block
 
@@ -1014,6 +1015,59 @@ def test_responses_retries_a_stream_that_closes_without_completing(monkeypatch):
         provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
                         max_tokens=500, listener=Listener())
     assert len(calls) == 3, "a ProviderError the caller retries, not a RuntimeError that ends the session"
+
+
+class _EndedStream(_DyingStream):
+    """A reply the API ended itself: `response.incomplete` or `response.failed`, then a
+    clean close. The SDK keeps a final response only for `response.completed`."""
+
+    def __init__(self, response):
+        super().__init__(fail=False, error=RuntimeError)
+        self.response = response
+
+    def __iter__(self):
+        yield SimpleNamespace(type=f"response.{self.response.status}", response=self.response)
+
+    def get_final_response(self):
+        raise RuntimeError("Didn't receive a `response.completed` event.")
+
+
+def test_responses_takes_an_incomplete_or_failed_reply_without_sending_it_again(monkeypatch):
+    """Sending again gets the same ending, billed in full each time."""
+    monkeypatch.setattr("openreynolds.llm.responses_api.time.sleep", lambda _: None)
+    provider = ResponsesProvider("k")
+    calls: list[dict] = []
+
+    def serve(response):
+        provider.client = SimpleNamespace(responses=SimpleNamespace(
+            stream=lambda **kw: calls.append(kw) or _EndedStream(response)))
+
+    def ask():
+        return provider.stream(model="m", system="s", messages=[], tools=[], effort="medium",
+                               max_tokens=500, listener=Listener())
+
+    serve(SimpleNamespace(
+        status="incomplete", incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        output=[_item(type="message", content=[SimpleNamespace(type="output_text", text="half")])],
+        usage=SimpleNamespace(input_tokens=100, output_tokens=500,
+                              input_tokens_details=SimpleNamespace(cached_tokens=0))))
+    turn = ask()
+    assert len(calls) == 1 and turn.stop_reason == "max_tokens" and turn.text == "half"
+
+    calls.clear()
+    serve(SimpleNamespace(status="failed", output=[], usage=None,
+                          error=SimpleNamespace(code="invalid_image", message="unreadable")))
+    with pytest.raises(BadRequest, match="invalid_image"):
+        ask()
+    assert len(calls) == 1
+
+    calls.clear()
+    serve(SimpleNamespace(status="failed", output=[], usage=None,
+                          error=SimpleNamespace(code="server_error", message="try again")))
+    with pytest.raises(ProviderError, match="server_error") as caught:
+        ask()
+    assert len(calls) == 1 and not isinstance(caught.value, BadRequest)
+    assert transient(caught.value), "the turn's own retries wait and ask again"
 
 
 def test_reynolds_maps_retired_ids_and_prices_what_it_serves():

@@ -56,6 +56,11 @@ class StreamCut(Exception):
     session. It is a dropped stream by another name, and retried as one."""
 
 
+_TRANSIENT_FAILURES = frozenset({"server_error", "rate_limit_exceeded", "vector_store_timeout"})
+"""`response.failed` codes that asking again can change. The rest (an invalid prompt,
+an image the API cannot read) fail the same way every time."""
+
+
 MIN_OUTPUT_TOKENS = 16
 """The API's own floor. A probe asking for fewer is a 400 about the wrong thing."""
 
@@ -299,10 +304,13 @@ class ResponsesProvider(Provider):
         if progress is None:
             progress = {}
         last = ""
+        ended: Any = None
         with self.client.responses.stream(**kwargs) as stream:
             for event in stream:
                 kind = getattr(event, "type", "")
                 last = kind or last
+                if kind in ("response.incomplete", "response.failed"):
+                    ended = getattr(event, "response", None)
                 if kind == "response.output_text.delta":
                     progress["emitted"] = True
                     listener.on_text(getattr(event, "delta", "") or "")
@@ -315,9 +323,30 @@ class ResponsesProvider(Provider):
                 final = stream.get_final_response()
             except RuntimeError as exc:
                 # The SDK's words for a stream that closed without `response.completed`.
+                # It says the same for a reply that did end -- `response.incomplete` at
+                # the output cap or a content filter, `response.failed` -- and sending
+                # those again gets the same ending, each one billed in full.
+                if ended is not None:
+                    return self._ended(ended)
                 raise StreamCut(f"the stream closed after {last or 'no events'} "
                                 "without response.completed") from exc
         return self._turn(final)
+
+    def _ended(self, response: Any) -> Turn:
+        """A reply the API ended itself, short of `response.completed`.
+
+        An incomplete one is a turn like any other -- `_turn` reads its reason -- and a
+        failed one is an error: a retry upstairs only for the codes waiting can change,
+        and a `BadRequest` otherwise, which is also what lets an image the API refused
+        be taken out of the thread (`cli._run_turn`)."""
+        if getattr(response, "status", "") != "failed":
+            return self._turn(response)
+        error = getattr(response, "error", None)
+        code = getattr(error, "code", "") or ""
+        text = f"the response failed: {code or 'no code'}: {getattr(error, 'message', '') or ''}"
+        if code in _TRANSIENT_FAILURES:
+            raise ProviderError(text)
+        raise BadRequest(text)
 
     def _turn(self, response: Any) -> Turn:
         content: list[Any] = []
