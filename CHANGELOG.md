@@ -11,13 +11,23 @@ All notable changes to this project are recorded here. The format follows
 - **A study's spending ceiling is the person's question.** When the hosted service
   pauses a study at 80% of its ceiling (`409 study_paused`), on a workspace call or on
   a model call, the person is asked in any mode: yes doubles the ceiling (`POST
-  /v1/studies/{id}/cap`) and the paused call runs again, a dollar amount sets that
-  ceiling, no stops the study with a final message and asks the model nothing more.
-  Before the first solve the agent's estimate (`job_start`'s new `estimate_usd`) and
-  the study's ceiling are shown; in ask-before-compute mode they are part of the
-  job's question. See docs/modes.md.
+  /v1/studies/{id}/cap`) and the paused call runs again, no stops the study with a
+  final message and asks the model nothing more. Before the first solve the person is
+  told how far the study may go before it asks; in ask-before-compute mode that is
+  part of the job's question. See docs/modes.md.
 
 ### Changed
+
+- **A study's pause speaks in normal studies, never dollars.** Plans are sold as
+  studies, so what a study has used is said as a multiple of a normal one (200 cents
+  quick, 500 full, the service's `times_normal`), and no hosted cost reaches the
+  person anywhere: the pause asks "This study has used 2x the usage of a normal full
+  study. Do you want to continue?", yes doubles the ceiling (a typed dollar amount is
+  no longer an answer), and the stop message, the notice after a raise, the line
+  before the first solve and a paused error's text all speak in multiples. The
+  default ceilings are the service's new 500 and 1250 cents. `job_start` no longer
+  takes `estimate_usd`, the Felix status line no longer shows `cost_usd`, and both
+  prompts say no cost in money is told to the user.
 
 - **The service's pricing errors keep their fields.** `BackendError.extra` (and a
   model call's `ProviderError.body`) carry everything a 4xx body says beyond `error`

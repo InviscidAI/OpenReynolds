@@ -145,10 +145,21 @@ def test_the_prompt_says_a_study_has_a_directory_of_its_own():
 
 # -- Felix mode (docs/felix-mode-acceptance.md, A2) ------------------------------
 
-OPENFOAM_PROMPT_SHA256 = "28fd68e9c109343984ca18e93e9d350c59cc72e37d55113800b1eef12e59236b"
+OPENFOAM_PROMPT_SHA256 = "af9b71bfa094e23ebef344dbf29d657b3d82ca751e8db10ce7d7c0b840d1f6e0"
 """The OpenFOAM prompt, pinned. It is the cache prefix of every OpenFOAM study, so it
 moves only on purpose: not for a second solver (Felix mode left it byte-identical),
-and last when the "searchable" claim with no search tool behind it came out (#27)."""
+when the "searchable" claim with no search tool behind it came out (#27), and last
+when it came to say that no cost in money is told to the user (plans are sold as
+studies; `job_start` lost `estimate_usd` in the same change, so the prefix moved
+anyway)."""
+
+
+def test_neither_prompt_invites_the_model_to_tell_the_user_a_cost():
+    """What the hosted service costs is never shown to the person, and the model is
+    one way it could reach them: Felix's GPU list and a solve's status carry dollars."""
+    assert "No cost in money is said to them." in SYSTEM_PROMPT
+    assert "No cost in money is said to them." in _felix()
+    assert "prices are for choosing, not for telling" in _felix()
 
 
 def test_the_openfoam_prompt_moves_only_on_purpose():

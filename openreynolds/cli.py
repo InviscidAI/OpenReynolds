@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
-from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day
+from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
@@ -3532,6 +3532,9 @@ def _run_turn(loop: Loop, view: View) -> bool:
             # `plan_limit`); they are said here too, as a workspace call says them.
             note = extra_note({k: v for k, v in exc.body.items()
                                if k not in ("error", "message")}) if exc.code else ""
+            if exc.code:
+                # A refusal from the service names no money, whatever its prose said.
+                exc_message = without_money(exc_message)
             if note:
                 exc_message = f"{exc_message} ({note})"
             if status:

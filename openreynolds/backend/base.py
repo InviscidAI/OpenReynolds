@@ -8,6 +8,7 @@ modules in this package may. `tests/test_negative_obligation.py` enforces that.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -177,7 +178,8 @@ class BackendError(Exception):
         """Every other top-level field of the service's error body. The pricing errors
         carry their facts here -- 402 `allowance_exhausted` (tier, period_end,
         renews_at, can_enable_overage, can_buy_credits, past_due), 403 `plan_limit` (limit, value, allowed, tier,
-        upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents) -- and a
+        upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents, times_normal,
+        style) -- and a
         reader branches on these, never on the prose in `message`."""
 
     def __str__(self) -> str:
@@ -185,7 +187,10 @@ class BackendError(Exception):
         if self.status is not None:
             prefix += f" ({self.status})"
         note = extra_note(self.extra)
-        return f"{prefix}: {self.message}" + (f" ({note})" if note else "")
+        # A pricing error (one carrying fields beside its message) may name money in
+        # its prose from an older service; that prose is said without it.
+        message = without_money(self.message) if self.extra else self.message
+        return f"{prefix}: {message}" + (f" ({note})" if note else "")
 
 
 def _tier_name(tier: Any) -> str:
@@ -221,7 +226,7 @@ def extra_note(extra: dict[str, Any] | None) -> str:
     """The pricing fields of an error body, said in a few words: which plan, what to
     upgrade to, when the allowance renews (only while that day is ahead), whether
     credits can be bought or pay-as-you-go overage turned on, a payment that failed, what a
-    study has spent of its ceiling.
+    paused study has used, as a multiple of a normal study and never in money.
 
     Said beside the service's own message rather than instead of it, because that
     message is prose and may change; these are the fields the contract fixes. Empty
@@ -249,11 +254,37 @@ def extra_note(extra: dict[str, Any] | None) -> str:
         parts.append("credits can be bought")
     if extra.get("can_enable_overage"):
         parts.append("pay-as-you-go overage (billed to your card) can be turned on")
-    if isinstance(extra.get("spent_cents"), (int, float)) and isinstance(
-            extra.get("cap_cents"), (int, float)):
-        parts.append(f"spent ${extra['spent_cents'] / 100:.2f} of a "
-                     f"${extra['cap_cents'] / 100:.2f} ceiling")
+    if "times_normal" in extra or (isinstance(extra.get("spent_cents"), (int, float))
+                                   and isinstance(extra.get("cap_cents"), (int, float))):
+        # What a paused study has used, as a multiple of a normal study and never in
+        # money (`ceiling.py`); from the cents and the normals there when an older
+        # service sends no `times_normal`.
+        from .. import ceiling
+
+        used = ceiling.described(ceiling.Paused(
+            "", float(extra.get("spent_cents") or 0), float(extra.get("cap_cents") or 0),
+            times_normal=ceiling._number(extra.get("times_normal")),
+            style=str(extra.get("style") or ""),
+        ))
+        parts.append(f"used {ceiling.times(used.times_normal)} the usage of a normal "
+                     f"{used.style} study")
     return "; ".join(parts)
+
+
+_MONEY = re.compile(r"\$\s?\d")
+_CLAUSE = re.compile(r"(?<=[.;:])\s+")
+
+
+def without_money(text: str) -> str:
+    """`text` with every sentence or clause that names an amount of money left out.
+
+    The service's prose is not ours to rewrite, but an older service named a study's
+    spend and ceiling in dollars there, and what the hosted service costs is never
+    shown to the person. Empty of anything else, it says the amount is not shown."""
+    if not _MONEY.search(text or ""):
+        return text
+    kept = [clause for clause in _CLAUSE.split(text) if not _MONEY.search(clause)]
+    return " ".join(kept).strip() or "the amount is not shown"
 
 
 @runtime_checkable
