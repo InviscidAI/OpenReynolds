@@ -490,8 +490,8 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     # whether this address earns it -- a domain list copied into the client goes stale
     # and starts telling people the opposite of what they are about to get.
     console.print(
-        "A company email address starts the account with $10 of credit, once, covering "
-        "the workspace and Reynolds' model together. A personal address starts at zero."
+        "A company email address starts a 30-day Pro trial with 15 full-depth studies, "
+        "no card needed. A personal address starts a 30-day Starter trial with 5, with a card."
     )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None

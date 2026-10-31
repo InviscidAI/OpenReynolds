@@ -2063,8 +2063,8 @@ def test_a_terminal_signup_learns_what_a_web_signup_is_told_about_credit(
 
     result = CliRunner().invoke(cli.main, ["login"], input="new@example.com\npw\nn\n")
 
-    assert "$10 of credit" in result.output
-    assert "personal address starts at zero" in result.output.lower()
+    assert "15 full-depth studies" in " ".join(result.output.split()) and "$" not in result.output
+    assert "30-day starter trial" in " ".join(result.output.lower().split())
     import inspect
 
     assert "gmail" not in inspect.getsource(cli._offer_account).lower(), (
