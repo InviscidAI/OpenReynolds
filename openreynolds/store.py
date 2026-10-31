@@ -34,6 +34,12 @@ class JobRecord:
     """Where the command ran. The progress line finds the case's controlDict from it;
     records written before it existed load with it empty and are shown without an end."""
     """How far the model has already read this job's log."""
+    ceiling_pause_handled: bool = False
+    """Whether this job's rejected Felix solve has already been put to the person.
+
+    Kept with the job rather than in the live loop so reading another log page or
+    resuming the study cannot ask the same spending question again.
+    """
 
 
 @dataclass

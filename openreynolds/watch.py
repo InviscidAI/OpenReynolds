@@ -18,7 +18,7 @@ from typing import Any
 
 from .backend.base import Backend, BackendError, JobStatus
 from .browse import human
-from .progress import felix_job_summary
+from .progress import felix_job_facts, felix_job_summary
 from .store import Store
 from .tools import describe_job
 from .view import View
@@ -141,10 +141,20 @@ class NullReader:
 
 
 @dataclass
+class FinishedJob:
+    """A job-end observation already read while watch built its report."""
+
+    record: Any
+    status: JobStatus
+    facts: Any = None
+
+
+@dataclass
 class Wake:
     kind: str
     """job | user | eof | idle | timeout | narrate"""
     text: str = ""
+    finished: tuple[FinishedJob, ...] = ()
 
 
 def watch(
@@ -186,9 +196,10 @@ def watch(
             if typed.strip():
                 return Wake("user", typed)
 
-        finished = _collect_finished(backend, store, view)
+        finished_jobs: list[FinishedJob] = []
+        finished = _collect_finished(backend, store, view, finished_jobs)
         if finished:
-            return Wake("job", finished)
+            return Wake("job", finished, tuple(finished_jobs))
 
         running = store.live_jobs()
         if not running:
@@ -297,7 +308,12 @@ def _progress_report(backend: Backend, pairs: list, progress: Any = None) -> str
     return "\n".join(lines)
 
 
-def _collect_finished(backend: Backend, store: Store, view: View) -> str:
+def _collect_finished(
+    backend: Backend,
+    store: Store,
+    view: View,
+    finished_jobs: list[FinishedJob] | None = None,
+) -> str:
     """Report on every job that stopped running since the last poll."""
     reports = []
     for record in store.live_jobs():
@@ -327,19 +343,33 @@ def _collect_finished(backend: Backend, store: Store, view: View) -> str:
         # exited"}`, so the exit code and the end reason never reached the stream at
         # all. An agent keying off `jobs` never learns its four-hour solve is done.
         view.jobs(list(store.session.jobs.values()))
-        reports.append(_job_report(backend, status, record))
+        facts = felix_job_facts(backend, record.cmd, record.job_id, status.log_size)
+        reports.append(_job_report(backend, status, record, facts=facts))
+        if finished_jobs is not None:
+            finished_jobs.append(FinishedJob(record, status, facts))
 
     return "\n\n".join(reports)
 
 
-def _job_report(backend: Backend, status: JobStatus, record: Any = None) -> str:
+_READ_FELIX_FACTS = object()
+
+
+def _job_report(
+    backend: Backend,
+    status: JobStatus,
+    record: Any = None,
+    *,
+    facts: Any = _READ_FELIX_FACTS,
+) -> str:
     """Facts about one finished job, with the tail of its log -- and for a Felix
     solve, its reading (`progress.felix_job_summary`): how it ended, the step it
     reached, the errors with the out-of-memory figures, the final status."""
     lines = [describe_job(status)]
     if record is not None:
+        if facts is _READ_FELIX_FACTS:
+            facts = felix_job_facts(backend, record.cmd, status.job_id, status.log_size)
         felix = felix_job_summary(backend, record.cmd, record.cwd or "", status.job_id,
-                                  status.log_size)
+                                  status.log_size, facts=facts)
         if felix:
             lines.extend(felix)
     tail = _tail(backend, status)

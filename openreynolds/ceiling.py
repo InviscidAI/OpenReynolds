@@ -128,6 +128,106 @@ def paused(exc: BaseException) -> Paused | None:
         return Paused("", 0.0, 0.0, message)
 
 
+@dataclass(frozen=True)
+class JobPauseResolution:
+    """What handling one finished Felix job changed."""
+
+    decision: bool | None = None
+    """True when raised, False when stopped, None when no question was needed."""
+    handled: bool = False
+    """Whether this job's refusal is conclusively accounted for."""
+    note: str = ""
+    """A fact to append to the job report sent back to the model."""
+
+
+_RAISED_JOB_NOTE = (
+    "The study's ceiling was raised. This refused job is finished; no replacement "
+    "solve was started."
+)
+_CLEARED_JOB_NOTE = (
+    "The study is no longer paused at its ceiling. This refused job is "
+    "finished; no replacement solve was started."
+)
+
+
+def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
+    """A foamd refusal from Felix against the service's current study row.
+
+    `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
+    exits 1 and prints a final JSON status instead of raising the `BackendError` that
+    `tools._handled` sees. The raw `refused` status proves foamd returned the 409,
+    rather than a felixd solve rejection or arbitrary output mentioning the error.
+    The current study row is authoritative after that: a live pause is the person's
+    question, and a cleared pause is a fact for the model.
+
+    The bool says the job is conclusively accounted for. False leaves it eligible for
+    a later read because the final status or study row was incomplete.
+    """
+    status = getattr(facts, "status", None)
+    if not isinstance(status, dict) or status.get("state") != "refused":
+        return None, False, ""
+    if status.get("status") != 409 or status.get("error") != STUDY_PAUSED:
+        return None, False, ""
+    service = getattr(ctx, "ceiling", None)
+    row = service.study() if service is not None else None
+    if not isinstance(row, dict):
+        return None, False, ""
+    paused_now = row.get("paused")
+    if paused_now is False:
+        return None, True, _CLEARED_JOB_NOTE
+    spent = row.get("spent_cents")
+    cap = row.get("cap_cents")
+    if (paused_now is not True
+            or isinstance(spent, bool) or not isinstance(spent, (int, float))
+            or isinstance(cap, bool) or not isinstance(cap, (int, float))):
+        return None, False, ""
+    info = Paused(
+        str(row.get("id") or row.get("study_id") or service.study_id),
+        float(spent),
+        float(cap),
+        str(status.get("message") or ""),
+        times_normal=_number(row.get("times_normal")),
+        style=str(row.get("style") or ""),
+    )
+    return described(info), True, ""
+
+
+def resolve_job_pause(ctx: Any, facts: Any) -> JobPauseResolution:
+    """Resolve a pause carried in Felix job output.
+
+    A current pause is put to the person. A stale, externally cleared refusal is
+    returned as a note for the model. Incomplete evidence remains unhandled so a
+    later read can try again.
+    """
+    info, handled, note = job_pause(ctx, facts)
+    if info is None:
+        return JobPauseResolution(handled=handled, note=note)
+    decision = resolve(ctx, info)
+    return JobPauseResolution(
+        decision=decision,
+        handled=handled,
+        note=_RAISED_JOB_NOTE if decision else "",
+    )
+
+
+def handle_finished_felix_job(
+    ctx: Any, record: Any, status: Any, facts: Any
+) -> JobPauseResolution:
+    """Account for a failed Felix solve once, for both tool and watch paths."""
+    from .felix_progress import is_felix_cmd
+
+    if (record is None
+            or getattr(status, "running", False)
+            or getattr(status, "exit_code", None) in (None, 0)
+            or getattr(record, "ceiling_pause_handled", False)
+            or not is_felix_cmd(getattr(record, "cmd", ""))):
+        return JobPauseResolution()
+    result = resolve_job_pause(ctx, facts)
+    if result.handled:
+        ctx.store.update_job(record.job_id, ceiling_pause_handled=True)
+    return result
+
+
 def described(info: Paused, ceiling: Any = None) -> Paused:
     """`info` with its style and its multiple of a normal study: the service's own
     fields when it sent them, else the study's record and the cents. A study whose
