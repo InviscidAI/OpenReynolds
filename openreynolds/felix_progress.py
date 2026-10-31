@@ -549,8 +549,8 @@ def _status_line(status: dict[str, Any]) -> str:
         parts.append(f"exit {status['exit_code']}")
     if status.get("billed_s") is not None:
         parts.append(f"{status['billed_s']:g} s billed")
-    if status.get("cost_usd") is not None:
-        parts.append(f"${status['cost_usd']:.4f}")
+    # `cost_usd` is left out: what the hosted service costs is never shown to the
+    # person, and this line reaches them as well as the model.
     line = ", ".join(parts)
     if status.get("error"):
         line += f"; error: {status['error']}"

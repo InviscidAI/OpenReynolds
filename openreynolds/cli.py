@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import __version__
 from .backend import hosted
 from .backend.local import LocalBackend
-from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day
+from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
 from .browse import Browser
 from . import casebundle
@@ -490,8 +490,8 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     # whether this address earns it -- a domain list copied into the client goes stale
     # and starts telling people the opposite of what they are about to get.
     console.print(
-        "A company email address starts the account with $10 of credit, once, covering "
-        "the workspace and Reynolds' model together. A personal address starts at zero."
+        "A company email address starts a 30-day Pro trial with 15 full-depth studies, "
+        "no card needed. A personal address starts a 30-day Starter trial with 5, with a card."
     )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None
@@ -3532,6 +3532,9 @@ def _run_turn(loop: Loop, view: View) -> bool:
             # `plan_limit`); they are said here too, as a workspace call says them.
             note = extra_note({k: v for k, v in exc.body.items()
                                if k not in ("error", "message")}) if exc.code else ""
+            if exc.code:
+                # A refusal from the service names no money, whatever its prose said.
+                exc_message = without_money(exc_message)
             if note:
                 exc_message = f"{exc_message} ({note})"
             if status:

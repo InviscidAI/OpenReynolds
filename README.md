@@ -56,9 +56,9 @@ cannot tell the two apart, so the terminal names the browser flow whenever a sig
 fails rather than offering to create a second account for an address that already has
 one.
 
-**A company email address starts the account with $10 of credit, once**, covering the
-hosted workspace and Reynolds' own metered model together; a personal address starts at
-zero. Which addresses count is the service's rule and is never guessed at here, because
+**A company email address starts a 30-day Pro trial with 15 full-depth studies**, no card
+needed, covering the hosted workspace and Reynolds' own metered model together; a personal
+address starts a 30-day Starter trial with 5, with a card. Which addresses count is the service's rule and is never guessed at here, because
 a domain list copied into a client goes stale and starts telling people the opposite of
 what they are about to get.
 

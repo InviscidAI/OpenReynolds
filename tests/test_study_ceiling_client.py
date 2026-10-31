@@ -2,14 +2,19 @@
 
 foamd pauses a study at 80% of its ceiling: the study's new sandboxes, model calls and
 GPU solves answer `409 study_paused` with `{error, message, study_id, spent_cents,
-cap_cents}`, and `POST /v1/studies/{id}/cap {cap_cents}` raises the ceiling (owner
-only; it must exceed what is spent). What the agent does with that:
+cap_cents, times_normal, style}`, and `POST /v1/studies/{id}/cap {cap_cents}` raises
+the ceiling (owner only; it must exceed what is spent). What the agent does with that:
 
-- the 409 becomes a question to the person (`approval.Approver`) showing what is spent,
-  the ceiling and the estimate given before the first solve;
-- yes raises the ceiling (double the old one, or what the person typed) and the call
-  that met the pause goes again; no stops the study with a plain final message;
-- before the first solve the person is told the estimate and the study's ceiling.
+- the 409 becomes a question to the person (`approval.Approver`): this study has used
+  2x the usage of a normal study, do you want to continue?
+- yes doubles the ceiling and the call that met the pause goes again; no stops the
+  study with a plain final message;
+- before the first solve the person is told how far the study may go before it asks.
+
+Billing stays in cents between the agent and the service, and none of it reaches the
+person as money: every figure they see is a multiple of a normal study, from the
+service's own `times_normal` or, from an older service without it, from the cents.
+The `$` tests below hold each surface to that.
 
 The 402/403/409 bodies carry more than `error` and `message`, and those fields survive
 into `BackendError` (and a model call's `ProviderError`) instead of being dropped.
@@ -50,13 +55,19 @@ class FakeFoamd:
 
     A study is paused while `spent >= 80% of cap`, as I1's reaper and proxy decide it.
     `POST .../cap` refuses a ceiling that does not exceed what is spent (409), and is
-    owner only (a wrong key is a 403)."""
+    owner only (a wrong key is a 403).
 
-    def __init__(self, spent_cents=800, cap_cents=1000, style="quick", key="of_live_test"):
+    The defaults are a full study at its default ceiling (1250 cents) that has used
+    1000, twice a normal full study: where every default study pauses. `modern=False`
+    is a foamd from before `times_normal`, whose prose named dollars."""
+
+    def __init__(self, spent_cents=1000, cap_cents=1250, style="full", key="of_live_test",
+                 modern=True):
         self.spent_cents = spent_cents
         self.cap_cents = cap_cents
         self.style = style
         self.key = key
+        self.modern = modern
         self.caps_posted: list[int] = []
         self.execs: list[str] = []
         self.paused_answers = 0
@@ -74,15 +85,44 @@ class FakeFoamd:
     def paused(self) -> bool:
         return self.spent_cents >= 0.8 * self.cap_cents
 
+    @property
+    def normal(self) -> int:
+        return 200 if self.style == "quick" else 500
+
+    def multiples(self, cap=None) -> dict:
+        """foamd's `times_normal` and `pause_times_normal`; nothing from an old one."""
+        if not self.modern:
+            return {}
+        cap = self.cap_cents if cap is None else cap
+        return {
+            "times_normal": (round(self.spent_cents / self.normal, 1)
+                             if self.spent_cents is not None else None),
+            "pause_times_normal": round(cap * 0.8 / self.normal, 1),
+        }
+
     def paused_body(self) -> dict:
+        if not self.modern:
+            return {
+                "error": "study_paused",
+                "message": (f"this study has spent ${self.spent_cents / 100:.2f} of its "
+                            f"${self.cap_cents / 100:.2f} ceiling and is paused at 80%. "
+                            "Raise its ceiling to continue."),
+                "study_id": STUDY,
+                "spent_cents": self.spent_cents,
+                "cap_cents": self.cap_cents,
+            }
+        used = round(self.spent_cents / self.normal, 1)
         return {
             "error": "study_paused",
-            "message": (f"this study has spent ${self.spent_cents / 100:.2f} of its "
-                        f"${self.cap_cents / 100:.2f} ceiling and is paused at 80%. "
-                        "Raise its ceiling to continue."),
+            "message": (f"study {STUDY} has used {used:g}x the usage of a normal "
+                        f"{self.style} study and is paused. To continue, its owner "
+                        f"raises the ceiling: POST /v1/studies/{STUDY}/cap "
+                        '{"cap_cents": <more>}'),
             "study_id": STUDY,
             "spent_cents": self.spent_cents,
             "cap_cents": self.cap_cents,
+            "times_normal": used,
+            "style": self.style,
         }
 
     def handler(self, request):
@@ -97,6 +137,7 @@ class FakeFoamd:
                 "id": STUDY, "title": "pipe", "solver": "openfoam", "style": self.style,
                 "cap_cents": self.cap_cents, "spent_cents": self.spent_cents,
                 "paused": self.paused if self.spent_cents is not None else None,
+                **self.multiples(),
             })
         if path == f"/v1/studies/{STUDY}/cap" and request.method == "POST":
             cents = json.loads(request.content)["cap_cents"]
@@ -108,7 +149,8 @@ class FakeFoamd:
                     "error": "conflict",
                     "message": (f"the new ceiling must exceed what the study has spent "
                                 f"(${self.spent_cents / 100:.2f}); asked for "
-                                f"${cents / 100:.2f}"),
+                                f"${cents / 100:.2f}") if not self.modern else
+                               "the new ceiling must exceed what the study has used",
                 })
             self.cap_cents = cents
             # Accepted above the spend even when the spend is still past 80% of it,
@@ -116,6 +158,7 @@ class FakeFoamd:
             return httpx.Response(200, json={
                 "study_id": STUDY, "cap_cents": cents, "spent_cents": self.spent_cents,
                 "pause_at_cents": round(cents * 0.8, 2), "paused": self.paused,
+                **self.multiples(cents),
             })
         if path == "/v1/instances/inst-1/start":
             self.starts += 1
@@ -227,10 +270,30 @@ def test_a_403_plan_limit_names_the_tier_to_upgrade_to():
 def test_a_409_study_paused_keeps_the_study_its_spend_and_its_ceiling():
     error = _decode_error(_response(409, FakeFoamd().paused_body()))
     assert error.code == "study_paused"
-    assert error.extra == {"study_id": STUDY, "spent_cents": 800, "cap_cents": 1000}
-    assert "$8.00" in str(error) and "$10.00" in str(error)
+    assert error.extra == {"study_id": STUDY, "spent_cents": 1000, "cap_cents": 1250,
+                           "times_normal": 2.0, "style": "full"}
+    assert "used 2x the usage of a normal full study" in str(error)
+    assert "$" not in str(error)
     info = ceiling.paused(error)
-    assert (info.study_id, info.spent_cents, info.cap_cents) == (STUDY, 800, 1000)
+    assert (info.study_id, info.spent_cents, info.cap_cents) == (STUDY, 1000, 1250)
+    assert (info.times_normal, info.style) == (2.0, "full")
+
+
+def test_the_backend_error_text_of_an_older_pause_names_no_money():
+    """An older foamd said "this study has spent $10.00 of its $12.50 ceiling" in its
+    prose and sent no `times_normal`. The error's text is what the person reads when a
+    workspace start meets the pause, so the money is left out and the multiple is
+    worked out from the cents."""
+    old = FakeFoamd(modern=False)
+    error = _decode_error(_response(409, old.paused_body()))
+    said = str(error)
+    assert "$" not in said, said
+    assert "used 2x the usage of a normal full study" in said
+    assert "Raise its ceiling to continue." in said, "the rest of the prose is kept"
+    conflict = _decode_error(_response(409, {
+        "error": "conflict", "message": "the new ceiling must exceed what the study has "
+        "spent ($10.00); asked for $9.00", "study_id": STUDY}))
+    assert "$" not in str(conflict) and "amount is not shown" in str(conflict)
 
 
 def test_an_error_with_no_extra_fields_reads_exactly_as_before():
@@ -261,16 +324,15 @@ def test_a_model_call_refused_by_the_proxy_keeps_its_fields_too():
     assert exc.code == "plan_limit"
     assert exc.body["upgrade_to"] == "pro"
     info = ceiling.paused(_sdk_error(409, FakeFoamd().paused_body()))
-    assert (info.spent_cents, info.cap_cents) == (800, 1000)
+    assert (info.spent_cents, info.cap_cents, info.times_normal) == (1000, 1250, 2.0)
 
 
 # -- 2. a pause on a tool call becomes a question -------------------------------------
 
 
 def test_yes_raises_the_ceiling_to_double_and_the_paused_call_goes_again(tmp_path):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     loop, ctx, view, _ = _session(tmp_path, foamd, "/yes")
-    ctx.estimate_cents = 600
     fake = install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
         message([text_block("meshed")]),
@@ -280,19 +342,28 @@ def test_yes_raises_the_ceiling_to_double_and_the_paused_call_goes_again(tmp_pat
 
     (_, kind, title, detail, choices), = view.questions
     assert kind == "ceiling"
-    assert "$8.00" in detail and "$10.00" in detail, "spent and the ceiling"
-    assert "$6.00" in detail, "the estimate given before the first solve"
-    assert "$20.00" in detail, "the default is double the old ceiling"
-    assert foamd.caps_posted == [2000]
+    assert title == "This study has used 2x a normal study"
+    assert detail.splitlines()[0] == ("This study has used 2x the usage of a normal full "
+                                      "study. Do you want to continue?")
+    assert "Yes lets it run to 4x before asking again; no stops it here." in detail
+    assert choices == ["continue", "stop the study"]
+    assert foamd.caps_posted == [2500], "yes is double the old ceiling"
     assert foamd.execs == ["blockMesh", "blockMesh"], "the paused call went again"
     result = loop.messages[-2]["content"][0]
     assert not result.get("is_error") and "ran" in str(result["content"])
     assert len(fake.calls) == 2 and ctx.stopped is None
+    notice, = [n for n in view.notices if "carrying on" in n]
+    assert notice == ("The study can now run to 4x a normal full study before asking "
+                      "again; carrying on.")
 
 
-def test_a_typed_amount_is_the_new_ceiling_in_dollars(tmp_path):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
-    loop, ctx, view, _ = _session(tmp_path, foamd, "$35")
+@pytest.mark.parametrize("modern", [True, False])
+def test_no_dollar_sign_reaches_the_person_at_a_pause(tmp_path, modern):
+    """The question, the notice after a raise, and every line the view was handed:
+    none of them names money, from a current foamd or from one that sends no
+    `times_normal` and puts dollars in its prose."""
+    foamd = FakeFoamd(modern=modern)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/yes")
     install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
         message([text_block("meshed")]),
@@ -300,15 +371,19 @@ def test_a_typed_amount_is_the_new_ceiling_in_dollars(tmp_path):
     loop.say("mesh it")
     loop.run()
 
-    assert foamd.caps_posted == [3500]
-    assert foamd.cap_cents == 3500 and foamd.execs == ["blockMesh", "blockMesh"]
+    (_, _, title, detail, _), = view.questions
+    assert "2x" in title and "4x" in detail
+    for said in [title, detail, *view.notices]:
+        assert "$" not in said, said
+    assert foamd.caps_posted == [2500]
 
 
-def test_an_amount_that_would_pause_again_at_once_is_asked_again(tmp_path):
-    """$9 exceeds the $8 spent -- the service would take it -- but 80% of it is $7.20,
-    under what is spent, so the study would be paused again by the very next call."""
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
-    loop, ctx, view, _ = _session(tmp_path, foamd, "9", "/yes")
+def test_a_quick_study_is_measured_against_a_normal_quick_study(tmp_path):
+    """A quick study's default ceiling is 500 cents and a normal one uses 200, so it
+    too pauses at 2x; an older foamd without `style` in its pause is read from the
+    study's record."""
+    foamd = FakeFoamd(spent_cents=400, cap_cents=500, style="quick", modern=False)
+    loop, ctx, view, _ = _session(tmp_path, foamd, "/yes")
     install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
         message([text_block("meshed")]),
@@ -316,13 +391,31 @@ def test_an_amount_that_would_pause_again_at_once_is_asked_again(tmp_path):
     loop.say("mesh it")
     loop.run()
 
-    assert len(view.questions) == 2
-    assert "at least $11.00" in view.questions[1][3], "says what the least useful ceiling is"
-    assert foamd.caps_posted == [2000]
+    (_, _, title, detail, _), = view.questions
+    assert "normal quick study" in detail and title.endswith("2x a normal study")
+    assert "run to 4x" in detail and foamd.caps_posted == [1000]
+
+
+def test_a_raise_doubling_leaves_short_goes_to_what_is_needed_unsaid(tmp_path):
+    """A study well past its ceiling (a service counting what this side had not seen)
+    is raised to the least ceiling that would not pause again at once, not to a double
+    that would, and nothing about that is shown in money."""
+    foamd = FakeFoamd(spent_cents=3000, cap_cents=1250)
+    loop, ctx, view, _ = _session(tmp_path, foamd, "/yes")
+    install_model(loop, [
+        message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
+        message([text_block("meshed")]),
+    ])
+    loop.say("mesh it")
+    loop.run()
+
+    assert foamd.caps_posted == [3800], "80% of 3800 is above the 3000 used"
+    (_, _, title, detail, _), = view.questions
+    assert "6x" in title and "run to 6.1x" in detail and "$" not in detail
 
 
 def test_no_stops_the_study_cleanly_and_the_model_is_not_asked_again(tmp_path):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     loop, ctx, view, store = _session(tmp_path, foamd, "/no")
     fake = install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"}, "tu_1"),
@@ -337,14 +430,17 @@ def test_no_stops_the_study_cleanly_and_the_model_is_not_asked_again(tmp_path):
     results = loop.messages[-1]["content"]
     assert [r["tool_use_id"] for r in results if r.get("type") == "tool_result"] == ["tu_1", "tu_2"]
     assert all(r["is_error"] for r in results if r.get("type") == "tool_result")
-    assert ctx.stopped and "$8.00" in ctx.stopped and "$10.00" in ctx.stopped
+    assert ctx.stopped and ctx.stopped.startswith(
+        "This study is paused: it has used 2x the usage of a normal full study.")
+    assert "$" not in ctx.stopped
     assert any(ctx.stopped in n for n in view.notices), "the final message is shown"
     transcript = (store.dir / "messages.jsonl").read_text()
     assert "stopped" in transcript and "ceiling" in transcript, "and kept in the record"
 
 
-def test_with_nobody_to_ask_the_study_stops_and_says_how_to_raise_it(tmp_path):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+@pytest.mark.parametrize("modern", [True, False])
+def test_with_nobody_to_ask_the_study_stops_and_says_how_to_raise_it(tmp_path, modern):
+    foamd = FakeFoamd(modern=modern)
     loop, ctx, view, _ = _session(tmp_path, foamd, approver=False)
     fake = install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
@@ -355,13 +451,24 @@ def test_with_nobody_to_ask_the_study_stops_and_says_how_to_raise_it(tmp_path):
 
     assert foamd.caps_posted == [] and len(fake.calls) == 1
     assert ctx.stopped and f"/v1/studies/{STUDY}/cap" in ctx.stopped
+    assert "2x the usage of a normal full study" in ctx.stopped and "$" not in ctx.stopped
+
+
+def test_a_raise_the_service_refuses_stops_without_naming_money():
+    """The stop message carries the raise's error, and an older foamd's refusal named
+    the spend and the ceiling asked for in dollars."""
+    info = ceiling.Paused(STUDY, 1000, 1250, times_normal=2.0, style="full")
+    error = BackendError("the new ceiling must exceed what the study has spent ($10.00); "
+                         "asked for $9.00", code="conflict", status=409)
+    said = ceiling.stop_message(info, asked=True, error=str(error))
+    assert "$" not in said and "could not be raised" in said
 
 
 def test_the_interactive_loop_does_not_wake_the_model_after_a_stop(tmp_path):
     """After a no, `blocked_reason` holds the stop, so a job finishing or a narration
     tick is not a reason to ask the model again -- it would be refused at the proxy
     exactly as the last call was."""
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     loop, ctx, view, _ = _session(tmp_path, foamd, "/no")
     install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
@@ -398,7 +505,7 @@ class PausedThenFine:
 
 
 def test_a_paused_model_call_is_put_to_the_person_and_retried_once_raised(tmp_path):
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     loop, ctx, view, _ = _session(tmp_path, foamd, "/yes")
     fake = PausedThenFine(foamd, message([text_block("carrying on")]))
     loop.client = SimpleNamespace(messages=fake)
@@ -406,13 +513,13 @@ def test_a_paused_model_call_is_put_to_the_person_and_retried_once_raised(tmp_pa
 
     assert cli._run_turn(loop, view) is True
     assert [q[1] for q in view.questions] == ["ceiling"]
-    assert foamd.caps_posted == [2000] and len(fake.calls) == 2
+    assert foamd.caps_posted == [2500] and len(fake.calls) == 2
 
 
 def test_a_paused_model_call_declined_is_not_retried_as_a_conflict(tmp_path):
     """409 is a transient status for a model call (`TRANSIENT_STATUSES`): without this,
     a paused study would be asked five more times over four minutes."""
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     loop, ctx, view, _ = _session(tmp_path, foamd, "/no")
     fake = PausedThenFine(foamd, message([text_block("never")]))
     loop.client = SimpleNamespace(messages=fake)
@@ -423,53 +530,55 @@ def test_a_paused_model_call_declined_is_not_retried_as_a_conflict(tmp_path):
     assert loop.blocked_reason and "ceiling" in loop.blocked_reason
 
 
-# -- 3. the estimate before the first solve ----------------------------------------------
+# -- 3. the line before the first solve --------------------------------------------------
 
 
-def test_the_first_solve_is_preceded_by_the_estimate_and_the_ceiling(tmp_path, backend):
-    foamd = FakeFoamd(spent_cents=120, cap_cents=5000, style="full")
+def test_the_first_solve_is_preceded_by_how_far_the_study_may_go(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=150, cap_cents=1250, style="full")
     finishing_jobs(backend)
     loop, ctx, view, _ = _session(tmp_path, foamd, backend=backend)
     install_model(loop, [
-        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "solve",
-                                          "estimate_usd": 4.5}, "tu_1")],
+        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "solve"}, "tu_1")],
                 stop_reason="tool_use"),
-        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "again",
-                                          "estimate_usd": 4.5}, "tu_2")],
+        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "again"}, "tu_2")],
                 stop_reason="tool_use"),
         message([text_block("running")]),
     ])
     loop.say("solve it")
     loop.run()
 
-    said = [n for n in view.notices if "estimate" in n.lower()]
-    assert len(said) == 1, "said once, before the first solve only"
-    line = said[0]
-    assert "$4.50" in line and "$50.00" in line and "$40.00" in line and "$1.20" in line
+    said = [n for n in view.notices if "normal" in n]
+    assert said == ["This study will ask before it uses more than 2x a normal full study. "
+                    "It has used 0.3x so far."], "said once, before the first solve only"
+    assert "$" not in said[0]
     assert view.questions == [], "a message, not a question, in auto"
     assert [s["cmd"] for s in backend.started] == ["simpleFoam", "simpleFoam"]
-    assert ctx.estimate_cents == 450
 
 
-def test_with_compute_approval_on_the_estimate_is_part_of_the_question(tmp_path, backend):
-    foamd = FakeFoamd(spent_cents=0, cap_cents=1000, style="quick")
+def test_with_compute_approval_the_line_is_part_of_the_question(tmp_path, backend):
+    foamd = FakeFoamd(spent_cents=0, cap_cents=500, style="quick")
     finishing_jobs(backend)
     loop, ctx, view, _ = _session(tmp_path, foamd, "/yes", mode="partial", backend=backend)
     install_model(loop, [
-        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "solve",
-                                          "estimate_usd": 2})], stop_reason="tool_use"),
+        message([tool_block("job_start", {"cmd": "simpleFoam", "name": "solve"})],
+                stop_reason="tool_use"),
         message([text_block("running")]),
     ])
     loop.say("solve it")
     loop.run()
 
     (_, kind, _, detail, _), = view.questions
-    assert kind == "job" and "$2.00" in detail and "$10.00" in detail and "$8.00" in detail
-    assert not [n for n in view.notices if "estimate" in n.lower()]
+    assert kind == "job" and "more than 2x a normal quick study" in detail
+    assert "$" not in detail and "so far" not in detail, "nothing used yet, nothing said"
+    assert not [n for n in view.notices if "normal" in n]
 
 
-def test_a_solve_with_no_estimate_still_shows_the_ceiling_and_says_none_was_given(tmp_path, backend):
-    foamd = FakeFoamd(spent_cents=0, cap_cents=5000)
+def test_a_solve_against_an_older_service_works_the_multiple_out_from_the_cents(
+    tmp_path, backend
+):
+    """A foamd without `pause_times_normal` is answered from the ceiling in force and
+    the normals here, never from dollars: a 5000-cent full ceiling pauses at 8x."""
+    foamd = FakeFoamd(spent_cents=0, cap_cents=5000, modern=False)
     finishing_jobs(backend)
     loop, ctx, view, _ = _session(tmp_path, foamd, backend=backend)
     install_model(loop, [
@@ -480,24 +589,30 @@ def test_a_solve_with_no_estimate_still_shows_the_ceiling_and_says_none_was_give
     loop.say("solve it")
     loop.run()
 
-    line, = [n for n in view.notices if "ceiling" in n]
-    assert "no estimate" in line.lower() and "$50.00" in line
+    line, = [n for n in view.notices if "normal" in n]
+    assert line == "This study will ask before it uses more than 8x a normal full study."
 
 
 def test_a_study_record_without_a_ceiling_falls_back_to_the_style_default():
-    assert ceiling.default_cap_cents("quick") == 1000
-    assert ceiling.default_cap_cents("full") == 5000
-    assert ceiling.default_cap_cents(None) == 5000
-    assert ceiling.default_cap_cents("") == 5000
+    assert ceiling.default_cap_cents("quick") == 500
+    assert ceiling.default_cap_cents("full") == 1250
+    assert ceiling.default_cap_cents(None) == 1250
+    assert ceiling.default_cap_cents("") == 1250
+    for style in ("quick", "full", None):
+        until = ceiling.default_cap_cents(style) * ceiling.PAUSE_AT / ceiling.normal_cents(style)
+        assert until == 2.0, "every default study pauses at twice a normal one"
+    row = {"style": "full"}
+    said = ceiling.preamble(SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row)))
+    assert said == "This study will ask before it uses more than 2x a normal full study."
 
 
-def test_the_job_tools_take_an_estimate():
+def test_the_job_tools_take_no_estimate_in_dollars():
+    """`estimate_usd` existed to be shown to the person, and nothing in dollars is."""
     from openreynolds.tools import FELIX_TOOLS, TOOLS
 
     for tools in (TOOLS, FELIX_TOOLS):
         job = next(t for t in tools if t["name"] == "job_start")
-        assert job["input_schema"]["properties"]["estimate_usd"]["type"] == "number"
-        assert "estimate_usd" not in job["input_schema"].get("required", [])
+        assert "estimate_usd" not in job["input_schema"]["properties"]
 
 
 def test_raise_study_cap_posts_the_new_ceiling():
@@ -580,9 +695,9 @@ def test_a_raise_the_service_still_counts_as_paused_is_put_again_not_retried(tmp
     """foamd takes a ceiling above the spend even when the spend is still past 80% of
     it -- spend this side had not seen, an open sandbox priced to now -- and answers
     `paused: true`. That is asked again at once, not met as a second 409."""
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
-    foamd.spend_at_raise = 900
-    loop, ctx, view, _ = _session(tmp_path, foamd, "11", "/yes")
+    foamd = FakeFoamd()
+    foamd.spend_at_raise = 2100
+    loop, ctx, view, _ = _session(tmp_path, foamd, "/yes", "/yes")
     install_model(loop, [
         message([tool_block("bash", {"cmd": "blockMesh"})], stop_reason="tool_use"),
         message([text_block("meshed")]),
@@ -590,41 +705,60 @@ def test_a_raise_the_service_still_counts_as_paused_is_put_again_not_retried(tmp
     loop.say("mesh it")
     loop.run()
 
-    assert foamd.caps_posted == [1100, 2200]
+    assert foamd.caps_posted == [2500, 5000]
     assert len(view.questions) == 2
     again = view.questions[1][3]
-    assert "$9.00" in again and "$11.00" in again, "says the service still counts it paused"
+    assert "counts 4.2x the usage of a normal study" in again, \
+        "says the service still counts it paused"
+    assert "$" not in again
     assert foamd.execs == ["blockMesh", "blockMesh"], "no call went out into a known pause"
-    assert not any("$11.00; carrying on" in n for n in view.notices)
+    assert [n for n in view.notices if "carrying on" in n] == [
+        "The study can now run to 8x a normal full study before asking again; carrying on."]
     assert ctx.stopped is None
 
 
 def test_the_preamble_reads_the_study_record_foamd_sends(tmp_path):
-    """`spent_cents` and `paused` are None when foamd cannot read the ledgers."""
+    """`spent_cents`, `times_normal` and `paused` are None when foamd cannot read the
+    ledgers; then nothing is said about what has been used."""
     foamd = FakeFoamd(spent_cents=None, cap_cents=5000, style="full")
     ctx = SimpleNamespace(ceiling=ceiling.Ceiling(client=foamd.client(), study_id=STUDY))
-    said = ceiling.preamble(ctx, {"estimate_usd": 12})
-    assert "$12.00" in said and "$50.00" in said and "spent so far" not in said
+    said = ceiling.preamble(ctx)
+    assert said == "This study will ask before it uses more than 8x a normal full study."
 
-    foamd = FakeFoamd(spent_cents=850, cap_cents=1000)
+    foamd = FakeFoamd(spent_cents=1050, cap_cents=1250)
     ctx = SimpleNamespace(ceiling=ceiling.Ceiling(client=foamd.client(), study_id=STUDY))
-    said = ceiling.preamble(ctx, {"estimate_usd": 3})
-    assert "$8.50" in said and "paused" in said.split("pauses at")[-1], \
+    said = ceiling.preamble(ctx)
+    assert "It has used 2.1x so far." in said and "It is paused now" in said, \
         "a study already paused says so before the solve meets it"
+    assert "$" not in said
+
+
+@pytest.mark.parametrize("modern", [True, False])
+def test_no_dollar_sign_reaches_the_person_before_the_first_solve(modern):
+    """Whatever the record holds, current or from a service before `times_normal`,
+    paused or not, nothing in the line is money."""
+    for spent, cap, style in [(0, 1250, "full"), (1050, 1250, "full"), (450, 500, "quick"),
+                              (None, 5000, "")]:
+        foamd = FakeFoamd(spent_cents=spent, cap_cents=cap, style=style, modern=modern)
+        ctx = SimpleNamespace(ceiling=ceiling.Ceiling(client=foamd.client(), study_id=STUDY))
+        said = ceiling.preamble(ctx)
+        assert said and "$" not in said, said
+    unreadable = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: None))
+    assert "$" not in ceiling.preamble(unreadable)
 
 
 def test_the_preamble_names_no_ceiling_for_an_exempt_study():
     """OFI#81: a staff study was told "This study's ceiling is $10.00; it pauses at
-    $8.00", a pause that never applies to it. foamd's `exempt` says so."""
-    row = {"style": "quick", "cap_cents": 1000, "spent_cents": 24, "paused": False, "exempt": True}
+    $8.00", a pause that never applies to it. foamd's `exempt` says so, and an exempt
+    study is told nothing."""
+    row = {"style": "quick", "cap_cents": 500, "spent_cents": 24, "paused": False, "exempt": True}
     ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row))
-    assert ceiling.preamble(ctx, {"estimate_usd": 1.5}) == "Estimate before the first solve: about $1.50."
-    assert ctx.estimate_cents == 150 and ceiling.preamble(ctx, {"estimate_usd": 2}) is None, "said once"
-    quiet = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: row))
-    assert ceiling.preamble(quiet, {}) is None, "no estimate and no ceiling: nothing to say"
+    assert ceiling.preamble(ctx) is None
     ctx = SimpleNamespace(ceiling=SimpleNamespace(study=lambda: {**row, "exempt": False}))
-    said = ceiling.preamble(ctx, {"estimate_usd": 1.5})
-    assert said is not None and "ceiling is $10.00" in said, "a customer's still says it"
+    said = ceiling.preamble(ctx)
+    assert said == ("This study will ask before it uses more than 2x a normal quick study. "
+                    "It has used 0.1x so far."), "a customer's still says it"
+    assert ceiling.preamble(ctx) is None, "said once"
 
 
 # -- 6. a resumed study whose workspace start met the ceiling -----------------------------
@@ -665,7 +799,7 @@ def test_a_resumed_start_paused_at_its_ceiling_starts_again_once_it_is_raised(
     first tool call puts the pause to the person; yes raises the ceiling, the start is
     sent again, and the call runs on the workspace that comes -- not on the start's
     stored refusal, asked three times and then every call after it."""
-    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    foamd = FakeFoamd()
     foamd.start_pauses = True
     loop, ctx, view, pending, bar = _resumed_start(tmp_path, monkeypatch, foamd, "/yes")
     assert pending.failed and foamd.starts == 1, "the start met the pause"
@@ -679,7 +813,7 @@ def test_a_resumed_start_paused_at_its_ceiling_starts_again_once_it_is_raised(
     loop.run()
 
     assert len(view.questions) == 1, "asked once"
-    assert foamd.caps_posted == [2000], "and raised once"
+    assert foamd.caps_posted == [2500], "and raised once"
     assert foamd.starts == 2, "the start went again after the raise"
     assert pending.ready() and not pending.failed
     assert [c for c in foamd.execs if c in ("blockMesh", "checkMesh")] == ["blockMesh", "checkMesh"]

@@ -527,7 +527,7 @@ class ConsoleView(View):
         if kind == "checkpoint":
             answer = "y approve / n or say what to change / a approve all"
         elif kind == "ceiling":
-            answer = "y raise it / a dollar amount for another ceiling / n stop the study"
+            answer = "y continue / n stop the study"
         self.console.print(f"[yellow]{answer}[/]", highlight=False)
         self.console.print(f"[bold yellow]{rule}[/]", highlight=False)
 

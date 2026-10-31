@@ -135,29 +135,26 @@ answer.
 
 ## The study's spending ceiling
 
-On the hosted service every study has a spending ceiling, and the service pauses the
-study at 80% of it. This question is asked in every mode, full auto included, because
-it is about your money rather than the agent's plan:
+On the hosted service every study has a ceiling, and the service pauses the study when
+it has used twice what a normal study of its style uses. What a study uses is said as
+a multiple of a normal study, never as money. This question is asked in every mode,
+full auto included, because it is about your plan rather than the agent's:
 
 ```
-Study paused at its spending ceiling
-  Spent $8.00 of a $10.00 ceiling (it pauses at 80%).
-  The estimate before the first solve was $6.00.
-  yes raises the ceiling to $20.00 (it would pause again at $16.00); a dollar amount
-  sets a different ceiling; no stops the study here.
+This study has used 2x a normal study
+  This study has used 2x the usage of a normal full study. Do you want to continue?
+  Yes lets it run to 4x before asking again; no stops it here.
 ```
 
-Yes doubles the ceiling and the call that met the pause runs again. A dollar amount
-(`35`, `$35`) sets that ceiling instead, as long as 80% of it is above what is spent.
-No stops the study: the turn ends after the calls in flight, a final message says
-why, and nothing more is sent to the model until you say something. With nobody to
-ask (`-p`), the study stops the same way and the message says how to raise the
-ceiling.
+Yes doubles the ceiling and the call that met the pause runs again. No stops the
+study: the turn ends after the calls in flight, a final message says why, and nothing
+more is sent to the model until you say something. With nobody to ask (`-p`), the
+study stops the same way and the message says how to raise the ceiling.
 
-Before a study's first solve the agent states its estimate in dollars (`job_start`'s
-`estimate_usd`), and you are told it beside the study's ceiling. In full auto and
-structured mode that is a message; in ask before compute it is part of the job's
-question.
+Before a study's first solve you are told how far it may go before it asks, for
+instance "This study will ask before it uses more than 2x a normal full study." In
+full auto and structured mode that is a message; in ask before compute it is part of
+the job's question.
 
 In the stream the pause is an `approval` event with `kind: "ceiling"`.
 

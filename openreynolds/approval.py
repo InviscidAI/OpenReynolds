@@ -34,7 +34,10 @@ APPROVED_ALL = "approved_all"
 NOBODY = "nobody answered"
 LEAVING = "the person is leaving the session"
 
-_YES = {"y", "yes", "ok", "okay", "go", "approve", "approved"}
+_YES = {"y", "yes", "ok", "okay", "go", "approve", "approved", "continue", "yes continue",
+        "yes, continue", "yes please"}
+""""continue" is the word the ceiling question itself offers ("Do you want to
+continue?"), so typing it back is a yes, never a note that stops the study."""
 _NO = {"n", "no"}
 _ALL = {"a", "all"}
 
@@ -70,9 +73,8 @@ def choices_for(kind: str) -> list[str]:
         return ["approve", "ask for changes", "approve all"]
     if kind == "ceiling":
         # A study paused at its spending ceiling (`ceiling.py`). Asked in every mode,
-        # since it is the person's money; "all" means no more than yes here, and a
-        # typed dollar amount is a ceiling of their own.
-        return ["raise the ceiling", "stop the study"]
+        # since it is the person's plan being used; "all" means no more than yes here.
+        return ["continue", "stop the study"]
     return ["approve", "decline", "approve all"]
 
 
