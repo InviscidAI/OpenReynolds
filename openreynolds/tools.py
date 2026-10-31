@@ -646,7 +646,7 @@ FELIX_JOB_START: dict[str, Any] = {
         "A solve is `felix run <case> --gpu G [--wall S]`: it uploads the case, runs "
         "it on one cloud GPU of type G (`felix gpus` lists them as JSON with "
         "`usd_per_hour`, for choosing and not for the user), billed per second while "
-        "it runs.This job's log is its "
+        "it runs. This job's log is its "
         "stderr: a `NOTE:` naming the solve, then the solver's lines as they are "
         "written -- `ERROR:`, `WARNING:` and `NOTE:` lines and one `step=` record per "
         "step. The results come back into `<case>/output/` (an earlier `output/` is "

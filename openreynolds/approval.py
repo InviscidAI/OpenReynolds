@@ -34,7 +34,10 @@ APPROVED_ALL = "approved_all"
 NOBODY = "nobody answered"
 LEAVING = "the person is leaving the session"
 
-_YES = {"y", "yes", "ok", "okay", "go", "approve", "approved"}
+_YES = {"y", "yes", "ok", "okay", "go", "approve", "approved", "continue", "yes continue",
+        "yes, continue", "yes please"}
+""""continue" is the word the ceiling question itself offers ("Do you want to
+continue?"), so typing it back is a yes, never a note that stops the study."""
 _NO = {"n", "no"}
 _ALL = {"a", "all"}
 
