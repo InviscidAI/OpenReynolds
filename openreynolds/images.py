@@ -175,8 +175,8 @@ Renders arrive at 900x700 to 1600x500 and cost 840-1,333 tokens each, and a stud
 the same path several times over while it fixes the framing. A mesh at 1024 px shows
 everything a mesh check is looking for -- cell spacing near a wall, a refinement band,
 whether the geometry is the right way up -- at roughly half the tokens. Transport only:
-the model still sees every picture it asks for, and `read_file` still hands back the
-whole file to anything that wants the bytes."""
+the model still sees every picture it asks for, and the file on disk is untouched for
+anything that wants its bytes (`bash`: `read_file` on an image is always the picture)."""
 
 
 def downscale(data: bytes, media: str, max_edge: int = ATTACH_MAX_EDGE) -> bytes:

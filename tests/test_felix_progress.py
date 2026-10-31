@@ -238,7 +238,7 @@ def test_the_final_status_of_felix_run_is_read_from_the_end_of_the_log():
     assert facts.step == 110
     text = "\n".join(fp.summary_lines(facts))
     assert "succeeded" in text
-    assert "$" in text  # the cost is part of what happened
+    assert "billed" in text and "$" not in text  # the GPU time, never its cost
 
 
 def test_felixd_lines_are_told_apart_from_the_solver_s():
@@ -262,6 +262,19 @@ def test_a_failed_solve_status_is_read_even_on_one_line():
     assert facts.status["state"] == "failed"
     assert facts.outcome == "failed"
     assert facts.oom.needed_gb == pytest.approx(112.1)
+
+
+def test_the_status_line_says_the_gpu_time_but_never_the_cost():
+    """The solve's status carries `cost_usd`, and the line made from it reaches the
+    person as well as the model. What the hosted service costs is never shown to the
+    person, so the line keeps the GPU and its billed seconds and leaves the dollars out."""
+    text = log("cavity_small.stderr") + (
+        '{"id": "x", "state": "succeeded", "gpu": "A100", "exit_code": 0, '
+        '"cost_usd": 0.8561, "billed_s": 1290.0}\n')
+    facts = fp.parse_felix_log(text)
+    said = "\n".join(fp.summary_lines(facts))
+    assert "solve succeeded, on A100, exit 0, 1290 s billed" in said
+    assert "$" not in said and "0.856" not in said
 
 
 def test_a_running_job_with_only_step_lines_is_running():

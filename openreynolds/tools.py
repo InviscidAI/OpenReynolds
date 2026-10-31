@@ -194,9 +194,6 @@ class ToolContext:
     """The study's spending ceiling on the hosted service (`ceiling.Ceiling`). None
     when no service is behind the session: then there is no ceiling to meet, and
     nothing is announced before the first solve."""
-    estimate_cents: float | None = None
-    """The last `estimate_usd` a `job_start` carried, in cents: shown before the first
-    solve and again if the study meets its ceiling."""
     estimated: bool = False
     """Whether the line before the first solve has been said this session."""
     stopped: str | None = None
@@ -286,20 +283,6 @@ do is the same class of bug as a listing that does not say it was cut short.
 Identical in both descriptions on purpose. They are read independently -- a model
 looking at `job_start` alone must get the whole fact -- and one wording repeated is
 cheaper to keep true than two that drift."""
-
-
-ESTIMATE_PROPERTY: dict[str, Any] = {
-    "type": "number",
-    "description": (
-        "Your estimate of what this job will cost, in US dollars: compute, GPU and the "
-        "model time it will take you to see it through. Before a study's first solve "
-        "it is shown to the person, beside the study's spending ceiling when it has "
-        "one, and again if the study meets that ceiling, so give it with the first "
-        "solve at least."
-    ),
-}
-"""`job_start`'s `estimate_usd`, in both solvers' variants: the estimate the person is
-shown before the first solve (`ceiling.preamble`)."""
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -521,7 +504,6 @@ TOOLS: list[dict[str, Any]] = [
                         "launch is refused instead."
                     ),
                 },
-                "estimate_usd": ESTIMATE_PROPERTY,
             },
             "required": ["cmd"],
         },
@@ -576,8 +558,9 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Read a window of a file as text, or list a directory. Byte offsets, so "
             "arbitrarily large files are readable a piece at a time. A path ending in "
-            ".png, .jpg, .gif or .webp comes back as the picture itself, so anything "
-            "you render you can also look at."
+            ".png, .jpg, .gif or .webp comes back as the picture itself, whole, "
+            "whatever offset or limit is given, so anything you render you can also "
+            "look at."
         ),
         "input_schema": {
             "type": "object",
@@ -663,7 +646,8 @@ FELIX_JOB_START: dict[str, Any] = {
         "Commands that pipe into `tee` or use `>`, `>>`, `2>&1` are refused. "
         "A solve is `felix run <case> --gpu G [--wall S]`: it uploads the case, runs "
         "it on one cloud GPU of type G (`felix gpus` lists them as JSON with "
-        "`usd_per_hour`), billed per second while it runs. This job's log is its "
+        "`usd_per_hour`, for choosing and not for the user), billed per second while "
+        "it runs. This job's log is its "
         "stderr: a `NOTE:` naming the solve, then the solver's lines as they are "
         "written -- `ERROR:`, `WARNING:` and `NOTE:` lines and one `step=` record per "
         "step. The results come back into `<case>/output/` (an earlier `output/` is "
@@ -700,7 +684,6 @@ FELIX_JOB_START: dict[str, Any] = {
                     "the job and the matching line is reported back. Optional."
                 ),
             },
-            "estimate_usd": ESTIMATE_PROPERTY,
         },
         "required": ["cmd"],
     },
@@ -1107,20 +1090,6 @@ def _written_run_shape(args: dict[str, Any]) -> str:
     return f" [{', '.join(parts)}]"
 
 
-def _whole_file(args: dict[str, Any], size: int) -> bool:
-    """Whether a read asks for all of the file rather than a window of it.
-
-    No offset and no limit is the plain case. But `offset: 0` with a limit at least the
-    file's size is the same request spelled out, and a model that fills in every
-    optional argument (GPT does; Claude leaves them out) spells it out every time --
-    which read a 250 KB render as 48 KB of PNG bytes, and the model reported the plot
-    "not visually inspected". A window that starts later, or stops short, is still
-    asking for bytes."""
-    offset = int(args.get("offset") or 0)
-    limit = args.get("limit")
-    return offset == 0 and (not limit or int(limit) >= size)
-
-
 def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, Any]]:
     path = args["path"]
     info = ctx.backend.stat(path, timeout=READ_TIMEOUT_S, max_attempts=READ_ATTEMPTS)
@@ -1128,8 +1097,13 @@ def _read_file(ctx: ToolContext, args: dict[str, Any]) -> str | list[dict[str, A
         listing = "\n".join(info.entries) if info.entries else "(empty)"
         return f"{path} — directory, {len(info.entries)} entries\n\n{listing}"
 
+    # An image is always the picture, whatever window was asked for. Its bytes tell a
+    # model nothing the picture's own line does not (format, dimensions, size), and GPT
+    # fills in every optional argument: it read a 250 KB render with `offset: 0` and a
+    # 48 KB limit and reported the plot "not visually inspected", and on prod
+    # (2026-10-30) a `limit: 1000` read of a PNG sent NUL bytes into the transcript.
     media = images.media_type(path)
-    if media is not None and _whole_file(args, info.size):
+    if media is not None:
         return _read_image(ctx, path, info, media)
 
     offset = max(0, int(args.get("offset") or 0))
