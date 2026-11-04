@@ -18,6 +18,10 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- The `openai-responses` preset defaults to `gpt-6.1-sol`, not `gpt-5.6-sol`, and compacts before
+  272K tokens. `gpt-5.6-sol`'s promotional price ends in November 2026, and on the CAD desk
+  `gpt-6.1-sol` had 22 of 26 cases survive the mesh vet against 16 of 26. A model set in your
+  config stays as it is.
 - **A study's pause speaks in normal studies, never dollars.** Plans are sold as
   studies, so what a study has used is said as a multiple of a normal one (200 cents
   quick, 500 full, the service's `times_normal`), and no hosted cost reaches the

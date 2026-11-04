@@ -179,8 +179,10 @@ PRESETS: dict[str, Preset] = {
             # effort on Chat Completions for every model above gpt-5.2, so the newer
             # models are reachable only here. `desk_model` stays on a Chat Completions
             # generation because the front desk asks for no tools and no reasoning.
+            # 272K, not the model's window: above it OpenAI bills a long-context rate,
+            # so a thread compacts first, as on `reynolds`.
             "openai-responses", "openai-responses", None,
-            "gpt-5.6-sol", "gpt-5.2", 400_000,
+            "gpt-6.1-sol", "gpt-5.2", 272_000,
             "OPENAI_API_KEY", "OpenAI through the Responses API: tools with reasoning.",
         ),
         Preset(
