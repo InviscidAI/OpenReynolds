@@ -87,6 +87,21 @@ def test_make_provider_picks_the_family_and_the_preset_endpoint():
     assert "gateway.example" in str(explicit.client.base_url)
 
 
+def test_a_socks_proxy_does_not_stop_the_model_client_from_starting(monkeypatch):
+    """A machine whose `ALL_PROXY` was a SOCKS URL could not even construct the
+    client: httpx2 honored the proxy, but the installed package had no SOCKS transport.
+    No request is made here; starting the provider is the behaviour that regressed."""
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+                 "http_proxy", "https_proxy", "no_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ALL_PROXY", "socks5h://127.0.0.1:9")
+
+    provider = llm.make_provider(cfg())
+
+    assert isinstance(provider, AnthropicProvider)
+    provider.client.close()
+
+
 # -- the Messages API ---------------------------------------------------------------
 
 
