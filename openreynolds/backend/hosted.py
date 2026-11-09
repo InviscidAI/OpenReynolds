@@ -1681,8 +1681,33 @@ def study_solver(base_url: str, api_key: str, study_id: str) -> tuple[str | None
         client.close()
     if not isinstance(row, dict):
         return None, False
+    if row.get("instance_id"):
+        _study_instances[study_id] = str(row["instance_id"])
     solver = str(row.get("solver") or "openfoam").strip().lower()
     return (solver if solver in ("openfoam", "felix") else "openfoam"), True
+
+
+_study_instances: dict[str, str] = {}
+"""The workspace each study's row names, as `study_solver` read it."""
+
+
+def study_instance(study_id: str) -> str | None:
+    """The workspace the platform has this study on, from the row `study_solver` just
+    read, so no second request. A resume on a machine that never held the study has no
+    local record of its workspace, and with a workspace per study (OpenReynolds#91)
+    the account's newest one is usually another study's: its files would not be there."""
+    return _study_instances.get(study_id)
+
+
+def _fresh_instance(client: FoamdClient, solver: str) -> str | None:
+    """A new workspace of this kind for a new study, or None when the account already
+    holds as many as foamd allows (the caller then shares one)."""
+    try:
+        return client.create_instance() if solver == "openfoam" else client.create_instance(kind=solver)
+    except BackendError as exc:
+        if exc.status == 409 and exc.code == "quota_exceeded":
+            return None
+        raise
 
 
 def reserve(
@@ -1690,9 +1715,20 @@ def reserve(
     api_key: str,
     instance_id: str | None = None,
     solver: str = "openfoam",
+    fresh: bool = False,
 ) -> tuple[FoamdClient, str, Starter]:
     """Settle which workspace, without starting it: the named instance, else an
     existing one, else a new row. A fraction of a second, all of it database.
+
+    `fresh` is a NEW STUDY: it gets a workspace of its own, never one another study is
+    on (OpenReynolds#91). Sharing the newest workspace put two studies started a second
+    apart on one machine, splitting its cores, tagging all its CPU to whichever bound
+    last, and leaving each study's folder on the other's disk, where a case run in place
+    billed the wrong study. foamd counts what an account may hold separately from what
+    it may run, so a workspace per study fits; how many run at once is the plan's,
+    refused at the start. If foamd refuses the new row anyway (409 quota_exceeded: the
+    account holds as many as it may), the study shares the newest one as before rather
+    than not starting.
 
     Deleting an instance destroys its persistent volume, so reuse is the default and
     nothing here ever deletes.
@@ -1733,7 +1769,11 @@ def reserve(
                 reverse=True,
             )
             held = len(existing)
-            if existing:
+            made = _fresh_instance(client, solver) if fresh else None
+            if made:
+                instance_id = made
+                held += 1
+            elif existing:
                 instance_id = existing[0]["id"]
                 listed_as_running = existing[0].get("status") == "running"
             elif solver == "openfoam":

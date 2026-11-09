@@ -1329,6 +1329,9 @@ def session(
             found, reachable = hosted.study_solver(cfg.foamd_url, cfg.foamd_api_key, study_id)
         if found:
             stored = found
+            # And its workspace, which is where its files are (OpenReynolds#91).
+            if not instance_id and not store.session.instance_id:
+                store.session.instance_id = hosted.study_instance(study_id) or ""
         elif solvers.chosen(asked):
             stored = asked  # nothing on record anywhere: the flag is the choice
         elif not reachable:
@@ -1392,6 +1395,10 @@ def session(
                     cfg.foamd_api_key,
                     instance_id or store.session.instance_id or None,
                     **_kind(settled),
+                    # A new study gets a workspace of its own (OpenReynolds#91); a
+                    # resume goes back to the one its files are on. Only when true,
+                    # so a resume makes the call it always made.
+                    **({} if resuming else {"fresh": True}),
                 )
             if resuming and store.session.remote_study_id:
                 # A resume knows its study before its workspace is up, so the start
@@ -1694,7 +1701,7 @@ def session(
                     with _timed("reserve"):
                         chosen_client, chosen_instance, chosen_starter = hosted.reserve(
                             cfg.foamd_url, cfg.foamd_api_key, instance_id or None,
-                            **_kind(chosen),
+                            **_kind(chosen), fresh=True,     # routing is a new study's
                         )
                 except BackendError as exc:
                     pending.fail(exc)
