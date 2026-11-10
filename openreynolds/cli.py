@@ -1826,7 +1826,8 @@ def session(
                     # A resume whose earlier messages were never answered answers
                     # them first, without waiting for the person to ask again. Not
                     # for a study still choosing its solver: that waits for a message.
-                    answer_first=bool(earlier and earlier.unanswered and not routing),
+                    answer_first=bool(earlier and earlier.unanswered and not routing
+                                      and not route_on),
                 )
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
@@ -1994,9 +1995,10 @@ EARLIER_ROWS = 2000
 """How many of a study's last conversation rows a resume reads: far more than the
 briefing's budget can hold (`watch.CONVERSATION_BUDGET_CHARS`), so the budget decides."""
 
-PLATFORM_PAGES = 20
-"""How many pages of the platform's transcript a resume reads at most when this
-machine has none of its own (`_platform_conversation`): 2,000 rows a page."""
+PLATFORM_ROWS = 999
+"""How many of the platform's newest transcript rows a resume reads when this machine
+has none of its own (`_platform_conversation`): the route's most per call, and far more
+than the briefing's budget holds once tool rows and events are dropped."""
 
 
 def _earlier_conversation(store: Store, client: Any) -> Any:
@@ -2012,61 +2014,118 @@ def _earlier_conversation(store: Store, client: Any) -> Any:
         rows = store.recent_messages(EARLIER_ROWS, roles=("user", "assistant"))
     except Exception:  # noqa: BLE001 - see docstring
         rows = []
+    more_before = False
     if not conversation_rows(rows) and client is not None and store.session.remote_study_id:
-        rows = _platform_conversation(client, store.session.remote_study_id)
-    conversation = earlier_conversation(rows)
+        rows, more_before = _platform_conversation(client, store.session.remote_study_id)
+    conversation = earlier_conversation(rows, more_before=more_before)
     return conversation if conversation.text else None
 
 
-def _platform_conversation(client: Any, study_id: str) -> list[dict[str, Any]]:
-    """The study's transcript as the platform captured it (`GET /v1/studies/{id}/
-    messages`), oldest first; empty when it cannot be read -- an older service, no
-    network, a stand-in client without the route."""
+def _platform_conversation(client: Any, study_id: str) -> tuple[list[dict[str, Any]], bool]:
+    """The study's newest transcript rows as the platform captured them, oldest first,
+    and whether earlier rows were left out; `([], False)` when they cannot be read --
+    an older service, no network, a stand-in client without the route.
+
+    One call: `GET /v1/studies/{id}/messages?after=-1&limit=999&newest=true`, the last
+    999 rows in seq order, `more` saying earlier ones exist. A service from before
+    `newest` ignores it and answers the FIRST rows instead; that is told by `more`
+    with rows that start at seq 0, and a briefing made from the start of a long study
+    would be worse than none, so it is dropped. With `more` false the rows are the
+    whole transcript either way."""
     read = getattr(client, "list_messages", None)
     if read is None:
-        return []
-    rows: list[dict[str, Any]] = []
-    after = -1
+        return [], False
     try:
-        for _ in range(PLATFORM_PAGES):
-            page = read(study_id, after=after)
-            if not isinstance(page, dict):
-                break
-            batch = [row for row in page.get("messages") or [] if isinstance(row, dict)]
-            rows.extend(batch)
-            if not page.get("more") or not batch:
-                break
-            after = max(int(row.get("seq") or 0) for row in batch)
+        page = read(study_id, after=-1, limit=PLATFORM_ROWS, newest=True)
     except Exception:  # noqa: BLE001 - see docstring
-        return rows
-    return rows
+        return [], False
+    if not isinstance(page, dict):
+        return [], False
+    by_seq: dict[int, dict[str, Any]] = {}
+    for row in page.get("messages") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            by_seq.setdefault(int(row.get("seq")), row)
+        except (TypeError, ValueError):
+            continue
+    more = bool(page.get("more"))
+    if more and by_seq and min(by_seq) == 0:
+        return [], False  # `newest` was ignored: these are the study's first rows
+    return [by_seq[seq] for seq in sorted(by_seq)], more
 
 
 def _start_refused(pending: PendingBackend, starter: Any) -> BackendError | None:
     """Why the session's workspace could not be started, when it could not; None while
     it is coming or is here (`Loop.start_refused`).
 
-    A refusal comes back fast -- the staging 403 for a plan limit answered in the same
-    second the start was sent -- and the person's first message often arrives as fast,
-    queued by the page before the session began. So a turn asked for within
-    `START_GRACE_S` of the start waits out the rest of that window for the answer;
-    after it the model runs ahead of the workspace as it always has."""
+    A turn waits for the start's own answer -- the reply to `POST /v1/instances/{id}/
+    start` -- before the model is asked, so a refusal is caught before anything is
+    spent on it: the admission checks (plan limit, quota, payment, a paused study) are
+    what that call does first, and a refusal is its whole answer. The same call is
+    also the one that waits for the workspace to boot -- on both of foamd's backends
+    it returns once the machine is up (`backend_ec2.start` waits for the instance and
+    its daemon; Modal for the sandbox) -- so the client cannot tell admission from
+    readiness, and the wait is bounded: `ADMISSION_WAIT_S` from the start was sent.
+    A start that has not answered by then is admitted in all likelihood, and the
+    model runs ahead of its boot as it always has. Once the start has answered, later
+    turns do not wait at all."""
     if pending.ready():
         return None
     if not pending.ready_event.is_set() and starter is not None:
         try:
-            left = START_GRACE_S - float(getattr(starter, "elapsed_s", 0.0) or 0.0)
+            left = ADMISSION_WAIT_S - float(getattr(starter, "elapsed_s", 0.0) or 0.0)
         except (TypeError, ValueError):
             left = 0.0
         if left > 0:
-            pending.ready_event.wait(left)
+            _wait_for_answer(starter, pending, left)
+        if not pending.ready_event.is_set() and _answered(starter):
+            # The start has answered. Admitted, the workspace is being set up
+            # (`_bring_up`) and the model runs ahead of that. Refused, `_bring_up`
+            # fails the promise right after saying so to the thread: waited for, so
+            # the turn finds the refusal said, with the start's own error as the
+            # backstop.
+            try:
+                starter.result(timeout=0)
+            except BackendError as exc:
+                pending.ready_event.wait(SETTLE_WAIT_S)
+                return pending.error or exc
+            except Exception:  # noqa: BLE001 - not a refusal this can name
+                return pending.error
     return pending.error
 
 
-START_GRACE_S = 2.0
-"""How long after its start a turn waits for the workspace's answer before running
-ahead of it (`_start_refused`). A refusal is a single round trip to the service; a
-start that succeeds takes a minute, and this is all of it the model waits."""
+def _answered(starter: Any) -> bool:
+    try:
+        return bool(getattr(starter, "done", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wait_for_answer(starter: Any, pending: PendingBackend, seconds: float) -> None:
+    """Wait up to `seconds` for the start to answer, or the promise to settle."""
+    deadline = time.monotonic() + seconds
+    wait = getattr(starter, "wait", None)
+    while not pending.ready_event.is_set() and not _answered(starter):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        if callable(wait):
+            wait(min(left, 0.05))
+        else:
+            pending.ready_event.wait(min(left, 0.05))
+
+
+ADMISSION_WAIT_S = 10.0
+"""The longest a turn waits, counted from when the start was sent, for the start's
+answer before the model runs ahead of it (`_start_refused`). A refusal is admission
+checks against the database: normally well under a second, seconds when the database
+or a cold service is slow. A start that is admitted then boots for about a minute, and
+the model does not wait for that."""
+
+SETTLE_WAIT_S = 2.0
+"""How long a turn waits, once the start has answered, for `_bring_up` to settle the
+promise -- a thread's few lines, so in practice no time at all."""
 
 
 def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
@@ -2927,7 +2986,7 @@ def _neighbour_work(backend: Backend, home: str) -> list[str] | None:
     return sorted(dict.fromkeys(names))
 
 
-def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> None:
+def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None:
     """End the session: stop the work, then put the container down.
 
     A container left running is a container being paid for, and the only thing that
@@ -2939,6 +2998,11 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
     So the default is now the other way round, and it is safe to be: the study's files
     have already come home, and stopping an instance leaves its volume untouched.
     `--keep-alive` is there for the laptop case, and says what it is choosing.
+
+    `keep_alive` may be an object rather than a bool: the hosted runner passes one
+    whose truth is "is another live session on this workspace?", answered afresh on
+    each test. It is asked at the top and again right before the shutdown, because
+    the stop, the sweep and the probes in between take seconds.
     """
     study = store.session.study_id
     home = store.session.home or WORKSPACE_ROOT
@@ -3051,6 +3115,14 @@ def _close_down(backend: Backend, store: Store, keep_alive: bool = False) -> Non
         )
         console.print("[dim]it is left up, and keeps costing, until they finish[/]")
         console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
+    elif keep_alive:
+        # Asked again: the hosted runner's `keep_alive` is a question -- is another
+        # live session on this workspace? -- answered afresh on each truth test, and
+        # the stop, the sweep and the probes above took seconds in which one may have
+        # joined. A plain bool answers as it did at the top.
+        _checkpoint_the_study(backend, store)
+        console.print("[dim]another session joined this workspace while this one was "
+                      "closing, so it is left up[/]")
     else:
         try:
             shutdown = getattr(backend, "shutdown", None)
@@ -3142,7 +3214,7 @@ def _checkpoint_the_study(backend: Backend, store: Store) -> None:
     store.save()
 
 
-def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: bool = False) -> None:
+def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any = False) -> None:
     """End a session whose workspace never became usable while it ran.
 
     Nothing of this study's ran on the workspace, so there are no jobs to stop and no
@@ -3184,6 +3256,11 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: bool 
                 "[dim]this session joined a workspace that was already running, and "
                 "is leaving it as it was[/]"
             )
+        elif keep_alive:
+            # Asked again after the wait for the start, for the reason `_close_down`
+            # asks again before its shutdown.
+            console.print("[dim]another session joined this workspace while this one was "
+                          "closing, so it is left up[/]")
         else:
             try:
                 shutdown = getattr(live, "shutdown", None)
@@ -3817,6 +3894,12 @@ def _run_interactive(
     anything is read, so the agent answers what it owes rather than waiting to be
     asked again. It is an ordinary turn, so a workspace that cannot start holds it
     back like any other (`_run_turn`)."""
+    if answer_first and _waiting_line(reader):
+        # The resume came with a message of its own -- the person asking again, put
+        # on the reader before the session began. Its turn answers it and what the
+        # briefing marks as awaiting an answer; a turn of its own first would answer
+        # the same question twice.
+        answer_first = False
     while True:
         if answer_first:
             answer_first = False
@@ -3907,6 +3990,30 @@ def _run_interactive(
         # `refresh_due` is a model switch waiting on a thread its window cannot hold.
         if completed and (loop.needs_refresh or loop.refresh_due):
             loop.refresh(_with_mode(situation(store, backend), loop))
+
+
+def _waiting_line(reader: Any) -> bool:
+    """Whether a line is already waiting on the reader, left where it was: asked of
+    `pending()` where the reader has it, which takes nothing off the queue."""
+    pending = getattr(reader, "pending", None)
+    if callable(pending):
+        try:
+            return bool(pending())
+        except Exception:  # noqa: BLE001 - see below
+            return False
+    poll = getattr(reader, "poll", None)
+    if poll is None:
+        return False
+    try:
+        line = poll()
+    except Exception:  # noqa: BLE001 - a reader that cannot be peeked has nothing waiting
+        return False
+    if line is NOTHING:
+        return False
+    putback = getattr(reader, "putback", None)
+    if putback is not None:
+        putback(line)
+    return line is not None
 
 
 def _run_one_shot(

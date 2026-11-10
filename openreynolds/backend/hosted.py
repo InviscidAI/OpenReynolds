@@ -902,14 +902,20 @@ class FoamdClient:
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)
 
-    def list_messages(self, study_id: str, after: int = -1, limit: int = 2000) -> dict[str, Any]:
+    def list_messages(self, study_id: str, after: int = -1, limit: int = 999,
+                      newest: bool = False) -> dict[str, Any]:
         """`GET /v1/studies/{id}/messages`: the transcript the platform captured, in
-        sequence order, rows after seq `after` (exclusive; -1 keeps seq 0) as
-        `{"messages": [{seq, role, content, created_at}], "more": bool}`. What a
-        resume on a machine that never held the study is briefed from
-        (`cli._earlier_conversation`)."""
-        return _json(self.request("GET", f"/v1/studies/{study_id}/messages",
-                                  params={"after": after, "limit": limit}))
+        sequence order, rows after seq `after` (exclusive; -1 keeps seq 0), at most
+        `limit` (the service caps it at 999), as `{"messages": [{seq, role, content,
+        created_at}], "more": bool}`. With `newest` the LAST `limit` such rows, still
+        oldest first, `more` saying earlier ones were left out; without it the first,
+        `more` saying later ones follow. `newest` is sent only when asked, and a
+        service from before it ignores it. What a resume on a machine that never held
+        the study is briefed from (`cli._platform_conversation`)."""
+        params: dict[str, Any] = {"after": after, "limit": limit}
+        if newest:
+            params["newest"] = "true"
+        return _json(self.request("GET", f"/v1/studies/{study_id}/messages", params=params))
 
     def post_result(self, study_id: str, payload: Any) -> None:
         self.request("POST", f"/v1/studies/{study_id}/results", json={"payload": payload})
@@ -1634,6 +1640,10 @@ class Starter:
     @property
     def done(self) -> bool:
         return self._done.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for the start to answer, at most `timeout` seconds. True once it has."""
+        return self._done.wait(timeout)
 
     @property
     def elapsed_s(self) -> float:

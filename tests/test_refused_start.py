@@ -59,10 +59,18 @@ class _Platform:
     def get_study(self, study_id):
         return self.row
 
-    def list_messages(self, study_id, after=-1, limit=2000):
-        self.reads.append({"study_id": study_id, "after": after})
-        rows = [r for r in self.transcript if r["seq"] > after]
+    def list_messages(self, study_id, after=-1, limit=999, newest=False):
+        """foamd's route: with `newest`, the LAST `limit` rows after `after`, oldest
+        first, `more` meaning earlier ones were left out. `ignores_newest` is a
+        service from before that parameter, which answers the first rows."""
+        self.reads.append({"study_id": study_id, "after": after, "limit": limit,
+                           "newest": newest})
+        rows = sorted((r for r in self.transcript if r["seq"] > after), key=lambda r: r["seq"])
+        if newest and not self.ignores_newest:
+            return {"messages": rows[-limit:], "more": len(rows) > limit}
         return {"messages": rows[:limit], "more": len(rows) > limit}
+
+    ignores_newest = False
 
     def __getattr__(self, name):
         return lambda *a, **k: None
@@ -183,7 +191,7 @@ def test_a_one_shot_run_exits_non_zero_with_the_refusal(monkeypatch, tmp_path):
 
 def test_a_start_still_pending_lets_the_model_run_ahead(monkeypatch, tmp_path):
     """The model runs ahead of a workspace that is still coming, on purpose."""
-    monkeypatch.setattr(cli, "START_GRACE_S", 0.05)
+    monkeypatch.setattr(cli, "ADMISSION_WAIT_S", 0.05)
     hold = threading.Event()
     starter = ReadyStarter(FakeBackend(), "iid-9", hold=hold)
     up_when_asked: list[bool] = []
@@ -213,7 +221,7 @@ def test_a_start_that_fails_during_a_turn_holds_back_the_next_message(monkeypatc
             return 0.0 if hold.is_set() else 99.0
 
     starter = FailsDuringTheTurn(FakeBackend(), "iid-9", hold=hold, error=PLAN_LIMIT)
-    monkeypatch.setattr(cli, "START_GRACE_S", 5.0)
+    monkeypatch.setattr(cli, "ADMISSION_WAIT_S", 5.0)
 
     def on_call(n):
         if n == 0:  # asked before the call is counted: this is the first
@@ -227,10 +235,9 @@ def test_a_start_that_fails_during_a_turn_holds_back_the_next_message(monkeypatc
     assert run.loop.start_refusal and "max_concurrent 2" in run.loop.start_refusal
 
 
-def test_a_refused_start_waits_out_the_grace_before_the_first_turn(monkeypatch, tmp_path):
-    """A refusal that answers within the grace -- the staging 403 came back in the same
-    second -- is caught before the model is asked, even when the message was already
-    queued as the session began."""
+def test_a_refused_start_is_waited_for_before_the_first_turn(monkeypatch, tmp_path):
+    """The first turn waits for the start's answer, so a refusal is caught before the
+    model is asked even when the message was already queued as the session began."""
     hold = threading.Event()
     starter = ReadyStarter(FakeBackend(), "iid-9", hold=hold, error=PLAN_LIMIT)
     threading.Timer(0.2, hold.set).start()
@@ -427,3 +434,124 @@ def test_no_conversation_is_no_paragraph():
     told = watch.earlier_conversation([_row("event", "x"), _row("tool", {"a": 1})])
 
     assert told.text == "" and told.unanswered == 0
+
+
+def test_a_slow_refusal_after_a_slow_setup_is_still_caught(monkeypatch, tmp_path):
+    """The window counts from the start, and the session's setup spends part of it: a
+    refusal that answers 2.5 s after the start, with the first turn asked at 2.3 s, is
+    still waited for (a fixed 2 s grace let the model run here)."""
+    hold = threading.Event()
+    asked = {}
+
+    class SlowService(ReadyStarter):
+        @property
+        def elapsed_s(self):
+            return 2.3
+
+    starter = SlowService(FakeBackend(), "iid-9", hold=hold, error=PLAN_LIMIT)
+    threading.Timer(0.2, hold.set).start()
+    run = _session(monkeypatch, tmp_path, [message([text_block("plan")])],
+                   lines=[CAVITY], starter=starter)
+
+    assert run.calls == []
+
+
+def test_a_start_that_answers_admitted_lets_the_turn_go_at_once(monkeypatch, tmp_path):
+    """Once the start has answered and was not refused, the model runs ahead of the
+    workspace's setup without waiting out anything."""
+    import time as time_mod
+
+    run_started = []
+    starter = ReadyStarter(FakeBackend(), "iid-9")  # answers at once, admitted
+    t0 = time_mod.monotonic()
+    run = _session(monkeypatch, tmp_path, [message([text_block("ok")])], lines=[CAVITY],
+                   starter=starter,
+                   on_call=lambda n: run_started.append(time_mod.monotonic() - t0))
+
+    assert len(run.calls) == 1 and run_started[0] < cli.ADMISSION_WAIT_S / 2
+
+
+def test_a_resume_with_a_first_message_answers_once(monkeypatch, tmp_path):
+    """The person retyping the question on resume: one turn answers it and what the
+    briefing marks as awaiting an answer, not a turn of its own first."""
+    study = _left_refused(tmp_path)
+    run = _session(monkeypatch, tmp_path, [message([text_block("Setting up the cavity.")])],
+                   lines=[CAVITY], study_id=study)
+
+    assert len(run.calls) == 1
+    sent = run.calls[0]["messages"]
+    assert watch.AWAITING in sent[0]["content"] and sent[-1]["content"] == CAVITY
+
+
+def test_the_platform_transcript_is_read_newest_first_in_one_call(monkeypatch, tmp_path):
+    transcript = [{"seq": i, "role": "user" if i % 2 else "assistant",
+                   "content": f"message {i}", "created_at": "2026-11-10T13:07:25+00:00"}
+                  for i in range(1500)]
+    platform = _Platform(transcript, row={"id": "remote-7", "home": "/work/x"})
+    run = _session(monkeypatch, tmp_path, [message([text_block("ok")])],
+                   lines=[], study_id="20261110-130725-cafe", platform=platform)
+
+    assert platform.reads == [{"study_id": "remote-7", "after": -1, "limit": 999,
+                               "newest": True}]
+    briefing = run.calls[0]["messages"][0]["content"]
+    assert "message 1499" in briefing and "message 0\n" not in briefing
+    assert "the ones before them" in briefing or "Earlier messages are left out" in briefing
+
+
+def test_a_service_that_ignores_newest_is_not_briefed_from_the_studys_start(
+        monkeypatch, tmp_path):
+    transcript = [{"seq": i, "role": "user", "content": f"message {i}"} for i in range(1500)]
+    platform = _Platform(transcript, row={"id": "remote-7", "home": "/work/x"})
+    platform.ignores_newest = True
+    run = _session(monkeypatch, tmp_path, [message([text_block("ok")])],
+                   lines=["hello"], study_id="20261110-130725-cafe", platform=platform)
+
+    assert watch.CONVERSATION_OPEN not in run.calls[0]["messages"][0]["content"]
+
+
+def test_more_before_says_earlier_messages_were_left_out():
+    told = watch.earlier_conversation([_row("user", "hi")], more_before=True)
+
+    assert "Earlier messages are left out" in told.text
+
+
+class _Flips:
+    """The ui's `keep_alive`: a question re-asked on each truth test."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+
+    def __bool__(self):
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+class _Stoppable(FakeBackend):
+    def __init__(self):
+        super().__init__()
+        self.was_already_running = False
+        self.stopped = 0
+
+    def shutdown(self):
+        self.stopped += 1
+
+
+def test_keep_alive_is_asked_again_right_before_the_shutdown(store, monkeypatch):
+    monkeypatch.setattr(cli, "console", Console(file=io.StringIO(), force_terminal=False))
+    backend = _Stoppable()
+    cli._close_down(backend, store, keep_alive=_Flips([False, True]))
+
+    assert backend.stopped == 0, "another session joined while this one was closing"
+
+    backend = _Stoppable()
+    cli._close_down(backend, store, keep_alive=_Flips([False]))
+    assert backend.stopped == 1, "nobody joined: put down as before"
+
+
+def test_keep_alive_is_asked_again_before_a_pending_workspace_is_put_down(store, monkeypatch):
+    monkeypatch.setattr(cli, "console", Console(file=io.StringIO(), force_terminal=False))
+    live = _Stoppable()
+    pending = pending_mod.PendingBackend("iid-1")
+    threading.Timer(0.05, pending.resolve, args=(live,)).start()
+    cli._close_down_pending(pending, store, keep_alive=_Flips([False, True]))
+
+    assert live.stopped == 0

@@ -449,7 +449,8 @@ def conversation_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def earlier_conversation(
-    rows: list[dict[str, Any]], budget: int = CONVERSATION_BUDGET_CHARS
+    rows: list[dict[str, Any]], budget: int = CONVERSATION_BUDGET_CHARS,
+    more_before: bool = False,
 ) -> Conversation:
     """What a resumed thread is told of the conversation so far.
 
@@ -460,7 +461,10 @@ def earlier_conversation(
     `Store.recent_messages` or the platform's transcript gives them (`role`,
     `content`, and `at` or `created_at`), oldest first. The person's messages after
     the agent's last reply are marked as awaiting an answer, and the briefing asks for
-    them to be answered. Quoted between markers, as a record rather than instructions."""
+    them to be answered. Quoted between markers, as a record rather than instructions.
+    `more_before` says `rows` are only the newest part of the transcript (the
+    platform's, read from the end), so earlier messages are left out even when every
+    row given fits."""
     said = conversation_rows(rows)
     if not said:
         return Conversation("", 0, 0)
@@ -494,9 +498,14 @@ def earlier_conversation(
     ]
     if left_out:
         lines.append(
-            f"The {left_out} earliest message{'s are' if left_out != 1 else ' is'} "
-            "left out to keep this short, so this is only the most recent part."
+            f"The {left_out} earliest message{'s' if left_out != 1 else ''}"
+            f"{', and the ones before them,' if more_before else ''} "
+            f"{'are' if left_out != 1 or more_before else 'is'} left out to keep "
+            "this short, so this is only the most recent part."
         )
+    elif more_before:
+        lines.append("Earlier messages are left out to keep this short, so this is only "
+                     "the most recent part.")
     lines.append(CONVERSATION_OPEN)
     lines.append("\n\n".join(blocks))
     lines.append(CONVERSATION_CLOSE)
