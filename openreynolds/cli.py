@@ -121,6 +121,19 @@ def _keep_stdout_for_json() -> None:
     images.suppress()
 
 
+def _is_refusal(exc: BackendError) -> bool:
+    """The workspace service answered and said no: payment (402), the plan (403), the
+    held cap or a paused study (409). Not an outage, and not one a retry clears."""
+    return getattr(exc, "status", None) in (402, 403, 409)
+
+
+def _needs_own_workspace(resuming: bool, instance_id: str | None, store: Store) -> bool:
+    """Whether this start must get a workspace of its own (`reserve(fresh=True)`): every
+    new study, and a resumed one that has none on record -- here, or on the platform's
+    row, which a resume on another machine has already read into the session."""
+    return not resuming or not (instance_id or store.session.instance_id)
+
+
 def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     """One `session_end` on stdout for a failure that happened before the view existed.
 
@@ -1397,9 +1410,12 @@ def session(
                     instance_id or store.session.instance_id or None,
                     **_kind(settled),
                     # A new study gets a workspace of its own (OpenReynolds#91); a
-                    # resume goes back to the one its files are on. Only when true,
-                    # so a resume makes the call it always made.
-                    **({} if resuming else {"fresh": True}),
+                    # resume goes back to the one its files are on. A resume of a study
+                    # that never got one (its workspace was refused, at the plan's or
+                    # the held cap) is a new study's start too: with no workspace named
+                    # it would otherwise join the account's newest, another study's.
+                    # Only when true, so a resume makes the call it always made.
+                    **({"fresh": True} if _needs_own_workspace(resuming, instance_id, store) else {}),
                 )
             if resuming and store.session.remote_study_id:
                 # A resume knows its study before its workspace is up, so the start
@@ -1411,6 +1427,14 @@ def session(
             pending = starter.pending()
             backend = pending
     except BackendError as exc:
+        if _is_refusal(exc):
+            # The service answered, and said no (the held cap, the plan, the budget): a
+            # retry gets the same answer, so it must not read as an outage, which is
+            # what an agent on the stream retries (`_terminal_json`).
+            console.print(f"[red]The workspace was refused:[/] {exc}")
+            if streaming_json:
+                _terminal_json("refused", str(exc), store.session.study_id)
+            raise SystemExit(ONE_SHOT_EXIT_CODES["refused"]) from exc
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         if streaming_json:
             _terminal_json("unreachable", str(exc), store.session.study_id)
@@ -1719,7 +1743,7 @@ def session(
                         )
                 except BackendError as exc:
                     pending.fail(exc)
-                    console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+                    console.print(f"[red]{'The workspace was refused' if _is_refusal(exc) else 'Could not reach the workspace service'}:[/] {exc}")
                     view.notice(f"the workspace could not be started: {exc}")
                     _say_workspace_failed(view, str(exc))
                     return (

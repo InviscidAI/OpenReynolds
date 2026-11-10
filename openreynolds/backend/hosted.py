@@ -1718,15 +1718,12 @@ def study_instance(study_id: str) -> str | None:
     return _study_instances.get(study_id)
 
 
-def _fresh_instance(client: FoamdClient, solver: str) -> str | None:
-    """A new workspace of this kind for a new study, or None when the account already
-    holds as many as foamd allows (the caller then shares one)."""
-    try:
-        return client.create_instance() if solver == "openfoam" else client.create_instance(kind=solver)
-    except BackendError as exc:
-        if exc.status == 409 and exc.code == "quota_exceeded":
-            return None
-        raise
+def _fresh_instance(client: FoamdClient, solver: str) -> str:
+    """A new workspace of this kind for a new study. foamd's refusal is raised as it
+    is: a study never shares another study's workspace (OpenReynolds#91), and the held
+    cap counts only workspaces that still have a disk, so the refusal names the way out
+    (a workspace is released when its study has been idle for a few days)."""
+    return client.create_instance() if solver == "openfoam" else client.create_instance(kind=solver)
 
 
 def reserve(
@@ -1745,9 +1742,10 @@ def reserve(
     last, and leaving each study's folder on the other's disk, where a case run in place
     billed the wrong study. foamd counts what an account may hold separately from what
     it may run, so a workspace per study fits; how many run at once is the plan's,
-    refused at the start. If foamd refuses the new row anyway (409 quota_exceeded: the
-    account holds as many as it may), the study shares the newest one as before rather
-    than not starting.
+    refused at the start. If foamd refuses the new row (409 quota_exceeded: the account
+    already has as many workspaces with disks as it may), the study does not start and
+    the refusal says why; it does not share. A new study does not list the account's
+    workspaces at all: it needs none of them, and an account holds one per study.
 
     Deleting an instance destroys its persistent volume, so reuse is the default and
     nothing here ever deletes.
@@ -1776,7 +1774,10 @@ def reserve(
     try:
         listed_as_running = False
         held = 0
-        if instance_id is None:
+        if instance_id is None and fresh:
+            instance_id = _fresh_instance(client, solver)
+            held = 1
+        elif instance_id is None:
             existing = sorted(
                 (
                     inst
@@ -1788,11 +1789,7 @@ def reserve(
                 reverse=True,
             )
             held = len(existing)
-            made = _fresh_instance(client, solver) if fresh else None
-            if made:
-                instance_id = made
-                held += 1
-            elif existing:
+            if existing:
                 instance_id = existing[0]["id"]
                 listed_as_running = existing[0].get("status") == "running"
             elif solver == "openfoam":

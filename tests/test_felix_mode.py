@@ -348,17 +348,25 @@ def test_a_new_study_gets_a_workspace_of_its_own_even_when_one_is_running(monkey
     assert fleet.created == [sent]
 
 
-def test_a_new_study_shares_the_newest_when_the_account_holds_all_it_may(monkeypatch):
+def test_a_new_study_never_shares_a_workspace_even_at_the_held_cap(monkeypatch):
+    """At the cap foamd refuses the new row, and the refusal is raised as it is: the
+    study does not join the newest workspace (OpenReynolds#91). The account's other
+    workspaces are not even listed."""
     class Full(_Fleet):
         def create_instance(self, **kwargs):
             self.created.append(kwargs)
-            raise BackendError("this account may hold 200 workspace(s) and already has 200; delete one first",
+            raise BackendError("this account may hold 200 workspace(s) ready at once and already has 200; "
+                               "one is released when its study has been idle for 3 day(s), or delete one",
                                code="quota_exceeded", status=409)
+
+        def list_instances(self):
+            raise AssertionError("a new study needs no listing")
 
     fleet = Full(ROWS)
     monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: fleet)
-    _client, instance_id, _starter = hosted_mod.reserve("https://svc", "key", None, solver="felix", fresh=True)
-    assert instance_id == "fx-newest" and fleet.created == [{"kind": "felix"}]
+    with pytest.raises(BackendError) as refused:
+        hosted_mod.reserve("https://svc", "key", None, solver="felix", fresh=True)
+    assert refused.value.code == "quota_exceeded" and fleet.created == [{"kind": "felix"}]
 
 
 def test_any_other_refusal_of_the_new_workspace_is_raised(monkeypatch):
@@ -1083,3 +1091,22 @@ def test_solver_read_from_the_platform(monkeypatch, answer, expected):
     monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
     assert hosted_mod.study_solver("https://svc", "key", "s") == expected
     assert client.closed
+
+
+def test_a_resumed_study_with_no_workspace_on_record_gets_its_own():
+    """A study whose first workspace was refused has none on record; resuming it must
+    not join the account's newest (another study's). One with a workspace goes back to it."""
+    from types import SimpleNamespace
+    from openreynolds import cli
+    none = SimpleNamespace(session=SimpleNamespace(instance_id=""))
+    held = SimpleNamespace(session=SimpleNamespace(instance_id="ws-1"))
+    assert cli._needs_own_workspace(False, None, held), "a new study always does"
+    assert cli._needs_own_workspace(True, None, none)
+    assert not cli._needs_own_workspace(True, None, held)
+    assert not cli._needs_own_workspace(True, "ws-2", none), "a named workspace is used"
+
+
+@pytest.mark.parametrize("status, refusal", [(402, True), (403, True), (409, True), (503, False), (None, False)])
+def test_a_refusal_is_not_reported_as_an_outage(status, refusal):
+    from openreynolds import cli
+    assert cli._is_refusal(BackendError("no", code="x", status=status)) is refusal
