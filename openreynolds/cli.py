@@ -2016,43 +2016,60 @@ def _earlier_conversation(store: Store, client: Any) -> Any:
         rows = []
     more_before = False
     if not conversation_rows(rows) and client is not None and store.session.remote_study_id:
-        rows, more_before = _platform_conversation(client, store.session.remote_study_id)
+        rows, more_before, highest = _platform_conversation(client, store.session.remote_study_id)
+        if highest is not None:
+            # The study's rows go on from the platform's: a machine with no record of
+            # the study starts its counter at 0, and every row this session posted
+            # used to land on a seq the transcript already had.
+            store.session.capture_seq = max(store.session.capture_seq, highest + 1)
     conversation = earlier_conversation(rows, more_before=more_before)
     return conversation if conversation.text else None
 
 
-def _platform_conversation(client: Any, study_id: str) -> tuple[list[dict[str, Any]], bool]:
-    """The study's newest transcript rows as the platform captured them, oldest first,
-    and whether earlier rows were left out; `([], False)` when they cannot be read --
-    an older service, no network, a stand-in client without the route.
+def _platform_conversation(
+    client: Any, study_id: str,
+) -> tuple[list[dict[str, Any]], bool, int | None]:
+    """The study's newest transcript rows as the platform captured them, in the
+    service's order (oldest first), whether earlier rows were left out, and the
+    highest seq seen -- what this session's own rows are numbered on from
+    (`_earlier_conversation`). `([], False, None)` when they cannot be read: an older
+    service, no network, a stand-in client without the route.
 
     One call: `GET /v1/studies/{id}/messages?after=-1&limit=999&newest=true`, the last
-    999 rows in seq order, `more` saying earlier ones exist. A service from before
+    999 rows, `more` saying earlier ones exist. The service orders them by insertion,
+    not seq, because a study resumed before seqs were carried on from the platform's
+    repeats them; rows sharing a seq are all kept, in its order. A service from before
     `newest` ignores it and answers the FIRST rows instead; that is told by `more`
     with rows that start at seq 0, and a briefing made from the start of a long study
-    would be worse than none, so it is dropped. With `more` false the rows are the
-    whole transcript either way."""
+    would be worse than none, so it is dropped. With repeated seqs the test can
+    misfire (newest rows that happen to begin at a repeated 0), which only costs the
+    briefing. With `more` false the rows are the whole transcript either way."""
     read = getattr(client, "list_messages", None)
     if read is None:
-        return [], False
+        return [], False, None
     try:
         page = read(study_id, after=-1, limit=PLATFORM_ROWS, newest=True)
     except Exception:  # noqa: BLE001 - see docstring
-        return [], False
+        return [], False, None
     if not isinstance(page, dict):
-        return [], False
-    by_seq: dict[int, dict[str, Any]] = {}
+        return [], False, None
+    rows: list[dict[str, Any]] = []
+    seqs: list[int] = []
     for row in page.get("messages") or []:
         if not isinstance(row, dict):
             continue
+        rows.append(row)
         try:
-            by_seq.setdefault(int(row.get("seq")), row)
+            seqs.append(int(row.get("seq")))
         except (TypeError, ValueError):
             continue
+    highest = max(seqs) if seqs else None
     more = bool(page.get("more"))
-    if more and by_seq and min(by_seq) == 0:
-        return [], False  # `newest` was ignored: these are the study's first rows
-    return [by_seq[seq] for seq in sorted(by_seq)], more
+    if more and seqs and seqs[0] == 0:
+        # `newest` was ignored: these are the study's first rows. Their highest seq is
+        # still a floor for this session's own, so it is kept.
+        return [], False, highest
+    return rows, more, highest
 
 
 def _start_refused(pending: PendingBackend, starter: Any) -> BackendError | None:
@@ -2121,7 +2138,14 @@ ADMISSION_WAIT_S = 10.0
 answer before the model runs ahead of it (`_start_refused`). A refusal is admission
 checks against the database: normally well under a second, seconds when the database
 or a cold service is slow. A start that is admitted then boots for about a minute, and
-the model does not wait for that."""
+the model does not wait for that.
+
+Two costs, known and accepted. The start's answer comes only once the workspace is up
+(foamd's start route blocks through the boot), so on a cold start the first reply of a
+session waits until this many seconds after the start was sent. And a refusal slower
+than this -- a second start by the same person queued behind foamd's per-user lock
+while another of their workspaces launches -- still gets one model turn, the one that
+ran ahead; the turn after it is held back."""
 
 SETTLE_WAIT_S = 2.0
 """How long a turn waits, once the start has answered, for `_bring_up` to settle the
@@ -3992,10 +4016,36 @@ def _run_interactive(
             loop.refresh(_with_mode(situation(store, backend), loop))
 
 
+_UNKNOWN = object()
+
+
+def _peek_line(reader: Any) -> Any:
+    """The first thing queued on `reader`, left there: a line, None for a queued EOF,
+    `NOTHING` for an empty queue, `_UNKNOWN` for a reader this cannot look into. Every
+    reader here queues on a `queue.Queue` (`queue` on the web's, `_queue` on the
+    terminal's and the stream's) or, in the tests, a list (`_lines`)."""
+    import queue as queue_mod
+
+    for name in ("queue", "_queue"):
+        q = getattr(reader, name, None)
+        if isinstance(q, queue_mod.Queue):
+            with q.mutex:
+                return q.queue[0] if q.queue else NOTHING
+    lines = getattr(reader, "_lines", None)
+    if isinstance(lines, list):
+        return lines[0] if lines else NOTHING
+    return _UNKNOWN
+
+
 def _waiting_line(reader: Any) -> bool:
-    """Whether a line is already waiting on the reader, left where it was: asked of
-    `pending()` where the reader has it, which takes nothing off the queue."""
+    """Whether a message is already waiting on the reader, left where it was. A queued
+    EOF is not one. Looked at in place where the reader allows (`_peek_line`); else
+    asked of `pending()`, which cannot tell an EOF from a line, or polled and put back."""
     pending = getattr(reader, "pending", None)
+    peek = _peek_line(reader)
+    if peek is not _UNKNOWN:
+        # A queued EOF is not a message: the owed turn runs, then the EOF ends it.
+        return peek is not None and peek is not NOTHING
     if callable(pending):
         try:
             return bool(pending())

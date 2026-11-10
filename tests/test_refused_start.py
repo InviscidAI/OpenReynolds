@@ -555,3 +555,57 @@ def test_keep_alive_is_asked_again_before_a_pending_workspace_is_put_down(store,
     cli._close_down_pending(pending, store, keep_alive=_Flips([False, True]))
 
     assert live.stopped == 0
+
+
+def test_a_resume_from_the_platform_numbers_its_rows_after_the_platforms(monkeypatch, tmp_path):
+    """A machine with no record of the study started its counter at 0, and wrote seq
+    0.. again into the platform's transcript. Its rows now go on from the highest."""
+    transcript = [
+        {"seq": 0, "role": "event", "content": "briefing"},
+        {"seq": 1, "role": "user", "content": CAVITY},
+        {"seq": 7, "role": "event", "content": "The workspace could not be started."},
+    ]
+    platform = _Platform(transcript, row={"id": "remote-7", "home": "/work/x"})
+    run = _session(monkeypatch, tmp_path, [message([text_block("Setting up the cavity.")])],
+                   lines=[], study_id="20261110-130725-cafe", platform=platform)
+
+    seqs = [r["seq"] for r in _rows(run.store)]
+    assert seqs and min(seqs) == 8, seqs
+
+
+def test_rows_sharing_a_seq_are_all_kept_in_the_services_order(monkeypatch, tmp_path):
+    """Studies resumed before the fix repeat seqs; every row is the person's or the
+    agent's words all the same, in the order the service inserted them."""
+    transcript = [
+        {"seq": 0, "role": "user", "content": "first request"},
+        {"seq": 1, "role": "assistant", "content": "first answer"},
+        {"seq": 0, "role": "user", "content": "second request"},
+    ]
+    platform = _Platform(transcript, row={"id": "remote-7", "home": "/work/x"})
+    platform.list_messages = lambda study_id, after=-1, limit=999, newest=False: {
+        "messages": list(transcript), "more": False}
+    run = _session(monkeypatch, tmp_path, [message([text_block("ok")])],
+                   lines=[], study_id="20261110-130725-cafe", platform=platform)
+
+    briefing = run.calls[0]["messages"][0]["content"]
+    assert briefing.index("first request") < briefing.index("first answer") \
+        < briefing.index("second request")
+    assert "awaiting an answer]\nsecond request" in briefing
+    assert min(r["seq"] for r in _rows(run.store)) == 2
+
+
+def test_a_queued_eof_does_not_stop_the_owed_answer(monkeypatch, tmp_path):
+    """An End already queued is not a message: the owed turn runs, then the EOF ends
+    the session."""
+    study = _left_refused(tmp_path)
+    run = _session(monkeypatch, tmp_path, [message([text_block("Setting up the cavity.")])],
+                   lines=[None], study_id=study)
+
+    assert len(run.calls) == 1
+
+
+def test_peeking_the_reader_leaves_it_as_it_was():
+    reader = ScriptedReader(["one", "two"])
+    assert cli._waiting_line(reader) and reader._lines == ["one", "two"]
+    assert not cli._waiting_line(ScriptedReader([None]))
+    assert not cli._waiting_line(ScriptedReader([]))

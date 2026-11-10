@@ -81,7 +81,8 @@ class StartRefused(Exception):
     the transcript; the refusal is what they are shown, and nothing is spent on the
     model to say it again in other words (`cli._run_turn` handles it). A turn that is
     already running when the start fails is not stopped by this -- only the next one
-    is not begun."""
+    is not begun. A `/btw` side question is not held back either: the side chat asks
+    the model on its own thread (`desk.SideChat`), never through `run`."""
 
     def __init__(self, error: Exception):
         super().__init__(str(error))
