@@ -902,6 +902,21 @@ class FoamdClient:
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)
 
+    def list_messages(self, study_id: str, after: int = -1, limit: int = 999,
+                      newest: bool = False) -> dict[str, Any]:
+        """`GET /v1/studies/{id}/messages`: the transcript the platform captured, in
+        sequence order, rows after seq `after` (exclusive; -1 keeps seq 0), at most
+        `limit` (the service caps it at 999), as `{"messages": [{seq, role, content,
+        created_at}], "more": bool}`. With `newest` the LAST `limit` such rows, still
+        oldest first, `more` saying earlier ones were left out; without it the first,
+        `more` saying later ones follow. `newest` is sent only when asked, and a
+        service from before it ignores it. What a resume on a machine that never held
+        the study is briefed from (`cli._platform_conversation`)."""
+        params: dict[str, Any] = {"after": after, "limit": limit}
+        if newest:
+            params["newest"] = "true"
+        return _json(self.request("GET", f"/v1/studies/{study_id}/messages", params=params))
+
     def post_result(self, study_id: str, payload: Any) -> None:
         self.request("POST", f"/v1/studies/{study_id}/results", json={"payload": payload})
 
@@ -1626,6 +1641,10 @@ class Starter:
     def done(self) -> bool:
         return self._done.is_set()
 
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for the start to answer, at most `timeout` seconds. True once it has."""
+        return self._done.wait(timeout)
+
     @property
     def elapsed_s(self) -> float:
         """Seconds since `start()`; 0 before it."""
@@ -1681,8 +1700,30 @@ def study_solver(base_url: str, api_key: str, study_id: str) -> tuple[str | None
         client.close()
     if not isinstance(row, dict):
         return None, False
+    if row.get("instance_id"):
+        _study_instances[study_id] = str(row["instance_id"])
     solver = str(row.get("solver") or "openfoam").strip().lower()
     return (solver if solver in ("openfoam", "felix") else "openfoam"), True
+
+
+_study_instances: dict[str, str] = {}
+"""The workspace each study's row names, as `study_solver` read it."""
+
+
+def study_instance(study_id: str) -> str | None:
+    """The workspace the platform has this study on, from the row `study_solver` just
+    read, so no second request. A resume on a machine that never held the study has no
+    local record of its workspace, and with a workspace per study (OpenReynolds#91)
+    the account's newest one is usually another study's: its files would not be there."""
+    return _study_instances.get(study_id)
+
+
+def _fresh_instance(client: FoamdClient, solver: str) -> str:
+    """A new workspace of this kind for a new study. foamd's refusal is raised as it
+    is: a study never shares another study's workspace (OpenReynolds#91), and the held
+    cap counts only workspaces that still have a disk, so the refusal names the way out
+    (a workspace is released when its study has been idle for a few days)."""
+    return client.create_instance() if solver == "openfoam" else client.create_instance(kind=solver)
 
 
 def reserve(
@@ -1690,9 +1731,21 @@ def reserve(
     api_key: str,
     instance_id: str | None = None,
     solver: str = "openfoam",
+    fresh: bool = False,
 ) -> tuple[FoamdClient, str, Starter]:
     """Settle which workspace, without starting it: the named instance, else an
     existing one, else a new row. A fraction of a second, all of it database.
+
+    `fresh` is a NEW STUDY: it gets a workspace of its own, never one another study is
+    on (OpenReynolds#91). Sharing the newest workspace put two studies started a second
+    apart on one machine, splitting its cores, tagging all its CPU to whichever bound
+    last, and leaving each study's folder on the other's disk, where a case run in place
+    billed the wrong study. foamd counts what an account may hold separately from what
+    it may run, so a workspace per study fits; how many run at once is the plan's,
+    refused at the start. If foamd refuses the new row (409 quota_exceeded: the account
+    already has as many workspaces with disks as it may), the study does not start and
+    the refusal says why; it does not share. A new study does not list the account's
+    workspaces at all: it needs none of them, and an account holds one per study.
 
     Deleting an instance destroys its persistent volume, so reuse is the default and
     nothing here ever deletes.
@@ -1721,7 +1774,10 @@ def reserve(
     try:
         listed_as_running = False
         held = 0
-        if instance_id is None:
+        if instance_id is None and fresh:
+            instance_id = _fresh_instance(client, solver)
+            held = 1
+        elif instance_id is None:
             existing = sorted(
                 (
                     inst

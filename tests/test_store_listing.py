@@ -707,7 +707,7 @@ def _reserved_with(service, backend):
     """`reserve` as the session calls it, handing back a service to capture through
     and a workspace that is up the moment it is asked."""
 
-    def reserve(url, key, iid=None):
+    def reserve(url, key, iid=None, **_kw):
         return service, "iid-1", ReadyStarter(backend, "iid-1")
 
     return reserve

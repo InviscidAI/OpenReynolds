@@ -223,7 +223,7 @@ def reserved(backend, instance_id="iid-1", **kwargs):
     session gets its workspace through, answered from memory. Returns what `reserve`
     returns -- no client, the instance id, a starter that resolves to `backend`."""
 
-    def reserve(url, key, iid=None):
+    def reserve(url, key, iid=None, **_kw):
         return None, instance_id, ReadyStarter(backend, instance_id, **kwargs)
 
     return reserve
@@ -233,7 +233,7 @@ def refusing_to_reserve(error=None):
     """A `reserve` against a service that is not there, for the tests that turn on
     what a session settles before it has a workspace."""
 
-    def reserve(url, key, iid=None):
+    def reserve(url, key, iid=None, **_kw):
         raise error or BackendError("no service in this test")
 
     return reserve

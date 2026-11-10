@@ -159,7 +159,7 @@ def test_saving_a_default_config_says_nothing_about_modes(clean_config):
 def _no_instance(monkeypatch, tmp_path, cfg=None):
     acquired = []
 
-    def reserve(url, key, iid):
+    def reserve(url, key, iid, **_kw):
         acquired.append(iid)
         raise BackendError("no service in this test")
 

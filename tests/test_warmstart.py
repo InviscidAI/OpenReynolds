@@ -741,7 +741,7 @@ def test_ending_during_the_start_with_keep_alive_leaves_it_to_the_reaper(
     assert time.monotonic() - t0 < 5.0
 
 
-def test_a_start_that_fails_tells_the_view_and_the_model_and_keeps_the_conversation(
+def test_a_start_that_fails_tells_the_view_and_holds_the_message_back_from_the_model(
     tmp_path, monkeypatch, quiet_console
 ):
     monkeypatch.setattr(pending_mod, "WAIT_CEILING_S", 10.0)
@@ -776,8 +776,12 @@ def test_a_start_that_fails_tells_the_view_and_the_model_and_keeps_the_conversat
     assert len(view.failed) == 1 and "no capacity" in view.failed[0], "it is said to have failed"
     (loop,) = loops
     assert backend.execs == [], "nothing ran"
-    assert any("unavailable" in e for e in view.tool_errors), "the tool call failed with the start's own error"
-    assert loop.fake.calls, "and the conversation went on"
+    # The refusal is all that is shown: a start that failed before the turn began
+    # holds the turn back, so the model is not asked to say it again in its own
+    # words (OpenReynolds#91, test_refused_start.py). The message is kept.
+    assert loop.fake.calls == [], "the model is not asked while the start has failed"
+    assert any(r["role"] == "user" and r["content"] == "go"
+               for r in loop.store.recent_messages(50)), "and the message is kept"
     assert backend.stopped == 0
 
 

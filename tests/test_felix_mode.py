@@ -114,7 +114,9 @@ def test_solver_openfoam_reserves_exactly_as_before(monkeypatch, tmp_path):
 
     assert len(calls) == 2
     for args, kwargs in calls:
-        assert len(args) == 3 and kwargs == {}
+        # Three positional arguments, and `fresh` for a new study (OpenReynolds#91); a
+        # stand-in that takes **kwargs, as ui's does, keeps working.
+        assert len(args) == 3 and kwargs == {"fresh": True}
 
 
 def test_solver_resume_keeps_the_stored_solver_and_ignores_a_different_flag(
@@ -332,6 +334,98 @@ def test_solver_reserve_creates_an_openfoam_workspace_as_before(monkeypatch):
     fleet, instance_id = _reserve(monkeypatch, rows)
     assert instance_id == "iid-new"
     assert fleet.created == [{}], "created exactly as before: no kind sent"
+
+
+# -- OpenReynolds#91: a workspace per study ----------------------------------------
+
+
+@pytest.mark.parametrize("solver, sent", [("openfoam", {}), ("felix", {"kind": "felix"})])
+def test_a_new_study_gets_a_workspace_of_its_own_even_when_one_is_running(monkeypatch, solver, sent):
+    """Two studies started a second apart both took the newest workspace and shared one
+    machine; a new study now makes its own, of its kind."""
+    fleet, instance_id = _reserve(monkeypatch, ROWS, solver=solver, fresh=True)
+    assert instance_id == "iid-new"
+    assert fleet.created == [sent]
+
+
+def test_a_new_study_never_shares_a_workspace_even_at_the_held_cap(monkeypatch):
+    """At the cap foamd refuses the new row, and the refusal is raised as it is: the
+    study does not join the newest workspace (OpenReynolds#91). The account's other
+    workspaces are not even listed."""
+    class Full(_Fleet):
+        def create_instance(self, **kwargs):
+            self.created.append(kwargs)
+            raise BackendError("this account may hold 200 workspace(s) ready at once and already has 200; "
+                               "one is released when its study has been idle for 3 day(s), or delete one",
+                               code="quota_exceeded", status=409)
+
+        def list_instances(self):
+            raise AssertionError("a new study needs no listing")
+
+    fleet = Full(ROWS)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: fleet)
+    with pytest.raises(BackendError) as refused:
+        hosted_mod.reserve("https://svc", "key", None, solver="felix", fresh=True)
+    assert refused.value.code == "quota_exceeded" and fleet.created == [{"kind": "felix"}]
+
+
+def test_any_other_refusal_of_the_new_workspace_is_raised(monkeypatch):
+    class Down(_Fleet):
+        def create_instance(self, **kwargs):
+            raise BackendError("payment required", code="allowance_exhausted", status=402)
+
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: Down(ROWS))
+    with pytest.raises(BackendError):
+        hosted_mod.reserve("https://svc", "key", None, fresh=True)
+
+
+def test_a_named_workspace_is_used_as_named_even_for_a_new_study(monkeypatch):
+    fleet = _Fleet(ROWS)
+    monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: fleet)
+    _client, instance_id, _starter = hosted_mod.reserve("https://svc", "key", "of-old", fresh=True)
+    assert instance_id == "of-old" and fleet.created == []
+
+
+def test_a_resume_reserves_as_it_always_did(monkeypatch, tmp_path):
+    """A resume goes back to the workspace its files are on, with the call it always made."""
+    calls, cfg = _no_service(monkeypatch, tmp_path, _stored(tmp_path, "openfoam"))
+    _said(monkeypatch)
+    with pytest.raises(SystemExit):
+        cli.session(cfg, study_id="study-x", instance_id=None, one_shot=None)
+    assert calls[0][0][2] == "iid-stored" and "fresh" not in calls[0][1]
+
+
+def test_a_resume_on_a_new_machine_goes_to_the_workspace_its_row_names(monkeypatch, tmp_path):
+    """With a workspace per study, the newest workspace is usually another study's; the
+    study's row says which one holds its files (OpenReynolds#91 review)."""
+    calls, cfg = _no_service(monkeypatch, tmp_path)
+    _said(monkeypatch)
+
+    def study_solver(url, key, study_id):
+        hosted_mod._study_instances[study_id] = "iid-of-the-study"
+        return "openfoam", True
+
+    monkeypatch.setattr(cli.hosted, "study_solver", study_solver)
+    with pytest.raises(SystemExit):
+        cli.session(cfg, study_id="20261108-120000-abcd", instance_id=None, one_shot=None)
+    assert calls[0][0][2] == "iid-of-the-study" and "fresh" not in calls[0][1]
+
+
+def test_study_solver_remembers_the_workspace_the_row_names(monkeypatch):
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def get_study(self, study_id):
+            return {"id": study_id, "solver": "felix", "instance_id": "iid-row"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(hosted_mod, "FoamdClient", Client)
+    assert hosted_mod.study_solver("https://svc", "key", "s1") == ("felix", True)
+    assert hosted_mod.study_instance("s1") == "iid-row"
+    assert hosted_mod.study_instance("never-read") is None
 
 
 def test_solver_recovered_from_the_platform_for_a_study_new_to_this_machine(tmp_path):
@@ -997,3 +1091,22 @@ def test_solver_read_from_the_platform(monkeypatch, answer, expected):
     monkeypatch.setattr(hosted_mod, "FoamdClient", lambda *a, **k: client)
     assert hosted_mod.study_solver("https://svc", "key", "s") == expected
     assert client.closed
+
+
+def test_a_resumed_study_with_no_workspace_on_record_gets_its_own():
+    """A study whose first workspace was refused has none on record; resuming it must
+    not join the account's newest (another study's). One with a workspace goes back to it."""
+    from types import SimpleNamespace
+    from openreynolds import cli
+    none = SimpleNamespace(session=SimpleNamespace(instance_id=""))
+    held = SimpleNamespace(session=SimpleNamespace(instance_id="ws-1"))
+    assert cli._needs_own_workspace(False, None, held), "a new study always does"
+    assert cli._needs_own_workspace(True, None, none)
+    assert not cli._needs_own_workspace(True, None, held)
+    assert not cli._needs_own_workspace(True, "ws-2", none), "a named workspace is used"
+
+
+@pytest.mark.parametrize("status, refusal", [(402, True), (403, True), (409, True), (503, False), (None, False)])
+def test_a_refusal_is_not_reported_as_an_outage(status, refusal):
+    from openreynolds import cli
+    assert cli._is_refusal(BackendError("no", code="x", status=status)) is refusal
