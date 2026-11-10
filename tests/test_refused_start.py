@@ -480,7 +480,10 @@ def test_a_resume_with_a_first_message_answers_once(monkeypatch, tmp_path):
 
     assert len(run.calls) == 1
     sent = run.calls[0]["messages"]
-    assert watch.AWAITING in sent[0]["content"] and sent[-1]["content"] == CAVITY
+    assert watch.AWAITING in sent[0]["content"]
+    # The retyped message is in this one turn. Not necessarily last: when the workspace
+    # comes up before the call, its ready note follows it (seen on CI, ubuntu 3.11).
+    assert [m["content"] for m in sent[1:]].count(CAVITY) == 1
 
 
 def test_the_platform_transcript_is_read_newest_first_in_one_call(monkeypatch, tmp_path):
