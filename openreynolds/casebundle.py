@@ -60,6 +60,13 @@ import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+CEILING_MB = 100
+"""The most a bundle is ever compressed to, even for the tier that goes regardless.
+
+Twice the service's artifact cap today. Past this the upload is refused anyway, so the
+rest is compression nobody receives -- and a GB-scale `0/` of nonuniform fields would
+otherwise be compressed in full, twice, at End (#82)."""
+
 BUDGET_MB = 40
 """How large a bundle may get, compressed.
 
@@ -203,9 +210,42 @@ def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
     return None
 
 
-def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+COMPRESSLEVEL = 6
+"""gzip's own default rather than tarfile's 9. Measured 2026-11-10 on 364 MB of a real
+study's logs and fields: level 9 took 13.8 s for 57 MB, level 6 took 7.1 s for 59 MB.
+Half the time for 3% more bytes, at a moment somebody is waiting on it."""
+
+
+class _TooBig(Exception):
+    """The archive being written has already passed its limit."""
+
+
+class _CappedBuffer(io.BytesIO):
+    """A BytesIO that refuses to grow past `limit` bytes.
+
+    gzip writes its output as it goes, so the moment the compressed archive crosses the
+    budget is the moment there is no point compressing the rest of it. Without this a
+    tier that could never fit was compressed in full before being thrown away: measured
+    2026-11-10 on a 3.4 GB study, 133 of the bundle's 134 seconds went to a tier that
+    was then left out, and on prod `close.capture_case` ran to ten minutes."""
+
+    def __init__(self, limit: int | None) -> None:
+        super().__init__()
+        self.limit = limit
+
+    def write(self, data) -> int:  # type: ignore[override]
+        n = super().write(data)
+        if self.limit is not None and self.tell() > self.limit:
+            raise _TooBig()
+        return n
+
+
+def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None,
+          limit: int | None = None) -> bytes:
+    """Pack `members` into a tar.gz; raise `_TooBig` as soon as it passes `limit`."""
+    buf = _CappedBuffer(limit)
+    tar = tarfile.open(fileobj=buf, mode="w:gz", compresslevel=COMPRESSLEVEL)
+    try:
         if manifest_bytes is not None:
             # Inside the archive rather than in the artifact's `meta`, on purpose. It
             # then needs no API change to carry (the upload route takes a `meta` form
@@ -221,7 +261,17 @@ def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None) 
                 tar.add(path, arcname=arcname, recursive=False)
             except OSError:
                 continue  # vanished under us; a backup is not worth failing a session
-    return buf.getvalue()
+    finally:
+        # Closed on every way out, with the limit lifted first: closing only flushes
+        # what gzip already holds and writes the trailer, and a stream left open --
+        # abandoned at the limit, or interrupted by Ctrl+C -- is closed by the garbage
+        # collector instead, which prints a traceback on the way out.
+        buf.limit = None
+        tar.close()
+    out = buf.getvalue()
+    if limit is not None and len(out) > limit:
+        raise _TooBig()  # the trailer, written with the limit lifted, crossed it
+    return out
 
 
 def build(root: Path, budget_mb: int = BUDGET_MB,
@@ -251,16 +301,24 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             by_tier[tier].append((path, str(path.relative_to(root)).replace("\\", "/")))
 
         budget = budget_mb * 1024 * 1024
+        ceiling = max(CEILING_MB, budget_mb) * 1024 * 1024
         taken: list[tuple[Path, str]] = []
         blob = b""
         for tier in TIERS:
             members = by_tier[tier]
             if not members:
                 continue
-            candidate = _pack(taken + members)
-            if len(candidate) > budget and taken:
+            try:
+                # The first tier travels past the budget (below), but not past the
+                # ceiling: beyond that the service refuses it anyway.
+                candidate = _pack(taken + members,
+                                  limit=budget if taken else ceiling)
+            except _TooBig:
                 report.skipped[tier] = (
                     f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
+                    if taken else
+                    f"{len(members)} file(s) come to more than {CEILING_MB} MB on their "
+                    "own, more than an upload may be"
                 )
                 continue
             if len(candidate) > budget and not taken:
