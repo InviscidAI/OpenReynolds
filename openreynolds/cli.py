@@ -3191,7 +3191,9 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
             if shutdown is not None:
                 with _timed("close.shutdown"):
                     shutdown()
-                for name in settle_after_shutdown(backend, store, report):
+                with _timed("close.settle"):
+                    settled = settle_after_shutdown(backend, store, report)
+                for name in settled:
                     console.print(f"[dim]{name} was still starting; it stopped with the instance[/]")
                 if not started_it_here:
                     console.print(
@@ -3221,12 +3223,6 @@ End -- what it means is that End is as it was before the route existed."""
 
 
 def _checkpoint_the_study(backend: Backend, store: Store) -> None:
-    """Timed wrapper; see `_checkpoint_now`."""
-    with _timed("close.checkpoint"):
-        _checkpoint_now(backend, store)
-
-
-def _checkpoint_now(backend: Backend, store: Store) -> None:
     """Copy this study's directory to the service's durable copy before End says the
     files are kept, and record what that established (OpenReynolds#51).
 
@@ -3247,7 +3243,8 @@ def _checkpoint_now(backend: Backend, store: Store) -> None:
     home = store.session.home or WORKSPACE_ROOT
     record: dict[str, Any] = {"asked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     try:
-        answer = checkpoint([home], timeout_s=END_CHECKPOINT_TIMEOUT_S)
+        with _timed("close.checkpoint"):
+            answer = checkpoint([home], timeout_s=END_CHECKPOINT_TIMEOUT_S)
     except BackendError as exc:
         if exc.status in UNSUPPORTED_CHECKPOINT:
             record["unsupported"] = True
@@ -3312,7 +3309,8 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
         return
     console.print("[dim]waiting for the workspace to come up so it can be put down again[/]")
     try:
-        live = backend.wait()
+        with _timed("close.wait_for_start"):
+            live = backend.wait()
     except BackendError as exc:
         console.print(f"[dim]the workspace did not start ({exc}), so there is nothing to stop[/]")
     else:
@@ -3334,7 +3332,8 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
             try:
                 shutdown = getattr(live, "shutdown", None)
                 if shutdown is not None:
-                    shutdown()
+                    with _timed("close.shutdown"):
+                        shutdown()
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
             except BackendError as exc:
                 console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")

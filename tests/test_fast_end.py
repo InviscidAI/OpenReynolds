@@ -13,7 +13,9 @@ Fix 2: the workspace is put down before the bundle is built, which needs nothing
 from __future__ import annotations
 
 import io
+import gc
 import os
+import sys
 import tarfile
 
 import pytest
@@ -27,6 +29,14 @@ from conftest import message, text_block
 def _incompressible(path, size):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(size))
+
+
+@pytest.fixture
+def unraisable(monkeypatch):
+    """What the garbage collector could not raise: an unclosed gzip stream's flush."""
+    seen: list = []
+    monkeypatch.setattr(sys, "unraisablehook", lambda u: seen.append(u.exc_value))
+    return seen
 
 
 @pytest.fixture
@@ -60,13 +70,12 @@ def test_a_tier_past_the_budget_is_abandoned_not_compressed_in_full(heavy, monke
         assert "case/system/controlDict" in tar.getnames()
 
 
-def test_an_abandoned_pack_raises_and_leaves_no_noise(heavy, capfd):
+def test_an_abandoned_pack_raises_and_leaves_no_noise(heavy, unraisable):
     members = [(p, p.name) for p in sorted((heavy / "case").glob("log.*"))]
     with pytest.raises(casebundle._TooBig):
         casebundle._pack(members, limit=512 * 1024)
-    import gc
     gc.collect()
-    assert "Exception ignored" not in capfd.readouterr().err
+    assert unraisable == []
 
 
 def test_a_pack_under_its_limit_is_a_whole_archive(heavy):
@@ -84,6 +93,44 @@ def test_the_first_tier_still_travels_past_the_budget(heavy):
     assert report.included[0] == "definition"
     assert report.oversized
     assert blob is not None and len(blob) > 1024 * 1024
+
+
+def test_a_first_tier_past_the_ceiling_is_not_compressed_in_full(heavy, monkeypatch):
+    """The first tier goes past the budget, but not past what an upload may be."""
+    monkeypatch.setattr(casebundle, "CEILING_MB", 1)
+    for i in range(40):
+        _incompressible(heavy / "case" / "system" / f"big{i:02d}", 256 * 1024)
+    added: list[str] = []
+    original = tarfile.TarFile.add
+
+    def counting(self, name, arcname=None, **kw):
+        added.append(arcname)
+        return original(self, name, arcname=arcname, **kw)
+
+    monkeypatch.setattr(tarfile.TarFile, "add", counting)
+    blob, report = casebundle.build(heavy, budget_mb=1)
+    assert len([a for a in added if a and "/big" in a]) < 10
+    assert "definition" in report.skipped
+    assert "more than an upload may be" in report.skipped["definition"]
+
+
+def test_an_interrupted_pack_is_closed_and_leaves_no_noise(heavy, monkeypatch, unraisable):
+    """Ctrl+C at End, mid-bundle: the stream is closed on the way out, not by the GC."""
+    original = tarfile.TarFile.add
+    count = []
+
+    def interrupted(self, *a, **kw):
+        count.append(1)
+        if len(count) == 3:
+            raise KeyboardInterrupt
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(tarfile.TarFile, "add", interrupted)
+    members = [(p, p.name) for p in sorted((heavy / "case").glob("log.*"))]
+    with pytest.raises(KeyboardInterrupt):
+        casebundle._pack(members, limit=512 * 1024)
+    gc.collect()
+    assert unraisable == []
 
 
 # -- the order of the close ----------------------------------------------------------

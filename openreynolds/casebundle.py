@@ -60,6 +60,13 @@ import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+CEILING_MB = 100
+"""The most a bundle is ever compressed to, even for the tier that goes regardless.
+
+Twice the service's artifact cap today. Past this the upload is refused anyway, so the
+rest is compression nobody receives -- and a GB-scale `0/` of nonuniform fields would
+otherwise be compressed in full, twice, at End (#82)."""
+
 BUDGET_MB = 40
 """How large a bundle may get, compressed.
 
@@ -254,15 +261,17 @@ def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None,
                 tar.add(path, arcname=arcname, recursive=False)
             except OSError:
                 continue  # vanished under us; a backup is not worth failing a session
-        tar.close()
-    except _TooBig:
-        # Abandoned. Closed all the same, with the limit lifted: that only flushes what
-        # gzip already holds and writes the trailer, and a stream left open is closed
-        # by the garbage collector instead, which prints a traceback on the way out.
+    finally:
+        # Closed on every way out, with the limit lifted first: closing only flushes
+        # what gzip already holds and writes the trailer, and a stream left open --
+        # abandoned at the limit, or interrupted by Ctrl+C -- is closed by the garbage
+        # collector instead, which prints a traceback on the way out.
         buf.limit = None
         tar.close()
-        raise
-    return buf.getvalue()
+    out = buf.getvalue()
+    if limit is not None and len(out) > limit:
+        raise _TooBig()  # the trailer, written with the limit lifted, crossed it
+    return out
 
 
 def build(root: Path, budget_mb: int = BUDGET_MB,
@@ -292,6 +301,7 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             by_tier[tier].append((path, str(path.relative_to(root)).replace("\\", "/")))
 
         budget = budget_mb * 1024 * 1024
+        ceiling = max(CEILING_MB, budget_mb) * 1024 * 1024
         taken: list[tuple[Path, str]] = []
         blob = b""
         for tier in TIERS:
@@ -299,11 +309,16 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             if not members:
                 continue
             try:
-                # Uncapped for the first tier: it travels whatever its size (below).
-                candidate = _pack(taken + members, limit=budget if taken else None)
+                # The first tier travels past the budget (below), but not past the
+                # ceiling: beyond that the service refuses it anyway.
+                candidate = _pack(taken + members,
+                                  limit=budget if taken else ceiling)
             except _TooBig:
                 report.skipped[tier] = (
                     f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
+                    if taken else
+                    f"{len(members)} file(s) come to more than {CEILING_MB} MB on their "
+                    "own, more than an upload may be"
                 )
                 continue
             if len(candidate) > budget and not taken:
