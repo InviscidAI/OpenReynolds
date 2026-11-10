@@ -1943,17 +1943,25 @@ def session(
                 with _timed("close.final_sync"):
                     _final_sync(live_mirror, ConsoleView(console))
                 pickup.result()
-        if capture:
-            with _timed("close.capture_case"):
-                _capture_the_case(capture, store, ConsoleView(console))
-            with _timed("close.capture_close"):
-                capture.close()
+        # The workspace goes down before the case is bundled, not after: the bundle is
+        # built from the local copy the sync just finished, so it needs nothing from
+        # the workspace, and it was the slowest step of the close -- ten minutes on
+        # prod at worst (#82). Bundled first, it held up the stop, and with it a
+        # person waiting on the web app to start their next study.
         if never_started:
             console.print(f"\n[dim]this study's files are in {store.dir}[/]")
             console.print(f"[dim]  resume: openreynolds --study {store.session.study_id}[/]")
-        else:
-            with _timed("close.close_down"):
-                _close_down(backend, store, keep_alive=keep_alive)
+        try:
+            if not never_started:
+                with _timed("close.close_down"):
+                    _close_down(backend, store, keep_alive=keep_alive)
+        finally:
+            # Still bundled if the close-down failed: the files are home either way.
+            if capture:
+                with _timed("close.capture_case"):
+                    _capture_the_case(capture, store, ConsoleView(console))
+                with _timed("close.capture_close"):
+                    capture.close()
         with _timed("close.backend_close"):
             backend.close()
         if stream is not None:
@@ -2800,11 +2808,12 @@ def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     copy -- which on that same day stood at 30.8 GB against a 20 GB quota with a live
     study unable to write (F-56).
 
-    It runs after `_final_sync` and before `capture.close()`, and both halves of that
-    matter. After the sync, because the bundle is built from the local mirror rather
-    than from the instance: the files are already here, so this costs no network and
-    cannot stall behind a workspace being torn down. Before the close, because `close`
-    is what drains the queue -- and the drain is bounded, so a bundle queued after it
+    It runs after `_final_sync` and `_close_down`, and before `capture.close()`, and
+    each of those matters. After the sync, because the bundle is built from the local
+    mirror rather than from the instance: the files are already here, so this costs no
+    network. After the close-down, because nothing here needs the workspace, so it is
+    not kept up while this runs (#82). Before the close, because `close` is what drains
+    the queue -- and the drain is bounded, so a bundle queued after it
     would be dropped without ever being attempted.
 
     Never raises. `build` returns a report rather than throwing, the upload goes
@@ -3084,16 +3093,21 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
     # Scoped to this study's own directory: the sweep still catches mpirun ranks that
     # outlived their job's process group, which is why it exists, and can no longer
     # reach a solve another session is running on the same instance.
-    report = stop_everything(backend, store, home=home)
+    # Each part timed on its own (#82): the close-down as a whole is up to 90 s on prod
+    # and nobody knew which part.
+    with _timed("close.stop_jobs"):
+        report = stop_everything(backend, store, home=home)
     for line in report.lines():
         console.print(f"  [{'green' if report.clean else 'yellow'}]{line}[/]")
 
-    running = _still_running_on_the_instance(backend, store)
+    with _timed("close.active_jobs"):
+        running = _still_running_on_the_instance(backend, store)
     scoped = str(home).rstrip("/") != WORKSPACE_ROOT
     # Only asked when the answer could change something: a session that can already see
     # somebody's job running on it is leaving it up either way, and the probe is a round
     # trip to a container that is about to be let go of.
-    neighbours = _neighbour_work(backend, home) if not running else []
+    with _timed("close.neighbours"):
+        neighbours = _neighbour_work(backend, home) if not running else []
     unanswered = neighbours is None
     """The probe could not be run at all. Not an answer, and above all not the answer
     "nobody is here" -- see `_neighbour_work`."""
@@ -3175,7 +3189,8 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
         try:
             shutdown = getattr(backend, "shutdown", None)
             if shutdown is not None:
-                shutdown()
+                with _timed("close.shutdown"):
+                    shutdown()
                 for name in settle_after_shutdown(backend, store, report):
                     console.print(f"[dim]{name} was still starting; it stopped with the instance[/]")
                 if not started_it_here:
@@ -3206,6 +3221,12 @@ End -- what it means is that End is as it was before the route existed."""
 
 
 def _checkpoint_the_study(backend: Backend, store: Store) -> None:
+    """Timed wrapper; see `_checkpoint_now`."""
+    with _timed("close.checkpoint"):
+        _checkpoint_now(backend, store)
+
+
+def _checkpoint_now(backend: Backend, store: Store) -> None:
     """Copy this study's directory to the service's durable copy before End says the
     files are kept, and record what that established (OpenReynolds#51).
 

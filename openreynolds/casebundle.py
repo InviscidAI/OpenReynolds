@@ -203,9 +203,42 @@ def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
     return None
 
 
-def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+COMPRESSLEVEL = 6
+"""gzip's own default rather than tarfile's 9. Measured 2026-11-10 on 364 MB of a real
+study's logs and fields: level 9 took 13.8 s for 57 MB, level 6 took 7.1 s for 59 MB.
+Half the time for 3% more bytes, at a moment somebody is waiting on it."""
+
+
+class _TooBig(Exception):
+    """The archive being written has already passed its limit."""
+
+
+class _CappedBuffer(io.BytesIO):
+    """A BytesIO that refuses to grow past `limit` bytes.
+
+    gzip writes its output as it goes, so the moment the compressed archive crosses the
+    budget is the moment there is no point compressing the rest of it. Without this a
+    tier that could never fit was compressed in full before being thrown away: measured
+    2026-11-10 on a 3.4 GB study, 133 of the bundle's 134 seconds went to a tier that
+    was then left out, and on prod `close.capture_case` ran to ten minutes."""
+
+    def __init__(self, limit: int | None) -> None:
+        super().__init__()
+        self.limit = limit
+
+    def write(self, data) -> int:  # type: ignore[override]
+        n = super().write(data)
+        if self.limit is not None and self.tell() > self.limit:
+            raise _TooBig()
+        return n
+
+
+def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None,
+          limit: int | None = None) -> bytes:
+    """Pack `members` into a tar.gz; raise `_TooBig` as soon as it passes `limit`."""
+    buf = _CappedBuffer(limit)
+    tar = tarfile.open(fileobj=buf, mode="w:gz", compresslevel=COMPRESSLEVEL)
+    try:
         if manifest_bytes is not None:
             # Inside the archive rather than in the artifact's `meta`, on purpose. It
             # then needs no API change to carry (the upload route takes a `meta` form
@@ -221,6 +254,14 @@ def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None) 
                 tar.add(path, arcname=arcname, recursive=False)
             except OSError:
                 continue  # vanished under us; a backup is not worth failing a session
+        tar.close()
+    except _TooBig:
+        # Abandoned. Closed all the same, with the limit lifted: that only flushes what
+        # gzip already holds and writes the trailer, and a stream left open is closed
+        # by the garbage collector instead, which prints a traceback on the way out.
+        buf.limit = None
+        tar.close()
+        raise
     return buf.getvalue()
 
 
@@ -257,8 +298,10 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             members = by_tier[tier]
             if not members:
                 continue
-            candidate = _pack(taken + members)
-            if len(candidate) > budget and taken:
+            try:
+                # Uncapped for the first tier: it travels whatever its size (below).
+                candidate = _pack(taken + members, limit=budget if taken else None)
+            except _TooBig:
                 report.skipped[tier] = (
                     f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
                 )
