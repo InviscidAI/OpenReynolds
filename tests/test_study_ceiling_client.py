@@ -40,7 +40,7 @@ from openreynolds.config import Config
 from openreynolds.llm.base import ProviderError
 from openreynolds.loop import Loop
 from openreynolds.tools import ToolContext, dispatch
-from openreynolds.watch import Wake, _collect_finished, _job_report
+from openreynolds.watch import FinishedJob, Wake, _collect_finished
 from test_cli import finishing_jobs
 
 pytestmark = pytest.mark.usefixtures("fast_polling")
@@ -574,12 +574,13 @@ def test_a_felix_job_refused_at_the_ceiling_stops_when_declined(tmp_path, backen
     _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
 
-    _answer, is_error = dispatch(ctx, "job_check", {"job_id": job_id})
+    answer, is_error = dispatch(ctx, "job_check", {"job_id": job_id})
 
     assert not is_error
     assert [question[1] for question in view.questions] == ["ceiling"]
     assert foamd.caps_posted == []
     assert ctx.stopped and "1.6x" in ctx.stopped and "$" not in ctx.stopped
+    assert "ceiling was not raised" in answer.lower()
 
     dispatch(ctx, "job_check", {"job_id": job_id})
     assert len(view.questions) == 1, "the same job is put to the person only once"
@@ -684,15 +685,18 @@ def test_a_finished_felix_pause_is_put_to_the_person_before_watch_wakes_the_mode
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
     _finished_paused_felix_job(ctx, backend, store, foamd)
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    wake = cli._finished_job_wake(loop, view, report)
+    wake = cli._finished_job_wake(loop, view, report, tuple(finished))
 
     assert wake is None
     assert [question[1] for question in view.questions] == ["ceiling"]
     assert loop.blocked_reason == ctx.stopped
     assert any(ctx.stopped in notice for notice in view.notices)
     assert any(ctx.stopped in str(message["content"]) for message in loop.messages)
+    assert "409 study_paused" in str(loop.messages[-2]["content"])
+    assert ctx.stopped in str(loop.messages[-1]["content"])
 
 
 def test_an_unhandled_finished_refusal_is_retried_before_the_next_turn(
@@ -702,9 +706,10 @@ def test_an_unhandled_finished_refusal_is_retried_before_the_next_turn(
     loop, ctx, view, store = _session(tmp_path, foamd, "/yes", backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
     foamd.spent_cents = None
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    assert cli._finished_job_wake(loop, view, report) == report
+    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
     assert store.session.jobs[job_id].ceiling_pause_handled is False
 
     foamd.spent_cents = 800
@@ -721,9 +726,10 @@ def test_a_raised_ceiling_is_in_the_watch_report_the_model_receives(tmp_path, ba
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     loop, ctx, view, store = _session(tmp_path, foamd, "/yes", backend=backend)
     _finished_paused_felix_job(ctx, backend, store, foamd)
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    wake = cli._finished_job_wake(loop, view, report)
+    wake = cli._finished_job_wake(loop, view, report, tuple(finished))
 
     assert wake is not None and "ceiling was raised" in wake
     assert "409 study_paused" in wake
@@ -779,9 +785,10 @@ def test_unrelated_failed_output_cannot_trigger_the_ceiling_question(tmp_path, b
     backend.jobs[job_id] = JobStatus(
         job_id=job_id, status="exited", name="grep", exit_code=1, log_size=17,
     )
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    assert cli._finished_job_wake(loop, view, report) == report
+    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
     assert view.questions == []
 
 
@@ -798,10 +805,12 @@ def test_felix_prose_without_a_rejected_final_status_cannot_ask(tmp_path, backen
         job_id=job_id, status="exited", name="cavity", exit_code=1,
         log_size=len(log),
     )
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    assert cli._finished_job_wake(loop, view, report) == report
+    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
     assert view.questions == []
+    assert store.session.jobs[job_id].ceiling_pause_handled is False
 
 
 def test_a_felixd_rejection_is_not_foamd_refusing_the_study(tmp_path, backend):
@@ -817,10 +826,92 @@ def test_a_felixd_rejection_is_not_foamd_refusing_the_study(tmp_path, backend):
         job_id=job_id, status="exited", name="cavity", exit_code=1,
         log_size=len(log),
     )
-    report = _collect_finished(backend, store, view)
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
 
-    assert cli._finished_job_wake(loop, view, report) == report
+    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
     assert view.questions == []
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+
+
+def test_a_known_non_refusal_final_status_is_not_rechecked_before_every_turn(
+    tmp_path, backend, monkeypatch
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    cmd = "felix run cavity --gpu H100"
+    job_id = backend.job_start(cmd, cwd="/work", name="cavity")
+    store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work")
+    log = b'{"state":"failed","error":"out_of_memory"}\n'
+    backend.logs[job_id] = log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", exit_code=1,
+        log_size=len(log),
+    )
+    finished = []
+    report = _collect_finished(backend, store, view, finished)
+
+    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+
+    def unexpected_status(*_args, **_kwargs):
+        raise AssertionError("the accounted-for final status must not be read again")
+
+    monkeypatch.setattr(backend, "job_status", unexpected_status)
+    assert cli._pending_finished_felix_jobs(loop, view) == ""
+
+
+def test_pending_pause_checks_do_not_wait_for_a_workspace_still_starting(
+    tmp_path, backend, monkeypatch
+):
+    from openreynolds.backend.pending import PendingBackend
+
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
+    job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
+    status = backend.job_status(job_id)
+    store.update_job(job_id, status=status.status, exit_code=status.exit_code)
+    pending = PendingBackend("inst-1")
+    ctx.backend = pending
+
+    def unexpected_status(*_args, **_kwargs):
+        raise AssertionError("a pre-turn check must not wait on PendingBackend")
+
+    monkeypatch.setattr(pending, "job_status", unexpected_status)
+    assert cli._pending_finished_felix_jobs(loop, view) == ""
+    assert store.session.jobs[job_id].ceiling_pause_handled is False
+
+
+def test_a_later_declined_pause_keeps_notes_from_earlier_finished_jobs(
+    tmp_path, backend, monkeypatch
+):
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, _store = _session(tmp_path, foamd, backend=backend)
+    first = SimpleNamespace(job_id="first")
+    second = SimpleNamespace(job_id="second")
+    results = iter([
+        ceiling.JobPauseResolution(handled=True, note="the first note"),
+        ceiling.JobPauseResolution(
+            decision=False, handled=True, note="the second note"
+        ),
+    ])
+
+    def handle(*_args, **_kwargs):
+        result = next(results)
+        if result.decision is False:
+            ctx.stopped = "the study stopped here"
+        return result
+
+    monkeypatch.setattr(ceiling, "handle_finished_felix_job", handle)
+    observations = (
+        FinishedJob(first, SimpleNamespace(), None),
+        FinishedJob(second, SimpleNamespace(), None),
+    )
+
+    assert cli._finished_job_wake(loop, view, "both jobs finished", observations) is None
+    assert "the first note" in str(loop.messages[-2]["content"])
+    assert "the second note" in str(loop.messages[-2]["content"])
+    assert "the study stopped here" in str(loop.messages[-1]["content"])
 
 
 def test_one_shot_returns_failed_when_the_person_stops_at_a_job_pause(
@@ -831,10 +922,9 @@ def test_one_shot_returns_failed_when_the_person_stops_at_a_job_pause(
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
 
     def finish(*_args, **_kwargs):
-        status = backend.job_status(job_id)
-        store.update_job(job_id, status=status.status, end_reason=status.end_reason,
-                         exit_code=status.exit_code)
-        return Wake("job", _job_report(backend, status, store.session.jobs[job_id]))
+        finished = []
+        report = _collect_finished(backend, store, view, finished)
+        return Wake("job", report, tuple(finished))
 
     monkeypatch.setattr(cli, "_run_turn", lambda *_args: True)
     monkeypatch.setattr(cli, "watch", finish)

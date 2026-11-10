@@ -412,8 +412,9 @@ object carries `v` (the schema), `type`, `at` (seconds since the session started
 The first object is always `session_start`, with `study_id`, `instance_id`, `model` and
 the local study directory -- `study_id` is what `--study <id>` takes to resume. The
 stream always ends with exactly one `session_end`, carrying the same outcome the exit
-code means: `ok`, `failed`, `timeout`, or `crashed` for an exception that escaped the
-session. A failure before the session could start is that one object and nothing else,
+code means: `ok`, `failed`, `timeout`, `refused` (the workspace could not be started --
+a plan limit, a quota, a study paused at its ceiling -- so the model was not asked; exit
+code `1`), or `crashed` for an exception that escaped the session. A failure before the session could start is that one object and nothing else,
 with an `error` and an outcome of `config` (something is missing from the
 configuration) or `unreachable` (the workspace service could not be reached) -- the
 three cases exit code `1` alone cannot tell apart. In between:

@@ -148,6 +148,10 @@ _CLEARED_JOB_NOTE = (
     "The study is no longer paused at its ceiling. This refused job is "
     "finished; no replacement solve was started."
 )
+_STOPPED_JOB_NOTE = (
+    "The ceiling was not raised. This refused job is finished; no replacement "
+    "solve was started."
+)
 
 
 def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
@@ -164,10 +168,15 @@ def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
     a later read because the final status or study row was incomplete.
     """
     status = getattr(facts, "status", None)
-    if not isinstance(status, dict) or status.get("state") != "refused":
+    if not isinstance(status, dict):
         return None, False, ""
-    if status.get("status") != 409 or status.get("error") != STUDY_PAUSED:
-        return None, False, ""
+    if (status.get("state") != "refused"
+            or status.get("status") != 409
+            or status.get("error") != STUDY_PAUSED):
+        # A final status was read and it is not foamd's ceiling refusal. There is
+        # nothing a later read can discover about this finished job, so account for
+        # it now instead of polling it before every later model turn.
+        return None, True, ""
     service = getattr(ctx, "ceiling", None)
     row = service.study() if service is not None else None
     if not isinstance(row, dict):
@@ -206,7 +215,22 @@ def resolve_job_pause(ctx: Any, facts: Any) -> JobPauseResolution:
     return JobPauseResolution(
         decision=decision,
         handled=handled,
-        note=_RAISED_JOB_NOTE if decision else "",
+        note=_RAISED_JOB_NOTE if decision else _STOPPED_JOB_NOTE,
+    )
+
+
+def finished_felix_job_needs_pause_check(record: Any, status: Any) -> bool:
+    """Whether one persisted Felix solve can still carry a ceiling refusal."""
+    from .felix_progress import is_felix_cmd
+
+    state = getattr(status, "status", "")
+    running = getattr(status, "running", state == "running")
+    return bool(
+        record is not None
+        and not running
+        and getattr(status, "exit_code", None) not in (None, 0)
+        and not getattr(record, "ceiling_pause_handled", False)
+        and is_felix_cmd(getattr(record, "cmd", ""))
     )
 
 
@@ -214,13 +238,7 @@ def handle_finished_felix_job(
     ctx: Any, record: Any, status: Any, facts: Any
 ) -> JobPauseResolution:
     """Account for a failed Felix solve once, for both tool and watch paths."""
-    from .felix_progress import is_felix_cmd
-
-    if (record is None
-            or getattr(status, "running", False)
-            or getattr(status, "exit_code", None) in (None, 0)
-            or getattr(record, "ceiling_pause_handled", False)
-            or not is_felix_cmd(getattr(record, "cmd", ""))):
+    if not finished_felix_job_needs_pause_check(record, status):
         return JobPauseResolution()
     result = resolve_job_pause(ctx, facts)
     if result.handled:
