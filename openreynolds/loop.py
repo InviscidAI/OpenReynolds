@@ -72,6 +72,22 @@ NOT_RUN_STOPPED = ("This call did not run: the study met its spending ceiling an
 the study's ceiling and the person did not raise it (`ceiling.resolve`)."""
 
 
+class StartRefused(Exception):
+    """The study's workspace could not be started, so the model was not asked.
+
+    Raised by `Loop.run` before the first request of a turn when the session's start
+    has failed (`Loop.start_refused`): a plan limit, a quota, a study paused at its
+    ceiling, a start that errored. The person's message is already in the thread and
+    the transcript; the refusal is what they are shown, and nothing is spent on the
+    model to say it again in other words (`cli._run_turn` handles it). A turn that is
+    already running when the start fails is not stopped by this -- only the next one
+    is not begun."""
+
+    def __init__(self, error: Exception):
+        super().__init__(str(error))
+        self.error = error
+
+
 class Loop:
     """One conversation thread against one workspace."""
 
@@ -143,6 +159,13 @@ class Loop:
         study whose solver is known, which is every study once this has run."""
         self.routed: str | None = None
         """The briefing `route_ahead` already wrote, waiting for the first message."""
+        self.start_refused: Callable[[], Exception | None] | None = None
+        """Why the session's workspace start failed, asked before a turn's first
+        request; None while it is coming or is here (`cli._start_refused`). None
+        itself for a session with nothing to start (a local workspace)."""
+        self.start_refusal: str | None = None
+        """What the last refused turn was refused with (`StartRefused`), for a
+        one-shot run to end on. Cleared by a turn that runs."""
 
         headers = {"X-Study-Id": store.session.study_id}
         # Without a timeout a stalled connection is indistinguishable from a model
@@ -372,6 +395,16 @@ class Loop:
                 getattr(self.ctx, "solver", None) == solvers.AUTO and self.router is not None
             ):
                 self._route()
+            refused = self.start_refused() if self.start_refused is not None else None
+            if refused is not None:
+                # The workspace will not come, so neither does an answer: the person
+                # is shown the refusal, and the model is not asked to repeat it. What
+                # the start said in the thread is put there now, so the transcript
+                # carries it beside the message it held back.
+                self._drain_posted()
+                self.start_refusal = str(refused)
+                raise StartRefused(refused)
+            self.start_refusal = None
             return self._turns()
         finally:
             with self._posted_lock:
@@ -938,7 +971,10 @@ class Loop:
             "workspace is untouched and this session continues. Anything you want to "
             "carry forward can go on disk now; the next message starts a fresh thread."
         )
-        self.run()
+        try:
+            self.run()
+        except StartRefused:
+            pass  # nothing can be put on disk without a workspace; the thread goes on
         self.restart(blurb)
         # A switch that was waiting for a smaller thread can go ahead at the next run.
         self.refresh_due = False

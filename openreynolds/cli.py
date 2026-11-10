@@ -34,7 +34,7 @@ from .config import ACCOUNT_PAGE_URL, Config, config_path
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
-from .loop import Loop, forwarded_note
+from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
@@ -46,7 +46,8 @@ from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
-from .watch import NOTHING, LineReader, NullReader, situation, watch
+from .watch import (NOTHING, LineReader, NullReader, conversation_rows, earlier_conversation,
+                    situation, watch)
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
@@ -1437,6 +1438,13 @@ def session(
         # of one row, and it needs no workspace, so it is not waited for.
         with _timed("recover_session"):
             _recover_session(store, client, study_id)
+    earlier = None
+    """The conversation this study had before this session, for the resume briefing
+    (`watch.earlier_conversation`). Read here, before this session has recorded a
+    row of its own, so nothing it says is briefed back to it."""
+    if resuming:
+        with _timed("earlier_conversation"):
+            earlier = _earlier_conversation(store, client)
     # Which directory is this study's is decided from what this machine knows; making
     # it is the one part that needs the workspace, and for a workspace still coming
     # up that part waits with everything else (`_bring_up`).
@@ -1572,6 +1580,11 @@ def session(
         with _timed("view_workspace"):
             view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        if pending is not None:
+            # A turn is not begun while the workspace start has failed: the person is
+            # shown the refusal and the model is not asked (`Loop.run`, `_run_turn`).
+            # `starter` is read when asked, so a solver routed later is covered.
+            loop.start_refused = lambda: _start_refused(pending, starter)
         # The side chat: `/btw <question>` answered by a fork of this loop's last
         # request, apart from the conversation (`desk.SideChat`). Off without a key or
         # when disabled; a one-shot run has nobody to ask one.
@@ -1674,6 +1687,7 @@ def session(
                     preferences=cfg.preferences,
                     mode=ctx.mode,
                     starting_eta_s=cfg.workspace_eta_s if pending is not None else None,
+                    earlier=earlier,
                 )
             with _timed("loop_brief"):
                 loop.brief(briefing)
@@ -1771,7 +1785,7 @@ def session(
                     briefing = _situation_brief(
                         store, backend, resuming, interactive=not one_shot,
                         preferences=cfg.preferences, mode=ctx.mode,
-                        starting_eta_s=cfg.workspace_eta_s,
+                        starting_eta_s=cfg.workspace_eta_s, earlier=earlier,
                     )
                 head, _, rest = briefing.partition("\n")
                 lines = [head, routed_line(chosen)]
@@ -1809,6 +1823,10 @@ def session(
                     loop, backend, store, view, browser, reader,
                     live=live_mirror, progress=tracker, side=side,
                     cad=ctx.cad,
+                    # A resume whose earlier messages were never answered answers
+                    # them first, without waiting for the person to ask again. Not
+                    # for a study still choosing its solver: that waits for a message.
+                    answer_first=bool(earlier and earlier.unanswered and not routing),
                 )
         except KeyboardInterrupt:
             view.info(_interrupt_note(keep_alive))
@@ -1929,10 +1947,14 @@ def session(
     return outcome
 
 
-ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2, "crashed": 1}
+ONE_SHOT_EXIT_CODES = {"ok": 0, "failed": 1, "timeout": 2, "crashed": 1, "refused": 1}
 """What a `-p` run's ending means to the shell that started it. Documented in the
 README, so a script can tell "the model could not be reached" from "the solve is
 still going" without parsing the output.
+
+`refused` is a run whose workspace could not be started (a plan limit, a quota, a
+study paused at its ceiling): the model was not asked, or its answer could not be
+acted on, and the refusal is what the run says.
 
 `crashed` normally leaves by the exception itself rather than through this table --
 the traceback is worth more than a tidy exit -- and it is mapped anyway so that an
@@ -1966,6 +1988,85 @@ def _kind(solver: str) -> dict[str, str]:
     """`solver=` for the calls that take one, given only for Felix: an OpenFOAM study
     makes exactly the calls it always made, and the service's default is OpenFOAM."""
     return {"solver": solver} if solver == solvers.FELIX else {}
+
+
+EARLIER_ROWS = 2000
+"""How many of a study's last conversation rows a resume reads: far more than the
+briefing's budget can hold (`watch.CONVERSATION_BUDGET_CHARS`), so the budget decides."""
+
+PLATFORM_PAGES = 20
+"""How many pages of the platform's transcript a resume reads at most when this
+machine has none of its own (`_platform_conversation`): 2,000 rows a page."""
+
+
+def _earlier_conversation(store: Store, client: Any) -> Any:
+    """The conversation a resumed study had, for its briefing; None for none.
+
+    The study's own transcript, `messages.jsonl`, when this machine has it: the
+    machine that ran the study, and the hosted runner, which has the study's
+    directory before the session starts (on the shared volume, or pulled from the
+    studies bucket for a disk that never held it). A machine that never held the
+    study has no transcript of it, and reads the one the platform captured instead.
+    Never raises: a resume without its conversation is the resume there always was."""
+    try:
+        rows = store.recent_messages(EARLIER_ROWS, roles=("user", "assistant"))
+    except Exception:  # noqa: BLE001 - see docstring
+        rows = []
+    if not conversation_rows(rows) and client is not None and store.session.remote_study_id:
+        rows = _platform_conversation(client, store.session.remote_study_id)
+    conversation = earlier_conversation(rows)
+    return conversation if conversation.text else None
+
+
+def _platform_conversation(client: Any, study_id: str) -> list[dict[str, Any]]:
+    """The study's transcript as the platform captured it (`GET /v1/studies/{id}/
+    messages`), oldest first; empty when it cannot be read -- an older service, no
+    network, a stand-in client without the route."""
+    read = getattr(client, "list_messages", None)
+    if read is None:
+        return []
+    rows: list[dict[str, Any]] = []
+    after = -1
+    try:
+        for _ in range(PLATFORM_PAGES):
+            page = read(study_id, after=after)
+            if not isinstance(page, dict):
+                break
+            batch = [row for row in page.get("messages") or [] if isinstance(row, dict)]
+            rows.extend(batch)
+            if not page.get("more") or not batch:
+                break
+            after = max(int(row.get("seq") or 0) for row in batch)
+    except Exception:  # noqa: BLE001 - see docstring
+        return rows
+    return rows
+
+
+def _start_refused(pending: PendingBackend, starter: Any) -> BackendError | None:
+    """Why the session's workspace could not be started, when it could not; None while
+    it is coming or is here (`Loop.start_refused`).
+
+    A refusal comes back fast -- the staging 403 for a plan limit answered in the same
+    second the start was sent -- and the person's first message often arrives as fast,
+    queued by the page before the session began. So a turn asked for within
+    `START_GRACE_S` of the start waits out the rest of that window for the answer;
+    after it the model runs ahead of the workspace as it always has."""
+    if pending.ready():
+        return None
+    if not pending.ready_event.is_set() and starter is not None:
+        try:
+            left = START_GRACE_S - float(getattr(starter, "elapsed_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            left = 0.0
+        if left > 0:
+            pending.ready_event.wait(left)
+    return pending.error
+
+
+START_GRACE_S = 2.0
+"""How long after its start a turn waits for the workspace's answer before running
+ahead of it (`_start_refused`). A refusal is a single round trip to the service; a
+start that succeeds takes a minute, and this is all of it the model waits."""
 
 
 def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
@@ -2247,6 +2348,7 @@ def _situation_brief(
     preferences: str = "",
     mode: str = "auto",
     starting_eta_s: float | None = None,
+    earlier: Any = None,
 ) -> str:
     """Facts about this session, assembled by the harness.
 
@@ -2270,6 +2372,10 @@ def _situation_brief(
         # resume ahead of its workspace cannot do yet: there it says what the study
         # recorded, and the ready note re-reads it.
         lines.append(situation(store, None if waiting else backend))
+        # And what was said, which a fresh thread otherwise knows nothing of
+        # (`watch.earlier_conversation`; read by `session` before it records anything).
+        if earlier is not None and getattr(earlier, "text", ""):
+            lines.append(earlier.text)
     else:
         lines.append(f"study {store.session.study_id} on instance {store.session.instance_id}.")
     if starting_eta_s is not None:
@@ -2450,18 +2556,17 @@ def _bring_up(
             with _timed("workspace_start"):
                 live = starter.result()
         except BackendError as exc:
-            pending.fail(exc)
-            tracker.workspace_ready()
-            console.print(f"[red]Could not start the workspace:[/] {exc}")
-            view.notice(f"the workspace could not be started: {exc}")
-            _say_workspace_failed(view, str(exc))
+            # Said to the thread before the promise is failed: a turn that finds the
+            # start failed is not begun (`Loop.run`), and it puts what was said here
+            # in the transcript as it holds the person's message back.
             if ceiling.paused(exc) is not None:
                 # The study is paused at its ceiling (a resumed study names itself on
                 # the start, and foamd judges the start against it). That is the one
-                # refusal a raise mends: the next call that waits on the workspace
-                # puts it to the person (`tools._handled`), and once it is raised the
-                # start is sent again (`_start_again`), so the call goes to a
-                # workspace that is coming instead of to this stored error again.
+                # refusal a raise mends: the next turn, or a call that waits on the
+                # workspace, puts it to the person (`_run_turn`, `tools._handled`),
+                # and once it is raised the start is sent again (`_start_again`), so
+                # the turn goes ahead of a workspace that is coming instead of
+                # meeting this stored error again.
                 loop.ctx.on_ceiling_raised = lambda: _start_again(
                     pending, starter, store, view, loop, tracker, browser, resuming,
                 )
@@ -2471,11 +2576,16 @@ def _bring_up(
                     "asks the person to raise the ceiling, and the workspace is "
                     "started again once it is raised."
                 )
-                return
-            loop.post(
-                f"The workspace could not be started ({exc}). Every tool call will "
-                "fail with that error until the session is resumed."
-            )
+            else:
+                loop.post(
+                    f"The workspace could not be started ({exc}). Every tool call will "
+                    "fail with that error until the session is resumed."
+                )
+            pending.fail(exc)
+            tracker.workspace_ready()
+            console.print(f"[red]Could not start the workspace:[/] {exc}")
+            view.notice(f"the workspace could not be started: {exc}")
+            _say_workspace_failed(view, str(exc))
             return
         if getattr(live, "was_already_running", False):
             console.print(_join_notice(pending.instance_id, getattr(live, "instances_held", 0)))
@@ -3512,6 +3622,8 @@ def _run_turn(loop: Loop, view: View) -> bool:
             loop.blocked_reason = getattr(getattr(loop, "ctx", None), "stopped", None)
             loop.images_dropped = False
             return True
+        except StartRefused as refused:
+            return _refused_turn(loop, view, refused.error)
         except ProviderError as exc:
             pause = ceiling.paused(exc)
             if pause is not None:
@@ -3634,6 +3746,32 @@ def _run_turn(loop: Loop, view: View) -> bool:
     return False
 
 
+def _refused_turn(loop: Any, view: View, error: Exception) -> bool:
+    """A turn that was not begun because the workspace could not be started. Returns
+    whether a turn ran after all -- only after the person raised the ceiling of a
+    study paused at it, when the start is sent again and the turn goes ahead of it.
+
+    Otherwise the refusal is all that is shown: the person's message stays in the
+    thread and the transcript, the model is not asked to say the refusal again in
+    its own words, and nothing is sent until the person speaks again -- which asks the
+    same question, so a resumed study is where the message is answered."""
+    ctx = getattr(loop, "ctx", None)
+    if ceiling.paused(error) is not None and ctx is not None:
+        if ceiling.resolve(ctx, error):
+            return _run_turn(loop, view)
+    reason = getattr(ctx, "stopped", None) or f"the workspace could not be started: {error}"
+    loop.start_refusal = reason
+    loop.blocked_reason = reason
+    console.print(
+        f"[yellow]The agent was not asked: {reason}.[/]\n"
+        "[yellow]Your message is kept in the study; the agent answers it when the "
+        "study is resumed and its workspace starts.[/]"
+    )
+    view.info("waiting for you - the workspace could not be started, so the agent "
+              "was not asked; your message is kept for when it can")
+    return False
+
+
 def _spoke_or_left(loop: Any) -> bool:
     """Whether a wait between retries should end: the person said something, or ended
     the session. Asked the way a held tool wait asks (`Loop.heard`, `Loop.leaving`):
@@ -3670,9 +3808,19 @@ def _run_interactive(
     progress: Any = None,
     side: Any = None,
     cad: Any = None,
+    answer_first: bool = False,
 ) -> None:
+    """The conversation at the prompt, until the person ends it.
+
+    `answer_first` is a resume whose earlier messages were never answered (the
+    briefing marks them, `watch.earlier_conversation`): the first turn runs before
+    anything is read, so the agent answers what it owes rather than waiting to be
+    asked again. It is an ordinary turn, so a workspace that cannot start holds it
+    back like any other (`_run_turn`)."""
     while True:
-        if store.live_jobs():
+        if answer_first:
+            answer_first = False
+        elif store.live_jobs():
             if progress is not None:
                 progress.idle()
             wake = watch(
@@ -3780,15 +3928,21 @@ def _run_one_shot(
     Stopping only ends the waiting: the job carries on out on the instance and the
     study resumes.
 
-    The answer is one of "ok", "failed" (the model API would not complete a turn)
-    and "timeout" (`--max-wait` ran out with a job still running). A script driving
+    The answer is one of "ok", "failed" (the model API would not complete a turn),
+    "refused" (the workspace could not be started, so the model was not asked or what
+    it planned could not run) and "timeout" (`--max-wait` ran out with a job still
+    running). A script driving
     `-p` has nothing but the exit code to go on, and for a long while all three
     exited 0 -- so a scheduled run whose every turn was refused by a rate limit
     looked, to the scheduler, exactly like one that had finished.
     """
     loop.say(prompt)
     if not _run_turn(loop, view):
-        return "failed"
+        return _not_completed(loop)
+    if _start_failed(loop):
+        # The model ran ahead of a workspace whose start was then refused: nothing it
+        # planned can run, and the run says so with its exit code.
+        return "refused"
     if live is not None and not _no_workspace_yet(loop):
         live.catch_up()
 
@@ -3807,12 +3961,30 @@ def _run_one_shot(
             break
         loop.inform(wake.text)
         if not _run_turn(loop, view):
-            return "failed"
+            return _not_completed(loop)
         if live is not None and not _no_workspace_yet(loop):
             live.catch_up()
         if loop.needs_refresh:
             loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
+
+
+def _not_completed(loop: Any) -> str:
+    """A one-shot run's outcome for a turn that did not complete: `refused` when the
+    workspace could not be started, `failed` when the model would not answer."""
+    return "refused" if getattr(loop, "start_refusal", None) else "failed"
+
+
+def _start_failed(loop: Any) -> bool:
+    """Whether the session's workspace start has failed, asked after a turn ran ahead
+    of it. Prints the refusal when it has, for the run's last word."""
+    asked = getattr(loop, "start_refused", None)
+    error = asked() if callable(asked) else None
+    if error is None:
+        return False
+    loop.start_refusal = f"the workspace could not be started: {error}"
+    console.print(f"[yellow]The run stops: {loop.start_refusal}.[/]")
+    return True
 
 
 def _take_forwarded(loop: Any) -> list[tuple[str, str]]:

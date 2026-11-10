@@ -902,6 +902,15 @@ class FoamdClient:
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)
 
+    def list_messages(self, study_id: str, after: int = -1, limit: int = 2000) -> dict[str, Any]:
+        """`GET /v1/studies/{id}/messages`: the transcript the platform captured, in
+        sequence order, rows after seq `after` (exclusive; -1 keeps seq 0) as
+        `{"messages": [{seq, role, content, created_at}], "more": bool}`. What a
+        resume on a machine that never held the study is briefed from
+        (`cli._earlier_conversation`)."""
+        return _json(self.request("GET", f"/v1/studies/{study_id}/messages",
+                                  params={"after": after, "limit": limit}))
+
     def post_result(self, study_id: str, payload: Any) -> None:
         self.request("POST", f"/v1/studies/{study_id}/results", json={"payload": payload})
 
