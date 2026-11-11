@@ -2824,6 +2824,16 @@ def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     blob, report = casebundle.build(root, study_id=store.session.study_id)
     for line in report.brief():
         view.info(line) if not report.error else view.warn(line)
+    if _TIMING:
+        # The lines above go to the person's console only. This one goes beside the
+        # `[timing]` marks into the runner's logs, so how often a bundle leaves out
+        # part of a study can be counted there (#94).
+        print("[bundle] " + json.dumps({
+            "study_id": store.session.study_id, "tiers": report.included,
+            "skipped": sorted(report.skipped), "partial": sorted(report.partial),
+            "cut": len(report.cut), "files": report.files, "bytes": report.bytes,
+            "oversized": report.oversized, "error": report.error,
+        }), file=sys.stderr, flush=True)
     if blob is None:
         return
     path = store.dir / "case-bundle.tar.gz"

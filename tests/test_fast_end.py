@@ -51,6 +51,11 @@ def heavy(tmp_path):
 
 
 def test_a_tier_past_the_budget_is_abandoned_not_compressed_in_full(heavy, monkeypatch):
+    # A mesh, because it is whole or useless; logs now travel in part (#94).
+    for i in range(40):
+        _incompressible(heavy / "case" / "constant" / "polyMesh" / f"points{i:02d}", 256 * 1024)
+    for log in (heavy / "case").glob("log.*"):
+        log.unlink()
     added: list[str] = []
     original = tarfile.TarFile.add
 
@@ -61,11 +66,11 @@ def test_a_tier_past_the_budget_is_abandoned_not_compressed_in_full(heavy, monke
     monkeypatch.setattr(tarfile.TarFile, "add", counting)
     blob, report = casebundle.build(heavy, budget_mb=1)
 
-    logs = [a for a in added if a and "log." in a]
-    # 40 logs of 256 KB against 1 MB: the pack gives up after about four of them.
-    assert 0 < len(logs) < 10, logs
+    mesh = [a for a in added if a and "polyMesh" in a]
+    # 40 files of 256 KB against 1 MB: the pack gives up after about four of them.
+    assert 0 < len(mesh) < 10, mesh
     assert report.included == ["definition"]
-    assert "record" in report.skipped
+    assert "mesh" in report.skipped
     with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
         assert "case/system/controlDict" in tar.getnames()
 
