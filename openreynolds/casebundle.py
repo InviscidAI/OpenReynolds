@@ -29,18 +29,20 @@ each could be produced again:
 | tier | share | rebuildable? |
 |---|---|---|
 | `definition` -- `system/`, `constant/` (not polyMesh, not geometry), `0/`, `0.orig/`, `Allrun`, `Allmesh`, `build.py` | 6.7% | **no** |
-| `record` -- `log.*`, and the tables in `postProcessing/` (forces, probes, residuals) | 6.4% | **no** |
 | `notes` -- `*.md`, `.reynolds/` | small | **no** |
+| `record` -- `log.*`, and the tables in `postProcessing/` (forces, probes, residuals) | 6.4% | **no** |
 | `geometry` -- `*.stl`, `*.obj`, `*.step`, wherever they sit | in `other` | only if the source is kept |
 | `mesh` -- `constant/polyMesh` | 47.3% | yes, from `Allmesh` + geometry, at minutes of cost |
 | `fields` -- the latest time directory | 16.8% | only by re-solving |
-| `samples` -- the rest of `postProcessing/`: surfaces and planes, one per write time | | only by re-solving |
+| `samples` -- the rest of `postProcessing/`: surfaces, planes and sets, one per write time | | only by re-solving |
 
 `record` and `samples` may travel in part (#94). A study's record used to go in or out
 whole, and one 190 MB solver log was enough to leave out every log while the mesh,
 which `Allmesh` rebuilds, went in. Now, when `record` does not fit whole, a long file
 keeps its first `CUT_HEAD` and last `CUT_TAIL` bytes -- the setup, and the final
-residuals and forces -- with a line in the middle saying what was cut. `samples` are
+residuals and forces -- with a line in the middle saying what was cut; tables go
+before logs, the answer before the diagnosis. `notes` is ahead of `record` because a
+cut record fills the room it is given, and notes are irreplaceable too. `samples` are
 per-write-time snapshots, gigabytes of them on a long transient run, so they go last
 and newest first, for as many as the room left allows. The manifest lists every cut
 file and the report says how many samples were left out.
@@ -63,6 +65,7 @@ thing worse than an incomplete backup is an incomplete backup that claims to be 
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import re
@@ -109,7 +112,7 @@ and refuses to finish a run whose rebuild script is not captured by it, so an
 unlisted name fails the run loudly instead of losing the artifact quietly."""
 DEFINITION_DIRS = {"system", "0", "0.orig"}
 
-TIERS = ("definition", "record", "notes", "geometry", "mesh", "fields", "samples")
+TIERS = ("definition", "notes", "record", "geometry", "mesh", "fields", "samples")
 """Priority order. Everything before `mesh` is irreplaceable; `mesh`, `fields` and
 `samples` are convenience -- a resume can rebuild the first and re-solve the others."""
 
@@ -117,10 +120,25 @@ PARTIAL = ("record", "samples")
 """The tiers that may travel in part. The others are whole or useless: half a mesh
 or half a time directory restores nothing."""
 
-TABLE_SUFFIXES = {"", ".dat", ".csv", ".xy", ".txt", ".json"}
-"""What in `postProcessing/` is a table (forces, probes, residuals: one row per time
-step, the record of how the run went) rather than a sample surface. Probes write files
-named `p` and `U`, with no suffix at all."""
+SAMPLE_SUFFIXES = {".vtp", ".vtk", ".vtu", ".vtm", ".vtkhdf", ".ply", ".obj", ".stl",
+                   ".x3d", ".case", ".geo", ".nas", ".png", ".jpg"}
+"""Surface and image formats a function object writes into `postProcessing/`, also when
+gzipped (`clip.vtp.gz`). Everything else there is a table -- forces, probes, residuals,
+one row per time step -- unless it is written once per write time (`PER_TIME`).
+
+A suffix list rather than a table list, because a probe's file is named after its
+field: `p`, `U`, and on a multiphase case `alpha.water`, whose suffix is `.water`."""
+
+PER_TIME = 20
+"""A function object with more time directories than this writes once per write time
+(sets, raw surfaces), so its files are samples. Tables are written into the start time's
+directory, one more per restart: the 3.4 GB study in #94 has five under `forces/`, and
+they hold its whole force history. A short run's sets written fewer times than this
+travel as record, which costs room, not the answer."""
+
+UNCUT_SUFFIXES = {".csv", ".json"}
+"""Formats with no comment syntax, which a cut would leave unparseable. They travel
+whole or not at all."""
 
 CUT_HEAD = 64 * 1024
 CUT_TAIL = 1024 * 1024
@@ -193,7 +211,25 @@ def _latest_time_dirs(root: Path) -> set[Path]:
     return out
 
 
-def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
+def _per_time(path: Path, counts: dict[Path, int]) -> bool:
+    """Whether `path` sits in one of many time directories of a function object."""
+    for parent in path.parents:
+        if parent.name == "postProcessing":
+            return False
+        if _TIME.match(parent.name):
+            holder = parent.parent
+            if holder not in counts:
+                try:
+                    counts[holder] = sum(1 for c in holder.iterdir()
+                                         if c.is_dir() and _TIME.match(c.name))
+                except OSError:
+                    counts[holder] = 0
+            return counts[holder] > PER_TIME
+    return False
+
+
+def classify(path: Path, root: Path, latest: set[Path],
+             counts: dict[Path, int] | None = None) -> str | None:
     """Which tier `path` belongs to, or None if it does not travel.
 
     Nothing regenerable-and-large goes: `processor*` is a decomposed copy of fields
@@ -216,7 +252,10 @@ def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
     if name.startswith("log."):
         return "record"
     if "postProcessing" in parts:
-        return "record" if suffix in TABLE_SUFFIXES else "samples"
+        base = name[:-3] if name.lower().endswith(".gz") else name
+        if Path(base).suffix.lower() in SAMPLE_SUFFIXES:
+            return "samples"
+        return "samples" if _per_time(path, {} if counts is None else counts) else "record"
     if suffix == ".md" or ".reynolds" in parts:
         return "notes"
     if name in DEFINITION_NAMES or any(p in DEFINITION_DIRS for p in parts[:-1]):
@@ -280,7 +319,10 @@ class _Cut:
     path: Path
     size: int
 
+    @functools.cached_property
     def body(self) -> bytes:
+        """Read once: it is packed in the fit and again in the bundle, and both have to
+        be the same bytes."""
         with open(self.path, "rb") as f:
             head = f.read(CUT_HEAD)
             f.seek(max(self.size - CUT_TAIL, 0))
@@ -298,6 +340,8 @@ class _Cut:
 
 
 def _cuttable(path: Path) -> _Cut | None:
+    if path.suffix.lower() in UNCUT_SUFFIXES and not path.name.startswith("log."):
+        return None
     try:
         size = path.stat().st_size
     except OSError:
@@ -311,7 +355,7 @@ Member = tuple["Path | _Cut", str]
 def _add(tar: tarfile.TarFile, source: "Path | _Cut", arcname: str) -> None:
     try:
         if isinstance(source, _Cut):
-            body = source.body()
+            body = source.body
             info = tarfile.TarInfo(arcname)
             info.size = len(body)
             info.mtime = int(source.path.stat().st_mtime)
@@ -362,6 +406,16 @@ def _write_time(arcname: str) -> float:
             except ValueError:
                 break
     return -1.0
+
+
+def _size(member: Member) -> int:
+    source = member[0]
+    if isinstance(source, _Cut):
+        return source.size
+    try:
+        return source.stat().st_size
+    except OSError:
+        return 0
 
 
 def _mtime(member: Member) -> float:
@@ -420,11 +474,12 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             return None, report
 
         latest = _latest_time_dirs(root)
+        counts: dict[Path, int] = {}
         by_tier: dict[str, list[Member]] = {t: [] for t in TIERS}
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.is_symlink():
                 continue
-            tier = classify(path, root, latest)
+            tier = classify(path, root, latest, counts)
             if tier is None:
                 continue
             by_tier[tier].append((path, str(path.relative_to(root)).replace("\\", "/")))
@@ -443,28 +498,26 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             if not members:
                 continue
             room = budget - used
-            try:
-                if tier == "samples":
-                    raise _TooBig()  # newest first or not at all; see `_in_part`
-                # The first tier travels past the budget (below), but not past the
-                # ceiling: beyond that the service refuses it anyway. A tier that can
-                # travel in part never goes oversized; it is cut to fit instead.
-                if room <= 0 and (taken or tier in PARTIAL):
-                    raise _TooBig()
-                size = len(_pack(members, limit=room if taken or tier in PARTIAL
-                                 else ceiling))
-            except _TooBig:
+            # Only a first tier that cannot be cut may go past the budget (below), and
+            # not past the ceiling: beyond that the service refuses it anyway.
+            first = not taken and tier not in PARTIAL
+            size: int | None = None
+            if tier != "samples" and (first or room > 0):  # samples: newest first, always
+                try:
+                    size = len(_pack(members, limit=ceiling if first else room))
+                except _TooBig:
+                    pass
+            if size is None:
                 part = _in_part(tier, members, room, report)
                 if part is None:
                     report.skipped[tier] = (
-                        f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
-                        if taken or tier in PARTIAL else
                         f"{len(members)} file(s) come to more than {CEILING_MB} MB on "
-                        "their own, more than an upload may be"
+                        "their own, more than an upload may be" if first else
+                        f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
                     )
                     continue
                 members, size = part
-            if size > budget and not taken:
+            if size > budget and first:
                 # The first tier is the irreplaceable one and it does not fit. It goes
                 # anyway, and the report says the upload may be refused.
                 #
@@ -499,14 +552,17 @@ def _in_part(tier: str, members: list[Member], room: int,
     """As much of a tier that does not fit whole as fits in `room`, with about how
     many compressed bytes it takes, or None for nothing.
 
-    `record` first cuts every long file to its head and tail, logs before tables;
+    `record` first cuts every long file to its head and tail, tables before logs;
     `samples` go newest first. Then as many as fit are taken, in that order."""
     if tier not in PARTIAL or room <= 0:
         return None
     if tier == "record":
         ordered = [(_cuttable(p) or p, a) for p, a in members]
-        ordered.sort(key=lambda m: (not m[1].rsplit("/", 1)[-1].startswith("log."),
-                                    -_mtime(m)))
+        # Tables first: the forces and residuals are the answer, and small. Then logs,
+        # largest first, which puts the solver's ahead of blockMesh's. Not by mtime,
+        # which on the mirror is when a file was pulled.
+        ordered.sort(key=lambda m: (m[1].rsplit("/", 1)[-1].startswith("log."),
+                                    -_size(m)))
     else:
         ordered = sorted(members, key=lambda m: (-_write_time(m[1]), -_mtime(m)))
     count, size = _fit(ordered, room)

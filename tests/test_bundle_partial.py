@@ -108,12 +108,21 @@ def test_a_table_keeps_whole_rows(tmp_path):
 
 def test_postprocessing_tables_are_record_and_surfaces_are_samples(tmp_path):
     root = _case(tmp_path)
-    latest = casebundle._latest_time_dirs(root)
     pp = root / "c" / "postProcessing"
+    for i in range(40):  # a set written at every write time
+        (pp / "sets" / f"{i * 0.5:g}").mkdir(parents=True)
+    # Five restarts, as the 3.4 GB study in #94 has: still the force history.
+    for t in ("0", "0.01", "0.02", "0.0634103341", "0.8"):
+        (pp / "forces" / t).mkdir(parents=True)
+    latest = casebundle._latest_time_dirs(root)
     cases = {
         pp / "probes" / "0" / "p": "record",
+        pp / "probes" / "0" / "alpha.water": "record",  # suffix ".water"
         pp / "forces" / "0" / "force.dat": "record",
+        pp / "forces" / "0.8" / "force.dat": "record",
         pp / "forces" / "forces_physical.csv": "record",
+        pp / "sets" / "1.5" / "line_U.xy": "samples",
+        pp / "forces" / "0.0634103341" / "force.dat": "record",
         pp / "planes" / "2.36" / "mid.vtp": "samples",
         pp / "clipPlane" / "0.35" / "clip.vtp.gz": "samples",
     }
@@ -185,3 +194,45 @@ def test_no_bundle_line_without_the_timing_switch(monkeypatch, tmp_path, capsys)
     _session(monkeypatch, tmp_path, [message([text_block("done")])],
              one_shot="cavity", capture=True)
     assert "[bundle]" not in capsys.readouterr().err
+
+
+def _table(rows: int) -> bytes:
+    return b"# Time Fx\n" + b"".join(f"{i} {i * 0.1:.9f}\n".encode() for i in range(rows))
+
+
+def test_tables_go_before_logs_and_the_largest_log_first(tmp_path):
+    """Room for a few cut logs only: the forces table and the solver's log are the ones
+    that travel, not whichever logs the sync pulled last."""
+    root = _case(tmp_path)
+    _write(root / "c" / "postProcessing" / "forces" / "0" / "force.dat", _table(1000))
+    for i in range(12):
+        _write(root / "c" / f"log.step{i:02d}", _log(30_000 + i, seed=i),
+               mtime=1_700_000_000 + 100 - i)  # pulled in reverse of size
+    _write(root / "c" / "log.pimpleFoam", _log(200_000, seed=99), mtime=1_600_000_000)
+    blob, report = casebundle.build(root, budget_mb=1)
+    names = _tar(blob).getnames()
+    assert "c/postProcessing/forces/0/force.dat" in names
+    assert "c/log.pimpleFoam" in names
+    assert "left out" in report.partial["record"]
+
+
+def test_a_cut_record_leaves_room_for_the_notes(tmp_path):
+    root = _case(tmp_path)
+    _write(root / "c" / "notes.md", os.urandom(300 * 1024))  # incompressible, 300 KB
+    for i in range(10):
+        _write(root / "c" / f"log.run{i}", _log(60_000, seed=i))
+    blob, report = casebundle.build(root, budget_mb=1)
+    assert "notes" in report.included and "record" in report.included
+    assert report.included.index("notes") < report.included.index("record")
+
+
+def test_a_csv_or_json_is_never_cut(tmp_path):
+    root = _case(tmp_path)
+    big = b"time,Fx\n" + b"".join(f"{i},{i * 0.1:.9f}\n".encode() for i in range(200_000))
+    _write(root / "c" / "postProcessing" / "forces" / "forces_physical.csv", big)
+    _write(root / "c" / "log.pimpleFoam", _log(200_000))
+    blob, report = casebundle.build(root, budget_mb=1)
+    assert "c/postProcessing/forces/forces_physical.csv" not in report.cut
+    names = _tar(blob).getnames()
+    if "c/postProcessing/forces/forces_physical.csv" in names:
+        assert _read(blob, "c/postProcessing/forces/forces_physical.csv") == big
