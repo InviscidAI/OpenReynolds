@@ -73,8 +73,8 @@ stalls every other request the process is serving. With that fixed, a copy and a
 command no longer notice each other -- `echo ok` costs the same 8-10 s whether a copy
 is in flight or not -- so a live pull uses the ordinary archive again, which is five
 times faster than reading every file out of the volume one at a time (7 s against 39 s
-for two case directories). What stays is the bound: a cycle still must not sit on one
-file for minutes."""
+for two case directories). What stays is the bound: one cycle gets one wait budget
+before its listing, rather than a fresh budget at each layer that leads to it."""
 
 LIVE_PULL_TIMEOUT_S = 25.0
 """How long a background cycle's own archive request may run before it gives up on it.
@@ -469,6 +469,7 @@ def sync(
     max_total_bytes: int = MAX_TOTAL_BYTES,
     refused: dict[str, str] | None = None,
     gate: "Gate | None" = None,
+    gate_unless: Callable[[], bool] | None = None,
 ) -> MirrorReport:
     """Copy down what has changed under the study's directory, and say what it did not.
 
@@ -485,11 +486,12 @@ def sync(
     so asks again, which is what "tries them again" in the report promises.
 
     `gate` is where a session says a tool call is in flight; a cycle given one stands
-    aside for it before each round trip (see GATE_WAIT_S).
+    aside for it once, immediately before listing (see GATE_WAIT_S). `gate_unless`
+    lets a stopped mirror cut that wait short.
     """
     started = time.monotonic()
     report = _sync(browser, path, everything, live, background, max_file_bytes,
-                   max_total_bytes, refused, gate)
+                   max_total_bytes, refused, gate, gate_unless)
     report.seconds = time.monotonic() - started
     return report
 
@@ -504,6 +506,7 @@ def _sync(
     max_total_bytes: int,
     refused: dict[str, str] | None,
     gate: "Gate | None",
+    gate_unless: Callable[[], bool] | None,
 ) -> MirrorReport:
     store = browser.store
     if store is None:
@@ -512,16 +515,16 @@ def _sync(
     report = MirrorReport(local_dir=store.fetch_dir(), study_id=store.session.study_id)
     root = path or browser.home or WORKSPACE_ROOT
 
-    # The gate was already asked once, in `LiveMirror._run`, before this cycle was
-    # let start -- but the listing below is itself a round trip (`browser.tree`: the
-    # service's files route on a hosted workspace, a `find` over the exec channel
-    # everywhere else), and a tool call can arrive in the gap between that first
-    # check and this one. Asked again here for the same reason `_pull_batch` asks
-    # again before every archive request: the wait is cheap, and skipping it is how
-    # a cycle that was clear to start ends up listing right through a call that
-    # started a moment later.
+    # Wait at the last possible point before the listing. This is the cycle's one
+    # gate budget: waiting once in `LiveMirror._run` and again here turned the stated
+    # 120 s cap into 240 s when a tool call stayed in flight, which is exactly the
+    # delay this bound exists to prevent.
     if gate is not None:
-        report.gate_wait_seconds += _timed_clear(gate, GATE_WAIT_S)
+        report.gate_wait_seconds += _timed_clear(
+            gate, GATE_WAIT_S, unless=gate_unless
+        )
+        if gate_unless is not None and gate_unless():
+            return report
 
     try:
         entries = browser.tree(root, depth=DEPTH, background=background)
@@ -822,8 +825,8 @@ class Gate:
     """Where a session says a tool call is in flight, so the mirror stays out of its way.
 
     The session's thread holds it around each tool call; the mirror's thread asks
-    `clear` before it starts a cycle and before its listing, and waits -- bounded by
-    GATE_WAIT_S -- for the call to end (a live pull no longer asks at all; see
+    `clear` immediately before its listing, and waits -- bounded by GATE_WAIT_S --
+    for the call to end (a live pull no longer asks at all; see
     `GATE_WAIT_S`'s docstring and `_pull_batch`). Nothing here ever blocks the
     session: the session only counts, and the counting is a lock held for
     nanoseconds.
@@ -872,7 +875,11 @@ class Gate:
             return True
 
 
-def _timed_clear(gate: Gate, timeout: float) -> float:
+def _timed_clear(
+    gate: Gate,
+    timeout: float,
+    unless: Callable[[], bool] | None = None,
+) -> float:
     """`gate.clear`, and how long it took -- so a cycle can say how much of its own
     wall time was standing aside versus doing anything (`MirrorReport.gate_wait_seconds`,
     asked for directly in `qa-runs/LATENCY.md`: whether the Gate was actually the
@@ -883,7 +890,7 @@ def _timed_clear(gate: Gate, timeout: float) -> float:
     captured here, so a test (or a future caller) that changes it after this module
     loads is still honoured -- a default parameter value is bound once, at `def`."""
     started = time.monotonic()
-    gate.clear(timeout)
+    gate.clear(timeout, unless=unless)
     return time.monotonic() - started
 
 
@@ -999,12 +1006,8 @@ class LiveMirror:
             # it counted as use, a hosted workspace could never be reclaimed and
             # billed until its 24-hour ceiling. It does not count.
             #
-            # And not while the model is in a tool call: the cycle's listing and
-            # transfers run on the same container as the call, and the call waits
-            # behind them. Bounded, so a busy turn still gets mirrored eventually.
-            self.gate.clear(GATE_WAIT_S, unless=self._stop.is_set)
-            if self._stop.is_set():
-                return
+            # The one bounded gate wait happens inside `sync`, immediately before
+            # the listing. Doing it here as well doubled the advertised cap.
             self._cycle(background=True)
 
     def _cycle(self, *, background: bool = False) -> MirrorReport:
@@ -1020,6 +1023,7 @@ class LiveMirror:
                     # somebody asked for -- the close-down one -- is the thing being
                     # waited on, and nothing is in flight to wait for.
                     gate=self.gate if background else None,
+                    gate_unless=self._stop.is_set if background else None,
                 )
             except Exception as exc:  # noqa: BLE001 - a convenience may not end a session
                 report = MirrorReport(

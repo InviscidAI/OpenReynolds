@@ -1104,6 +1104,36 @@ def test_the_wait_for_a_tool_call_is_bounded(backend, store, monkeypatch):
         live.stop()
 
 
+def test_one_cycle_gets_one_gate_wait_budget(backend, store):
+    """The bound belongs to the cycle, not to every layer on the way to its listing."""
+    import time as _time
+
+    class HeldGate:
+        def __init__(self):
+            self.calls = 0
+
+        def clear(self, timeout, unless=None):
+            self.calls += 1
+            return False
+
+    _workspace_of(backend, ("a.md",))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    gate = HeldGate()
+    live.gate = gate
+    live.start()
+    try:
+        live.poke()
+        for _ in range(100):
+            if live.last_report is not None:
+                break
+            _time.sleep(0.01)
+        assert live.last_report is not None
+    finally:
+        live.stop()
+
+    assert gate.calls == 1, "a cycle cannot turn the 120 s cap into two waits"
+
+
 def test_a_waiting_cycle_does_not_outlive_stop(backend, store):
     """Close-down must not sit behind a held gate for two minutes."""
     import time as _time
