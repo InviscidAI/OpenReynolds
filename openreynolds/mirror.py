@@ -390,19 +390,30 @@ def reason_to_skip_live(relative: str, newest: dict[str, str]) -> str | None:
     but `_wanted` does not drop it: it comes after the newest, within
     `EARLIER_BYTES_PER_CYCLE` and `EARLIER_BYTES` (`_earlier_within`).
     """
+    return _live_verdict(relative, newest)[0]
+
+
+def _live_verdict(
+    relative: str, newest: dict[str, str]
+) -> tuple[str | None, tuple[str, str] | None]:
+    """`reason_to_skip_live`, and, when the reason is an earlier time, the case and
+    the time directory it judged: `("case/processors4", "20")` for
+    `case/processors4/20/U`. Returned from the same walk so the two cannot disagree
+    about which numbered directory on a path was the time."""
     parts = relative.split("/")
     for index, part in enumerate(parts[:-1]):
         if _PROCESSOR_DIR.match(part):
-            return "processor decomposition data"
+            return "processor decomposition data", None
         if part in LIVE_DROP_DIRS:
-            return "written for a viewer that is not on this machine"
+            return "written for a viewer that is not on this machine", None
         if _is_time_directory(part):
-            keep = newest.get("/".join(parts[:index]))
+            case = "/".join(parts[:index])
+            keep = newest.get(case)
             if keep is not None and part != keep:
-                return f"{EARLIER_TIME} ({part}/)"
+                return f"{EARLIER_TIME} ({part}/)", (case, part)
     if _suffix(parts[-1]) in SKIP_SUFFIXES:
-        return "written for a viewer that is not on this machine"
-    return None
+        return "written for a viewer that is not on this machine", None
+    return None, None
 
 
 PRIORITY_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
@@ -551,12 +562,19 @@ def _sync(
     # 244 s in, and every time the solver wrote before 76 s was never seen.
     def stand_aside() -> None:
         report.gate_wait_seconds += _timed_clear(gate, GATE_WAIT_S, stopping)
+        if stopping is not None and stopping():
+            # The wait was cut short because the mirror is stopping, not because the
+            # call ended: walking now would be the command the wait exists to keep
+            # off the call's channel, and the close-down sync follows anyway.
+            raise _Stopped
 
     try:
         entries = browser.tree(
             root, depth=DEPTH, background=background,
             before_walk=stand_aside if gate is not None else None,
         )
+    except _Stopped:
+        return report
     except (BackendError, OSError) as exc:
         if getattr(exc, "code", "") == "workspace_idle":
             # The expected steady state of an idle session, not a fault: there is no
@@ -586,13 +604,18 @@ def _sync(
         report.warnings.append(entries.notice)
 
     candidates, later = _wanted(
-        entries, root, report, everything, max_file_bytes, live=live, refused=refused
+        entries, root, report, everything, max_file_bytes, live=live, refused=refused,
+        earlier_times=gate is not None,
     )
     _pull(
         browser, _within_budget(candidates, report, max_total_bytes), report,
         refused=refused, gate=gate, later=later,
     )
     return report
+
+
+class _Stopped(Exception):
+    """Raised out of a cycle's listing when the mirror stopped while it waited."""
 
 
 def local_for(local_dir: Path, remote: str) -> Path:
@@ -620,39 +643,52 @@ def _wanted(
     max_file_bytes: int,
     live: bool = False,
     refused: dict[str, str] | None = None,
+    earlier_times: bool = False,
 ) -> tuple[list[Entry], dict[str, int]]:
     """Files worth asking for: not filtered out, not too big, not already here, and
     not refused by the service already this session. And, of those, the paths that
-    go after the rest: a live cycle's earlier time directories (`_earlier_within`)."""
+    go after the rest: a live cycle's earlier time directories (`_earlier_within`).
+
+    `earlier_times` is only for a background cycle, whose round trips are bounded
+    (`LIVE_PULL_TIMEOUT_S`). The close-down sync is what the end of a session waits
+    on, so it brings the newest time as it always did and leaves the backlog named."""
     wanted = []
     newest = newest_times(entries, root) if live else {}
     earlier: dict[tuple[str, str], list[Entry]] = {}
+    blocked: set[tuple[str, str]] = set()
     earlier_here = 0
     for entry in entries:
         if entry.is_dir:
             continue
-        if refused and entry.path in refused:
-            # Named and counted like every other file left behind. This is the
-            # opposite of dropping it quietly: the path failed once, the reason is
-            # here, and the retry is a command away.
-            report.skipped.append(Skip(entry.path, refused[entry.path], entry.size))
-            continue
         relative = _relative(entry.path, root)
         held = None
         if live:
-            reason = reason_to_skip_live(relative, newest)
-            if reason is not None and reason.startswith(EARLIER_TIME):
-                held, reason = _time_of(relative), None
+            reason, held = _live_verdict(relative, newest)
+            if held is not None and earlier_times:
+                reason = None
+            else:
+                held = None
         elif everything:
             reason = None
         else:
             reason = reason_to_skip(relative) or reason_by_size(relative, entry.size)
+        if refused and entry.path in refused:
+            # Named and counted like every other file left behind. This is the
+            # opposite of dropping it quietly: the path failed once, the reason is
+            # here, and the retry is a command away.
+            reason = refused[entry.path]
+        if reason and held is not None:
+            # An earlier time is copied whole or not at all (`_earlier_within`), so
+            # a file of it left behind holds back the rest of it this cycle.
+            blocked.add(held)
         if reason:
             report.skipped.append(Skip(entry.path, reason, entry.size))
             continue
         if entry.size > max_file_bytes:
             # The cap holds even under `--all`: "everything" is a statement about
             # which files are interesting, not about how much disk to use.
+            if held is not None:
+                blocked.add(held)
             report.skipped.append(
                 Skip(
                     entry.path,
@@ -670,20 +706,15 @@ def _wanted(
             earlier.setdefault(held, []).append(entry)
             continue
         wanted.append(entry)
+    for key in blocked:
+        for entry in earlier.pop(key, []):
+            report.skipped.append(Skip(
+                entry.path, f"{EARLIER_TIME} ({key[1]}/), held back with a file of it",
+                entry.size,
+            ))
     later = _earlier_within(earlier, earlier_here, report)
     wanted.extend(later)
     return wanted, {entry.path: rank for rank, entry in enumerate(later)}
-
-
-def _time_of(relative: str) -> tuple[str, str]:
-    """The case and the time directory a file sits in: `("case/processors4", "20")`
-    for `case/processors4/20/U`. The first time directory on the path, which is the
-    one `reason_to_skip_live` judged."""
-    parts = relative.split("/")
-    for index, part in enumerate(parts[:-1]):
-        if _is_time_directory(part):
-            return "/".join(parts[:index]), part
-    return "", ""
 
 
 def _earlier_within(
@@ -700,12 +731,24 @@ def _earlier_within(
     cycle_left = EARLIER_BYTES_PER_CYCLE
     kept_left = EARLIER_BYTES - here
     taken: list[Entry] = []
-    order = sorted(earlier, key=lambda key: (-float(key[1]), key[0]))
-    waiting = False
+    # Newest first within each case, and the cases taken in turn: a steady case's
+    # times are iteration counts in the thousands and a transient one's are seconds,
+    # so one order by value across cases would give the steady one everything.
+    by_case: dict[str, list[str]] = {}
+    for case, name in earlier:
+        by_case.setdefault(case, []).append(name)
+    rank = {
+        (case, name): index
+        for case, names in by_case.items()
+        for index, name in enumerate(sorted(names, key=float, reverse=True))
+    }
+    order = sorted(earlier, key=lambda key: (rank[key], key[0]))
+    waiting = full = False
     for case, name in order:
         files = earlier[(case, name)]
         size = sum(entry.size for entry in files)
-        if size > kept_left:
+        if full or size > kept_left:
+            full = True
             reason = f"{EARLIER_TIME} ({name}/), past the {human(EARLIER_BYTES)} kept of them"
         elif waiting or (taken and size > cycle_left):
             # Stop at the first that does not fit, so the order holds: a smaller,
@@ -798,7 +841,7 @@ def _pull(
     study that had plenty worth keeping -- which is exactly what a live run did.
     """
     for batch in _batches(wanted, later):
-        _pull_batch(browser, batch, report, refused, gate)
+        _pull_batch(browser, batch, report, refused, gate, later)
 
 
 def _pull_batch(
@@ -807,6 +850,7 @@ def _pull_batch(
     report: MirrorReport,
     refused: dict[str, str] | None,
     gate: "Gate | None",
+    later: dict[str, int] | None = None,
 ) -> bool:
     """One archive request, and what to do when it fails. True when it came down.
 
@@ -846,11 +890,11 @@ def _pull_batch(
                 f"a batch of {len(batch)} failed ({exc}); looking for the file it failed on"
             )
             for index, entry in enumerate(batch):
-                if _pull_batch(browser, [entry], report, refused, gate):
+                if _pull_batch(browser, [entry], report, refused, gate, later):
                     continue
                 rest = batch[index + 1 :]
                 if rest:
-                    _pull_batch(browser, rest, report, refused, gate)
+                    _pull_batch(browser, rest, report, refused, gate, later)
                 return False
             return True
         entry = batch[0]
@@ -858,6 +902,12 @@ def _pull_batch(
         report.skipped.append(Skip(entry.path, "the copy failed", entry.size))
         if refused is not None and is_a_fact_about_the_path(exc):
             refused[entry.path] = refusal(exc)
+        elif refused is not None and later and entry.path in later:
+            # An earlier time is a nicety, and one that will not copy must not hold
+            # every older time behind it, cycle after cycle (`_earlier_within` takes
+            # them newest first). So it is set aside for the session, whole, like a
+            # path the service refused; `openreynolds pull` asks for it again.
+            refused[entry.path] = f"{EARLIER_TIME} that did not copy this session ({exc})"
         return False
     report.pulled.extend(written)
     report.bytes_pulled += sum(entry.size for entry in batch)
