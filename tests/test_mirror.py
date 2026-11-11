@@ -1009,7 +1009,7 @@ def test_each_case_gets_its_turn_at_the_earlier_times(backend, store, monkeypatc
     )
     report = cycle(browser_for(backend, store))
     earlier = sorted(
-        str(Path(p).parent.relative_to(Path(p).parents[2]))
+        Path(p).parent.relative_to(Path(p).parents[2]).as_posix()
         for p in report.pulled if Path(p).parent.name in ("2000", "0.2", "1000", "0.1")
     )
     assert earlier == ["steady/2000", "transient/0.2"]
