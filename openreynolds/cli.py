@@ -38,7 +38,7 @@ from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
-from .progress import Tracker
+from .progress import Tracker, felix_job_facts
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
@@ -46,8 +46,16 @@ from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
-from .watch import (NOTHING, LineReader, NullReader, conversation_rows, earlier_conversation,
-                    situation, watch)
+from .watch import (
+    FinishedJob,
+    NOTHING,
+    LineReader,
+    NullReader,
+    conversation_rows,
+    earlier_conversation,
+    situation,
+    watch,
+)
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
@@ -3762,6 +3770,12 @@ def _run_turn(loop: Loop, view: View) -> bool:
     is that distinction, and it is the caller's cue to stop asking until a person
     says something.
     """
+    pending = _pending_finished_felix_jobs(loop, view)
+    if pending is None:
+        return False
+    if pending:
+        loop.tell(pending)
+
     status: int | None = None
     refusal_code = ""
     refusal_body: dict[str, Any] = {}
@@ -3788,14 +3802,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
                 loop.settle()
                 if ceiling.resolve(loop.ctx, pause):
                     continue
-                stopped = loop.ctx.stopped
-                console.print(f"\n[yellow]{stopped}[/]")
-                view.notice(stopped)
-                event = getattr(loop, "event", None)
-                if event is not None:
-                    event(stopped)
-                loop.blocked_reason = stopped
-                view.info("waiting for you - the study is paused at its spending ceiling")
+                _stopped_at_ceiling(loop, view)
                 return False
             status = exc.status_code
             refusal_code = exc.code
@@ -4000,7 +4007,13 @@ def _run_interactive(
                     if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
-                loop.inform(wake.text)
+                report = (_finished_job_wake(loop, view, wake.text, wake.finished)
+                          if wake.kind == "job" else wake.text)
+                if wake.kind == "job" and report is None:
+                    # `_finished_job_wake` has already kept the report, then the
+                    # stop, in that order. Do not append the raw refusal afterwards.
+                    continue
+                loop.inform(report)
             elif wake.kind == "user":
                 # A person speaking is the one thing that can change a refusal:
                 # they have topped the account up, fixed the key, or want to hear
@@ -4170,7 +4183,10 @@ def _run_one_shot(
             return "timeout"
         if wake.kind != "job":
             break
-        loop.inform(wake.text)
+        report = _finished_job_wake(loop, view, wake.text, wake.finished)
+        if report is None:
+            return _not_completed(loop)
+        loop.inform(report)
         if not _run_turn(loop, view):
             return _not_completed(loop)
         if live is not None and not _no_workspace_yet(loop):
@@ -4178,6 +4194,78 @@ def _run_one_shot(
         if loop.needs_refresh:
             loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
+
+
+def _stopped_at_ceiling(loop: Any, view: View) -> None:
+    """Record one spending-ceiling stop in every place a session exposes it."""
+    stopped = loop.ctx.stopped
+    loop.tell(stopped)
+    console.print(f"\n[yellow]{stopped}[/]")
+    view.notice(stopped)
+    loop.blocked_reason = stopped
+    view.info("waiting for you - the study is paused at its spending ceiling")
+
+
+def _finished_job_wake(
+    loop: Any,
+    view: View,
+    report: str,
+    finished: tuple[FinishedJob, ...] = (),
+) -> str | None:
+    """The finished-job facts to send to the model, or None after a ceiling stop.
+
+    Only a failed `felix run|continue` job named by this wake can carry a refusal. Its
+    structured final status is checked against the current study row, and each job is
+    accounted for once in the persisted record. A raised ceiling is appended to the
+    same facts the model receives, so it does not read an old 409 as still current.
+    """
+    updated = report
+    for observation in finished:
+        record = observation.record
+        pause = ceiling.handle_finished_felix_job(
+            loop.ctx, record, observation.status, observation.facts
+        )
+        if pause.note:
+            updated += f"\njob {record.job_id}: {pause.note}"
+        if pause.decision is False:
+            # Match an in-turn stop: first preserve all job results and notes, then
+            # put the final stop in the thread. This also keeps notes from earlier
+            # observations when a later job is the one the person declines.
+            facts = updated[1:] if not report and updated.startswith("\n") else updated
+            if facts:
+                loop.inform(facts)
+            _stopped_at_ceiling(loop, view)
+            return None
+    return updated[1:] if not report and updated.startswith("\n") else updated
+
+
+def _pending_finished_felix_jobs(loop: Any, view: View) -> str | None:
+    """Retry unhandled Felix refusals before every model turn.
+
+    A refusal may finish while the session is away, while another refusal blocks
+    model calls, or while the study row cannot be read. Finished jobs are no longer
+    watched, so their persisted `ceiling_pause_handled` flag is the retry queue.
+    """
+    store = getattr(loop, "store", None)
+    ctx = getattr(loop, "ctx", None)
+    backend = getattr(ctx, "backend", None)
+    if store is None or ctx is None or backend is None:
+        return ""
+    if isinstance(backend, PendingBackend) and not backend.ready():
+        return ""
+    observations = []
+    for record in store.session.jobs.values():
+        if not ceiling.finished_felix_job_needs_pause_check(record, record):
+            continue
+        try:
+            status = backend.job_status(record.job_id)
+        except BackendError:
+            continue
+        facts = felix_job_facts(backend, record.cmd, record.job_id, status.log_size)
+        observations.append(FinishedJob(record, status, facts))
+    if not observations:
+        return ""
+    return _finished_job_wake(loop, view, "", tuple(observations))
 
 
 def _not_completed(loop: Any) -> str:
