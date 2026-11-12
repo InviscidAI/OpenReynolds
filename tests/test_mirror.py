@@ -853,19 +853,173 @@ def test_a_live_cycle_keeps_the_mesh_the_viewer_reads(backend, store):
     assert report.skipped == []
 
 
-def test_a_live_cycle_keeps_the_newest_time_and_drops_the_ones_it_replaced(backend, store):
-    """A running solve writes a complete copy of the fields every few seconds."""
+def whole(backend, *rows: tuple[str, int]) -> None:
+    """`workspace`, with each file its full size, so a second cycle finds the copy
+    the first made already here."""
+    workspace(backend, *rows)
+    for path, size in rows:
+        backend.files[path] = b"x" * size
+
+
+def cycle(browser, **kwargs):
+    """One background cycle, as `LiveMirror` runs it: live, with a gate."""
+    return mirror.sync(browser, live=True, background=True, gate=mirror.Gate(), **kwargs)
+
+
+def test_a_live_cycle_brings_every_written_time_newest_first(backend, store):
+    """A time written between two cycles used to stay on the instance for good: a
+    staging study wrote a time every 2 s from 20 s to 100 s and the viewer got four.
+    The newest comes first, then the earlier ones, newest of those first."""
     workspace(
         backend,
         (f"{HOME}/case/1/U", 3_000),
         (f"{HOME}/case/2/U", 3_000),
         (f"{HOME}/case/10/U", 3_000),
     )
-    report = mirror.sync(browser_for(backend, store), live=True)
+    report = cycle(browser_for(backend, store))
 
-    assert [str(Path(p).parent.name) for p in report.pulled] == ["10"], "newest by value, not by name"
-    assert len(report.skipped) == 2
-    assert all("superseded" in s.reason for s in report.skipped)
+    assert [Path(p).parent.name for p in report.pulled] == ["10", "2", "1"], (
+        "newest by value, not by name, and the earlier ones after it"
+    )
+    assert report.skipped == []
+
+
+def test_an_earlier_time_comes_whole_or_not_at_all(backend, store, monkeypatch):
+    """A time with half its fields is one the viewer lists and cannot draw."""
+    monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 5_000)
+    whole(
+        backend,
+        (f"{HOME}/case/processors4/3/U", 3_000),
+        (f"{HOME}/case/processors4/2/U", 2_000),
+        (f"{HOME}/case/processors4/2/p", 2_000),
+        (f"{HOME}/case/processors4/1/U", 1_500),
+    )
+    browser = browser_for(backend, store)
+    first = cycle(browser)
+
+    pulled = {Path(p).parent.name for p in first.pulled}
+    assert pulled == {"3", "2"}, "the newest, then one earlier time, whole"
+    waiting = {Path(s.path).parent.name for s in first.skipped}
+    assert waiting == {"1"}, "an older, smaller time does not jump the queue"
+    assert all("for a later cycle" in s.reason for s in first.skipped)
+
+    second = cycle(browser)
+    assert {Path(p).parent.name for p in second.pulled} == {"1"}
+    assert second.skipped == []
+
+
+def test_one_earlier_time_bigger_than_a_cycle_still_comes(backend, store, monkeypatch):
+    """Slow rather than never: a large mesh's time is bigger than any one cycle."""
+    monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 1_000)
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 3_000),
+        (f"{HOME}/case/2/U", 3_000),
+        (f"{HOME}/case/1/U", 3_000),
+    )
+    browser = browser_for(backend, store)
+    assert [Path(p).parent.name for p in cycle(browser).pulled] == ["3", "2"]
+    assert [Path(p).parent.name for p in cycle(browser).pulled] == ["1"]
+
+
+def test_earlier_times_stop_at_what_a_session_keeps(backend, store, monkeypatch):
+    """The runner stages sixteen sessions on one disk; a long transient solve writes
+    more than that. The ones already here count, and the newest still comes."""
+    monkeypatch.setattr(mirror, "EARLIER_BYTES", 5_000)
+    whole(
+        backend,
+        (f"{HOME}/case/2/U", 3_000),
+        (f"{HOME}/case/1/U", 3_000),
+    )
+    browser = browser_for(backend, store)
+    first = cycle(browser)
+    assert [Path(p).parent.name for p in first.pulled] == ["2", "1"]
+
+    whole(
+        backend,
+        (f"{HOME}/case/4/U", 3_000),
+        (f"{HOME}/case/3/U", 3_000),
+        (f"{HOME}/case/2/U", 3_000),
+        (f"{HOME}/case/1/U", 3_000),
+    )
+    second = cycle(browser)
+    assert [Path(p).parent.name for p in second.pulled] == ["4"], (
+        "2/ is now earlier and already here: 3 KB of the 5 KB kept, so 3/ does not fit"
+    )
+    assert [Path(s.path).parent.name for s in second.skipped] == ["3"]
+    assert "kept of them" in second.skipped[0].reason
+
+
+def test_the_close_down_sync_brings_the_newest_time_and_leaves_the_backlog(backend, store):
+    """The end of a session waits on this sync, and its round trips are not bounded
+    the way a background cycle's are; a backlog of earlier times is not its job."""
+    workspace(backend, (f"{HOME}/case/2/U", 30), (f"{HOME}/case/1/U", 30))
+    report = mirror.sync(browser_for(backend, store), live=True)
+    assert [Path(p).parent.name for p in report.pulled] == ["2"]
+    assert [Path(s.path).parent.name for s in report.skipped] == ["1"]
+
+
+def test_an_earlier_time_that_will_not_copy_does_not_hold_the_older_ones(backend, store, monkeypatch):
+    """Taken newest first, a time whose file times out every cycle would be first in
+    line every cycle, and every older time would wait behind it for good."""
+    monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 60)
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
+        (f"{HOME}/case/1/U", 30),
+    )
+    real = backend.get_tree
+
+    def flaky(paths, local_dir, **kwargs):
+        if any(path.endswith("/2/p") for path in paths):
+            raise BackendError("timed out", code="timeout")
+        return real(paths, local_dir, **kwargs)
+
+    backend.get_tree = flaky
+    browser = browser_for(backend, store)
+    refused: dict[str, str] = {}
+    first = cycle(browser, refused=refused)
+    assert f"{HOME}/case/2/p" in refused
+    assert "1" not in {Path(p).parent.name for p in first.pulled}, "1/ waits behind 2/"
+
+    second = cycle(browser, refused=refused)
+    assert [Path(p).parent.name for p in second.pulled] == ["1"], "the older time came"
+    held = {s.path for s in second.skipped}
+    assert f"{HOME}/case/2/p" in held
+
+
+def test_a_time_with_a_file_left_behind_is_left_whole(backend, store, monkeypatch):
+    """A time with half its fields is one the viewer lists and cannot draw."""
+    whole(backend, (f"{HOME}/case/2/U", 30), (f"{HOME}/case/1/U", 20), (f"{HOME}/case/1/p", 60))
+    report = cycle(browser_for(backend, store), max_file_bytes=50)
+    assert [Path(p).parent.name for p in report.pulled] == ["2"]
+    assert sorted(Path(s.path).name for s in report.skipped) == ["U", "p"]
+
+
+def test_each_case_gets_its_turn_at_the_earlier_times(backend, store, monkeypatch):
+    """A steady case's times are iteration counts in the thousands; ordering by value
+    across cases would hand it every cycle and the transient case nothing."""
+    monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 60)
+    whole(
+        backend,
+        (f"{HOME}/steady/3000/U", 30), (f"{HOME}/steady/2000/U", 30),
+        (f"{HOME}/steady/1000/U", 30),
+        (f"{HOME}/transient/0.3/U", 30), (f"{HOME}/transient/0.2/U", 30),
+        (f"{HOME}/transient/0.1/U", 30),
+    )
+    report = cycle(browser_for(backend, store))
+    earlier = sorted(
+        Path(p).parent.relative_to(Path(p).parents[2]).as_posix()
+        for p in report.pulled if Path(p).parent.name in ("2000", "0.2", "1000", "0.1")
+    )
+    assert earlier == ["steady/2000", "transient/0.2"]
+
+
+def test_numbered_directories_above_a_case_are_not_its_times(backend, store):
+    """`sweep/5/case/100/U`: the time judged is 100/, under the case `sweep/5/case`."""
+    reason, held = mirror._live_verdict("sweep/5/case/100/U", {"sweep": "5", "sweep/5/case": "200"})
+    assert held == ("sweep/5/case", "100")
+    assert "100/" in reason
 
 
 def test_newest_times_reads_the_number_not_the_string(backend, store):
@@ -1161,3 +1315,74 @@ def test_the_loop_holds_the_gate_around_a_tool_call(backend, store, view, monkey
     block = SimpleNamespace(name="bash", input={"cmd": "ls"}, id="t1")
     loop._run_tool(block)
     assert seen == [True] and not loop.gate.busy
+
+
+def test_a_cycle_listed_by_the_service_does_not_wait_for_a_tool_call(backend, store):
+    """The service's files route is not the channel a tool call is on, so a hosted
+    cycle has nothing to stand aside for. During a five-minute solve call on staging
+    the first listing came 244 s in."""
+    import time as _time
+
+    from openreynolds.backend.base import StoredEntry, StoredListing
+
+    backend.files[f"{HOME}/case/4/U"] = b"x" * 50
+    backend.list_stored = lambda path, depth: StoredListing(
+        [StoredEntry(path=f"{HOME}/case/4/U", is_dir=False, size=50, mtime=1700000000.0)]
+    )
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.start()
+    try:
+        with live.gate.held():
+            live.poke()
+            for _ in range(40):
+                if live.last_report is not None:
+                    break
+                _time.sleep(0.05)
+            assert live.last_report is not None, "the cycle ran during the tool call"
+            assert [Path(p).name for p in live.last_report.pulled] == ["U"]
+            assert live.last_report.gate_wait_seconds < 1.0
+            assert backend.execs == [], "no command on the workspace while the call ran"
+    finally:
+        live.stop()
+
+
+def test_a_walking_cycle_waits_for_a_tool_call_once(backend, store, monkeypatch):
+    """Two bounded waits in a row add up: a cycle stood aside 120 s before it began
+    and 120 s more before it listed. One bound per cycle, not one per step."""
+    import time as _time
+
+    monkeypatch.setattr(mirror, "GATE_WAIT_S", 1.0)
+    _workspace_of(backend, ("a.md",))
+    live = mirror.LiveMirror(browser_for(backend, store), interval_s=3600)
+    live.start()
+    try:
+        with live.gate.held():
+            started = _time.monotonic()
+            live.poke()
+            for _ in range(200):
+                if live.last_report is not None:
+                    break
+                _time.sleep(0.02)
+            took = _time.monotonic() - started
+            assert live.last_report is not None
+            # Two waits in a row would be 2 s; one is 1 s, with room for a slow host.
+            assert took < 1.7, f"waited {took:.2f} s, more than one 1 s bound"
+            assert live.last_report.gate_wait_seconds >= 0.9
+    finally:
+        live.stop()
+
+
+def test_a_cycle_whose_wait_was_cut_by_stop_does_not_walk(backend, store):
+    """The wait ending because the mirror stopped is not the call ending: walking
+    then is the very command the wait keeps off the call's channel."""
+    _workspace_of(backend, ("a.md",))
+    gate = mirror.Gate()
+    gate.enter()
+    try:
+        report = mirror.sync(
+            browser_for(backend, store), live=True, background=True, gate=gate,
+            stopping=lambda: True,
+        )
+    finally:
+        gate.exit()
+    assert backend.execs == [] and report.pulled == []
