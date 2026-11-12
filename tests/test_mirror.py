@@ -908,6 +908,23 @@ def test_an_earlier_time_comes_whole_or_not_at_all(backend, store, monkeypatch):
     assert second.skipped == []
 
 
+def test_the_total_budget_keeps_the_newest_before_a_whole_earlier_time(backend, store):
+    """Backfill is optional; the newest time is what the viewer opens on."""
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 2_000),
+        (f"{HOME}/case/2/U", 2_000),
+        (f"{HOME}/case/2/p", 2_000),
+    )
+
+    report = cycle(browser_for(backend, store), max_total_bytes=5_000)
+
+    assert [Path(path).parent.name for path in report.pulled] == ["3"]
+    assert {Path(skip.path).name for skip in report.skipped} == {"U", "p"}
+    assert {Path(skip.path).parent.name for skip in report.skipped} == {"2"}
+    assert all("budget for one sync" in skip.reason for skip in report.skipped)
+
+
 def test_one_earlier_time_bigger_than_a_cycle_still_comes(backend, store, monkeypatch):
     """Slow rather than never: a large mesh's time is bigger than any one cycle."""
     monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 1_000)
