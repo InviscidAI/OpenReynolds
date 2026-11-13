@@ -322,8 +322,11 @@ openreynolds --local
   on the container stops everything; the files are kept.
 - **Felix is cloud-only.** Its solves run on cloud GPUs, so a local study is OpenFOAM.
 
-The image is `ghcr.io/inviscidai/reynolds-workspace:2512`; `OPENREYNOLDS_IMAGE`
-names another. To use an OpenFOAM installed on your machine instead of Docker, set
+The image is `ghcr.io/inviscidai/reynolds-workspace:2512`, built from
+[`docker/workspace`](docker/workspace/Dockerfile): OpenFOAM ESI v2512, HiSA, gmsh,
+build123d, pyvista and the rest of what the agent uses, the same image the hosted
+workspace runs. Build your own with `docker build -t my-workspace docker/workspace`
+and point `OPENREYNOLDS_IMAGE=my-workspace` at it. To use an OpenFOAM installed on your machine instead of Docker, set
 `OPENREYNOLDS_LOCAL=native` (and `OPENREYNOLDS_FOAM_BASHRC` if it is not found). That
 runs the agent's commands directly as you, with no sandbox, and the agent is written for
 ESI v2512, so another version or fork will differ in places.

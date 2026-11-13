@@ -1,0 +1,91 @@
+# Build the workspace image (docker/workspace) and publish it to
+# ghcr.io/inviscidai/reynolds-workspace, the image `openreynolds --local` pulls.
+#
+# A pull request that touches it builds it, with every check in check.sh, and pushes
+# nothing. A push to main publishes two tags: `:<commit sha>`, never re-pushed, and the
+# moving `:2512`, named after the OpenFOAM version the image is built FROM, which is
+# what openreynolds/backend/docker.py's DEFAULT_IMAGE names. The digest goes in the
+# run summary: the hosted workspace builds FROM this image pinned by that digest, so
+# moving `:2512` changes what local installs get and nothing hosted until it is bumped.
+#
+# ONE-TIME SETUP: GitHub creates the package private on its first push. An org owner
+# sets it public (package settings → Change visibility), or `docker pull` is denied.
+
+name: workspace-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/workspace/**"
+      - ".github/workflows/workspace-image.yml"
+  pull_request:
+    paths:
+      - "docker/workspace/**"
+      - ".github/workflows/workspace-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: workspace-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REPO: ghcr.io/inviscidai/reynolds-workspace
+  VERSION: "2512"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # HiSA compiles from source inside the build; the cache makes the next one skip it.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches the image's OpenFOAM
+        run: |
+          set -euo pipefail
+          grep -q "^FROM opencfd/openfoam-default:${VERSION}@sha256:" docker/workspace/Dockerfile
+          grep -q "reynolds-workspace:${VERSION}\"" openreynolds/backend/docker.py
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/workspace
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: false
+          tags: |
+            ${{ env.REPO }}:${{ env.VERSION }}
+            ${{ env.REPO }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=reynolds-workspace
+            org.opencontainers.image.description=OpenFOAM v2512 with the tools the Reynolds agent uses
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "## reynolds-workspace"
+            echo
+            echo '```'
+            echo "$REPO:$VERSION"
+            echo "$REPO@${{ steps.build.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

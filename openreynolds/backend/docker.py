@@ -43,7 +43,11 @@ from .base import WORKSPACE_ROOT, BackendError, EXEC_MAX_TIMEOUT_S, ExecResult, 
 from .local import LOGS_DIR, MAX_OUTPUT_BYTES, LocalBackend, _now
 
 DEFAULT_IMAGE = "ghcr.io/inviscidai/reynolds-workspace:2512"
-"""The hosted workspace's image, published for running locally."""
+"""Built from docker/workspace by .github/workflows/workspace-image.yml. The hosted
+workspace runs the same image with its job supervisor added."""
+
+ROOT_SHIM = "/usr/local/lib/libfoamnotadmin.so"
+"""Lets OpenFOAM compile code at run time as root; built into the image."""
 
 JOBS_DIR = f"{LOGS_DIR}/jobs"
 """Under the workspace: one directory per job."""
@@ -140,6 +144,11 @@ class DockerBackend(LocalBackend):
             # Files the solver writes land in the person's own directory, owned by
             # them rather than by root. Docker Desktop maps ownership itself.
             args += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        else:
+            # Root in the container, where OpenFOAM refuses to compile #codeStream
+            # and coded boundary conditions; the image's shim answers its "am I
+            # root?" with no (docker/workspace/Dockerfile).
+            args += ["-e", f"LD_PRELOAD={ROOT_SHIM}"]
         return args + ["--entrypoint", "sleep", self.image, "infinity"]
 
     @staticmethod

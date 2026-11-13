@@ -17,8 +17,11 @@ import pytest
 
 from openreynolds import cli, prompt
 from openreynolds.backend.base import WORKSPACE_ROOT, BackendError
+from openreynolds.backend import docker as docker_module
 from openreynolds.backend.docker import DEFAULT_IMAGE, DockerBackend
 from openreynolds.config import Config
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 posix_only = pytest.mark.skipif(
@@ -80,6 +83,28 @@ def test_the_container_is_sandboxed_and_mounts_the_workspace_at_work(tmp_path):
     assert args[args.index("-v") + 1] == f"{tmp_path.resolve()}:{WORKSPACE_ROOT}"
     assert args[-4:] == ["--entrypoint", "sleep", "example/image:1", "infinity"]
     assert backend.workspace_root == WORKSPACE_ROOT
+
+
+def test_root_in_the_container_gets_the_codestream_shim(tmp_path, monkeypatch):
+    """Docker Desktop on Windows runs the container as root, where OpenFOAM refuses
+    to compile #codeStream unless the image's shim is preloaded."""
+    monkeypatch.delattr("os.getuid", raising=False)
+    args = DockerBackend(root=tmp_path, image="x:1").run_args()
+    assert "--user" not in args
+    assert f"LD_PRELOAD={docker_module.ROOT_SHIM}" in args
+    assert docker_module.ROOT_SHIM in (REPO / "docker/workspace/Dockerfile").read_text()
+
+
+def test_the_default_image_is_the_one_this_repository_builds():
+    """The workflow publishes `:<the FROM line's OpenFOAM version>`, and that is the
+    tag DEFAULT_IMAGE names."""
+    dockerfile = (REPO / "docker/workspace/Dockerfile").read_text()
+    base = next(line for line in dockerfile.splitlines() if line.startswith("FROM "))
+    assert "@sha256:" in base, "the base is pinned by digest"
+    version = base.split(":")[1].split("@")[0]
+    assert DEFAULT_IMAGE == f"ghcr.io/inviscidai/reynolds-workspace:{version}"
+    workflow = (REPO / ".github/workflows/workspace-image.yml").read_text()
+    assert f'VERSION: "{version}"' in workflow
 
 
 def test_the_default_image_is_the_published_one(tmp_path, monkeypatch):
