@@ -603,14 +603,12 @@ def _sync(
     if getattr(entries, "truncated", False):
         report.warnings.append(entries.notice)
 
-    candidates, later = _wanted(
+    now, times = _wanted(
         entries, root, report, everything, max_file_bytes, live=live, refused=refused,
         earlier_times=gate is not None,
     )
-    _pull(
-        browser, _within_budget(candidates, report, max_total_bytes, later), report,
-        refused=refused, gate=gate, later=later,
-    )
+    wanted, later = _within_budget(now, times, report, max_total_bytes)
+    _pull(browser, wanted, report, refused=refused, gate=gate, later=later)
     return report
 
 
@@ -644,10 +642,11 @@ def _wanted(
     live: bool = False,
     refused: dict[str, str] | None = None,
     earlier_times: bool = False,
-) -> tuple[list[Entry], dict[str, int]]:
+) -> tuple[list[Entry], list[tuple[str, list[Entry]]]]:
     """Files worth asking for: not filtered out, not too big, not already here, and
-    not refused by the service already this session. And, of those, the paths that
-    go after the rest: a live cycle's earlier time directories (`_earlier_within`).
+    not refused by the service already this session. Returned in two parts: the rest,
+    and apart from them a live cycle's earlier time directories, each one's name and
+    files, newest first (`_earlier_within`), which go after the rest.
 
     `earlier_times` is only for a background cycle, whose round trips are bounded
     (`LIVE_PULL_TIMEOUT_S`). The close-down sync is what the end of a session waits
@@ -712,17 +711,14 @@ def _wanted(
                 entry.path, f"{EARLIER_TIME} ({key[1]}/), held back with a file of it",
                 entry.size,
             ))
-    later = _earlier_within(earlier, earlier_here, report)
-    for files in later:
-        wanted.extend(files)
-    return wanted, {entry.path: rank for rank, files in enumerate(later) for entry in files}
+    return wanted, _earlier_within(earlier, earlier_here, report)
 
 
 def _earlier_within(
     earlier: dict[tuple[str, str], list[Entry]], here: int, report: MirrorReport
-) -> list[list[Entry]]:
-    """The earlier time directories this cycle copies, newest first, whole: one list
-    of files per time, so the sync budget can keep each one whole too.
+) -> list[tuple[str, list[Entry]]]:
+    """The earlier time directories this cycle copies, newest first, whole: each
+    one's name and files, so the sync budget can keep each one whole too.
 
     Whole, because a time with half its fields is one the viewer lists and cannot
     draw. Newest first, because those are the ones nearest what the user is looking
@@ -732,7 +728,7 @@ def _earlier_within(
     named in the report and asked for again next cycle."""
     cycle_left = EARLIER_BYTES_PER_CYCLE
     kept_left = EARLIER_BYTES - here
-    taken: list[list[Entry]] = []
+    taken: list[tuple[str, list[Entry]]] = []
     # Newest first within each case, and the cases taken in turn: a steady case's
     # times are iteration counts in the thousands and a transient one's are seconds,
     # so one order by value across cases would give the steady one everything.
@@ -758,7 +754,7 @@ def _earlier_within(
             waiting = True
             reason = f"{EARLIER_TIME} ({name}/), for a later cycle"
         else:
-            taken.append(files)
+            taken.append((name, files))
             cycle_left -= size
             kept_left -= size
             continue
@@ -767,29 +763,29 @@ def _earlier_within(
 
 
 def _within_budget(
-    candidates: list[Entry],
+    now: list[Entry],
+    times: list[tuple[str, list[Entry]]],
     report: MirrorReport,
     max_total_bytes: int,
-    later: dict[str, int] | None = None,
-) -> list[Entry]:
+) -> tuple[list[Entry], dict[str, int]]:
     """As much as fits, smallest first, and a live cycle's earlier times after that.
+    Returns the files, and of those the earlier times' paths with their time's rank,
+    which `_batches` sends last.
 
     Smallest first because of what running out should cost: one enormous log left
     behind is a sentence in the report, and three hundred dictionaries left behind
     because that log went first is the study missing.
 
-    `later` (path to its time's rank, from `_wanted`) is the earlier-time backfill.
-    It is spent on last, so it never pushes out the newest time, which is what the
-    viewer opens on; and a whole time at a time, newest first, stopping at the first
-    that does not fit, for the reasons `_earlier_within` gives. Sorted in with the
-    rest, two 2 KB fields of an earlier time took a 5 KB budget ahead of the
-    newest time's one 2 KB field, and left that time behind (#100).
+    `times` is the earlier-time backfill, newest first, from `_wanted`. It is spent
+    on last, so it never pushes out the newest time, which is what the viewer opens
+    on; and a whole time at a time, stopping at the first that does not fit, for the
+    reasons `_earlier_within` gives. Sorted in with the rest, two 2 KB fields of an
+    earlier time took a 5 KB budget ahead of the newest time's one 2 KB field, and
+    left that time behind (#100).
     """
-    later = later or {}
     budget = max_total_bytes
     wanted = []
     over = f"past the {human(max_total_bytes)} budget for one sync"
-    now = [entry for entry in candidates if entry.path not in later]
     for entry in sorted(now, key=lambda item: (item.size, item.path)):
         if entry.size > budget:
             report.skipped.append(Skip(entry.path, over, entry.size))
@@ -797,26 +793,19 @@ def _within_budget(
         budget -= entry.size
         wanted.append(entry)
 
-    times: dict[int, list[Entry]] = {}
-    for entry in candidates:
-        if entry.path in later:
-            times.setdefault(later[entry.path], []).append(entry)
+    later: dict[str, int] = {}
     full = False
-    for rank in sorted(times):
-        files = times[rank]
+    for rank, (name, files) in enumerate(times):
         size = sum(entry.size for entry in files)
         if full or size > budget:
             full = True
-            name = next(
-                (part for part in reversed(files[0].path.split("/")[:-1])
-                 if _is_time_directory(part)), "?",
-            )
             reason = f"{EARLIER_TIME} ({name}/), {over}, held back whole"
             report.skipped.extend(Skip(entry.path, reason, entry.size) for entry in files)
             continue
         budget -= size
         wanted.extend(files)
-    return wanted
+        later.update((entry.path, rank) for entry in files)
+    return wanted, later
 
 
 def _batches(wanted: list[Entry], later: dict[str, int] | None = None) -> list[list[Entry]]:
