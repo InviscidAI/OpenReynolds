@@ -608,7 +608,7 @@ def _sync(
         earlier_times=gate is not None,
     )
     _pull(
-        browser, _within_budget(candidates, report, max_total_bytes), report,
+        browser, _within_budget(candidates, report, max_total_bytes, later), report,
         refused=refused, gate=gate, later=later,
     )
     return report
@@ -713,14 +713,16 @@ def _wanted(
                 entry.size,
             ))
     later = _earlier_within(earlier, earlier_here, report)
-    wanted.extend(later)
-    return wanted, {entry.path: rank for rank, entry in enumerate(later)}
+    for files in later:
+        wanted.extend(files)
+    return wanted, {entry.path: rank for rank, files in enumerate(later) for entry in files}
 
 
 def _earlier_within(
     earlier: dict[tuple[str, str], list[Entry]], here: int, report: MirrorReport
-) -> list[Entry]:
-    """The earlier time directories this cycle copies, newest first, whole.
+) -> list[list[Entry]]:
+    """The earlier time directories this cycle copies, newest first, whole: one list
+    of files per time, so the sync budget can keep each one whole too.
 
     Whole, because a time with half its fields is one the viewer lists and cannot
     draw. Newest first, because those are the ones nearest what the user is looking
@@ -730,7 +732,7 @@ def _earlier_within(
     named in the report and asked for again next cycle."""
     cycle_left = EARLIER_BYTES_PER_CYCLE
     kept_left = EARLIER_BYTES - here
-    taken: list[Entry] = []
+    taken: list[list[Entry]] = []
     # Newest first within each case, and the cases taken in turn: a steady case's
     # times are iteration counts in the thousands and a transient one's are seconds,
     # so one order by value across cases would give the steady one everything.
@@ -756,7 +758,7 @@ def _earlier_within(
             waiting = True
             reason = f"{EARLIER_TIME} ({name}/), for a later cycle"
         else:
-            taken.extend(files)
+            taken.append(files)
             cycle_left -= size
             kept_left -= size
             continue
@@ -765,28 +767,55 @@ def _earlier_within(
 
 
 def _within_budget(
-    candidates: list[Entry], report: MirrorReport, max_total_bytes: int
+    candidates: list[Entry],
+    report: MirrorReport,
+    max_total_bytes: int,
+    later: dict[str, int] | None = None,
 ) -> list[Entry]:
-    """As much as fits, smallest first.
+    """As much as fits, smallest first, and a live cycle's earlier times after that.
 
     Smallest first because of what running out should cost: one enormous log left
     behind is a sentence in the report, and three hundred dictionaries left behind
     because that log went first is the study missing.
+
+    `later` (path to its time's rank, from `_wanted`) is the earlier-time backfill.
+    It is spent on last, so it never pushes out the newest time, which is what the
+    viewer opens on; and a whole time at a time, newest first, stopping at the first
+    that does not fit, for the reasons `_earlier_within` gives. Sorted in with the
+    rest, two 2 KB fields of an earlier time took a 5 KB budget ahead of the
+    newest time's one 2 KB field, and left that time behind (#100).
     """
+    later = later or {}
     budget = max_total_bytes
     wanted = []
-    for entry in sorted(candidates, key=lambda item: (item.size, item.path)):
+    over = f"past the {human(max_total_bytes)} budget for one sync"
+    now = [entry for entry in candidates if entry.path not in later]
+    for entry in sorted(now, key=lambda item: (item.size, item.path)):
         if entry.size > budget:
-            report.skipped.append(
-                Skip(
-                    entry.path,
-                    f"past the {human(max_total_bytes)} budget for one sync",
-                    entry.size,
-                )
-            )
+            report.skipped.append(Skip(entry.path, over, entry.size))
             continue
         budget -= entry.size
         wanted.append(entry)
+
+    times: dict[int, list[Entry]] = {}
+    for entry in candidates:
+        if entry.path in later:
+            times.setdefault(later[entry.path], []).append(entry)
+    full = False
+    for rank in sorted(times):
+        files = times[rank]
+        size = sum(entry.size for entry in files)
+        if full or size > budget:
+            full = True
+            name = next(
+                (part for part in reversed(files[0].path.split("/")[:-1])
+                 if _is_time_directory(part)), "?",
+            )
+            reason = f"{EARLIER_TIME} ({name}/), {over}, held back whole"
+            report.skipped.extend(Skip(entry.path, reason, entry.size) for entry in files)
+            continue
+        budget -= size
+        wanted.extend(files)
     return wanted
 
 
