@@ -446,12 +446,19 @@ class Config:
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)
         return path
 
-    def missing(self) -> list[str]:
-        """Which required settings are absent. LLM auth is bring-your-own-key."""
+    def missing(self, *, local: bool = False) -> list[str]:
+        """Which required settings are absent. LLM auth is bring-your-own-key.
+
+        A local workspace needs no service, so then only the model's key is required:
+        the open-source agent runs on a laptop with Docker and a key, and nothing else.
+        A model the service provides still needs the service's key, which
+        `model_key_missing` says."""
         gaps = []
-        if not self.foamd_url:
+        preset = preset_for(self.provider)
+        service = not local or (preset is not None and preset.name == REYNOLDS)
+        if service and not self.foamd_url:
             gaps.append("FOAMD_URL")
-        if not self.foamd_api_key:
+        if service and not self.foamd_api_key:
             gaps.append("FOAMD_API_KEY")
         key = self.model_key_missing()
         if key:

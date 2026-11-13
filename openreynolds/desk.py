@@ -442,7 +442,7 @@ class SideChat:
             return self._fork
         return {
             "model": self.loop.cfg.model,
-            "system": system_prompt(ctx.solver),
+            "system": system_prompt(ctx.solver, local=ctx.local),
             "messages": list(self.loop.messages),
             "tools": tools_for(ctx),
             "effort": self.loop.cfg.effort,

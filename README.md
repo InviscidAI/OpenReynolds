@@ -297,6 +297,40 @@ make a hundred-kilobyte picture is the wrong way round. Frames come home and
 `openreynolds video` assembles them here, where a real encoder lives. The instance
 image has no encoder on purpose.
 
+## Running it on your own machine
+
+`--local` puts the workspace on your computer instead of in the cloud. It runs in
+Docker, in the same image the hosted workspace runs (OpenFOAM ESI v2512, cfMesh, the
+toolbox's Python packages), so the agent sees exactly what it sees in the cloud: the
+same `/work`, the same tools, the same version. Nothing is billed but your model.
+
+```bash
+# Docker Desktop on macOS or Windows, or Docker Engine on Linux, then:
+openreynolds config --provider anthropic    # or any preset; ollama needs no key
+openreynolds --local doctor                 # pulls the image, runs blockMesh in it
+openreynolds --local
+```
+
+- **No account needed.** A local workspace asks for a model key and nothing else.
+- **Your files.** The workspace is `~/.openreynolds/work` (`OPENREYNOLDS_LOCAL_WORK`
+  moves it), mounted into the container as `/work`. Everything the agent writes is
+  there, owned by you, and stays when the session ends.
+- **Sandboxed.** Commands run inside the container, as your user, with no network.
+  They can reach the workspace directory and nothing else on your machine.
+- **Jobs outlive the session.** A solve keeps running when you leave, the container
+  stays up for it, and `--study <id> --local` picks the study up again. `docker rm -f`
+  on the container stops everything; the files are kept.
+- **Felix is cloud-only.** Its solves run on cloud GPUs, so a local study is OpenFOAM.
+
+The image is `ghcr.io/inviscidai/reynolds-workspace:2512`, built from
+[`docker/workspace`](docker/workspace/Dockerfile): OpenFOAM ESI v2512, HiSA, gmsh,
+build123d, pyvista and the rest of what the agent uses, the same image the hosted
+workspace runs. Build your own with `docker build -t my-workspace docker/workspace`
+and point `OPENREYNOLDS_IMAGE=my-workspace` at it. To use an OpenFOAM installed on your machine instead of Docker, set
+`OPENREYNOLDS_LOCAL=native` (and `OPENREYNOLDS_FOAM_BASHRC` if it is not found). That
+runs the agent's commands directly as you, with no sandbox, and the agent is written for
+ESI v2512, so another version or fork will differ in places.
+
 ## Editing the mesh by hand — the hosted app only
 
 Asking in words is right for "make the duct wider" and wrong for "that face is the
@@ -470,6 +504,8 @@ containers want:
 | `OPENREYNOLDS_SOLVER` | `auto`, `openfoam` or `felix`, read when `--solver` is not given. A resumed study keeps the solver it has. |
 | `OPENREYNOLDS_MODE` | `auto`, `partial` or `structured`, or an alias. A value that is not a mode is ignored with a warning: the config file's `mode` applies, or full auto, and a resumed study keeps its stored mode. |
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
+| `OPENREYNOLDS_LOCAL` | `docker` (what `--local` sets) runs the workspace in Docker on this machine; `native` uses an OpenFOAM installed here, with no sandbox. |
+| `OPENREYNOLDS_LOCAL_WORK` / `OPENREYNOLDS_IMAGE` | The local workspace's directory (default `~/.openreynolds/work`) and the Docker image it runs in. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
 | `OPENREYNOLDS_WORKSPACE_ETA_S` | How long a workspace usually takes to come up (default 30). A session starts talking before its workspace is up; this is the "usually about N seconds" the model is told while it waits. |
