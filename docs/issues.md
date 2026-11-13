@@ -679,7 +679,9 @@ clean and this was not.
 
 ---
 
-## 24. `LocalBackend` jobs die with the session, and the interface says they do not
+## 24. `LocalBackend` jobs die with the session, and the interface says they do not — RESOLVED for the Docker workspace
+
+**Resolved for `--local` (Docker), 2026-11-13.** `backend/docker.py` keeps each job as files under `/work/.logs/jobs/<id>/` and runs it in a container that outlives the session, so a job keeps running when the session ends and a resumed session can still read its status. `OPENREYNOLDS_LOCAL=native` is unchanged.
 
 **What happened.** Stopping a `-p` study on the local backend killed both running
 `pimpleFoam` jobs. Their logs stop mid-timestep — no `End`, no fatal error, just a
@@ -921,7 +923,9 @@ client is not established.
 
 ---
 
-## 31. The workspace path the prompt advertises does not work inside a shell command
+## 31. The workspace path the prompt advertises does not work inside a shell command — RESOLVED for the Docker workspace
+
+**Resolved for `--local` (Docker), 2026-11-13.** The workspace directory is mounted at `/work` inside the container, so `/work` in a command is the workspace. `OPENREYNOLDS_LOCAL=native` still has the alias problem described here.
 
 `LocalBackend._resolve` treats `/work` as an alias for the real workspace root, so every
 *tool argument* — a `cwd`, a path handed to `read_file`, the toolbox destination — lands in

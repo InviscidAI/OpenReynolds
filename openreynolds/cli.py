@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import __version__
 from .backend import hosted
+from .backend import docker as docker_backend
+from .backend.docker import DockerBackend
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
@@ -176,6 +178,13 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     help="How hard the model thinks this session. /effort changes it mid-study.",
 )
 @click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run the workspace on this machine, in Docker, instead of in the cloud; or "
+         "OPENREYNOLDS_LOCAL=docker. OPENREYNOLDS_LOCAL=native uses an OpenFOAM "
+         "installed here instead, with no sandbox.",
+)
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
     "--keep-alive",
@@ -207,12 +216,17 @@ def main(
     mode: str | None,
     solver: str | None,
     no_capture: bool,
+    local: bool,
     plain: bool,
     keep_alive: bool,
     max_wait: float,
     output_format: str,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
+    if local:
+        # Through the environment, which is where the session and every subcommand
+        # (`doctor`, `files`, `pull`) already read the choice from.
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
     if ctx.invoked_subcommand is not None:
         # `--output-format` is a GROUP option, so the obvious thing for an agent to do
         # is put it in front of everything -- and this function used to return here
@@ -261,7 +275,7 @@ def main(
     if no_capture:
         cfg.capture = False
 
-    missing = cfg.missing()
+    missing = cfg.missing(local=local_workspace() is not None)
     if missing:
         console.print(f"[red]Missing configuration:[/] {', '.join(missing)}")
         console.print(
@@ -980,16 +994,65 @@ def doctor_cmd(ctx: click.Context, as_json: bool) -> None:
 
 
 def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
-    """Each check reports a fact. Nothing here changes anything."""
+    """Each check reports a fact. Nothing here changes anything -- except that a local
+    Docker workspace is started if it is not running, since asking it whether OpenFOAM
+    runs is the check, and it is left up as a session would leave it."""
+    kind = local_workspace()
+    if kind is None:
+        workspace = [_check_service(cfg)]
+    elif kind == "docker":
+        workspace = [_check_docker()]
+    else:
+        workspace = [_check_native_foam()]
+    signed_in = bool(cfg.foamd_url and cfg.foamd_api_key)
     return [
         _check_settings(cfg),
-        _check_service(cfg),
+        *workspace,
         _check_model(cfg),
-        _check_capture(cfg),
+        _check_capture(cfg) if kind is None or signed_in else (
+            "capture", True, "not signed in, so nothing is uploaded"),
         _check_toolbox(),
         _check_terminal(),
         _check_video(),
     ]
+
+
+FOAM_PROBE = "blockMesh -help >/dev/null && echo OpenFOAM ${WM_PROJECT_VERSION:-?} && nproc"
+"""What a workspace is asked to prove it can mesh: a utility that runs, and its version."""
+
+
+def _check_docker() -> tuple[str, bool, str]:
+    """The local Docker workspace: Docker there, the image there, OpenFOAM running in it."""
+    try:
+        backend = DockerBackend()
+        result = backend.exec(FOAM_PROBE, timeout_s=120)
+    except BackendError as exc:
+        return "local workspace (Docker)", False, str(exc)
+    lines = result.output.strip().splitlines()
+    if result.exit_code != 0 or len(lines) < 2:
+        return "local workspace (Docker)", False, (
+            f"OpenFOAM did not run in {backend.image}: {result.output.strip()[-300:]}")
+    return "local workspace (Docker)", True, (
+        f"{lines[-2]} on {lines[-1]} core(s) in {backend.image}; "
+        f"{backend.root} is {WORKSPACE_ROOT}")
+
+
+def _check_native_foam() -> tuple[str, bool, str]:
+    """An OpenFOAM installed on this machine, used with no sandbox."""
+    backend = LocalBackend()
+    if not backend.bashrc:
+        return "local OpenFOAM (native)", False, (
+            "no OpenFOAM found to source; set OPENREYNOLDS_FOAM_BASHRC to its etc/bashrc, "
+            "or use the Docker workspace (--local)")
+    result = backend.exec(FOAM_PROBE, timeout_s=60)
+    lines = result.output.strip().splitlines()
+    if result.exit_code != 0 or len(lines) < 2:
+        return "local OpenFOAM (native)", False, (
+            f"blockMesh did not run after sourcing {backend.bashrc}: "
+            f"{result.output.strip()[-300:]}")
+    note = "" if "2512" in lines[-2] else "; the agent is written for ESI v2512, so expect differences"
+    return "local OpenFOAM (native)", True, (
+        f"{lines[-2]} from {backend.bashrc}, no sandbox{note}")
 
 
 NO_TERMINAL_HELP = (
@@ -1333,7 +1396,8 @@ def session(
     it is a study opened somewhere else, and it is named by its id rather than
     inheriting the shared workspace root."""
 
-    local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
+    local_kind = local_workspace()
+    local = local_kind is not None
     asked = solvers.normalize(solver) or solvers.normalize(os.environ.get("OPENREYNOLDS_SOLVER"))
     stored = store.recorded_solver
     if resuming and not local and not (store.dir / "session.json").is_file():
@@ -1380,12 +1444,19 @@ def session(
     is here already (the local one)."""
     try:
         if local:
-            # A workspace on this machine: no container, no bill, and nothing to
-            # reach. Meant for working on the harness itself, where the question is
-            # what the agent does and the answer comes from running it repeatedly.
-            backend = LocalBackend()
+            # A workspace on this machine: nothing billed and nothing to reach. In
+            # Docker it is the hosted image in a container; native, whatever OpenFOAM
+            # the machine has.
+            if local_kind == "docker":
+                backend = DockerBackend()
+                console.print(f"[dim]{docker_backend.describe(backend)}[/]")
+                # Up before the model is asked anything, so no Docker, or no image,
+                # is said here once rather than as every tool call failing.
+                backend.ensure_up()
+            else:
+                backend = LocalBackend()
+                console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
             client, resolved_instance = None, "local"
-            console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
         elif settled == solvers.AUTO:
             # The solver is chosen from the person's first message, and a workspace
             # has one kind: nothing is reserved, started or opened on the platform
@@ -1435,7 +1506,10 @@ def session(
             if streaming_json:
                 _terminal_json("refused", str(exc), store.session.study_id)
             raise SystemExit(ONE_SHOT_EXIT_CODES["refused"]) from exc
-        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        if local:
+            console.print(f"[red]Could not start the local workspace:[/] {exc.message}")
+        else:
+            console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         if streaming_json:
             _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
@@ -1531,6 +1605,7 @@ def session(
         on_fetch=_fetch_hook(capture),
         mode=cfg.mode,
         solver=settled,
+        local=local_kind == "docker",
     )
     if cfg.capture and not local and cfg.foamd_url and cfg.foamd_api_key:
         # The study's spending ceiling lives on the platform's row for it, so only a
@@ -1950,7 +2025,7 @@ def session(
         # person waiting on the web app to start their next study.
         if never_started:
             console.print(f"\n[dim]this study's files are in {store.dir}[/]")
-            console.print(f"[dim]  resume: openreynolds --study {store.session.study_id}[/]")
+            console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {store.session.study_id}[/]")
         try:
             if not never_started:
                 with _timed("close.close_down"):
@@ -1994,6 +2069,22 @@ the traceback is worth more than a tidy exit -- and it is mapped anyway so that 
 embedder which swallows the exception cannot turn a crash into a zero."""
 
 WORKSPACE_LISTED = 40
+
+
+def local_workspace() -> str | None:
+    """Which local workspace `OPENREYNOLDS_LOCAL` asks for: `docker`, `native`, or None
+    for the hosted one. `1` is `native`, which is what it meant before there was a
+    choice (`scripts/cad_accept.py` sets it)."""
+    value = os.environ.get("OPENREYNOLDS_LOCAL", "").strip().lower()
+    if value in ("", "0", "false", "no", "off"):
+        return None
+    return "docker" if value == "docker" else "native"
+
+
+def _local_flag() -> str:
+    """` --local` in a command shown to the person, when this session's workspace is the
+    Docker one: a resume without it would look for the study in the cloud."""
+    return " --local" if local_workspace() == "docker" else ""
 
 
 def _settle_solver(stored: str | None, asked: str | None, *, resuming: bool, local: bool) -> str:
@@ -3094,7 +3185,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
             console.print(f"[yellow]{len(live)} job(s) still running:[/] {names}")
             console.print("[dim]they keep going, and keep costing, until they finish[/]")
             console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
 
     if live:
@@ -3216,7 +3307,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
             # Still up, so its stop's full copy has not happened either.
             _checkpoint_the_study(backend, store)
 
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
 
 
 END_CHECKPOINT_TIMEOUT_S = 45.0
@@ -3311,11 +3402,11 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
     console.print(f"\n[dim]this study's files are in {store.dir}[/]")
     console.print("[dim]the workspace was still starting when the session ended; nothing ran on it[/]")
     if keep_alive:
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
     if backend.failed:
         console.print("[dim]the workspace did not start, so there is nothing to stop[/]")
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
     console.print("[dim]waiting for the workspace to come up so it can be put down again[/]")
     try:
@@ -3347,7 +3438,7 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
             except BackendError as exc:
                 console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
 
 
 def _report_on_exit(backend: Backend, store: Store) -> None:
@@ -3364,7 +3455,7 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
         # which one it is.
         console.print(f"\n[dim]this study's files are in {home} on the instance[/]")
         console.print(f"[dim]your copy of them: {store.files_dir}[/]")
-        console.print(f"[dim]resume with:  openreynolds --study {study}[/]")
+        console.print(f"[dim]resume with:  openreynolds{_local_flag()} --study {study}[/]")
         console.print(f"[dim]look at them: openreynolds files --study {study}[/]")
         console.print(f"[dim]bring more:   openreynolds pull --study {study} --all[/]")
         return
@@ -3372,7 +3463,7 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
     console.print("[dim]they keep going, and keep costing, until they finish[/]")
     console.print(f"[dim]  your copy of this study so far: {store.files_dir}[/]")
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
     console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
 
 
@@ -3894,7 +3985,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
             "The usual cause is a rate limit or usage cap on your model API key, not "
             "your work -- every job and file is safe on the instance and mirrored "
             "here.[/]\n[yellow]Wait a minute and try again, or leave with /exit and "
-            f"resume in a fresh, smaller thread: [bold]openreynolds --study {study}[/][/]"
+            f"resume in a fresh, smaller thread: [bold]openreynolds{_local_flag()} --study {study}[/][/]"
         )
     else:
         view.info("the thread is intact - say something to continue, or /exit")
