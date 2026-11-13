@@ -908,6 +908,47 @@ def test_an_earlier_time_comes_whole_or_not_at_all(backend, store, monkeypatch):
     assert second.skipped == []
 
 
+def test_the_sync_budget_goes_to_the_newest_time_before_the_backfill(backend, store):
+    """#100: the budget was spent smallest first across everything, so two 2 KB
+    fields of an earlier time took a 5 KB budget and the newest time's one 2 KB field
+    was left behind -- the viewer one time behind the solver, with half of an earlier
+    time it cannot draw."""
+    workspace(
+        backend,
+        (f"{HOME}/case/3/U", 2_000),
+        (f"{HOME}/case/2/U", 2_000),
+        (f"{HOME}/case/2/p", 2_000),
+    )
+    report = cycle(browser_for(backend, store), max_total_bytes=5_000)
+
+    assert [Path(p).parent.name for p in report.pulled] == ["3"]
+    assert sorted(Path(s.path).name for s in report.skipped) == ["U", "p"], (
+        "the earlier time is left whole, not half-copied"
+    )
+    assert all(
+        s.reason.startswith(f"{mirror.EARLIER_TIME} (2/)") and "budget" in s.reason
+        for s in report.skipped
+    )
+
+
+def test_earlier_times_within_the_sync_budget_stop_at_the_first_that_does_not_fit(
+    backend, store
+):
+    """Newest first and whole, as `_earlier_within` orders them: an older, smaller
+    time does not take the budget the next cycle would give the one before it."""
+    workspace(
+        backend,
+        (f"{HOME}/case/4/U", 1_000),
+        (f"{HOME}/case/3/U", 1_000),
+        (f"{HOME}/case/2/U", 3_000),
+        (f"{HOME}/case/1/U", 500),
+    )
+    report = cycle(browser_for(backend, store), max_total_bytes=4_000)
+
+    assert [Path(p).parent.name for p in report.pulled] == ["4", "3"]
+    assert sorted(Path(s.path).parent.name for s in report.skipped) == ["1", "2"]
+
+
 def test_one_earlier_time_bigger_than_a_cycle_still_comes(backend, store, monkeypatch):
     """Slow rather than never: a large mesh's time is bigger than any one cycle."""
     monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 1_000)
