@@ -407,8 +407,13 @@ class CadDesk:
                  on_step: Callable[[Step], None] | None = None,
                  interject: Callable[[], str | None] | None = None,
                  on_turn: Callable[..., None] | None = None,
-                 reviewer: Any | None = None):
+                 reviewer: Any | None = None,
+                 headers: dict[str, str] | None = None):
         self.cfg = cfg
+        self.headers = dict(headers or {})
+        """Sent on every model request: the session's `X-Study-Id`, so the service bills
+        this desk's calls to the study and judges them against its ceiling. A trial
+        account's call without it is refused (foamd `trial_needs_study`)."""
         self.backend = backend
         self.store = store
         self.reviewer = reviewer
@@ -452,7 +457,7 @@ class CadDesk:
         well because this desk holds the thread for minutes at a time, and a remark
         that waits that long is a remark that arrives after the thing it was about."""
         self.model = cfg.mesher_model or cfg.model
-        self.provider = make_provider(cfg, model=self.model)
+        self.provider = make_provider(cfg, model=self.model, default_headers=self.headers)
         self._built_for = (self.model, endpoint_key(cfg, self.model))
         """The configured model and the endpoint `provider` was built for; see `_follow`."""
         self.effort = cfg.mesher_effort or "high"
@@ -490,7 +495,7 @@ class CadDesk:
             return
         self.model = model
         if built[1] != self._built_for[1]:
-            self.provider = make_provider(self.cfg, model=model)
+            self.provider = make_provider(self.cfg, model=model, default_headers=self.headers)
         self._built_for = built
 
     def run(self, request: str, case: str | None = None,
