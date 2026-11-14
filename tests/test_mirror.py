@@ -1029,6 +1029,91 @@ def test_an_earlier_time_that_will_not_copy_does_not_hold_the_older_ones(backend
     assert f"{HOME}/case/2/p" in held
 
 
+def test_an_earlier_time_whose_file_fails_is_not_left_half_copied(backend, store, monkeypatch):
+    """#103: `2/p` times out after the search for it has brought `2/U` home."""
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
+        (f"{HOME}/case/1/U", 30),
+    )
+    real = backend.get_tree
+
+    def flaky(paths, local_dir, **kwargs):
+        if any(path.endswith("/2/p") for path in paths):
+            raise BackendError("timed out", code="timeout")
+        return real(paths, local_dir, **kwargs)
+
+    backend.get_tree = flaky
+    browser = browser_for(backend, store)
+    refused: dict[str, str] = {}
+    first = cycle(browser, refused=refused)
+
+    case = mirror.local_for(first.local_dir, f"{HOME}/case")
+    assert sorted(p.name for p in case.iterdir()) == ["1", "3"], "no 2/, not even an empty one"
+    assert sorted(Path(p).parent.name for p in first.pulled) == ["1", "3"]
+    assert first.bytes_pulled == 60, "what was taken back is not counted as copied"
+    left = {Path(s.path).name: s.reason for s in first.skipped}
+    assert left["p"] == "the copy failed"
+    assert "held back with a file of it" in left["U"]
+
+    second = cycle(browser, refused=refused)
+    assert second.pulled == [], "and it is not copied again to be taken back again"
+    assert not (case / "2").exists()
+
+
+def test_a_time_split_across_round_trips_is_not_left_half_copied(backend, store, monkeypatch):
+    """#103: `2/T` lands, `2/U` times out in the next round trip, `2/p` is not asked for."""
+    monkeypatch.setattr(mirror, "BATCH_BYTES", 30)
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 30),
+        (f"{HOME}/case/2/T", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
+        (f"{HOME}/case/1/U", 30),
+    )
+    real = backend.get_tree
+
+    def flaky(paths, local_dir, **kwargs):
+        if any(path.endswith("/2/U") for path in paths):
+            raise BackendError("timed out", code="timeout")
+        return real(paths, local_dir, **kwargs)
+
+    backend.get_tree = flaky
+    report = cycle(browser_for(backend, store), refused={})
+
+    case = mirror.local_for(report.local_dir, f"{HOME}/case")
+    assert sorted(p.name for p in case.iterdir()) == ["1", "3"]
+    assert f"{HOME}/case/2/p" not in backend.fetched, "no round trip for the rest of it"
+    assert sorted(Path(p).parent.name for p in report.pulled) == ["1", "3"]
+    left = {Path(s.path).name: s.reason for s in report.skipped}
+    assert left["U"] == "the copy failed"
+    assert "held back with a file of it" in left["T"]
+    assert "held back with a file of it" in left["p"]
+
+
+def test_taking_a_time_back_removes_only_what_this_cycle_wrote(backend, store, monkeypatch):
+    """A round trip that succeeds without `2/U` leaves an earlier cycle's copy of it."""
+    whole(
+        backend,
+        (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
+    )
+    browser = browser_for(backend, store)
+    kept = mirror.local_for(store.fetch_dir(), f"{HOME}/case/2/U")
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_bytes(b"from an earlier cycle")
+    real = backend.get_tree
+
+    def flaky(paths, local_dir, **kwargs):
+        if any(path.endswith("/2/p") for path in paths):
+            raise BackendError("timed out", code="timeout")
+        return real([path for path in paths if not path.endswith("/2/U")], local_dir, **kwargs)
+
+    backend.get_tree = flaky
+    report = cycle(browser, refused={})
+
+    assert kept.read_bytes() == b"from an earlier cycle"
+    assert [Path(p).parent.name for p in report.pulled] == ["3"]
+
+
 def test_a_time_with_a_file_left_behind_is_left_whole(backend, store, monkeypatch):
     """A time with half its fields is one the viewer lists and cannot draw."""
     whole(backend, (f"{HOME}/case/2/U", 30), (f"{HOME}/case/1/U", 20), (f"{HOME}/case/1/p", 60))
