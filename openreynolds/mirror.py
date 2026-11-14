@@ -858,8 +858,54 @@ def _pull(
     company, and losing the company with it is how a mirror comes back empty from a
     study that had plenty worth keeping -- which is exactly what a live run did.
     """
+    later = later or {}
+    asked, had = len(report.skipped), len(report.pulled)
+    failed: set[int] = set()
     for batch in _batches(wanted, later):
-        _pull_batch(browser, batch, report, refused, gate, later)
+        batch = [entry for entry in batch if later.get(entry.path) not in failed]
+        if batch:
+            _pull_batch(browser, batch, report, refused, gate, later)
+        failed = {later[skip.path] for skip in report.skipped[asked:] if skip.path in later}
+    if failed:
+        did_not_copy = {skip.path for skip in report.skipped[asked:]}
+        rest = [
+            entry
+            for entry in wanted
+            if later.get(entry.path) in failed and entry.path not in did_not_copy
+        ]
+        _take_back(rest, had, report)
+
+
+def _take_back(rest: list[Entry], had: int, report: MirrorReport) -> None:
+    """Remove what this cycle copied of an earlier time one file of which failed (#103).
+
+    Only a path in `report.pulled[had:]` goes: a round trip can succeed without a
+    file it was asked for, and an earlier cycle's copy there is not this one's to
+    delete."""
+    reason = f"{EARLIER_TIME}, held back with a file of it that did not copy"
+    root = report.local_dir.resolve()
+    written = {Path(path).resolve() for path in report.pulled[had:]}
+    gone: set[Path] = set()
+    for entry in rest:
+        report.skipped.append(Skip(entry.path, reason, entry.size))
+        target = local_for(root, entry.path).resolve()
+        if target not in written:
+            continue
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            report.warnings.append(f"could not take back {target}: {exc}")
+            continue
+        gone.add(target)
+        report.bytes_pulled -= entry.size
+        for parent in target.parents:
+            if parent == root:
+                break
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+    report.pulled = [path for path in report.pulled if Path(path).resolve() not in gone]
 
 
 def _pull_batch(
