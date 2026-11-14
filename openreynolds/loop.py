@@ -169,6 +169,10 @@ class Loop:
         one-shot run to end on. Cleared by a turn that runs."""
 
         headers = {"X-Study-Id": store.session.study_id}
+        self.study_headers = headers
+        """What every model client of this session sends: the main loop's, the CAD
+        desk's and the reviewer's (`cli.session` hands it to each). The service tags the
+        spend with the study and refuses a trial account's call without it."""
         # Without a timeout a stalled connection is indistinguishable from a model
         # thinking hard, and the session stops dead with nothing said. A failure is
         # recoverable -- it is reported and the thread survives -- silence is not.

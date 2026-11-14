@@ -1656,7 +1656,7 @@ def session(
         if openfoam_tools and not cfg.model_key_missing():
             with _timed("review"):
                 reviewer = cad.Reviewer(
-                    cfg, backend,
+                    cfg, backend, headers=getattr(loop, "study_headers", None),
                     on_step=lambda step: _cad_desk_step(view, tracker, step,
                                                         store=store, capture=capture),
                 )
@@ -1678,6 +1678,7 @@ def session(
                     on_step=lambda step: _cad_desk_step(view, tracker, step,
                                                         store=store, capture=capture),
                     reviewer=reviewer if cfg.cad_review else None,
+                    headers=getattr(loop, "study_headers", None),
                 )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, side=side
