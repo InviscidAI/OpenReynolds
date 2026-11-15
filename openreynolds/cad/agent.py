@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .. import images
+from ..backend.base import WORKSPACE_ROOT
 from ..llm import Listener, ProviderError, endpoint_key, make_provider
 from .brief import (CAD_DONE, CAD_REFUSED, remark_message, system_prompt,
                     task_message)
@@ -46,6 +47,7 @@ from .cells import Cell, CellLog
 from .check import Check, mesh_regions, verify
 from .review import MAX_ROUNDS, REVIEW_TIMEOUT_S, Review, facts_from_check
 from . import gate
+from . import mesh_index
 
 MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a mesh and a finish. A run that
@@ -564,13 +566,17 @@ class CadDesk:
         one's news."""
 
         system = self._system()
+        # Meshes other cases on this workspace already finished (#35), leaving out this
+        # case's own: a re-run of it rebuilds what is there.
+        root = getattr(self.backend, "workspace_root", "") or WORKSPACE_ROOT
+        built = mesh_index.offer(mesh_index.read(self.backend, root, exclude=case_dir), root)
         messages: list[dict[str, Any]] = [
             {"role": "user",
              "content": [{"type": "text",
                           "text": task_message(request, case_dir, case_rel,
                                                self._said(), geometry,
                                                [p for p in self._supplied
-                                                if p != geometry])}]}
+                                                if p != geometry], built=built)}]}
         ]
         last_text = ""
         turns = 0
@@ -751,6 +757,9 @@ class CadDesk:
             # The shipped desk's finish check draws nothing, so the reviewer's first view
             # is the one picture the main agent gets of what was built.
             result.png = result.review.png
+        if result.ok and result.check is not None:
+            mesh_index.record(self.backend, mesh_index.entry(
+                result.check, case_dir, request, self.home.rsplit("/", 1)[-1]), root)
         return result
 
     # -- the three seams a differently-briefed desk replaces ---------------------
