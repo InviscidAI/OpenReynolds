@@ -204,6 +204,9 @@ class ToolContext:
     call goes again. Set while the workspace's own start is what met the pause
     (`cli._bring_up`): the start is sent again, so the call goes to a workspace that
     is coming rather than to the start's stored refusal."""
+    local: bool = False
+    """Whether the workspace is a container on the person's own machine
+    (`backend/docker.py`), which changes what the system prompt says about it."""
     solver: str = solvers.OPENFOAM
     """This study's solver (`solvers.py`): `openfoam` or `felix`. It decides the tool
     list (`tools_for`), how `job_start` reads a launch, and the system prompt the loop

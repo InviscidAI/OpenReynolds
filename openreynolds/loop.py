@@ -814,7 +814,8 @@ class Loop:
 
         request = dict(
             model=self.cfg.model,
-            system=system_prompt(getattr(self.ctx, "solver", "openfoam")),
+            system=system_prompt(getattr(self.ctx, "solver", "openfoam"),
+                                 local=getattr(self.ctx, "local", False)),
             messages=self.messages,
             tools=tools_for(self.ctx),
             effort=self.cfg.effort,
