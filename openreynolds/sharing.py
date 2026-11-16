@@ -428,7 +428,16 @@ def _write_private(path: Path, data: bytes) -> None:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
         with os.fdopen(fd, "wb") as out:
             out.write(data)
-        os.replace(tmp, path)
+        for attempt in range(20):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                # Windows refuses a replace while another process is replacing or
+                # reading the same file; it is free again in moments.
+                if os.name != "nt" or attempt == 19:
+                    raise
+                time.sleep(0.05)
     finally:
         tmp.unlink(missing_ok=True)
 
