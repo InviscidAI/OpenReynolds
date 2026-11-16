@@ -322,6 +322,96 @@ def test_a_restart_directory_is_merged_in_time_order(tmp_path, results):
     assert len(history["sources"]) == 2
 
 
+def write_restart(case: Path, start: str, rows: str) -> Path:
+    """A second time directory, as a run restarted from `start` writes it."""
+    restart = case / "postProcessing" / "forces" / start
+    restart.mkdir(parents=True)
+    path = restart / "forceCoeffs.dat"
+    path.write_text(FORCE_COEFFS.split("0.1 ")[0] + rows)
+    return path
+
+
+def restart_row(time: str, cd: str) -> str:
+    return f"{time:<20}1.1e-02         {cd:<16}3.3e-01         1.7e-01         1.6e-01\n"
+
+
+def test_a_restart_from_an_earlier_write_drops_the_abandoned_run_past_it(tmp_path, results):
+    """A run went bad and was restarted from an earlier write. Until the restart had
+    reached the old run's last time, the old rows past the restart point were merged in
+    after the new ones: the history ended in the abandoned run, and the tail mean quoted
+    as Cd was taken from it."""
+    case = write_force_files(tmp_path / "case")  # 0.1 .. 0.4, the run that went bad
+    write_restart(case, "0.2", restart_row("0.25", "1.10e+00") + restart_row("0.3", "1.11e+00"))
+    history = results.read_history(results.find_force_files(case)["forces/forceCoeffs.dat"])
+
+    assert results.column(history, "Time").tolist() == [0.1, 0.2, 0.25, 0.3]
+    assert results.column(history, "Cd").tolist() == [1.20, 1.24, 1.10, 1.11]
+    assert history["superseded"] == ["2 rows of 0/ past t = 0.2, where a later run restarted"]
+
+
+def test_a_restart_with_no_rows_yet_still_supersedes_the_old_run(tmp_path, results):
+    """The restarted run has opened its file and written nothing yet: what it supersedes
+    is already known from the directory it writes in."""
+    case = write_force_files(tmp_path / "case")
+    write_restart(case, "0.2", "")
+    history = results.read_history(results.find_force_files(case)["forces/forceCoeffs.dat"])
+
+    assert results.column(history, "Time").tolist() == [0.1, 0.2]
+    assert history["superseded"] == ["2 rows of 0/ past t = 0.2, where a later run restarted"]
+
+
+def test_a_continuation_from_the_last_write_loses_nothing(tmp_path, results):
+    """`startFrom latestTime` after a clean stop: the restart begins where the old file
+    ends, so every old row is kept and none is reported superseded."""
+    case = write_force_files(tmp_path / "case")
+    write_restart(case, "0.4", restart_row("0.5", "1.36e+00"))
+    history = results.read_history(results.find_force_files(case)["forces/forceCoeffs.dat"])
+
+    assert results.column(history, "Time").tolist() == [0.1, 0.2, 0.3, 0.4, 0.5]
+    assert history["superseded"] == []
+
+
+def test_each_restart_supersedes_only_what_came_before_it(tmp_path, results):
+    """Three runs: 0 -> 0.4, restarted from 0.2 and run to 0.35, restarted from 0.3.
+    Each directory keeps its rows up to where the next one starts."""
+    case = write_force_files(tmp_path / "case")
+    write_restart(case, "0.2", restart_row("0.25", "2.25e+00") + restart_row("0.3", "2.30e+00")
+                  + restart_row("0.35", "2.35e+00"))
+    write_restart(case, "0.3", restart_row("0.31", "3.31e+00"))
+    history = results.read_history(results.find_force_files(case)["forces/forceCoeffs.dat"])
+
+    assert results.column(history, "Time").tolist() == [0.1, 0.2, 0.25, 0.3, 0.31]
+    assert results.column(history, "Cd").tolist() == [1.20, 1.24, 2.25, 2.30, 3.31]
+    assert len(history["superseded"]) == 2
+
+
+def test_a_restart_directory_without_a_time_name_is_cut_at_its_first_row(tmp_path, results):
+    """A directory name that is not a time says nothing about where the run restarted;
+    its first row still does."""
+    case = write_force_files(tmp_path / "case")
+    write_restart(case, "restart", restart_row("0.25", "1.10e+00"))
+    history = results.read_history(results.find_force_files(case)["forces/forceCoeffs.dat"])
+
+    assert results.column(history, "Time").tolist() == [0.1, 0.2, 0.25]
+
+
+def test_the_forces_summary_says_rows_were_dropped(tmp_path, results):
+    case = write_force_files(tmp_path / "case")
+    write_restart(case, "0.2", restart_row("0.25", "1.10e+00"))
+    out = tmp_path / "out"
+    out.mkdir()
+
+    class Ctx:
+        pass
+
+    ctx = Ctx()
+    ctx.case, ctx.out_dir = case, out
+    _path, notes = results.produce_forces(ctx, results.Output("forces", "forces", "forces"))
+
+    assert notes["Cd (last)"] == "1.1"
+    assert notes["superseded"] == "2 rows of 0/ past t = 0.2, where a later run restarted"
+
+
 def test_coefficients_are_preferred_over_raw_forces(results):
     grouped = {"forces/forces.dat": [], "forces/forceCoeffs.dat": [], "forces/moment.dat": []}
     assert results.choose_force_series(grouped) == "forces/forceCoeffs.dat"

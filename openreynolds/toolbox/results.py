@@ -405,12 +405,31 @@ def choose_force_series(grouped: dict[str, list[Path]]) -> str:
     return sorted(grouped, key=rank)[0]
 
 
+def restart_point(path: Path, data: dict[str, Any]) -> float | None:
+    """The time a file's run started from, which is where it takes over the history.
+
+    OpenFOAM names a function object's output directory after the run's start time, so
+    the directory says it even before the first row is written; failing that, the first
+    row does."""
+    kind, start, _name = time_key(path.parent.name)
+    first = data["rows"][0][0] if data["rows"] else None
+    if kind == 0:
+        return start if first is None else min(start, first)
+    return first
+
+
 def read_history(paths: Iterable[Path]) -> dict[str, Any]:
     """Several files of one series read and merged into a single history.
 
     Overlapping times happen whenever a run is restarted from a write earlier than
     the last one it had reached: both files then hold rows for the same times. The
-    later file wins, because it is the one describing the run that is still on disk.
+    later file wins, because it is the one describing the run that is still on disk --
+    and it wins from where it starts, not only where it has rows. A run that went bad at
+    t = 0.4 and was restarted from the write at 0.2 leaves 0.2 .. 0.4 in the old file;
+    while the new run is at 0.3, the old rows at 0.35 and 0.4 are from the run that was
+    abandoned, and merging them in made the history end in it, so the tail mean quoted
+    as Cd was the bad run's. Rows of a file past the start of any later one are
+    dropped and named in `superseded`.
     """
     parsed = [(Path(path), parse_dat(Path(path).read_text(errors="replace"))) for path in paths]
     usable = [(path, data) for path, data in parsed if data["rows"]]
@@ -421,20 +440,40 @@ def read_history(paths: Iterable[Path]) -> dict[str, Any]:
             "meta": parsed[-1][1]["meta"] if parsed else {},
             "sources": [str(path) for path, _ in parsed],
             "ignored": [],
+            "superseded": [],
         }
+
+    # Where each file's successors take over: the earliest start of any later file.
+    starts = [restart_point(path, data) for path, data in parsed]
+    taken_over: dict[Path, float] = {}
+    for index, (path, _data) in enumerate(parsed):
+        later = [start for start in starts[index + 1:] if start is not None]
+        if later:
+            taken_over[path] = min(later)
 
     columns = usable[-1][1]["columns"]
     merged: dict[float, list[float]] = {}
     meta: dict[str, str] = {}
     sources: list[str] = []
     ignored: list[str] = []
+    superseded: list[str] = []
     for path, data in usable:
         if data["columns"] != columns:
             ignored.append(f"{path.name} in {path.parent.name}/ has a different column set")
             continue
         meta.update(data["meta"])
         sources.append(str(path))
-        for row in data["rows"]:
+        rows = data["rows"]
+        cut = taken_over.get(path)
+        if cut is not None:
+            kept = [row for row in rows if row[0] <= cut]
+            dropped = len(rows) - len(kept)
+            if dropped:
+                superseded.append(f"{dropped} row{'s' if dropped != 1 else ''} of "
+                                  f"{path.parent.name}/ past t = {cut:g}, where a later "
+                                  "run restarted")
+            rows = kept
+        for row in rows:
             merged[row[0]] = row
 
     return {
@@ -443,6 +482,7 @@ def read_history(paths: Iterable[Path]) -> dict[str, Any]:
         "meta": meta,
         "sources": sources,
         "ignored": ignored,
+        "superseded": superseded,
     }
 
 
@@ -1073,6 +1113,8 @@ def produce_forces(ctx, spec: Output):
     if len(history["sources"]) > 1:
         notes["merged from"] = f"{len(history['sources'])} time directories"
     notes.update(force_headline(history, columns))
+    if history["superseded"]:
+        notes["superseded"] = "; ".join(history["superseded"])
     if history["ignored"]:
         notes["ignored"] = "; ".join(history["ignored"])
     return out, notes
