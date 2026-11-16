@@ -181,9 +181,28 @@ def test_a_tree_copied_out_keeps_its_links_as_links(tmp_path):
     (tree / "host").symlink_to("/")
     got = backend.get_tree(["/work/s1/t"], tmp_path / "mirror")
     assert [p.name for p in got] == ["a"]
-    assert (tmp_path / "mirror" / "t" / "host").is_symlink(), "copied as a link, not as /"
+    assert (tmp_path / "mirror" / "s1" / "t" / "host").is_symlink(), "copied as a link, not as /"
     assert backend.get_tree(["/work/s1/t/host", "/work/s1/t/a"], tmp_path / "m2") == [
-        tmp_path / "m2" / "a"], "a link out, named on its own, is skipped like a missing file"
+        tmp_path / "m2" / "s1" / "t" / "a"], "a link out, named on its own, is skipped like a missing file"
+
+
+@pytest.mark.parametrize("make", ["docker", "local"])
+def test_a_file_copied_out_lands_where_the_mirror_looks(tmp_path, make):
+    """`mirror.local_for` predicts where a workspace path lands, as the hosted
+    backend's archive keeps it: its shape under the workspace root. These backends put
+    it under its bare name instead, so a study's `download_url` and `pull` found
+    nothing, and two cases' `constant/polyMesh/faces` were one file."""
+    from openreynolds.backend.local import LocalBackend
+    from openreynolds.mirror import local_for
+    backend = DockerBackend(root=tmp_path / "w") if make == "docker" else LocalBackend(root=tmp_path / "w")
+    for case in ("a", "b"):
+        mesh = backend.root / "s1" / case / "constant" / "polyMesh"
+        mesh.mkdir(parents=True)
+        (mesh / "faces").write_text(case)
+    got = backend.get_tree(["/work/s1/a/constant/polyMesh/faces", "/work/s1/b"], tmp_path / "m")
+    for case in ("a", "b"):
+        landed = local_for(tmp_path / "m", f"/work/s1/{case}/constant/polyMesh/faces")
+        assert landed in got and landed.read_text() == case
 
 
 @posix_only
