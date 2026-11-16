@@ -564,17 +564,16 @@ has two parts:
   and parts of your case files. Images and other binary results go as their
   descriptions, and nothing is opened just to be sent.
 
-When the first study it would share starts, OpenReynolds tells you what it shares; the
-trace is sent after the study ends, so `openreynolds sharing off` before then shares
-nothing. Through `openreynolds mcp` the notice is in `start_study`'s answer. Model keys
+OpenReynolds says so in one line when you sign in (or, on a machine signed in before
+this version, when the next study starts). A study's trace is sent after it ends, so
+`openreynolds sharing off` before then shares nothing. Through `openreynolds mcp` the
+line is in `start_study`'s answer. Model keys
 and the service key are never sent, and they, environment variables named like secrets
 and the shapes of common keys are removed before a trace is queued.
 
 - `openreynolds sharing off` (or `OPENREYNOLDS_SHARING=off`) stops this machine sharing
-  and discards what it has queued; `openreynolds sharing status` says what this machine
-  and the account do.
-- "Share usage" and "Share study content" on the web app's Account page apply to every
-  machine signed in to the account, and the same page deletes every trace shared.
+  and discards what it has queued; `openreynolds sharing status` says whether it is on.
+- The web app's Account page deletes every trace your account has shared.
 - Without a service key nothing is recorded or sent.
 
 Sharing is separate from capture: capture is the study's copy on the service, shown and

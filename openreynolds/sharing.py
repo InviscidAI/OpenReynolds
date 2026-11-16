@@ -1,4 +1,4 @@
-"""Sharing: the trace of each study a signed-in OpenReynolds sends to the service.
+"""Sharing: the trace of each study OpenReynolds sends to the service.
 
 What this does is set by the privacy policy's "Traces from OpenReynolds"
 (https://tryreynolds.com/privacy), and each rule there is a rule here:
@@ -7,16 +7,12 @@ What this does is set by the privacy policy's "Traces from OpenReynolds"
   (`openreynolds login`). A machine signed out has its queue emptied.
 * **On by default, with a switch per machine.** `openreynolds sharing off` (kept in
   `sharing.json` beside the config) or `OPENREYNOLDS_SHARING=off` stops this machine
-  sharing anything and empties what it has queued. The account's two switches, "Share
-  usage" and "Share study content", are the service's (`GET /v1/account/sharing`), and
-  are asked before every send: content off sends the usage part only, usage off sends
-  nothing and empties the queue.
-* **Told first.** At the start of the first study this version would share, it shows
-  `NOTICE`; that study's trace is sent only after it ends, and the switch is asked again
-  when it is queued and sent, so turning sharing off during it shares nothing.
-  `DISCLOSURE_VERSION` says which
-  notice; the service refuses a client whose notice is older than the one it requires,
-  and a client that meets one sends nothing more.
+  sharing anything and empties what it has queued. The switch is asked again when a
+  trace is queued and when it is sent. There is no account-wide switch.
+* **Told once.** `NOTICE`, one line, is shown when the machine signs in, or at the start
+  of the first study on a machine that signed in before this version. `DISCLOSURE_VERSION`
+  says which notice; the service refuses a client whose notice is older than the one it
+  requires, and that client empties its queue.
 * **Credentials removed** before a trace is written to the queue (`redact.Redactor`):
   this machine's keys by value, then the patterns the service applies again.
 * **Bounded.** A tool's input and output are cut at `CONTENT_AT_MOST` characters and
@@ -26,9 +22,13 @@ What this does is set by the privacy policy's "Traces from OpenReynolds"
 A trace is its own record, apart from the capture plane (`capture.py`), which shows and
 resumes a study on the service and has its own switch (`OPENREYNOLDS_CAPTURE`).
 
-Only OpenReynolds' own interfaces share -- the terminal, `-p`, stream-json, and the local
-MCP server (`cli.session`'s `sharing`). The hosted web app runs sessions through the same
-code under its own interface, and its studies are the service's, not traces.
+Which sessions share is `cli.session`'s `sharing`: OpenReynolds' own interfaces (the
+terminal, `-p`, stream-json, the local MCP server), and the hosted web app, which passes
+`"web"`: its studies always leave a trace, marked `source: web`, with no notice, since
+the web app is the service itself and the policy says so. A web trace never touches this
+machine's files (switch, notice, queue): one runner process holds many people's
+sessions, so a queue there could go out under the wrong person's key. It is sent from
+memory when the study ends (`send_now`), once, or not at all.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from . import __version__
-from .config import ACCOUNT_PAGE_URL, Config, config_path
+from .config import Config, config_path
 from .redact import Redactor, known_values
 
 DISCLOSURE_VERSION = 1
@@ -59,19 +59,8 @@ Raised with `NOTICE` whenever what a trace contains changes in a material way.""
 PRIVACY_URL = "https://tryreynolds.com/privacy"
 
 NOTICE = (
-    "OpenReynolds shares a trace of each study while this machine is signed in to your "
-    "Reynolds account, and this is the first time this version would.\n"
-    "  - Usage: the tools the agent called and whether they worked, the model, tokens, "
-    "timings, error types and the OpenReynolds version.\n"
-    "  - Study content: your messages, the agent's reasoning and replies, and every "
-    "tool's inputs and outputs, which can include commands, logs and parts of your case "
-    "files. Binary files go as names and sizes only.\n"
-    "Credentials are removed before anything leaves this machine. Model keys and the "
-    "service key are never sent. This study's trace is sent when it ends.\n"
-    "Stop it on this machine with `openreynolds sharing off` (or OPENREYNOLDS_SHARING=off). "
-    "\"Share usage\" and \"Share study content\" on your Account page "
-    f"({ACCOUNT_PAGE_URL}) apply to every machine signed in to your account. "
-    f"Details: {PRIVACY_URL}"
+    "OpenReynolds shares a trace of each study with Reynolds to improve it, credentials "
+    f"removed; `openreynolds sharing off` stops it on this machine. {PRIVACY_URL}"
 )
 
 CONTENT_AT_MOST = 20_000
@@ -155,7 +144,8 @@ def set_enabled(enabled: bool) -> State:
 
 def take_notice(cfg: Config) -> str | None:
     """`NOTICE` when this machine shares and has not shown this version's notice yet,
-    marking it shown; None otherwise. Whoever takes it shows it at the study's start."""
+    marking it shown; None otherwise. Whoever takes it shows it: `openreynolds login`, or
+    the start of the first study on a machine signed in before this version."""
     state = load_state()
     if not active(cfg, state) or state.notice >= DISCLOSURE_VERSION:
         return None
@@ -164,17 +154,26 @@ def take_notice(cfg: Config) -> str | None:
     return NOTICE
 
 
-def begin(cfg: Config, study_id: str, *, backend: str = "", solver: str = "") -> tuple[Recorder | None, str | None]:
+SOURCES = ("openreynolds", "web")
+
+
+def begin(cfg: Config, study_id: str, *, backend: str = "", solver: str = "",
+          source: str = "openreynolds") -> tuple[Recorder | None, str | None]:
     """At a session's start: (the recorder for this study or None, the notice to show
     or None). A machine that is not signed in has its queue emptied, which is what
-    signing out does."""
+    signing out does. A `web` session (the hosted app) is never shown the notice and
+    reads and writes none of this machine's sharing files."""
+    if source == "web":
+        if not signed_in(cfg) or env_off():
+            return None, None
+        return Recorder(cfg, study_id, backend=backend, solver=solver, source="web"), None
     if not signed_in(cfg):
         clear_queue()
         return None, None
     if not active(cfg):
         return None, None
-    notice = take_notice(cfg)
-    return Recorder(cfg, study_id, backend=backend, solver=solver), notice
+    notice = take_notice(cfg) if source != "web" else None
+    return Recorder(cfg, study_id, backend=backend, solver=solver, source=source), notice
 
 
 # -- recording one study ---------------------------------------------------------------
@@ -234,8 +233,9 @@ class Recorder:
     records a message; one lock keeps the list whole."""
 
     def __init__(self, cfg: Config, study_id: str, *, backend: str = "", solver: str = "",
-                 environ: dict[str, str] | None = None):
+                 source: str = "openreynolds", environ: dict[str, str] | None = None):
         self.study_id = study_id
+        self.source = source if source in SOURCES else "openreynolds"
         self.redact = Redactor(known_values([cfg.llm_api_key, cfg.foamd_api_key], environ))
         self.records: list[dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -306,7 +306,8 @@ class Recorder:
         header = {**self.header, "ended_at": _now(), "turns": self._turns, "tool_calls": self._calls}
         return {
             "id": uuid.uuid4().hex, "disclosure": DISCLOSURE_VERSION, "openreynolds": __version__,
-            "study_id": self.study_id, "queued_at": _now(), "parts": "usage+content",
+            "study_id": self.study_id, "source": self.source, "queued_at": _now(),
+            "parts": "usage+content",
             "records": [header, *records],
         }
 
@@ -386,25 +387,6 @@ def _client(cfg: Config, timeout: float) -> Any:
                                  "User-Agent": f"openreynolds/{__version__}"})
 
 
-def account_switches(cfg: Config, timeout: float = 10.0) -> dict[str, Any] | None:
-    """The account's switches and the notice it requires, or None when the service did
-    not answer. A machine that is not signed in has none."""
-    if not signed_in(cfg):
-        return None
-    try:
-        with _client(cfg, timeout) as http:
-            answer = http.get("/v1/account/sharing")
-    except Exception:  # noqa: BLE001 - offline is an answer of its own
-        return None
-    if answer.status_code != 200:
-        return None
-    try:
-        got = answer.json()
-    except ValueError:
-        return None
-    return got if isinstance(got, dict) else None
-
-
 def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
     """Send what is queued, within `budget_s`. Counts of what was sent, dropped and left.
 
@@ -420,18 +402,6 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
     deadline = time.monotonic() + budget_s
     try:
         with _client(cfg, max(2.0, min(budget_s, 20.0))) as http:
-            answer = http.get("/v1/account/sharing")
-            if answer.status_code == 401:
-                counts["dropped"] = clear_queue()   # the key was revoked: signed out
-                return counts
-            if answer.status_code != 200:
-                counts["left"] = len(waiting)
-                return counts
-            switches = answer.json()
-            if switches.get("share_usage") is False or int(switches.get("disclosure") or 0) > DISCLOSURE_VERSION:
-                counts["dropped"] = clear_queue()
-                return counts
-            with_content = switches.get("share_content") is not False
             for path in waiting:
                 if time.monotonic() > deadline:
                     break
@@ -441,8 +411,6 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
                     path.unlink(missing_ok=True)
                     counts["dropped"] += 1
                     continue
-                if not with_content:
-                    body = usage_only(body)
                 sent = http.post("/v1/traces", content=gzip.compress(json.dumps(body).encode("utf-8")),
                                  headers={"content-type": "application/json", "content-encoding": "gzip"})
                 code = (sent.json().get("error") if sent.headers.get("content-type", "").startswith(
@@ -450,7 +418,8 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
                 if sent.status_code in (200, 201):
                     path.unlink(missing_ok=True)
                     counts["sent"] += 1
-                elif code in ("sharing_off", "disclosure_outdated") or sent.status_code == 401:
+                elif code == "disclosure_outdated" or sent.status_code == 401:
+                    # A notice this version never showed, or a revoked key (signed out).
                     counts["dropped"] += clear_queue()
                     break
                 elif sent.status_code in (400, 410, 413, 422):
@@ -462,6 +431,24 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
         pass
     counts["left"] = len(queued())
     return counts
+
+
+def send_now(cfg: Config, recorder: Recorder, budget_s: float = END_BUDGET_S) -> bool:
+    """A web study's trace, sent straight from memory and never queued: whether the
+    service took it. Never raises."""
+    if not recorder._turns or recorder.broken or not signed_in(cfg):
+        return False
+    try:
+        body = recorder.body()
+        data = gzip.compress(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+        if len(data) > SEND_AT_MOST:
+            data = gzip.compress(json.dumps(usage_only(body), ensure_ascii=False).encode("utf-8"))
+        with _client(cfg, max(2.0, budget_s)) as http:
+            sent = http.post("/v1/traces", content=data,
+                             headers={"content-type": "application/json", "content-encoding": "gzip"})
+        return sent.status_code in (200, 201)
+    except Exception:  # noqa: BLE001 - sharing never fails a study
+        return False
 
 
 def send_in_background(cfg: Config, budget_s: float = START_BUDGET_S) -> threading.Thread | None:
@@ -485,23 +472,11 @@ def describe(cfg: Config) -> list[str]:
     elif not state.enabled:
         lines.append("Sharing is off on this machine (`openreynolds sharing on` turns it back on).")
     elif state.notice < DISCLOSURE_VERSION:
-        lines.append("Sharing is on on this machine. The next study shows what is shared "
-                     "when it starts.")
+        lines.append("Sharing is on on this machine. The next study says so once when it starts.")
     else:
         lines.append("Sharing is on on this machine.")
     if signed_in(cfg):
-        switches = account_switches(cfg)
-        if switches is None:
-            lines.append("The account's switches could not be read (the service did not answer).")
-        else:
-            on = lambda v: "on" if v else "off"  # noqa: E731
-            lines.append(f"Account: Share usage {on(switches.get('share_usage'))}, "
-                         f"Share study content {on(switches.get('share_content'))} "
-                         f"({switches.get('traces', 0)} traces shared). Change them on the "
-                         "web app's Account page.")
-            if int(switches.get("disclosure") or 0) > DISCLOSURE_VERSION:
-                lines.append("The service needs a newer OpenReynolds before this machine can "
-                             "share; upgrade it.")
+        lines.append("Your shared traces can be deleted on the web app's Account page.")
     waiting = len(queued())
     if waiting:
         lines.append(f"{waiting} trace{'s' if waiting != 1 else ''} waiting to be sent.")

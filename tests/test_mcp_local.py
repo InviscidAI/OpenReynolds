@@ -323,7 +323,7 @@ def test_the_sharing_notice_is_in_the_first_answer_and_that_study_is_shared(worl
     monkeypatch.setattr(sharing, "take_notice", lambda cfg: next(shown))
     first = call(world, "start_study", task="first")
     assert first["sharing_notice"] == sharing.NOTICE
-    assert first["next"].startswith("Show the person sharing_notice word for word")
+    assert first["next"].startswith("Show the person sharing_notice")
     second = call(world, "start_study", task="second")
     assert "sharing_notice" not in second
     world.studies.ready.set()

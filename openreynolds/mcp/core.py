@@ -632,8 +632,8 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
                 # A host that shares traces says what it shares the first time, and this
                 # is the only place a person driving through an agent will see it.
                 answer["sharing_notice"] = session["sharing_notice"]
-                answer["next"] = ("Show the person sharing_notice word for word before anything "
-                                  "else: it says what this machine shares and how to turn it off. "
+                answer["next"] = ("Show the person sharing_notice, one line, word for word: it "
+                                  "says what this machine shares and how to turn it off. "
                                   "Then " + answer["next"][0].lower() + answer["next"][1:])
             return answer
         return await call(run)

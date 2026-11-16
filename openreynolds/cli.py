@@ -498,6 +498,9 @@ def login_cmd(
     cfg.foamd_api_key = str(token["key"])
     path = cfg.save()
     console.print(f"\n[green]Signed in as {email}.[/] This machine's key ([bold]{token.get('name') or label}[/]) is saved to {path}")
+    notice = sharing_mod.take_notice(cfg)
+    if notice:
+        console.print(notice, markup=False, highlight=False)
     _say_what_is_next(cfg)
 
 
@@ -981,8 +984,7 @@ def sharing_cmd(switch: str) -> None:
 
     Shared only while this machine is signed in (`openreynolds login`). Off stops it
     sharing anything and discards what it has queued; OPENREYNOLDS_SHARING=off does the
-    same for one environment. The account's own switches are on the web app's Account
-    page. What a trace contains: https://tryreynolds.com/privacy"""
+    same for one environment. What a trace contains: https://tryreynolds.com/privacy"""
     cfg = Config.load()
     if switch == "off":
         sharing_mod.set_enabled(False)
@@ -1298,15 +1300,15 @@ def session(
     model_explicit: bool | None = None,
     solver: str | None = None,
     route_on: str | None = None,
-    sharing: bool | None = None,
+    sharing: bool | str | None = None,
 ) -> str | None:
     """Run one study to its end.
 
     `sharing` says whether this session's trace may be shared (`sharing.py`), when the
     machine shares at all. None means only OpenReynolds' own interfaces: the terminal,
-    `-p` and stream-json, and not an embedder's `interface` -- the hosted web app runs
-    sessions through that seam, and its studies are the service's, not traces. The
-    local MCP server passes True.
+    `-p` and stream-json, and not an embedder's `interface`. The local MCP server passes
+    True; the hosted web app passes `"web"`: its studies always leave a trace, and it is
+    never shown the notice.
 
     `solver` is `auto`, `openfoam` or `felix` (`solvers.py`), as `--solver` gives it;
     None reads `OPENREYNOLDS_SOLVER`, and with neither the agent chooses (`auto`). A
@@ -1684,11 +1686,13 @@ def session(
     ctx.on_render = lambda _path: live_mirror.poke()
 
     shares = (interface is None) if sharing is None else bool(sharing)
+    trace_source = "web" if sharing == "web" else "openreynolds"
     shared: dict[str, Any] = {}
     """The study's recorder once `drive` has made one (`sharing.begin`), for the close-down
     to queue and send."""
-    if shares:
+    if shares and trace_source != "web":
         # What earlier sessions on this machine left queued goes while this one starts.
+        # Never from the web app's runner, whose process is many people's (`sharing.py`).
         sharing_mod.send_in_background(cfg)
 
     bringing_up = threading.Event()
@@ -1744,10 +1748,10 @@ def session(
         if shares:
             recorder, notice = sharing_mod.begin(
                 cfg, store.session.study_id, solver=str(ctx.solver or ""),
-                backend=local_kind or "hosted")
+                backend=local_kind or "hosted", source=trace_source)
             if notice:
-                # At the start, before anything is sent: the trace goes after the study
-                # ends, and `sharing off` before then shares nothing (`sharing.begin`).
+                # One line, once, on a machine signed in before this version: the trace
+                # goes after the study ends, and `sharing off` before then shares nothing.
                 view.notice(notice)
             loop.recorder = shared["recorder"] = recorder
         if pending is not None:
@@ -2112,8 +2116,11 @@ def session(
             if shared.get("recorder") is not None:
                 with _timed("close.sharing"):
                     try:
-                        shared["recorder"].finish()
-                        sharing_mod.send(cfg)
+                        if trace_source == "web":
+                            sharing_mod.send_now(cfg, shared["recorder"])
+                        else:
+                            shared["recorder"].finish()
+                            sharing_mod.send(cfg)
                     except Exception:  # noqa: BLE001 - sharing never fails a close-down
                         pass
         with _timed("close.backend_close"):

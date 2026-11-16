@@ -97,14 +97,47 @@ def test_turning_it_off_discards_the_queue(seen):
 
 
 def test_only_openreynolds_own_interfaces_share_unless_asked():
-    """The hosted web app runs sessions through `interface`; its studies are the
-    service's, so a session with an interface shares only when told to."""
+    """An embedder's `interface` shares only when told to: the MCP server says True, and
+    the hosted web app says "web"."""
     import inspect
 
     from openreynolds import cli
 
     source = inspect.getsource(cli.session)
     assert "shares = (interface is None) if sharing is None else bool(sharing)" in source
+    assert 'trace_source = "web" if sharing == "web" else "openreynolds"' in source
+
+
+def test_a_web_study_is_recorded_without_the_notice_and_says_so(on):
+    """The hosted app is the service: its studies always leave a trace, and it never
+    shows (or uses up) the machine's notice, whatever the machine's switch says."""
+    sharing.set_enabled(False)
+    recorder, notice = sharing.begin(on, "s1", source="web")
+    assert notice is None and sharing.load_state().notice == 0
+    recorder.turn(_turn(), 1.0)
+    assert recorder.body()["source"] == "web"
+    sharing.set_enabled(True)
+    terminal, _ = sharing.begin(on, "s2")
+    assert terminal.body()["source"] == "openreynolds"
+
+
+def test_a_web_trace_is_sent_from_memory_and_never_queued(on, service):
+    """One runner process holds many people's sessions: a queue there could send one
+    person's trace with another's key, so a web trace never touches the queue, and a web
+    session never sends what the queue holds."""
+    svc = service()
+    _queue_one(on)
+    left = sharing.queued()
+    recorder, _ = sharing.begin(on, "s1", source="web")
+    recorder.turn(_turn(), 1.0)
+    assert sharing.send_now(on, recorder) is True
+    assert [b["source"] for b in svc.posted] == ["web"]
+    assert sharing.queued() == left
+
+
+def test_the_notice_is_one_line():
+    assert "\n" not in sharing.NOTICE and len(sharing.NOTICE) < 200
+    assert "openreynolds sharing off" in sharing.NOTICE and sharing.PRIVACY_URL in sharing.NOTICE
 
 
 # -- what a trace holds ---------------------------------------------------------------
@@ -207,17 +240,14 @@ def test_the_loop_tells_the_recorder_everything(seen, ctx, store, view, backend)
 class Service:
     """The two routes a client calls, scripted."""
 
-    def __init__(self, switches=None, post_status=201, post_error=""):
-        self.switches = {"share_usage": True, "share_content": True,
-                         "disclosure": sharing.DISCLOSURE_VERSION, **(switches or {})}
+    def __init__(self, post_status=201, post_error=""):
         self.post_status = post_status
         self.post_error = post_error
         self.posted: list[dict] = []
-        self.get_status = 200
+        self.paths: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/v1/account/sharing":
-            return httpx.Response(self.get_status, json=self.switches)
+        self.paths.append(request.url.path)
         body = json.loads(gzip.decompress(request.content))
         self.posted.append(body)
         if self.post_status >= 400:
@@ -253,28 +283,10 @@ def test_a_queued_trace_is_sent_and_removed(seen, service):
     _queue_one(seen)
     assert sharing.send(seen)["sent"] == 1
     assert sharing.queued() == [] and svc.posted[0]["parts"] == "usage+content"
-
-
-def test_content_off_sends_the_usage_part_only(seen, service):
-    svc = service(switches={"share_content": False})
-    _queue_one(seen)
-    sharing.send(seen)
-    (body,) = svc.posted
-    assert body["parts"] == "usage"
-    assert {r["kind"] for r in body["records"]} <= sharing.USAGE_KINDS
-
-
-@pytest.mark.parametrize("switches", [{"share_usage": False},
-                                      {"disclosure": sharing.DISCLOSURE_VERSION + 1}])
-def test_usage_off_or_a_newer_notice_sends_nothing_and_empties_the_queue(seen, service, switches):
-    svc = service(switches=switches)
-    _queue_one(seen)
-    sharing.send(seen)
-    assert svc.posted == [] and sharing.queued() == []
+    assert svc.paths == ["/v1/traces"], "there are no account switches to ask first"
 
 
 @pytest.mark.parametrize("status,error,kept", [(500, "", True), (410, "deleted_since", False),
-                                                (403, "sharing_off", False),
                                                 (409, "disclosure_outdated", False)])
 def test_what_a_refusal_does_to_the_queue(seen, service, status, error, kept):
     service(post_status=status, post_error=error)
@@ -284,11 +296,11 @@ def test_what_a_refusal_does_to_the_queue(seen, service, status, error, kept):
 
 
 def test_a_revoked_key_empties_the_queue(seen, service):
-    svc = service()
-    svc.get_status = 401
+    service(post_status=401, post_error="unauthorized")
+    _queue_one(seen)
     _queue_one(seen)
     sharing.send(seen)
-    assert sharing.queued() == [] and svc.posted == []
+    assert sharing.queued() == []
 
 
 def test_offline_keeps_the_queue(seen, monkeypatch):
@@ -302,11 +314,9 @@ def test_offline_keeps_the_queue(seen, monkeypatch):
     assert sharing.send(seen)["left"] == 1
 
 
-def test_status_says_what_this_machine_and_the_account_do(seen, service):
-    service(switches={"share_content": False, "traces": 3})
+def test_status_says_what_this_machine_does(seen):
     lines = "\n".join(sharing.describe(seen))
-    assert "Sharing is on on this machine." in lines
-    assert "Share usage on, Share study content off (3 traces shared)" in lines
+    assert "Sharing is on on this machine." in lines and "Account page" in lines
 
 
 def test_the_cli_switch(on, monkeypatch):
@@ -314,9 +324,29 @@ def test_the_cli_switch(on, monkeypatch):
 
     from openreynolds.cli import main
 
-    monkeypatch.setattr(sharing, "account_switches", lambda cfg, timeout=10.0: None)
     runner = CliRunner()
     off = runner.invoke(main, ["sharing", "off"])
     assert off.exit_code == 0 and sharing.load_state().enabled is False
     back = runner.invoke(main, ["sharing", "on"])
     assert back.exit_code == 0 and sharing.load_state().enabled is True
+
+
+def test_signing_in_says_it_shares_in_one_line_once(on, monkeypatch, tmp_path):
+    """The notice is said at sign-in, so the first study is not interrupted by it."""
+    from click.testing import CliRunner
+
+    from openreynolds import cli
+
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    monkeypatch.setattr(cli.hosted, "auth_config", lambda url: {"supabase_url": "https://sb.example", "publishable_key": "pk"})
+    monkeypatch.setattr(cli.hosted, "password_session", lambda *a: {"access_token": "jwt"})
+    monkeypatch.setattr(cli.hosted, "accept_terms", lambda url, jwt: {})
+    monkeypatch.setattr(cli.hosted, "mint_key", lambda url, jwt, name: {"key": "of_live_x", "name": name})
+
+    result = CliRunner().invoke(cli.main, ["login"], input="a@example.com\npw123456\n")
+    assert result.exit_code == 0, result.output
+    assert sharing.NOTICE in result.output
+    assert sharing.load_state().notice == sharing.DISCLOSURE_VERSION
+    recorder, notice = sharing.begin(on, "s1")
+    assert recorder is not None and notice is None
