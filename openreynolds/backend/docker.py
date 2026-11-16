@@ -255,7 +255,14 @@ class DockerBackend(LocalBackend):
                 raise
             if not source.exists():
                 continue
-            landing = destination / source.name
+            # Where the mirror expects it (`mirror.local_for`): the path's shape under the
+            # workspace root, as the hosted backend's archive keeps it. By its bare name
+            # it landed where `local_for` never looked, and two directories' `faces`
+            # were one file.
+            try:
+                landing = destination / source.relative_to(self.root)
+            except ValueError:
+                landing = destination / source.name
             if source.is_dir():
                 # Links inside are copied as links, not followed: one that points out
                 # of the workspace would otherwise copy this machine into the mirror.
