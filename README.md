@@ -557,8 +557,7 @@ sharing off. Traces are how we find where the agent goes wrong on real problems.
 has two parts:
 
 - **Usage:** which tools the agent called and whether they worked, the model, token
-  counts, timings, error types and the OpenReynolds version. No messages, commands or
-  files.
+  counts, timings and the OpenReynolds version. No messages, commands or files.
 - **Study content:** your messages, the agent's reasoning and replies, and every tool's
   inputs and outputs, each cut at 20,000 characters. These can include commands, logs
   and parts of your case files. Images and other binary results go as their
@@ -574,7 +573,8 @@ and the shapes of common keys are removed before a trace is queued.
 - `openreynolds sharing off` (or `OPENREYNOLDS_SHARING=off`) stops this machine sharing
   and discards what it has queued; `openreynolds sharing status` says whether it is on.
 - The web app's Account page deletes every trace your account has shared.
-- Without a service key nothing is recorded or sent.
+- Without a service key nothing is recorded or sent. A queued trace is sent only under
+  the account and service it was recorded with; signing in as someone else drops it.
 
 Sharing is separate from capture: capture is the study's copy on the service, shown and
 resumed in the web app; a trace is the record used to improve Reynolds. The privacy

@@ -48,7 +48,7 @@ def _turn(text="done", thinking="", tokens=None, stop="end_turn"):
 
 
 def test_a_machine_not_signed_in_records_nothing_and_drops_its_queue(on):
-    sharing.enqueue("old", b"x")
+    sharing.enqueue(sharing.fingerprint(on), "old", b"x")
     cfg = Config(llm_api_key=KEY)
     assert sharing.begin(cfg, "s1") == (None, None)
     assert sharing.queued() == []
@@ -90,7 +90,7 @@ def test_off_records_nothing(seen, monkeypatch, how):
 
 
 def test_turning_it_off_discards_the_queue(seen):
-    sharing.enqueue("a" * 32, b"x")
+    sharing.enqueue(sharing.fingerprint(seen), "a" * 32, b"x")
     assert len(sharing.queued()) == 1
     sharing.set_enabled(False)
     assert sharing.queued() == [] and sharing.load_state().enabled is False
@@ -156,11 +156,11 @@ def test_credentials_are_removed_by_value_and_by_shape(seen):
 
 def test_usage_records_carry_no_text(seen):
     recorder = sharing.Recorder(seen, "s1")
-    recorder.turn(_turn("the answer is 42", thinking="let me think"), 1.5)
+    recorder.turn(_turn("the answer is forty-two", thinking="let me think"), 1.5)
     recorder.tool("bash", {"cmd": "blockMesh"}, "Mesh OK", False, 0.1)
     usage = [r for r in recorder.records if r["kind"] in sharing.USAGE_KINDS]
     dumped = json.dumps(usage)
-    assert "42" not in dumped and "think" not in dumped and "blockMesh" not in dumped
+    assert "forty-two" not in dumped and "think" not in dumped and "blockMesh" not in dumped
     turn = next(r for r in usage if r["kind"] == "turn")
     assert turn["input_tokens"] == 10 and turn["output_tokens"] == 5 and turn["seconds"] == 1.5
 
@@ -245,9 +245,11 @@ class Service:
         self.post_error = post_error
         self.posted: list[dict] = []
         self.paths: list[str] = []
+        self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.paths.append(request.url.path)
+        self.requests.append(request)
         body = json.loads(gzip.decompress(request.content))
         self.posted.append(body)
         if self.post_status >= 400:
@@ -350,3 +352,198 @@ def test_signing_in_says_it_shares_in_one_line_once(on, monkeypatch, tmp_path):
     assert sharing.load_state().notice == sharing.DISCLOSURE_VERSION
     recorder, notice = sharing.begin(on, "s1")
     assert recorder is not None and notice is None
+
+
+# -- the review's fixes ---------------------------------------------------------------
+
+
+def test_a_queued_trace_goes_only_to_the_account_it_was_recorded_under(seen, service):
+    """Signed in as someone else, or pointed at another service: what the machine
+    queued before is dropped, never sent under the new key."""
+    svc = service()
+    _queue_one(seen)
+    other = Config(llm_api_key=KEY, foamd_api_key="of_live_" + "o" * 40, foamd_url=seen.foamd_url)
+    assert sharing.send(other)["dropped"] == 1
+    _queue_one(seen)
+    staging = Config(llm_api_key=KEY, foamd_api_key=SERVICE, foamd_url="https://staging.example.test")
+    assert sharing.send(staging)["dropped"] == 1
+    assert svc.posted == [] and sharing.queued() == []
+
+
+def test_a_trace_queued_before_this_version_is_dropped(seen, service):
+    """A queue file that does not say whose it is cannot be sent safely."""
+    svc = service()
+    sharing._queue()
+    (sharing.queue_dir() / ("a" * 32 + ".json.gz")).write_bytes(b"x")
+    assert sharing.send(seen)["dropped"] == 1 and svc.posted == []
+
+
+def test_the_bytes_queued_are_the_bytes_sent_with_the_clock(seen, service):
+    svc = service()
+    path = _queue_one(seen)
+    queued = path.read_bytes()
+    sharing.send(seen)
+    (request,) = svc.requests
+    assert request.content == queued
+    assert request.headers["x-openreynolds-sent-at"].endswith("+00:00")
+
+
+def test_stamps_carry_microseconds(seen):
+    """A delete and a trace queued just after it, in the same second, must compare."""
+    stamp = sharing._now()
+    assert "." in stamp.split("T")[1]
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"enabled": "false"}', '{"enabled": 0}', "[]"])
+def test_a_switch_file_that_cannot_be_read_is_off(on, content):
+    sharing.state_path().parent.mkdir(parents=True, exist_ok=True)
+    sharing.state_path().write_text(content)
+    assert sharing.active(on) is False
+    assert sharing.begin(on, "s1") == (None, None)
+    if content != '{"enabled": "false"}':
+        assert "could not be read" in "\n".join(sharing.describe(on))
+
+
+def test_a_switch_written_true_is_on(on):
+    sharing.state_path().parent.mkdir(parents=True, exist_ok=True)
+    sharing.state_path().write_text('{"enabled": true, "notice": 1}')
+    assert sharing.active(on) is True
+
+
+def test_a_config_folder_that_cannot_be_written_never_fails_a_study(on, monkeypatch):
+    """Told every time instead of once, and the study runs."""
+    def refuse(state):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(sharing, "save_state", refuse)
+    recorder, notice = sharing.begin(on, "s1")
+    assert recorder is not None and notice == sharing.NOTICE
+    assert sharing.take_notice(on) == sharing.NOTICE
+
+
+def test_whatever_goes_wrong_at_the_start_the_study_runs(on, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sharing, "Recorder", broken)
+    assert sharing.begin(on, "s1") == (None, None)
+    assert sharing.begin(on, "s1", source="web") == (None, None)
+
+
+def test_two_openreynolds_writing_at_once_do_not_collide(seen):
+    import threading
+
+    errors = []
+
+    def write():
+        try:
+            for _ in range(20):
+                sharing.save_state(sharing.State(enabled=True, notice=1))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert [p for p in sharing.state_path().parent.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_a_file_sent_by_another_openreynolds_meanwhile_is_not_an_error(seen, tmp_path):
+    assert sharing._age(tmp_path / "gone.json.gz") == 0.0
+
+
+def test_a_web_study_is_traced_whatever_the_runner_environment_says(seen, monkeypatch):
+    """The web app's runner is the service's own: a stray OPENREYNOLDS_SHARING in its
+    container does not turn off what the policy says always happens."""
+    monkeypatch.setenv("OPENREYNOLDS_SHARING", "off")
+    recorder, notice = sharing.begin(seen, "s1", source="web")
+    assert recorder is not None and recorder.source == "web" and notice is None
+
+
+def test_a_web_trace_asks_a_busy_service_again(seen, monkeypatch):
+    answers = [503, 503, 201]
+    sent = []
+
+    def client(cfg, timeout):
+        def reply(request):
+            sent.append(request)
+            return httpx.Response(answers.pop(0), json={"error": "busy"})
+        return httpx.Client(base_url=cfg.foamd_url, transport=httpx.MockTransport(reply))
+
+    monkeypatch.setattr(sharing, "_client", client)
+    monkeypatch.setattr(sharing.time, "sleep", lambda s: None)
+    recorder = sharing.Recorder(seen, "s1", source="web")
+    recorder.turn(_turn(), 1.0)
+    assert sharing.send_now(seen, recorder) is True and len(sent) == 3
+
+
+def test_a_key_across_the_cut_leaves_no_piece_behind(seen):
+    recorder = sharing.Recorder(seen, "s1")
+    other = "sk-ant-api03-" + "z" * 60
+    output = "x" * (sharing.CONTENT_AT_MOST - 21) + " " + other
+    recorder.tool("bash", {"cmd": "env"}, output, False)
+    io = recorder.records[-1]
+    assert "zzzz" not in io["output"] and "sk-ant" not in io["output"]
+
+
+def test_each_request_is_given_only_what_is_left_of_the_budget(seen, service):
+    svc = service()
+    _queue_one(seen)
+    sharing.send(seen, budget_s=3.0)
+    (request,) = svc.requests
+    assert request.extensions["timeout"]["read"] <= 3.0
+
+
+def test_ctrl_c_while_sending_leaves_the_trace_queued_and_the_close_down_running(seen, monkeypatch):
+    from openreynolds import cli
+
+    def interrupted(cfg, budget_s=8.0):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sharing, "send", interrupted)
+    recorder = sharing.Recorder(seen, "s1")
+    recorder.turn(_turn(), 1.0)
+    cli._close_sharing(seen, recorder, web=False)   # does not raise
+    assert len(sharing.queued()) == 1
+
+
+@pytest.mark.parametrize("line,gone", [
+    ('{"api_key": "abcd1234efgh5678"}', "abcd1234efgh5678"),
+    ("'password': 'correct horse battery staple'", "correct horse battery staple"),
+    ("postgres://reynolds:hunter2hunter2@db.example.com:5432/x", "hunter2hunter2"),
+    ("curl -u alice:s3cr3tpass https://example.com", "s3cr3tpass"),
+    ("Cookie: session=abcdef0123456789; theme=dark", "abcdef0123456789"),
+    ('headers={"Authorization": "Bearer abcdefgh12345678"}', "abcdefgh12345678"),
+])
+def test_redaction_takes_the_common_shapes(line, gone):
+    from openreynolds.redact import Redactor
+
+    out = Redactor().text(line)
+    assert gone not in out and MARK in out, out
+
+
+def test_a_key_that_names_a_secret_marks_its_value():
+    from openreynolds.redact import Redactor
+
+    assert Redactor().deep({"password": "plainword", "case": "cavity"}) == {
+        "password": MARK, "case": "cavity"}
+
+
+@pytest.mark.parametrize("unit", [
+    "TOKEN", "TOKEN=", "a_", "sk-", "eyJ-", "eyJaaaaaaaaa.", "xoxb-", "authorization:",
+    "cookie:", "-----BEGIN PRIVATE KEY-----", "http://a:", "-u a:", '"password": "', " ",
+])
+def test_redaction_is_linear_in_the_text(unit):
+    """A pattern that backtracks would hold the session: 40,000 characters built from each
+    pattern's own prefix take well under a second (the old NAME=value pattern: 5.6 s)."""
+    import time
+
+    from openreynolds.redact import Redactor
+
+    text = (unit * (40_000 // len(unit) + 1))[:40_000]
+    started = time.perf_counter()
+    Redactor().text(text)
+    assert time.perf_counter() - started < 0.5

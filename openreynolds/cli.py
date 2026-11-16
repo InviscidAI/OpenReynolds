@@ -1693,7 +1693,10 @@ def session(
     if shares and trace_source != "web":
         # What earlier sessions on this machine left queued goes while this one starts.
         # Never from the web app's runner, whose process is many people's (`sharing.py`).
-        sharing_mod.send_in_background(cfg)
+        try:
+            sharing_mod.send_in_background(cfg)
+        except Exception:  # noqa: BLE001 - sharing never fails a study
+            pass
 
     bringing_up = threading.Event()
     """Whether `drive` got as far as starting the thread that resolves `pending`. A
@@ -2107,22 +2110,17 @@ def session(
                 with _timed("close.close_down"):
                     _close_down(backend, store, keep_alive=keep_alive)
         finally:
-            # Still bundled if the close-down failed: the files are home either way.
-            if capture:
-                with _timed("close.capture_case"):
-                    _capture_the_case(capture, store, ConsoleView(console))
-                with _timed("close.capture_close"):
-                    capture.close()
-            if shared.get("recorder") is not None:
-                with _timed("close.sharing"):
-                    try:
-                        if trace_source == "web":
-                            sharing_mod.send_now(cfg, shared["recorder"])
-                        else:
-                            shared["recorder"].finish()
-                            sharing_mod.send(cfg)
-                    except Exception:  # noqa: BLE001 - sharing never fails a close-down
-                        pass
+            try:
+                # Still bundled if the close-down failed: the files are home either way.
+                if capture:
+                    with _timed("close.capture_case"):
+                        _capture_the_case(capture, store, ConsoleView(console))
+                    with _timed("close.capture_close"):
+                        capture.close()
+            finally:
+                if shared.get("recorder") is not None:
+                    with _timed("close.sharing"):
+                        _close_sharing(cfg, shared["recorder"], web=trace_source == "web")
         with _timed("close.backend_close"):
             backend.close()
         if stream is not None:
@@ -2972,6 +2970,21 @@ def _switch_mode(name: str, view: View, loop: Loop | None) -> None:
         f"mode: {modes.label(chosen)}. {modes.DESCRIPTIONS[chosen]}",
         "this applies from the next tool call",
     ])
+
+
+def _close_sharing(cfg: Config, recorder: Any, *, web: bool) -> None:
+    """The study's trace at the close-down: queued, then sent within the budget; a web
+    study's sent from memory. Never raises, Ctrl-C included: a second Ctrl-C to skip
+    the wait stops the sending, and what was queued goes at the next study, while the
+    rest of the close-down (the workspace, the backend) still runs."""
+    try:
+        if web:
+            sharing_mod.send_now(cfg, recorder)
+            return
+        recorder.finish()
+        sharing_mod.send(cfg)
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - sharing never fails a close-down
+        pass
 
 
 def _capture_the_case(capture: Capture, store: Store, view: View) -> None:

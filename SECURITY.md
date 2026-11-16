@@ -58,7 +58,7 @@ which it is. The local mirror under `./studies/` is written regardless.
 **A trace of each study is shared while this machine is signed in, unless sharing is
 off.** Separately from capture, and whether the workspace is the service's or this
 machine's, a signed-in OpenReynolds sends a trace of each study for improving Reynolds:
-usage (tools and whether they worked, the model, tokens, timings, error types, the
+usage (tools and whether they worked, the model, tokens, timings, the
 version) and study content (messages, the agent's reasoning, tool inputs and outputs, cut
 at 20,000 characters each). It says so in one line at sign-in, and a study's trace is sent
 after the study ends. Credentials it knows (the model key, the service key, environment
