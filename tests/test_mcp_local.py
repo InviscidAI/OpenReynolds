@@ -313,10 +313,10 @@ def test_an_unpolled_study_ends_itself_at_the_prompt():
     assert reader2.get(timeout=0.05) is None, "a poll 45 s ago keeps it alive"
 
 
-def test_the_sharing_notice_is_in_the_first_answer_and_that_study_is_not_shared(world, monkeypatch):
+def test_the_sharing_notice_is_in_the_first_answer_and_that_study_is_shared(world, monkeypatch):
     """Nobody reads this server's stderr, so the notice a sharing machine shows before
     its first trace goes in `start_study`'s answer, with the caller told to show it; the
-    study it was shown for is started with sharing off, and the next one with it on."""
+    study it was shown for is shared like the next one."""
     from openreynolds import sharing
 
     shown = iter([sharing.NOTICE, None])
@@ -331,4 +331,4 @@ def test_the_sharing_notice_is_in_the_first_answer_and_that_study_is_not_shared(
         if len(world.studies.calls) == 2:
             break
         time.sleep(0.05)
-    assert [c["sharing"] for c in world.studies.calls] == [False, True]
+    assert [c["sharing"] for c in world.studies.calls] == [True, True]

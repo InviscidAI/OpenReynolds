@@ -54,18 +54,30 @@ def test_a_machine_not_signed_in_records_nothing_and_drops_its_queue(on):
     assert sharing.queued() == []
 
 
-def test_the_first_study_shows_the_notice_and_is_not_recorded(on):
+def test_the_first_study_shows_the_notice_and_is_recorded(on):
     recorder, notice = sharing.begin(on, "s1")
-    assert recorder is None and notice == sharing.NOTICE
+    assert isinstance(recorder, sharing.Recorder) and notice == sharing.NOTICE
     assert "openreynolds sharing off" in notice and sharing.PRIVACY_URL in notice
     again, none = sharing.begin(on, "s2")
     assert none is None and isinstance(again, sharing.Recorder)
 
 
+def test_sharing_off_during_the_first_study_shares_nothing(on):
+    """The notice is shown at the start; turning sharing off before the study ends
+    keeps its trace from being queued."""
+    recorder, notice = sharing.begin(on, "s1")
+    assert notice
+    recorder.message("user", "hello")
+    recorder.turn(_turn(), 1.0)
+    sharing.set_enabled(False)
+    assert recorder.finish() is None
+    assert sharing.queued() == []
+
+
 def test_a_newer_notice_is_shown_again(seen, monkeypatch):
     monkeypatch.setattr(sharing, "DISCLOSURE_VERSION", sharing.DISCLOSURE_VERSION + 1)
     recorder, notice = sharing.begin(seen, "s1")
-    assert recorder is None and notice
+    assert recorder is not None and notice == sharing.NOTICE
 
 
 @pytest.mark.parametrize("how", ["env", "switch"])

@@ -488,7 +488,8 @@ class LocalHost(HostDefaults):
             raise McpError(f"no study {study_id} on this machine (list_studies names them)")
 
         # The sharing notice, the first time this version would share: put in the answer,
-        # because nobody reads this server's stderr, and this study is then not shared.
+        # because nobody reads this server's stderr. The study is shared like any other:
+        # its trace goes after it ends, and `sharing off` before then shares nothing.
         notice = sharing_mod.take_notice(cfg)
 
         session_id = str(uuid.uuid4())
@@ -514,7 +515,7 @@ class LocalHost(HostDefaults):
                     cfg, study_id=study_id, instance_id=None, one_shot=None, keep_alive=False,
                     interface=interface, mode_explicit=mode is not None, model_explicit=bool(body.get("model")),
                     solver=body.get("solver") or None, route_on=body.get("route_on") or None,
-                    sharing=notice is None,
+                    sharing=True,
                 )
                 session.status = "ended"
             except SystemExit as exc:

@@ -564,8 +564,9 @@ has two parts:
   and parts of your case files. Images and other binary results go as their
   descriptions, and nothing is opened just to be sent.
 
-Before the first trace, OpenReynolds tells you what it shares, and that study is not
-shared; through `openreynolds mcp` the notice is in `start_study`'s answer. Model keys
+When the first study it would share starts, OpenReynolds tells you what it shares; the
+trace is sent after the study ends, so `openreynolds sharing off` before then shares
+nothing. Through `openreynolds mcp` the notice is in `start_study`'s answer. Model keys
 and the service key are never sent, and they, environment variables named like secrets
 and the shapes of common keys are removed before a trace is queued.
 

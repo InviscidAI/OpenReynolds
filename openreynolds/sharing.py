@@ -11,8 +11,10 @@ What this does is set by the privacy policy's "Traces from OpenReynolds"
   usage" and "Share study content", are the service's (`GET /v1/account/sharing`), and
   are asked before every send: content off sends the usage part only, usage off sends
   nothing and empties the queue.
-* **Told first.** Before the first trace this version would send, it shows `NOTICE`, and
-  the study the notice is shown for is not recorded. `DISCLOSURE_VERSION` says which
+* **Told first.** At the start of the first study this version would share, it shows
+  `NOTICE`; that study's trace is sent only after it ends, and the switch is asked again
+  when it is queued and sent, so turning sharing off during it shares nothing.
+  `DISCLOSURE_VERSION` says which
   notice; the service refuses a client whose notice is older than the one it requires,
   and a client that meets one sends nothing more.
 * **Credentials removed** before a trace is written to the queue (`redact.Redactor`):
@@ -65,7 +67,7 @@ NOTICE = (
     "tool's inputs and outputs, which can include commands, logs and parts of your case "
     "files. Binary files go as names and sizes only.\n"
     "Credentials are removed before anything leaves this machine. Model keys and the "
-    "service key are never sent. This study is not shared.\n"
+    "service key are never sent. This study's trace is sent when it ends.\n"
     "Stop it on this machine with `openreynolds sharing off` (or OPENREYNOLDS_SHARING=off). "
     "\"Share usage\" and \"Share study content\" on your Account page "
     f"({ACCOUNT_PAGE_URL}) apply to every machine signed in to your account. "
@@ -153,8 +155,7 @@ def set_enabled(enabled: bool) -> State:
 
 def take_notice(cfg: Config) -> str | None:
     """`NOTICE` when this machine shares and has not shown this version's notice yet,
-    marking it shown; None otherwise. Whoever takes it shows it, and does not record the
-    study it is shown for."""
+    marking it shown; None otherwise. Whoever takes it shows it at the study's start."""
     state = load_state()
     if not active(cfg, state) or state.notice >= DISCLOSURE_VERSION:
         return None
@@ -173,9 +174,7 @@ def begin(cfg: Config, study_id: str, *, backend: str = "", solver: str = "") ->
     if not active(cfg):
         return None, None
     notice = take_notice(cfg)
-    if notice:
-        return None, notice
-    return Recorder(cfg, study_id, backend=backend, solver=solver), None
+    return Recorder(cfg, study_id, backend=backend, solver=solver), notice
 
 
 # -- recording one study ---------------------------------------------------------------
@@ -486,8 +485,8 @@ def describe(cfg: Config) -> list[str]:
     elif not state.enabled:
         lines.append("Sharing is off on this machine (`openreynolds sharing on` turns it back on).")
     elif state.notice < DISCLOSURE_VERSION:
-        lines.append("Sharing is on on this machine. The next study shows what is shared, "
-                     "and is not shared itself.")
+        lines.append("Sharing is on on this machine. The next study shows what is shared "
+                     "when it starts.")
     else:
         lines.append("Sharing is on on this machine.")
     if signed_in(cfg):

@@ -1746,7 +1746,8 @@ def session(
                 cfg, store.session.study_id, solver=str(ctx.solver or ""),
                 backend=local_kind or "hosted")
             if notice:
-                # Before anything is sent, and this study is not recorded (`sharing.begin`).
+                # At the start, before anything is sent: the trace goes after the study
+                # ends, and `sharing off` before then shares nothing (`sharing.begin`).
                 view.notice(notice)
             loop.recorder = shared["recorder"] = recorder
         if pending is not None:

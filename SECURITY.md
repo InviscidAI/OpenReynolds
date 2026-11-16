@@ -60,8 +60,8 @@ off.** Separately from capture, and whether the workspace is the service's or th
 machine's, a signed-in OpenReynolds sends a trace of each study for improving Reynolds:
 usage (tools and whether they worked, the model, tokens, timings, error types, the
 version) and study content (messages, the agent's reasoning, tool inputs and outputs, cut
-at 20,000 characters each). Before the first one it shows what it shares, and that study
-is not shared. Credentials it knows (the model key, the service key, environment
+at 20,000 characters each). When the first study it would share starts, it shows what it
+shares; the trace is sent after the study ends. Credentials it knows (the model key, the service key, environment
 variables named like secrets) and the shapes of common keys are removed before a trace
 is written to its queue (`openreynolds/redact.py`); that does not remove all personal or
 engineering information. `openreynolds sharing off` or `OPENREYNOLDS_SHARING=off` stops
