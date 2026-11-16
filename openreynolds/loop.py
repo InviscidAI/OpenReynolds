@@ -167,6 +167,10 @@ class Loop:
         self.start_refusal: str | None = None
         """What the last refused turn was refused with (`StartRefused`), for a
         one-shot run to end on. Cleared by a turn that runs."""
+        self.recorder: Any | None = None
+        """The study's trace, when this machine shares (`sharing.Recorder`, wired by
+        `cli.session`): told every model turn, tool call and recorded message. It hears
+        and never speaks -- nothing it does reaches the thread or the model."""
 
         headers = {"X-Study-Id": store.session.study_id}
         self.study_headers = headers
@@ -486,6 +490,8 @@ class Loop:
             # results, is where `inform` would have put it.
             self._drain_posted()
             response = self._send()
+            if self.recorder is not None:
+                self.recorder.turn(response, time.monotonic() - started)
 
             if response.declined:
                 self._fell_back(response)
@@ -872,6 +878,7 @@ class Loop:
         return f"This {name} call did not run: the person declined it and gave no reason."
 
     def _run_tool(self, block: Any) -> dict[str, Any]:
+        began = time.monotonic()
         self.view.tool(block.name, _summarize(block.input))
         tool_input = dict(block.input)
         offered = block.name in {tool["name"] for tool in tools_for(self.ctx)}
@@ -894,7 +901,7 @@ class Loop:
                 self._unbusy()
         else:
             content, is_error = self._dispatch(block, tool_input)
-        return self._result(block, content, is_error)
+        return self._result(block, content, is_error, seconds=time.monotonic() - began)
 
     def _before_first_solve(self, name: str, tool_input: dict[str, Any]) -> str:
         """How far the study may go before it asks, as a multiple of a normal study
@@ -926,7 +933,8 @@ class Loop:
         finally:
             self._unbusy()
 
-    def _result(self, block: Any, content: Any, is_error: bool) -> dict[str, Any]:
+    def _result(self, block: Any, content: Any, is_error: bool,
+                seconds: float | None = None) -> dict[str, Any]:
         # A tool result can be content blocks rather than text -- an image, for one --
         # and those go to the model as they are. What gets written down is a
         # description: a megabyte of base64 in the message log helps nobody read it.
@@ -935,6 +943,9 @@ class Loop:
             "tool",
             {"tool": block.name, "input": dict(block.input), "output": written, "error": is_error},
         )
+        if self.recorder is not None:
+            # The same description, never the bytes: an image goes as what it is.
+            self.recorder.tool(block.name, dict(block.input), written, is_error, seconds)
         if is_error:
             self.view.tool_error(written.splitlines()[0] if written else "failed")
         return {
@@ -1117,6 +1128,8 @@ class Loop:
         seq = self.store.append_message(role, content)
         if self.capture:
             self.capture.message(seq, role, content)
+        if self.recorder is not None:
+            self.recorder.message(role, content)
 
 
 TICK_EVERY_S = 10.0

@@ -44,6 +44,7 @@ from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
+from . import sharing as sharing_mod
 from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
@@ -973,6 +974,29 @@ def mcp_cmd(local_here: bool) -> None:
     serve()
 
 
+@main.command("sharing")
+@click.argument("switch", required=False, type=click.Choice(["on", "off", "status"]), default="status")
+def sharing_cmd(switch: str) -> None:
+    """Whether this machine shares a trace of each study: on, off, or status.
+
+    Shared only while this machine is signed in (`openreynolds login`). Off stops it
+    sharing anything and discards what it has queued; OPENREYNOLDS_SHARING=off does the
+    same for one environment. The account's own switches are on the web app's Account
+    page. What a trace contains: https://tryreynolds.com/privacy"""
+    cfg = Config.load()
+    if switch == "off":
+        sharing_mod.set_enabled(False)
+        console.print("Sharing is off on this machine; nothing queued is kept.")
+        return
+    if switch == "on":
+        sharing_mod.set_enabled(True)
+        if sharing_mod.env_off():
+            console.print("Turned on, but OPENREYNOLDS_SHARING=off still keeps it off in this environment.")
+            return
+    for line in sharing_mod.describe(cfg):
+        console.print(line, markup=False, highlight=False)
+
+
 @main.command("doctor")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
 @click.pass_context
@@ -1274,8 +1298,15 @@ def session(
     model_explicit: bool | None = None,
     solver: str | None = None,
     route_on: str | None = None,
+    sharing: bool | None = None,
 ) -> str | None:
     """Run one study to its end.
+
+    `sharing` says whether this session's trace may be shared (`sharing.py`), when the
+    machine shares at all. None means only OpenReynolds' own interfaces: the terminal,
+    `-p` and stream-json, and not an embedder's `interface` -- the hosted web app runs
+    sessions through that seam, and its studies are the service's, not traces. The
+    local MCP server passes True.
 
     `solver` is `auto`, `openfoam` or `felix` (`solvers.py`), as `--solver` gives it;
     None reads `OPENREYNOLDS_SOLVER`, and with neither the agent chooses (`auto`). A
@@ -1652,6 +1683,14 @@ def session(
     # the next cycle. poke() is non-blocking, so looking costs the model nothing.
     ctx.on_render = lambda _path: live_mirror.poke()
 
+    shares = (interface is None) if sharing is None else bool(sharing)
+    shared: dict[str, Any] = {}
+    """The study's recorder once `drive` has made one (`sharing.begin`), for the close-down
+    to queue and send."""
+    if shares:
+        # What earlier sessions on this machine left queued goes while this one starts.
+        sharing_mod.send_in_background(cfg)
+
     bringing_up = threading.Event()
     """Whether `drive` got as far as starting the thread that resolves `pending`. A
     session that fails before that point has a start under way and nobody waiting on
@@ -1702,6 +1741,14 @@ def session(
         with _timed("view_workspace"):
             view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        if shares:
+            recorder, notice = sharing_mod.begin(
+                cfg, store.session.study_id, solver=str(ctx.solver or ""),
+                backend=local_kind or "hosted")
+            if notice:
+                # Before anything is sent, and this study is not recorded (`sharing.begin`).
+                view.notice(notice)
+            loop.recorder = shared["recorder"] = recorder
         if pending is not None:
             # A turn is not begun while the workspace start has failed: the person is
             # shown the refusal and the model is not asked (`Loop.run`, `_run_turn`).
@@ -2061,6 +2108,13 @@ def session(
                     _capture_the_case(capture, store, ConsoleView(console))
                 with _timed("close.capture_close"):
                     capture.close()
+            if shared.get("recorder") is not None:
+                with _timed("close.sharing"):
+                    try:
+                        shared["recorder"].finish()
+                        sharing_mod.send(cfg)
+                    except Exception:  # noqa: BLE001 - sharing never fails a close-down
+                        pass
         with _timed("close.backend_close"):
             backend.close()
         if stream is not None:
