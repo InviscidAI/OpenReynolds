@@ -27,7 +27,7 @@ from typing import Any, Iterable
 MARK = "[redacted]"
 
 SECRET_NAME = (r"(?:api[_\-]?key|access[_\-]?key|private[_\-]?key|secret|token|password"
-               r"|passwd|passphrase|credentials?|cookie|_pwd(?![a-z]))")
+               r"|passwd|passphrase|credentials?|cookie|_pwd(?![a-z])|(?<![a-z])pass(?![a-z]))")
 """What a name says when what it names is a secret."""
 
 _NAMED = re.compile(r"(?i)" + SECRET_NAME + r"|authorization")
@@ -61,8 +61,10 @@ PATTERNS: tuple[re.Pattern[str], ...] = (
                r"[^\r\n\"']{6,8192}"),
     # A URL's password: scheme://user:password@host.
     re.compile(r"(?i)((?<![A-Za-z0-9+.\-])[a-z][a-z0-9+.\-]{0,30}://[^\s:/@\"'<>]{1,256}:)"
-               r"[^\s@/\"'<>]{1,256}(?=@)"),
-    # curl -u user:password (and --user).
+               r"[^\s/\"'<>]{1,256}(?=@[^\s@/\"'<>]{1,256}(?:[/:?#\s\"'<>]|$))"),
+    # curl -u user:password (and --user), quoted with a space in it, or not.
+    re.compile(r"((?<!\S)(?:-u|--user)(?:\s{1,8}|=)\"[^\s:\"]{1,256}:)[^\"\r\n]{1,512}"),
+    re.compile(r"((?<!\S)(?:-u|--user)(?:\s{1,8}|=)'[^\s:']{1,256}:)[^'\r\n]{1,512}"),
     re.compile(r"((?<!\S)(?:-u|--user)(?:\s{1,8}|=)[\"']?[^\s:\"']{1,256}:)[^\s\"']{1,512}"),
     # NAME=value, NAME: value, "name": "value" (and JSON escaped inside a string,
     # \"name\": \"value\"), where the name says secret. A quoted value is taken
@@ -107,7 +109,8 @@ def _keep_name(match: re.Match[str]) -> str:
     return match.group(1) + quote + MARK + quote
 
 
-_SECRET_ENV = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$")
+_SECRET_ENV = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|_PASS|_PWD|CREDENTIALS?)$")
+"""`_PWD`, not `PWD`: that one is the shell's working directory."""
 
 _SHORTEST_KNOWN = 8
 """A known value shorter than this is not removed by value: `KEY=1` in the environment
@@ -130,10 +133,10 @@ def secret_name(name: str) -> bool:
 
 
 def _marks_whole(key: Any, value: Any) -> bool:
-    """A value under a key that names a secret goes whole: a string, a number, a list
-    (`{"password": 12345678}`, `{"tokens": ["..."]}`). An object is gone into instead."""
-    return (isinstance(key, str) and secret_name(key) and value not in (None, "", [])
-            and not isinstance(value, (bool, dict)))
+    """A value under a key that names a secret goes whole, whatever it is: a string, a
+    number, a list, an object (`{"credentials": {"user": ..., "pass": ...}}`)."""
+    return (isinstance(key, str) and secret_name(key) and value not in (None, "", [], {})
+            and not isinstance(value, bool))
 
 
 def _named_pair(value: dict) -> bool:

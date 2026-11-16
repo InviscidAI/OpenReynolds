@@ -359,22 +359,26 @@ def test_signing_in_says_it_shares_in_one_line_once(on, monkeypatch, tmp_path):
 
 def test_a_queued_trace_goes_only_to_the_account_it_was_recorded_under(seen, service):
     """Signed in as someone else, or pointed at another service: what the machine
-    queued before is dropped, never sent under the new key."""
+    queued before is never sent under the new key. It is left for a session that still
+    holds the old one, and dropped once it is a week old."""
     svc = service()
-    _queue_one(seen)
+    path = _queue_one(seen)
     other = Config(llm_api_key=KEY, foamd_api_key="of_live_" + "o" * 40, foamd_url=seen.foamd_url)
-    assert sharing.send(other)["dropped"] == 1
-    _queue_one(seen)
     staging = Config(llm_api_key=KEY, foamd_api_key=SERVICE, foamd_url="https://staging.example.test")
-    assert sharing.send(staging)["dropped"] == 1
-    assert svc.posted == [] and sharing.queued() == []
+    assert sharing.send(other)["left"] == 1 and sharing.send(staging)["left"] == 1
+    assert svc.posted == []
+    old = path.stat().st_mtime - sharing.STALE_AFTER_S - 60
+    os.utime(path, (old, old))
+    assert sharing.send(other)["dropped"] == 1 and sharing.queued() == [] and svc.posted == []
 
 
 def test_a_trace_queued_before_this_version_is_dropped(seen, service):
     """A queue file that does not say whose it is cannot be sent safely."""
     svc = service()
     sharing._queue()
-    (sharing.queue_dir() / ("a" * 32 + ".json.gz")).write_bytes(b"x")
+    path = sharing.queue_dir() / ("a" * 32 + ".json.gz")
+    path.write_bytes(b"x")
+    os.utime(path, (1, 1))
     assert sharing.send(seen)["dropped"] == 1 and svc.posted == []
 
 
@@ -394,7 +398,9 @@ def test_stamps_carry_microseconds(seen):
     assert "." in stamp.split("T")[1]
 
 
-@pytest.mark.parametrize("content", ["{not json", '{"enabled": "false"}', '{"enabled": 0}', "[]"])
+@pytest.mark.parametrize("content", ["{not json", '{"enabled": "false"}', '{"enabled": 0}', "[]",
+                                     '{"enabled": "disabled"}', '{"enabled": ""}', '{"Enabled": false}',
+                                     '{"notice": 1}'])
 def test_a_switch_file_that_cannot_be_read_is_off(on, content):
     sharing.state_path().parent.mkdir(parents=True, exist_ok=True)
     sharing.state_path().write_text(content)
@@ -547,3 +553,98 @@ def test_redaction_is_linear_in_the_text(unit):
     started = time.perf_counter()
     Redactor().text(text)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize("value,off", [("off", True), ("disabled", True), ("never", True),
+                                       ("on", False), ("1", False), ("", False)])
+def test_the_environment_switch_takes_anything_unknown_as_off(on, monkeypatch, value, off):
+    monkeypatch.setenv("OPENREYNOLDS_SHARING", value)
+    assert sharing.env_off() is off
+
+
+def test_off_empties_the_queue_even_when_the_switch_cannot_be_saved(seen, monkeypatch):
+    _queue_one(seen)
+
+    def refuse(state):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(sharing, "save_state", refuse)
+    with pytest.raises(PermissionError):
+        sharing.set_enabled(False)
+    assert sharing.queued() == []
+
+
+def test_status_while_signed_out_keeps_nothing_queued(seen):
+    _queue_one(seen)
+    sharing.describe(Config(llm_api_key=KEY))
+    assert sharing.queued() == []
+
+
+def test_a_redirect_is_not_followed(seen, monkeypatch):
+    """A 307 would carry the trace to another host; a 301 would make it a GET whose 200
+    reads as sent. Neither is followed, and the trace stays queued."""
+    hosts = []
+
+    def reply(request):
+        hosts.append(request.url.host)
+        if request.url.host == "api.example.test":
+            return httpx.Response(307, headers={"location": "https://elsewhere.test/v1/traces"})
+        return httpx.Response(201, json={})
+
+    real = sharing._client
+    monkeypatch.setattr(sharing, "_client", lambda cfg, timeout: _with_transport(real(cfg, timeout), reply))
+    _queue_one(seen)
+    assert sharing.send(seen)["left"] == 1 and hosts == ["api.example.test"]
+
+
+def _with_transport(client, reply):
+    """`sharing._client`'s own settings (redirects included), over a scripted transport."""
+    client._transport = httpx.MockTransport(reply)
+    return client
+
+
+def test_the_budget_holds_whatever_the_network_does(seen, monkeypatch):
+    """httpx's timeouts are per phase and restart with each byte; a post that never
+    answers costs the budget, not more."""
+    import threading
+    import time as clock
+
+    release = threading.Event()
+
+    class Hung:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            release.set()
+
+        def post(self, *a, **k):
+            release.wait(30)
+            raise httpx.ReadTimeout("trickled")
+
+    monkeypatch.setattr(sharing, "_client", lambda cfg, timeout: Hung())
+    _queue_one(seen)
+    started = clock.monotonic()
+    assert sharing.send(seen, budget_s=1.5)["left"] == 1
+    recorder = sharing.Recorder(seen, "s1", source="web")
+    recorder.turn(_turn(), 1.0)
+    assert sharing.send_now(seen, recorder, budget_s=1.5) is False
+    assert clock.monotonic() - started < 4.0
+
+
+@pytest.mark.parametrize("line,expected", [
+    ('curl --user "alice:s3cret pass" https://x', f'curl --user "alice:{MARK}" https://x'),
+    ("postgres://bob:p@ss@db/x", f"postgres://bob:{MARK}@db/x"),
+    ("DB_PASS=hunter2hunter2", f"DB_PASS={MARK}"),
+    ("bypass_cache=enabled", "bypass_cache=enabled"),
+])
+def test_redaction_takes_the_last_shapes_and_leaves_lookalikes(line, expected):
+    from openreynolds.redact import Redactor
+
+    assert Redactor().text(line) == expected
+
+
+def test_an_object_under_a_secret_key_goes_whole():
+    from openreynolds.redact import Redactor
+
+    assert Redactor().deep({"credentials": {"user": "bob", "pass": "hunter2hunter2"}}) == {"credentials": MARK}

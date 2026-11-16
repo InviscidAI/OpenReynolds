@@ -557,7 +557,8 @@ sharing off. Traces are how we find where the agent goes wrong on real problems.
 has two parts:
 
 - **Usage:** which tools the agent called and whether they worked, the model, token
-  counts, timings and the OpenReynolds version. No messages, commands or files.
+  counts, timings, the kind of workspace and solver, the operating system, and the
+  OpenReynolds and Python versions. No messages, commands or files.
 - **Study content:** your messages, the agent's reasoning and replies, and every tool's
   inputs and outputs, each cut at 20,000 characters. These can include commands, logs
   and parts of your case files. Images and other binary results go as their

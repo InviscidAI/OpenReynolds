@@ -101,6 +101,15 @@ waits for the next session's start."""
 START_BUDGET_S = 60.0
 
 _OFF = ("0", "false", "no", "off")
+_ON = ("1", "true", "yes", "on")
+
+STALE_AFTER_S = 7 * 24 * 3600
+"""A queued trace recorded under another account or service is left for that one (two
+sessions on one machine can hold different keys) until it is this old, then dropped."""
+
+WEB_BUDGET_S = 20.0
+"""How long the web app's close-down may spend sending its trace: there is no queue
+to fall back on, so a busy service is asked again for longer than a terminal waits."""
 
 _SENT_AT = "X-OpenReynolds-Sent-At"
 """This machine's clock as it sends, so the service can correct `queued_at` for a
@@ -143,13 +152,15 @@ def load_state() -> State:
         return State(enabled=False, unreadable=True)
     if not isinstance(raw, dict):
         return State(enabled=False, unreadable=True)
-    enabled = raw.get("enabled", True)
+    enabled = raw.get("enabled")
+    readable = isinstance(enabled, bool) or (
+        isinstance(enabled, str) and enabled.strip().lower() in _ON + _OFF)
     if isinstance(enabled, str):
-        enabled = enabled.strip().lower() not in _OFF
+        enabled = enabled.strip().lower() in _ON
     notice = raw.get("notice") or 0
-    return State(enabled=enabled is True,
+    return State(enabled=readable and enabled is True,
                  notice=notice if isinstance(notice, int) and not isinstance(notice, bool) else 0,
-                 unreadable=not isinstance(enabled, bool))
+                 unreadable=not readable)
 
 
 def save_state(state: State) -> None:
@@ -160,7 +171,10 @@ def save_state(state: State) -> None:
 
 
 def env_off() -> bool:
-    return (os.environ.get("OPENREYNOLDS_SHARING") or "").strip().lower() in _OFF
+    """OPENREYNOLDS_SHARING set to anything but empty or an on word is off: a value
+    this version does not know (`disabled`, `never`) was meant as off."""
+    value = (os.environ.get("OPENREYNOLDS_SHARING") or "").strip().lower()
+    return bool(value) and value not in _ON
 
 
 def signed_in(cfg: Config) -> bool:
@@ -181,11 +195,12 @@ def active(cfg: Config, state: State | None = None) -> bool:
 
 
 def set_enabled(enabled: bool) -> State:
+    if not enabled:
+        clear_queue()      # first: a switch that cannot be saved still empties the queue
     state = load_state()
     state.enabled = enabled
+    state.unreadable = False
     save_state(state)
-    if not enabled:
-        clear_queue()
     return state
 
 
@@ -473,10 +488,32 @@ def _sent_at() -> dict[str, str]:
     return {"content-type": "application/json", "content-encoding": "gzip", _SENT_AT: _now()}
 
 
+def _post_within(http: Any, data: bytes, seconds: float) -> Any:
+    """One POST that returns within `seconds` whatever the network does: httpx's
+    timeouts are per phase and restart with each byte, and DNS has none. A post still
+    running then is abandoned to its daemon thread (the service drops a duplicate);
+    None means no answer in time."""
+    result: dict[str, Any] = {}
+
+    def post() -> None:
+        try:
+            result["sent"] = http.post("/v1/traces", content=data, headers=_sent_at(),
+                                       timeout=max(0.5, seconds))
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+
+    worker = threading.Thread(target=post, name="sharing-post", daemon=True)
+    worker.start()
+    worker.join(max(0.0, seconds))
+    return result.get("sent")
+
+
 def _client(cfg: Config, timeout: float) -> Any:
     import httpx2 as httpx
 
-    return httpx.Client(base_url=cfg.foamd_url.rstrip("/"), timeout=timeout, follow_redirects=True,
+    # No redirects: a 307 would carry the trace to another host, and a 301 would turn
+    # it into a GET whose 200 reads as "sent".
+    return httpx.Client(base_url=cfg.foamd_url.rstrip("/"), timeout=timeout, follow_redirects=False,
                         headers={"Authorization": f"Bearer {cfg.foamd_api_key}",
                                  "User-Agent": f"openreynolds/{__version__}"})
 
@@ -503,16 +540,19 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
                     break
                 if _account_of(path) != account:
                     # Recorded under another account or service (or by a version that
-                    # did not say which): never sent under this one's key.
-                    path.unlink(missing_ok=True)
-                    counts["dropped"] += 1
+                    # did not say which): never sent under this one's key. Left for the
+                    # session that holds that key, and dropped once it is stale.
+                    if time.time() - _age(path) > STALE_AFTER_S:
+                        path.unlink(missing_ok=True)
+                        counts["dropped"] += 1
                     continue
                 try:
                     data = path.read_bytes()
                 except OSError:      # another OpenReynolds sent it meanwhile
                     continue
-                sent = http.post("/v1/traces", content=data, headers=_sent_at(),
-                                 timeout=min(left, 20.0))
+                sent = _post_within(http, data, min(left, 20.0))
+                if sent is None:
+                    break                          # no answer in time: later
                 code = (sent.json().get("error") if sent.headers.get("content-type", "").startswith(
                     "application/json") and sent.status_code >= 400 else "") or ""
                 if sent.status_code in (200, 201):
@@ -536,7 +576,7 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
 _RETRY = frozenset({429, 502, 503, 504})
 
 
-def send_now(cfg: Config, recorder: Recorder, budget_s: float = END_BUDGET_S) -> bool:
+def send_now(cfg: Config, recorder: Recorder, budget_s: float = WEB_BUDGET_S) -> bool:
     """A web study's trace, sent straight from memory and never queued: whether the
     service took it. A busy service is asked again while the budget lasts; there is no
     queue to fall back on. Never raises."""
@@ -548,11 +588,11 @@ def send_now(cfg: Config, recorder: Recorder, budget_s: float = END_BUDGET_S) ->
         with _client(cfg, max(1.0, budget_s)) as http:
             while True:
                 left = deadline - time.monotonic()
-                sent = http.post("/v1/traces", content=data, headers=_sent_at(),
-                                 timeout=max(0.5, left))
-                if sent.status_code in (200, 201):
+                sent = _post_within(http, data, left)
+                if sent is not None and sent.status_code in (200, 201):
                     return True
-                if sent.status_code not in _RETRY or deadline - time.monotonic() < 1.5:
+                if (sent is None or sent.status_code not in _RETRY
+                        or deadline - time.monotonic() < 1.5):
                     return False
                 time.sleep(1.0)
     except Exception:  # noqa: BLE001 - sharing never fails a study
@@ -574,6 +614,7 @@ def describe(cfg: Config) -> list[str]:
     state = load_state()
     lines = []
     if not signed_in(cfg):
+        clear_queue()      # signed out: nothing is kept for sending later
         lines.append("This machine is not signed in, so it shares nothing (`openreynolds login`).")
     elif state.unreadable:
         lines.append(f"Sharing is off on this machine: {state_path()} could not be read "
