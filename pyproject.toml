@@ -51,7 +51,11 @@ dev = [
     # The kernel channel's own tests run a real kernel against `LocalBackend`.
     "ipykernel>=6.29",
     "jupyter_client>=8.6",
+    # The MCP server's tests (tests/test_mcp_local.py).
+    "mcp>=2.2,<3",
 ]
+# `openreynolds mcp`: the tools another agent drives studies with (openreynolds/mcp).
+mcp = ["mcp>=2.2,<3"]
 # `openreynolds video` prefers a real ffmpeg on PATH; imageio is the fallback encoder.
 video = ["imageio>=2.31"]
 # The cell channel the CAD desk works in. These belong to the *workspace image*, not to

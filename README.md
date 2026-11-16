@@ -413,6 +413,7 @@ down to **0.567**.
 | `openreynolds renders` | Every picture and assembled animation. |
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` skips the prompt. |
+| `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
@@ -420,6 +421,36 @@ work, `/mode`, `/model` and `/effort` change how the session runs, and anything 
 type reaches the model at its next step -- a receipt says so at once, and an agent
 holding a wait reads it within a second -- so you can steer a run without stopping it. `/help` has the rest; see *In a session: commands, help and
 completion*.
+
+## Using it from Claude Code (MCP)
+
+`openreynolds mcp` lets another agent hand Reynolds a CFD task: Claude Code, or any
+client that speaks the Model Context Protocol. It is the same set of tools the hosted
+Reynolds MCP server offers, defined once in `openreynolds/mcp/core.py`, so a caller
+that has used one has used both.
+
+    pip install 'openreynolds[mcp]'
+    claude mcp add reynolds -- openreynolds mcp            # a Reynolds workspace (after `openreynolds login`)
+    claude mcp add reynolds -- openreynolds mcp --local    # this machine's Docker workspace
+
+| Tool | What it does |
+| --- | --- |
+| `upload_file` | Stage an input file (STL, STEP, a drawing, data) by its path on this machine. |
+| `start_study` | Start a study, or continue one by `study_id`: the task in words, the staged files, `depth` (`quick` or `full`), `mode`, `model`, `effort`, `solver`. Returns a `session_id` at once. |
+| `study_status` | What the study is doing and what was said since `after_seq`; waits up to 50 s for something to change. The state is `starting`, `working`, `waiting_for_approval`, `waiting_for_input`, `ending`, `ended` or `error`. |
+| `send_message` | Say something to the running study: answer a question, change course, `/btw` a side question. |
+| `answer_approval` | Approve or decline what a `partial` or `structured` study asks before it runs. |
+| `end_study` | End the session: jobs and workspace stopped, files kept. |
+| `list_studies` / `get_results` | The studies on this machine; one study's final message, `results.json`, reports, pictures and file list. |
+| `download_url` | The local path of one of a study's files, copied out of a live workspace first. |
+
+Each study runs inside the server process, as `openreynolds` runs it in a terminal: the
+same configuration, the same workspace, the same `studies/` directory under where the
+server was started (Claude Code starts it in your project). A study nobody has polled
+for 30 minutes ends itself at its next prompt, and when the client goes away every live
+study ends as `end_study` would, files kept; `start_study` with its `study_id` carries
+on. The calling agent's note -- that no person is watching, and what its final message
+should hold -- is added after your own `preferences.md`.
 
 ## Driving it from a program
 

@@ -950,6 +950,29 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
     console.print(f"[green]{target}[/]  ({len(sequence)} frames at {fps:g} fps, via {tool})")
 
 
+@main.command("mcp")
+@click.option("--local", "local_here", is_flag=True,
+              help="Run studies on this machine's Docker workspace instead of a Reynolds one.")
+def mcp_cmd(local_here: bool) -> None:
+    """Serve Reynolds to an MCP client (Claude Code, ...) over stdio.
+
+    The client starts studies, watches them and reads their results through the same
+    tools the hosted Reynolds MCP server offers. Studies run in this process, with this
+    machine's configuration; when the client goes away they end as End would, files
+    kept. Add it to Claude Code with: claude mcp add reynolds -- openreynolds mcp
+    """
+    if local_here:
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        click.echo("The MCP server needs the mcp package: pip install 'openreynolds[mcp]'", err=True)
+        raise SystemExit(1) from None
+    from .mcp.local import serve
+
+    serve()
+
+
 @main.command("doctor")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
 @click.pass_context
