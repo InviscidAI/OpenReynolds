@@ -380,7 +380,7 @@ def clear_queue() -> int:
 
 
 def _client(cfg: Config, timeout: float) -> Any:
-    import httpx
+    import httpx2 as httpx
 
     return httpx.Client(base_url=cfg.foamd_url.rstrip("/"), timeout=timeout, follow_redirects=True,
                         headers={"Authorization": f"Bearer {cfg.foamd_api_key}",

@@ -10,7 +10,7 @@ import os
 import stat
 from types import SimpleNamespace
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from openreynolds import sharing
