@@ -8,14 +8,17 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
-- **`openreynolds logout`.** Removes this machine's service key from the config and
-  deletes any traces queued to share, unsent. A key set in `FOAMD_API_KEY` is left
-  alone, and the command says to unset it.
+- **`openreynolds logout`.** Revokes this machine's service key on the service, then
+  removes it from the config and deletes any traces queued to share, unsent. If the
+  service cannot be reached nothing changes, unless `--here-only` says to remove the
+  key from this machine anyway. A key set in `FOAMD_API_KEY` is left alone, and the
+  command says the machine is still signed in through it.
 
 ### Fixed
 
 - The release workflow now creates the GitHub release for a tag. It read the tag from
   a job it did not wait on, got nothing, and took the latest release for this one.
+  An empty tag now fails the job.
 
 ## [0.4.0] - 2026-11-17
 

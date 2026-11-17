@@ -168,6 +168,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
         run: |
+          # An empty tag would make `gh release view` find the latest release instead.
+          test -n "$TAG" || { echo "no tag from the build job"; exit 1; }
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG already exists, leaving it alone"
           else

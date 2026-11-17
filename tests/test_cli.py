@@ -2641,32 +2641,124 @@ def test_retry_after_lengthens_a_wait_but_never_shortens_it():
     assert base.retry_delay(ProviderError("x", 402), 0) is None
 
 
-def test_logout_removes_the_key_and_the_queue_and_keeps_the_rest(monkeypatch, tmp_path):
+
+def _signed_in_machine(monkeypatch, tmp_path, *, revoke=None):
+    """A config file with a key and other settings, a queued trace, and the service's
+    revoke faked: `revoke` answers it (an outcome, or an exception to raise)."""
     path = tmp_path / "c.json"
     monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(path))
     monkeypatch.delenv("FOAMD_API_KEY", raising=False)
+    monkeypatch.delenv("FOAMD_URL", raising=False)
     monkeypatch.setenv("OPENREYNOLDS_MODEL", "from-the-environment")
     path.write_text(json.dumps({"foamd_url": "https://api.example", "foamd_api_key": "of_live_x", "model": "m1"}))
     queue = cli.sharing_mod.queue_dir()
     queue.mkdir(parents=True, exist_ok=True)
     (queue / "t.json.gz").write_bytes(b"x")
+    asked = []
+
+    def revoke_own_key(url, key):
+        asked.append((url, key))
+        if isinstance(revoke, Exception):
+            raise revoke
+        return revoke or "revoked"
+
+    monkeypatch.setattr(cli.hosted, "revoke_own_key", revoke_own_key)
+    return path, queue, asked
+
+
+def _logout_said(result):
+    return " ".join(result.output.split())
+
+
+def test_logout_revokes_the_key_then_removes_it_and_the_queue(monkeypatch, tmp_path):
+    path, queue, asked = _signed_in_machine(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(cli.main, ["logout"])
 
     assert result.exit_code == 0, result.output
-    assert "Signed out" in result.output and "1 queued trace deleted" in result.output
+    assert asked == [("https://api.example", "of_live_x")]
+    assert "Signed out." in _logout_said(result) and "revoked on the service" in _logout_said(result)
+    assert "1 queued trace deleted" in _logout_said(result)
     # Only the key goes: nothing the environment set is written into the file.
     assert json.loads(path.read_text()) == {"foamd_url": "https://api.example", "model": "m1"}
     assert not list(queue.iterdir())
     assert "of_live_x" not in result.output
 
 
-def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+def test_logout_changes_nothing_when_the_service_cannot_revoke(monkeypatch, tmp_path):
+    path, queue, _asked = _signed_in_machine(
+        monkeypatch, tmp_path, revoke=cli.BackendError("cannot reach", code="unreachable"))
+    before = path.read_text()
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 1
+    assert "nothing was changed" in _logout_said(result) and "--here-only" in _logout_said(result)
+    assert path.read_text() == before and list(queue.iterdir())
+
+
+def test_logout_here_only_removes_the_key_without_asking_the_service(monkeypatch, tmp_path):
+    path, _queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.main, ["logout", "--here-only"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == [] and "stays valid on the service" in _logout_said(result)
+    assert "foamd_api_key" not in json.loads(path.read_text())
+
+
+def test_logout_against_a_service_that_cannot_revoke_says_the_key_still_works(monkeypatch, tmp_path):
+    path, _queue, _asked = _signed_in_machine(monkeypatch, tmp_path, revoke="unsupported")
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "cannot revoke keys yet" in _logout_said(result) and "stays valid there" in _logout_said(result)
+    assert "foamd_api_key" not in json.loads(path.read_text())
+
+
+def test_logout_with_an_environment_key_too_does_not_claim_to_be_signed_out(monkeypatch, tmp_path):
+    path, _queue, asked = _signed_in_machine(monkeypatch, tmp_path)
     monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
 
     result = CliRunner().invoke(cli.main, ["logout"])
 
     assert result.exit_code == 0, result.output
-    assert "nothing to remove" in result.output and "FOAMD_API_KEY is still set" in result.output
+    assert asked == [("https://api.example", "of_live_x")], "the file's key is the one revoked"
+    assert "Signed out" not in result.output and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
+    assert json.loads(path.read_text()) == {"foamd_url": "https://api.example", "model": "m1"}
+    assert "of_live_env" not in path.read_text()
+
+
+def test_logout_with_an_unreadable_config_changes_nothing_and_says_why(monkeypatch, tmp_path):
+    path, queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+    path.write_text('{"foamd_api_key": "of_live_x",')
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 1
+    assert "cannot be read" in _logout_said(result) and "nothing to remove" not in result.output
+    assert asked == [] and path.read_text() == '{"foamd_api_key": "of_live_x",' and list(queue.iterdir())
+
+
+def test_logout_prints_a_config_path_with_brackets_as_it_is(monkeypatch, tmp_path):
+    folder = tmp_path / "[bold]work"
+    folder.mkdir()
+    path, _queue, _asked = _signed_in_machine(monkeypatch, folder)
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "[bold]work" in _logout_said(result)
+
+
+def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
+    monkeypatch.setattr(cli.hosted, "revoke_own_key", lambda url, key: pytest.fail("nothing to revoke"))
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to remove" in _logout_said(result) and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
     assert not (tmp_path / "c.json").exists()

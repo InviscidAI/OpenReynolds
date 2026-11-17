@@ -1620,3 +1620,25 @@ def test_a_checkpoint_that_failed_is_raised_with_the_services_reason():
     with pytest.raises(BackendError) as raised:
         backend.checkpoint(["/work/s1"], timeout_s=60)
     assert "AccessDenied" in raised.value.message
+
+
+@pytest.mark.parametrize("status, outcome", [(204, "revoked"), (401, "already"), (404, "unsupported"), (405, "unsupported")])
+def test_a_key_revokes_itself_with_its_own_bearer(status, outcome):
+    from openreynolds.backend.hosted import revoke_own_key
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path, request.headers.get("authorization")))
+        return httpx.Response(status, json={"error": "x", "message": "y"} if status >= 400 else None)
+
+    assert revoke_own_key("https://svc.example/", "of_live_k", transport=httpx.MockTransport(handler)) == outcome
+    assert seen == [("DELETE", "/v1/keys/self", "Bearer of_live_k")]
+
+
+def test_a_service_that_fails_the_revoke_is_an_error():
+    from openreynolds.backend.hosted import revoke_own_key
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(503, json={"error": "busy", "message": "try later"}))
+    with pytest.raises(BackendError):
+        revoke_own_key("https://svc.example", "of_live_k", transport=transport)
