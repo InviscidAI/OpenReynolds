@@ -105,6 +105,55 @@ _CONFIG_KEYS = (
 )
 
 
+
+class ConfigUnreadable(Exception):
+    """The config file is there but cannot be read as settings."""
+
+
+def _stored() -> dict[str, object]:
+    """The config file as written, nothing from the environment. {} when there is no
+    file; `ConfigUnreadable` when there is one that cannot be read."""
+    path = config_path()
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigUnreadable(f"{path}: {exc}") from exc
+    if not isinstance(stored, dict):
+        raise ConfigUnreadable(f"{path}: not a settings object")
+    return stored
+
+
+def stored_service_key() -> tuple[str, str]:
+    """(service url, service key) as the config file has them; empty strings for
+    either that is not there. Raises `ConfigUnreadable`."""
+    stored = _stored()
+    return str(stored.get("foamd_url") or ""), str(stored.get("foamd_api_key") or "")
+
+
+def forget_service_key() -> bool:
+    """Remove the service key from the config file, leaving every other setting as it
+    was written (not as the environment has it now). Whether the file named one.
+    Written whole or not at all. Raises `ConfigUnreadable`."""
+    stored = _stored()
+    if "foamd_api_key" not in stored:
+        return False
+    had = bool(stored.pop("foamd_api_key"))
+    _write_private(config_path(), json.dumps(stored, indent=2) + "\n")
+    return had
+
+
+def _write_private(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
 def _seconds_or(text: str | None, default: float) -> float:
     """A non-negative number of seconds from an environment variable, or `default`
     for anything that is not one. A hint about timing is not worth refusing to start

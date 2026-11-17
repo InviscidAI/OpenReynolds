@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from rich.markup import escape
 from concurrent.futures import ThreadPoolExecutor
 
 from . import __version__
@@ -33,7 +34,9 @@ from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
-from .config import ACCOUNT_PAGE_URL, Config, config_path
+from .config import (
+    ACCOUNT_PAGE_URL, Config, ConfigUnreadable, config_path, forget_service_key, stored_service_key,
+)
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
@@ -503,6 +506,65 @@ def login_cmd(
     if notice:
         console.print(notice, markup=False, highlight=False)
     _say_what_is_next(cfg)
+
+
+@main.command("logout")
+@click.option("--here-only", is_flag=True,
+              help="Remove the key from this machine without revoking it on the service.")
+def logout_cmd(here_only: bool) -> None:
+    """Sign this machine out: its service key is revoked on the service and removed
+    from the config, and the traces it queued to share are deleted unsent.
+
+    Revoking first is what stops a copy of the key, and any study still running on
+    this machine, from going on using it. If the service cannot be reached nothing is
+    changed, unless --here-only says to remove the key from this machine regardless.
+    Studies already on the service stay there. A key in FOAMD_API_KEY is not in the
+    config file: it is left alone, and this says so.
+    """
+    path = escape(str(config_path()))
+    try:
+        stored_url, key = stored_service_key()
+    except ConfigUnreadable as exc:
+        console.print(f"[red]The config file cannot be read, so nothing was changed:[/] {escape(str(exc))}")
+        raise SystemExit(1) from None
+
+    outcome = ""
+    url = stored_url or Config.load().foamd_url
+    if key and not here_only:
+        try:
+            outcome = hosted.revoke_own_key(url, key)
+        except BackendError as exc:
+            console.print(f"[red]Could not revoke the key at {escape(url)}, so nothing was changed:[/] {escape(exc.message)}")
+            console.print("Run [bold]openreynolds logout[/] again once the service answers, or "
+                          "[bold]openreynolds logout --here-only[/] to remove the key from this "
+                          "machine only; it would stay valid on the service.")
+            raise SystemExit(1) from None
+    try:
+        removed = forget_service_key()
+    except ConfigUnreadable as exc:
+        console.print(f"[red]The config file cannot be read:[/] {escape(str(exc))}")
+        raise SystemExit(1) from None
+    dropped = sharing_mod.clear_queue()
+    env_key = bool(os.environ.get("FOAMD_API_KEY"))
+
+    if removed:
+        done = "Signed out." if not env_key else "The saved key is gone."
+        if outcome == "revoked":
+            console.print(f"[green]{done}[/] The key is revoked on the service and removed from {path}.")
+        elif outcome == "already":
+            console.print(f"[green]{done}[/] The key is removed from {path}; the service had already revoked it.")
+        elif outcome == "unsupported":
+            console.print(f"[yellow]{done}[/] The key is removed from {path}, but {escape(url)} cannot "
+                          "revoke keys yet, so it stays valid there.")
+        else:
+            console.print(f"[yellow]{done}[/] The key is removed from {path}; it stays valid on the service.")
+    else:
+        console.print(f"No service key is saved in {path}, so there was nothing to remove.")
+    if dropped:
+        console.print(f"{dropped} queued trace{'s' if dropped != 1 else ''} deleted unsent.")
+    if env_key:
+        console.print("[yellow]Still signed in through FOAMD_API_KEY[/], which this does not "
+                      "touch: unset it to sign out.")
 
 
 def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:
