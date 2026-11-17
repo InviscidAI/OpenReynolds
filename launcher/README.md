@@ -4,7 +4,7 @@ Agentic OpenFOAM CFD: describe a flow problem, get an evidence-backed answer.
 
 This npm package is a **launcher**, not the program. The real thing is the
 [`openreynolds` Python package](https://pypi.org/project/openreynolds/); everything
-about what it does, what it needs (an Anthropic key, a compute backend) and how to use
+about what it does, what it needs (a model: a Reynolds account or your own provider's key; and a workspace: a Reynolds one, or Docker on this machine) and how to use
 it is in the
 [project README](https://github.com/InviscidAI/OpenReynolds#readme).
 `npm install -g openreynolds` exists so people who live in Node get the same

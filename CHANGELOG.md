@@ -6,7 +6,39 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-17
+
 ### Added
+
+- **A workspace on your own machine: `--local`.** The hosted workspace's image
+  (`ghcr.io/inviscidai/reynolds-workspace:2512`: OpenFOAM ESI v2512, HiSA, gmsh,
+  build123d, pyvista) runs in Docker here, with `~/.openreynolds/work` mounted as
+  `/work`, as your user and with no network. No account is needed, only a model key;
+  `--study <id> --local` resumes a local study, and jobs outlive the session.
+  `OPENREYNOLDS_LOCAL=native` uses an OpenFOAM installed on the machine instead, with
+  no sandbox, and now says so at the start when it finds none. Felix stays cloud-only.
+- **`openreynolds mcp`: Reynolds as an MCP server.** Claude Code or any MCP client can
+  start studies, watch them, answer their questions and fetch their results through
+  the same nine tools the hosted Reynolds MCP server offers (`openreynolds/mcp/core.py`
+  defines them for both). Studies run in this process, on a Reynolds workspace or with
+  `--local` on this machine's Docker. `claude mcp add reynolds -- openreynolds mcp`. The
+  `mcp` package is now a standard dependency, so it works from pip, uvx, pipx and npm
+  installs alike; the `[mcp]` extra is kept, empty, for older instructions.
+- **A signed-in machine shares a trace of each study.** While OpenReynolds is signed in
+  (`openreynolds login`), it sends the service a trace of each study after it ends --
+  usage (tools and whether they worked, models, tokens, timings, workspace kind and
+  solver, OS and versions) and study content (messages, reasoning, tool inputs and
+  outputs, each cut at 20,000 characters) -- whether the workspace is the service's or
+  this machine's. Credentials it knows, environment variables named like secrets and
+  the shapes of common keys are removed before a trace is queued (`redact.py`), and
+  again by the service. It says so in one line at sign-in (password or `--browser`),
+  or at the next study on a machine signed in before. `openreynolds sharing
+  off|on|status` and `OPENREYNOLDS_SHARING=off` switch it per machine, and `off`
+  discards the queue; nothing is recorded or sent without a service key. Traces can be
+  deleted from the web app's Account page. `doctor` shows whether sharing is on. What
+  is kept and for how long: https://tryreynolds.com/privacy.
+- **A new hosted study gets its own workspace (#92).** Studies no longer share one
+  instance's `/work`; a resumed study goes back to its own.
 
 - **A study's spending ceiling is the person's question.** When the hosted service
   pauses a study at 80% of its ceiling (`409 study_paused`), on a workspace call or on
@@ -15,6 +47,16 @@ All notable changes to this project are recorded here. The format follows
   final message and asks the model nothing more. Before the first solve the person is
   told how far the study may go before it asks; in ask-before-compute mode that is
   part of the job's question. See docs/modes.md.
+
+- **Felix mode: a second solver.** `--solver auto|openfoam|felix` (or
+  `OPENREYNOLDS_SOLVER`). With `auto`, the default, the solver is chosen from the
+  person's first message by a request of its own, before the agent's first turn (see
+  *Changed*), and the workspace -- of that solver's kind -- is reserved and started,
+  and the platform's study opened with that solver, only once it has been chosen. A Felix study gets its own system prompt (pointing at `/opt/felix/docs`), no
+  `cad`, `mesh_review` or OpenFOAM toolbox, and a `job_start` that runs `felix run`
+  without the OpenFOAM restart guard and trapFpe check. The solver is fixed for the
+  whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
+  is unchanged byte for byte.
 
 ### Changed
 
@@ -89,19 +131,30 @@ All notable changes to this project are recorded here. The format follows
 - **A failed model request is in the transcript.** A turn a provider error ended leaves
   an `event` row saying the request failed and why, not only a live notice.
 
-### Added
-
-- **Felix mode: a second solver.** `--solver auto|openfoam|felix` (or
-  `OPENREYNOLDS_SOLVER`). With `auto`, the default, the agent's first decision is the
-  solver (`choose_solver`), and the workspace -- of that solver's kind -- is reserved
-  and started, and the platform's study opened with that solver, only once it has
-  chosen. A Felix study gets its own system prompt (pointing at `/opt/felix/docs`), no
-  `cad`, `mesh_review` or OpenFOAM toolbox, and a `job_start` that runs `felix run`
-  without the OpenFOAM restart guard and trapFpe check. The solver is fixed for the
-  whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
-  is unchanged byte for byte.
-
 ### Fixed
+
+- **End stops the workspace before bundling the case (#93),** and the bundle stops at
+  its budget; a bundle over budget keeps the record in part instead of dropping it
+  (#95).
+- **A SOCKS proxy can start the model client (#90).** `httpx2[socks]` is a dependency.
+- **A live study's times reach the viewer within a cycle (#98),** the newest first,
+  before the backfill of earlier ones (#102).
+- **Every model client a session builds names the study (#105),** so the service can
+  count its usage against that study.
+- **A cut stream is retried, and a transient model failure no longer ends the turn
+  (#87, #74).**
+- **Ending a session keeps a job's real ending (#85),** and a workspace start that fails
+  says so (#83).
+- **The solver-could-not-be-chosen line is printed once,** not twice, in a plain session.
+- **The `--no-capture` help said it sends nothing to the platform.** It keeps the
+  study's transcript on this machine; traces have their own switch. The help, README
+  and `doctor` now say so.
+- **The trial text in `login` and the README said a company address needs no card.**
+  Both trials take a card and renew unless cancelled.
+- **The end-of-session hint offered `openreynolds pull --all`,** a flag that does not
+  exist; it is `openreynolds pull`, and a local study is not offered it at all. A
+  session on a native local workspace no longer says it joined a running workspace.
+- **The MCP server reported an empty version;** it reports the package's.
 
 - **A piped command fails when any stage of it does (#48).** `blockMesh | tail -40`
   reported exit_code 0 from a FOAM FATAL ERROR because `tail` succeeded. `bash` and
@@ -1152,7 +1205,8 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.2.0...v0.3.0
