@@ -414,6 +414,7 @@ down to **0.567**.
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` skips the prompt. |
 | `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
+| `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
@@ -541,11 +542,44 @@ containers want:
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
 | `OPENREYNOLDS_WORKSPACE_ETA_S` | How long a workspace usually takes to come up (default 30). A session starts talking before its workspace is up; this is the "usually about N seconds" the model is told while it waits. |
 | `OPENREYNOLDS_CAPTURE` | `0` sends nothing to the platform. |
+| `OPENREYNOLDS_SHARING` | `off` shares no trace from this environment, and discards what is queued (see *Sharing*). |
 | `OPENREYNOLDS_TRACE` | A file to append cost events to: one JSON object per turn, tool call and mirror cycle, with the token counts split apart rather than summed. Unset writes nothing. |
 
 By default the transcript of every study is uploaded to the workspace service as it
 runs, so a study is kept somewhere other than one laptop. `--no-capture` for a session,
 or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
+
+### Sharing
+
+While this machine is signed in (`openreynolds login`), OpenReynolds shares a trace of
+each study it runs, on the service's workspace or on this machine's, unless you turn
+sharing off. Traces are how we find where the agent goes wrong on real problems. A trace
+has two parts:
+
+- **Usage:** which tools the agent called and whether they worked, the model, token
+  counts, timings, the kind of workspace and solver, the operating system, and the
+  OpenReynolds and Python versions. No messages, commands or files.
+- **Study content:** your messages, the agent's reasoning and replies, and every tool's
+  inputs and outputs, each cut at 20,000 characters. These can include commands, logs
+  and parts of your case files. Images and other binary results go as their
+  descriptions, and nothing is opened just to be sent.
+
+OpenReynolds says so in one line when you sign in (or, on a machine signed in before
+this version, when the next study starts). A study's trace is sent after it ends, so
+`openreynolds sharing off` before then shares nothing. Through `openreynolds mcp` the
+line is in `start_study`'s answer. Model keys
+and the service key are never sent, and they, environment variables named like secrets
+and the shapes of common keys are removed before a trace is queued.
+
+- `openreynolds sharing off` (or `OPENREYNOLDS_SHARING=off`) stops this machine sharing
+  and discards what it has queued; `openreynolds sharing status` says whether it is on.
+- The web app's Account page deletes every trace your account has shared.
+- Without a service key nothing is recorded or sent. A queued trace is sent only under
+  the account and service it was recorded with; signing in as someone else drops it.
+
+Sharing is separate from capture: capture is the study's copy on the service, shown and
+resumed in the web app; a trace is the record used to improve Reynolds. The privacy
+policy says what is kept and for how long: https://tryreynolds.com/privacy.
 
 ## Layout
 
@@ -560,6 +594,7 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | `cad/` | The CAD desk behind the `cad` tool: its own brief, its own model client, and one python cell a step in a kernel on the workspace — build or import the shape, tag it, mesh it, look at it, revise. `check.py` is the finish line it does not declare for itself, and `cells.py` decides which cells become the script the run leaves behind. Nothing here imports a CAD kernel into this process. Geometry and meshing used to be a stack of generators and a spec language here; an agent replaced all of it on 2026-09-07, and the kernel replaced that agent's bash. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
+| `sharing.py` / `redact.py` | The trace of each study a signed-in machine shares, its notice, queue and switch; credentials out of it first. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists; `pending.py` stands in for a workspace that is still coming up, so a session talks before its machine is there. |
 | `llm/` | Provider adapters: Messages API, Chat Completions, and the preset table. |
 | `tui.py` / `view.py` | The interface, behind a presentation-only `View` seam. |

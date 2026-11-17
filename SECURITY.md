@@ -55,6 +55,20 @@ study is kept somewhere other than one laptop. `--no-capture` turns it off for a
 session, `OPENREYNOLDS_CAPTURE=0` for an environment, and `openreynolds doctor` says
 which it is. The local mirror under `./studies/` is written regardless.
 
+**A trace of each study is shared while this machine is signed in, unless sharing is
+off.** Separately from capture, and whether the workspace is the service's or this
+machine's, a signed-in OpenReynolds sends a trace of each study for improving Reynolds:
+usage (tools and whether they worked, the model, tokens, timings, the workspace kind
+and solver, the operating system and versions) and study content (messages, the agent's reasoning, tool inputs and outputs, cut
+at 20,000 characters each). It says so in one line at sign-in, and a study's trace is sent
+after the study ends. Credentials it knows (the model key, the service key, environment
+variables named like secrets) and the shapes of common keys are removed before a trace
+is written to its queue (`openreynolds/redact.py`); that does not remove all personal or
+engineering information. `openreynolds sharing off` or `OPENREYNOLDS_SHARING=off` stops
+it and discards the queue, and nothing is sent without a service key. The web app's
+Account page deletes every trace shared. What a trace is, and how long it is kept:
+the privacy policy at https://tryreynolds.com/privacy.
+
 **`preferences.md` is sent verbatim to the model provider.** So is everything you type,
 everything the model reads with `read_file`, and every tool output it sees. The
 standing note beside `config.json` is relayed word for word into the briefing of every
@@ -71,5 +85,6 @@ model reading a file it found on the volume, and text in a file steering what th
 model does next. Those are the free-will contract working as written. In scope is
 anything where the *harness* does more than carry out the model's decisions and report
 facts: a path that escapes `./studies/<id>/` on your machine, a key printed in full,
-an upload that happens with capture off, a command that runs somewhere other than the
-instance.
+an upload that happens with capture off, a trace sent with sharing off or with no
+service key, a known credential left in a trace, a command that runs somewhere other
+than the instance.

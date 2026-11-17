@@ -622,12 +622,20 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
             if files:
                 deliveries.record(session_id, {"task": task.strip(), "files": files, "at": time.time()})
                 deliveries.watch(session_id)
-            return {
+            answer = {
                 "session_id": session_id, "study_id": session.get("study_id") or study_id or None,
                 "state": "starting", "model": session.get("model"),
                 "next": "Call study_status with this session_id. The study_id appears once the "
                         "study is named, within the first minute.",
             }
+            if session.get("sharing_notice"):
+                # A host that shares traces says what it shares the first time, and this
+                # is the only place a person driving through an agent will see it.
+                answer["sharing_notice"] = session["sharing_notice"]
+                answer["next"] = ("Show the person sharing_notice, one line, word for word: it "
+                                  "says what this machine shares and how to turn it off. "
+                                  "Then " + answer["next"][0].lower() + answer["next"][1:])
+            return answer
         return await call(run)
 
     @server.tool(description=describe("study_status"))

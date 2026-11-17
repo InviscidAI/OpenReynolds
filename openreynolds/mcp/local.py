@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import cli, modes
+from .. import sharing as sharing_mod
 from ..backend.base import WORKSPACE_ROOT, BackendError
 from ..config import Config
 from ..mirror import local_for
@@ -486,6 +487,11 @@ class LocalHost(HostDefaults):
         if study_id and not (_STUDY_ID.match(study_id) and (Path(cfg.studies_dir) / study_id).is_dir()):
             raise McpError(f"no study {study_id} on this machine (list_studies names them)")
 
+        # The sharing notice, the first time this version would share: put in the answer,
+        # because nobody reads this server's stderr. The study is shared like any other:
+        # its trace goes after it ends, and `sharing off` before then shares nothing.
+        notice = sharing_mod.take_notice(cfg)
+
         session_id = str(uuid.uuid4())
         view = LocalView(Path(cfg.studies_dir), style)
         reader = LocalReader(self.idle_timeout_s,
@@ -509,6 +515,7 @@ class LocalHost(HostDefaults):
                     cfg, study_id=study_id, instance_id=None, one_shot=None, keep_alive=False,
                     interface=interface, mode_explicit=mode is not None, model_explicit=bool(body.get("model")),
                     solver=body.get("solver") or None, route_on=body.get("route_on") or None,
+                    sharing=True,
                 )
                 session.status = "ended"
             except SystemExit as exc:
@@ -527,7 +534,10 @@ class LocalHost(HostDefaults):
         with self._lock:
             self.sessions[session_id] = session
         session.thread.start()
-        return {"session_id": session_id, "study_id": study_id, "model": cfg.model}
+        started = {"session_id": session_id, "study_id": study_id, "model": cfg.model}
+        if notice:
+            started["sharing_notice"] = notice
+        return started
 
     def _session(self, session_id: str) -> LocalSession:
         try:
