@@ -33,7 +33,7 @@ from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
-from .config import ACCOUNT_PAGE_URL, Config, config_path
+from .config import ACCOUNT_PAGE_URL, Config, config_path, forget_service_key
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
@@ -503,6 +503,29 @@ def login_cmd(
     if notice:
         console.print(notice, markup=False, highlight=False)
     _say_what_is_next(cfg)
+
+
+@main.command("logout")
+def logout_cmd() -> None:
+    """Sign this machine out: its service key is removed from the config, and the
+    traces it queued to share are deleted unsent.
+
+    Studies already on the service stay there. A key set in FOAMD_API_KEY is not in
+    the config file, so it is left alone and this says so.
+    """
+    removed = forget_service_key()
+    dropped = sharing_mod.clear_queue()
+    if removed:
+        console.print(f"[green]Signed out.[/] The service key is removed from {config_path()}.")
+    else:
+        console.print("No service key is saved on this machine, so there was nothing to remove.")
+    if dropped:
+        console.print(f"{dropped} queued trace{'s' if dropped != 1 else ''} deleted unsent.")
+    if os.environ.get("FOAMD_API_KEY"):
+        console.print(
+            "[yellow]FOAMD_API_KEY is still set here[/] and signs this machine in again: "
+            "unset it to stay signed out."
+        )
 
 
 def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:

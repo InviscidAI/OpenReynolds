@@ -4,7 +4,7 @@ What this does is set by the privacy policy's "Traces from OpenReynolds"
 (https://tryreynolds.com/privacy), and each rule there is a rule here:
 
 * **Signed in only.** Nothing is recorded, queued or sent without a service key
-  (`openreynolds login`). A machine signed out has its queue emptied. Each queued
+  (`openreynolds login`). A machine signed out (`openreynolds logout`) has its queue emptied. Each queued
   trace is named for the account and service it was recorded under (`fingerprint`),
   and goes only to that one: a machine signed in to another account, or pointed at
   another service, drops what it queued before.

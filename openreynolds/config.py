@@ -105,6 +105,22 @@ _CONFIG_KEYS = (
 )
 
 
+def forget_service_key() -> bool:
+    """Remove the service key from the config file, leaving every other setting as it
+    was written (not as the environment has it now). Whether there was one to remove."""
+    path = config_path()
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(stored, dict) or not stored.pop("foamd_api_key", None):
+        return False
+    path.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    return True
+
+
 def _seconds_or(text: str | None, default: float) -> float:
     """A non-negative number of seconds from an environment variable, or `default`
     for anything that is not one. A hint about timing is not worth refusing to start

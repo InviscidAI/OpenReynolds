@@ -147,7 +147,7 @@ jobs:
         run: npm publish --provenance --access public
 
   release:
-    needs: [pypi, npm]
+    needs: [build, pypi, npm]
     if: ${{ always() && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:

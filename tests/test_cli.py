@@ -2639,3 +2639,34 @@ def test_retry_after_lengthens_a_wait_but_never_shortens_it():
     assert base.retry_delay(raised("Wed, 21 Oct 2026 07:28:00 GMT"), 1) == base.TRANSIENT_WAITS[1]
     assert base.retry_delay(ProviderError("x", 429), len(base.TRANSIENT_WAITS)) is None
     assert base.retry_delay(ProviderError("x", 402), 0) is None
+
+
+def test_logout_removes_the_key_and_the_queue_and_keeps_the_rest(monkeypatch, tmp_path):
+    path = tmp_path / "c.json"
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(path))
+    monkeypatch.delenv("FOAMD_API_KEY", raising=False)
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "from-the-environment")
+    path.write_text(json.dumps({"foamd_url": "https://api.example", "foamd_api_key": "of_live_x", "model": "m1"}))
+    queue = cli.sharing_mod.queue_dir()
+    queue.mkdir(parents=True, exist_ok=True)
+    (queue / "t.json.gz").write_bytes(b"x")
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "Signed out" in result.output and "1 queued trace deleted" in result.output
+    # Only the key goes: nothing the environment set is written into the file.
+    assert json.loads(path.read_text()) == {"foamd_url": "https://api.example", "model": "m1"}
+    assert not list(queue.iterdir())
+    assert "of_live_x" not in result.output
+
+
+def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to remove" in result.output and "FOAMD_API_KEY is still set" in result.output
+    assert not (tmp_path / "c.json").exists()

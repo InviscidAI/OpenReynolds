@@ -413,6 +413,7 @@ down to **0.567**.
 | `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
 | `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` approves a short code in a browser, which is the device-code flow and the only way in for a Google account. |
+| `openreynolds logout` | Sign this machine out: its service key leaves the config, and traces queued to share are deleted unsent. Studies on the service stay. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
 | `openreynolds doctor` | Check every surface: settings, workspace, model, capture, sharing, toolbox, terminal, video. Read-only on the service's workspace; with `--local` it pulls the image and starts the container to run `blockMesh` in it. `--json` answers in one object. |
 | `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
@@ -587,6 +588,7 @@ and the shapes of common keys are removed before a trace is queued.
 - `openreynolds sharing off` (or `OPENREYNOLDS_SHARING=off`) stops this machine sharing
   and discards what it has queued; `openreynolds sharing status` says whether it is on.
 - The web app's Account page deletes every trace your account has shared.
+- `openreynolds logout` signs the machine out and deletes what it has queued.
 - Without a service key nothing is recorded or sent. A queued trace is sent only under
   the account and service it was recorded with; signing in as someone else drops it.
 
