@@ -379,10 +379,40 @@ def find_force_files(case: Path | str) -> dict[str, list[Path]]:
         if len(parts) < 2:
             continue
         function = "/".join(parts[:-2]) if len(parts) >= 3 else parts[0]
-        grouped.setdefault(f"{function}/{dat.name}", []).append(dat)
+        grouped.setdefault(f"{function}/{series_name(dat)[0]}", []).append(dat)
     for paths in grouped.values():
-        paths.sort(key=lambda path: time_key(path.parent.name))
+        paths.sort(key=written_order)
     return grouped
+
+
+RESTART_SUFFIX = re.compile(r"^(?P<stem>.+)_(?P<time>[-+]?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)$")
+"""A function object restarted into a directory that already has its file does not
+overwrite it: it writes `forceCoeffs_0.2.dat` beside `forceCoeffs.dat`, the suffix being
+the time the new run started from."""
+
+
+def series_name(path: Path) -> tuple[str, float | None]:
+    """The file name a series is known by, and the restart time its name carries:
+    `forceCoeffs_0.2.dat` is `forceCoeffs.dat` restarted from 0.2."""
+    match = RESTART_SUFFIX.match(path.stem)
+    if match:
+        return match["stem"] + path.suffix, float(match["time"])
+    return path.name, None
+
+
+def written_order(path: Path) -> tuple[float, tuple[int, float, str]]:
+    """Files of one series in the order their runs wrote them.
+
+    Not by directory name: run 0 -> 0.4, restarted from 0.2, restarted again from 0.1
+    leaves `0/`, `0.1/`, `0.2/`, and by name the abandoned `0.2/` would come last. The
+    file a run is still writing is the one modified last. Equal times (a copy that did
+    not keep them) fall back to the directory name, which is right for the usual case
+    of restarts that only move forward."""
+    try:
+        modified = path.stat().st_mtime
+    except OSError:
+        modified = 0.0
+    return modified, time_key(path.parent.name)
 
 
 def choose_force_series(grouped: dict[str, list[Path]]) -> str:
@@ -405,17 +435,68 @@ def choose_force_series(grouped: dict[str, list[Path]]) -> str:
     return sorted(grouped, key=rank)[0]
 
 
-def restart_point(path: Path, data: dict[str, Any]) -> float | None:
+def restart_point(path: Path) -> float | None:
     """The time a file's run started from, which is where it takes over the history.
 
-    OpenFOAM names a function object's output directory after the run's start time, so
-    the directory says it even before the first row is written; failing that, the first
-    row does."""
-    kind, start, _name = time_key(path.parent.name)
-    first = data["rows"][0][0] if data["rows"] else None
-    if kind == 0:
-        return start if first is None else min(start, first)
-    return first
+    OpenFOAM says it in the file name when the run restarted into a directory that
+    already had the file (`forceCoeffs_0.2.dat`), and otherwise in the name of the time
+    directory it writes in -- both before the first row is written. A file in a
+    directory that is not a time (a flat `postProcessing/forces/forceCoeffs.dat`) says
+    nothing about where a run started, and takes over nothing."""
+    _name, suffix = series_name(path)
+    if suffix is not None:
+        return suffix
+    kind, start, _ = time_key(path.parent.name)
+    return start if kind == 0 else None
+
+
+def time_tolerance(t: float) -> float:
+    """How far a time directory's name can be from the time it stands for. OpenFOAM
+    rounds the name to `timePrecision` (6 significant digits by default), while the
+    `.dat` time column carries more: `0.333333/` holds the run from 0.3333333."""
+    return 1e-5 * abs(t) + 1e-12
+
+
+def saved_times(path: Path) -> list[float]:
+    """The case's written time directories, for the case `path` is a postProcessing
+    file of (a decomposed case's are under `processor0/`)."""
+    for parent in path.parents:
+        if parent.name == "postProcessing":
+            case = parent.parent
+            break
+    else:
+        return []
+    times: set[float] = set()
+    for folder in (case, case / "processor0"):
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            kind, value, _ = time_key(entry.name)
+            if kind == 0 and entry.is_dir():
+                times.add(value)
+    return sorted(times)
+
+
+def only_at_saved_times(rows: Sequence[Sequence[float]], saved: Sequence[float]) -> bool:
+    """Whether every row sits on a written time: what `-postProcess -func forceCoeffs
+    -time 0.2:` writes over saved times, as opposed to a run's row per time step."""
+    if not rows or not saved:
+        return False
+    for row in rows:
+        t = row[0]
+        if not any(abs(t - s) <= time_tolerance(s) for s in saved):
+            return False
+    return True
+
+
+def post_relative(path: Path) -> str:
+    """`forces/0/forceCoeffs.dat`: which file, not only which time directory."""
+    parts = path.parts
+    if "postProcessing" in parts:
+        return "/".join(parts[len(parts) - parts[::-1].index("postProcessing"):])
+    return f"{path.parent.name}/{path.name}"
 
 
 def read_history(paths: Iterable[Path]) -> dict[str, Any]:
@@ -443,34 +524,59 @@ def read_history(paths: Iterable[Path]) -> dict[str, Any]:
             "superseded": [],
         }
 
-    # Where each file's successors take over: the earliest start of any later file.
-    starts = [restart_point(path, data) for path, data in parsed]
-    taken_over: dict[Path, float] = {}
-    for index, (path, _data) in enumerate(parsed):
-        later = [start for start in starts[index + 1:] if start is not None]
-        if later:
-            taken_over[path] = min(later)
+    # A file written by `-postProcess` over saved times is not a run: it has rows only
+    # at write times, and taking it as a restart would replace the run's per-step
+    # history with a few points. It is used only when no run wrote this series.
+    saved = saved_times(usable[-1][0])
+    runs = [(path, data) for path, data in usable if not only_at_saved_times(data["rows"], saved)]
+    ignored: list[str] = []
+    if runs:
+        for path, data in usable:
+            if (path, data) not in runs:
+                ignored.append(f"{post_relative(path)} has rows only at saved times "
+                               "(post-processed, not a run)")
+        usable = runs
 
     columns = usable[-1][1]["columns"]
+    for path, data in usable:
+        if data["columns"] != columns:
+            ignored.append(f"{post_relative(path)} has a different column set")
+    usable = [(path, data) for path, data in usable if data["columns"] == columns]
+
+    # Where each file's successors take over: the earliest restart point of any later
+    # run, found in one pass from the end. A file that has opened and written nothing
+    # yet is a run that has started; one with rows counts only if it is a run of this
+    # column set, because a file that adds no rows cannot replace any.
+    contributing = {path for path, _ in usable}
+    takes_over = [(path, data) for path, data in parsed
+                  if path in contributing or not data["rows"]]
+    taken_over: dict[Path, tuple[float, float | None]] = {}
+    earliest: tuple[float, float | None] | None = None
+    for path, data in reversed(takes_over):
+        if earliest is not None:
+            taken_over[path] = earliest
+        start = restart_point(path)
+        if start is not None and (earliest is None or start < earliest[0]):
+            earliest = (start, data["rows"][0][0] if data["rows"] else None)
+
     merged: dict[float, list[float]] = {}
     meta: dict[str, str] = {}
     sources: list[str] = []
-    ignored: list[str] = []
     superseded: list[str] = []
     for path, data in usable:
-        if data["columns"] != columns:
-            ignored.append(f"{path.name} in {path.parent.name}/ has a different column set")
-            continue
         meta.update(data["meta"])
         sources.append(str(path))
         rows = data["rows"]
-        cut = taken_over.get(path)
-        if cut is not None:
-            kept = [row for row in rows if row[0] <= cut]
+        if path in taken_over:
+            cut, successor_first = taken_over[path]
+            # The directory name is rounded, so the row at the restart time can sit a
+            # little past it; a row at or past the successor's own first row cannot.
+            kept = [row for row in rows if row[0] <= cut + time_tolerance(cut)
+                    and (successor_first is None or row[0] < successor_first)]
             dropped = len(rows) - len(kept)
             if dropped:
                 superseded.append(f"{dropped} row{'s' if dropped != 1 else ''} of "
-                                  f"{path.parent.name}/ past t = {cut:g}, where a later "
+                                  f"{post_relative(path)} past t = {cut:g}, where a later "
                                   "run restarted")
             rows = kept
         for row in rows:
