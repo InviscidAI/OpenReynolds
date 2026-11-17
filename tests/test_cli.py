@@ -476,6 +476,7 @@ def test_doctor_reports_every_check(monkeypatch):
         "workspace service",
         "model API",
         "capture",
+        "sharing",
         "toolbox",
         "terminal",
         "video assembly",

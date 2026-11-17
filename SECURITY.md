@@ -23,30 +23,37 @@ Most of what follows is not a vulnerability to be fixed; it is how the agent wor
 the honest thing is to say so plainly so that nobody is surprised by it. The design is
 in [`docs/design.md`](docs/design.md).
 
-**The agent runs an unsandboxed shell on your hosted instance, with no approval gate.**
-The `bash` tool executes whatever the model decides to run, as root, inside the
-instance's own container. There is no allow-list, no confirmation step, and no
-rewriting of commands -- the harness may not block or gate a tool call on policy
-grounds, and that is deliberate. The instance is the sandbox: a per-user container
-with a persistent volume, and nothing else. The agent's tools reach the instance only;
-they never execute anything on your machine. What comes back to your machine is
-written under `./studies/<id>/` and nowhere else.
+**The agent runs an unsandboxed shell in its workspace, with no approval gate.**
+The `bash` tool executes whatever the model decides to run. There is no allow-list, no
+confirmation step, and no rewriting of commands -- the harness may not block or gate a
+tool call on policy grounds, and that is deliberate. The workspace is the sandbox, and
+where it is depends on how you run OpenReynolds:
+
+- **A Reynolds workspace (the default):** commands run as root inside the study's own
+  container in the cloud, and never on your machine.
+- **`--local`:** commands run in a Docker container on your machine, as your user, with
+  no network. They reach the workspace directory (`~/.openreynolds/work`, mounted as
+  `/work`) and nothing else on your machine.
+- **`OPENREYNOLDS_LOCAL=native`** (and `OPENREYNOLDS_LOCAL=1`, its older spelling): commands
+  run directly on your machine, as you, with **no sandbox at all**. Use it only where
+  you would let the model type into your own terminal.
+
+Whatever the workspace, what comes back to your machine from a study is written under
+`./studies/<id>/`.
 
 **The modes are about compute, not about safety.** In the default mode, full auto,
 nothing is ever held. If you choose *ask before compute* (`--mode partial`), every
-`job_start` and `mesh` call is put to you before it runs, and in *structured* mode
-those two are held until you approve a plan. `bash`, `write_file`, `read_file`,
-`fetch`, `job_check` and `job_kill` run without asking in every mode, so a mode is a
-way to decide when compute is spent, not a sandbox or an allow-list for commands.
+`job_start` call is put to you before it runs, and in *structured* mode it is held
+until you approve a plan. `bash`, `write_file`, `read_file`, `fetch`, `job_check` and
+`job_kill` run without asking in every mode, so a mode is a way to decide when compute
+is spent, not a sandbox or an allow-list for commands.
 
-**`/work` on the instance persists across studies and is readable by the model.** The
-volume outlives every session. Whatever a previous study left there, whatever you
-carried up with `openreynolds push`, and whatever another study is writing at the same
-time is visible to the model in every later session on that instance, and it may read
-it. A file in the workspace can contain text that looks like instructions; the model
-reads files as part of its work and nothing stands between the two. Keep secrets out
-of `/work`, and do not share an instance with anyone whose files you would not show
-the model.
+**`/work` is readable by the model.** On a Reynolds workspace each study has its own,
+holding what that study and you put there (`openreynolds push`, uploads). A local
+workspace is one directory shared by every local study, so whatever an earlier study
+left there is visible to every later one. A file in the workspace can contain text
+that looks like instructions; the model reads files as part of its work and nothing
+stands between the two. Keep secrets out of `/work`.
 
 **Transcripts are uploaded unless capture is off.** By default every message, every
 tool call and its (capped) output, every fetched artifact and the end-of-session

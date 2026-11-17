@@ -554,7 +554,9 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
     from mcp.server.mcpserver import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
 
-    server = MCPServer(name=name, title=title, instructions=host.instructions)
+    from .. import __version__
+
+    server = MCPServer(name=name, title=title, instructions=host.instructions, version=__version__)
     deliveries = getattr(host, "deliveries", None) or Deliveries(host)
     say = host.say_text
 

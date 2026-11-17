@@ -150,8 +150,8 @@ rewritten. A config file saved then loads the same way.
 
 ### The mesh desk and the side chat
 
-The mesh desk reads the model at each `mesh` call, so it follows the switch unless
-`OPENREYNOLDS_MESHER_MODEL` pins it. The side chat (`/btw`) has no client of its own: it
+The CAD desk reads the model at each `cad` call, so it follows the switch unless
+`OPENREYNOLDS_CAD_MODEL` pins it. The side chat (`/btw`) has no client of its own: it
 forks the loop's last request on the loop's provider, so it is on whichever model that
 request was -- the new one from the first request after the switch. The front desk that
 used to answer every mid-turn message with a desk model is gone; `desk_model` is still

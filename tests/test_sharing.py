@@ -354,6 +354,27 @@ def test_signing_in_says_it_shares_in_one_line_once(on, monkeypatch, tmp_path):
     assert recorder is not None and notice is None
 
 
+def test_signing_in_through_the_browser_says_it_too(on, monkeypatch, tmp_path):
+    """`login --browser` is the only way in for a Google account: the line is said
+    there as well, not left for the first study."""
+    from click.testing import CliRunner
+
+    from openreynolds import cli
+
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {"device_code": "dc", "user_code": "AB12-CD34", "verification_url": "https://app.example/cli?code=AB12-CD34", "expires_in": 600, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: {"api_key": "of_live_browser", "name": "laptop"})
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+    assert result.exit_code == 0, result.output
+    assert sharing.NOTICE in result.output
+    assert sharing.load_state().notice == sharing.DISCLOSURE_VERSION
+    again = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+    assert again.exit_code == 0 and sharing.NOTICE not in again.output
+
+
 # -- the review's fixes ---------------------------------------------------------------
 
 

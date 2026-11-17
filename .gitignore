@@ -59,3 +59,6 @@ reynolds-verification/
 # still local. The reports carry the numbers; the tables are rebuilt where the runs are.
 docs/cad-buildup/runs/
 docs/cad-buildup/sweeps/*/runs/
+
+# Editor project settings
+.idea/

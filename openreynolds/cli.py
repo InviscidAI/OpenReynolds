@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -178,7 +179,7 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     type=click.Choice(EFFORTS, case_sensitive=False),
     help="How hard the model thinks this session. /effort changes it mid-study.",
 )
-@click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
+@click.option("--no-capture", is_flag=True, help="Keep this study's transcript on this machine: no copy on the service to see or resume in the web app. Sharing has its own switch (openreynolds sharing off).")
 @click.option(
     "--local",
     is_flag=True,
@@ -522,8 +523,9 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     # whether this address earns it -- a domain list copied into the client goes stale
     # and starts telling people the opposite of what they are about to get.
     console.print(
-        "A company email address starts a 30-day Pro trial with 15 full-depth studies, "
-        "no card needed. A personal address starts a 30-day Starter trial with 5, with a card."
+        "A company email address starts a 30-day Pro trial with 15 full-depth studies; a "
+        "personal address starts a 30-day Starter trial with 5. Both take a card and renew "
+        "unless you cancel."
     )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None
@@ -601,6 +603,9 @@ def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
     cfg.foamd_api_key = str(token["api_key"])
     path = cfg.save()
     console.print(f"\n[green]Signed in.[/] Key [bold]{token.get('name') or label}[/] saved to {path}")
+    notice = sharing_mod.take_notice(cfg)
+    if notice:
+        console.print(notice, markup=False, highlight=False)
     _say_what_is_next(cfg)
 
 
@@ -769,8 +774,9 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     """Copy this study's files down to this machine.
 
     A session already does this at the end of every turn, so this is for asking
-    again, for asking about one directory, or for `--all` when the default judgement
-    about what is worth keeping is the wrong one for this study.
+    again, for asking about one directory, or for everything when the default judgement
+    about what is worth keeping is the wrong one for this study (`--readable-only`
+    brings only what can be read).
     """
     cfg = Config.load()
     studies = list_studies(cfg.studies_dir)
@@ -967,11 +973,6 @@ def mcp_cmd(local_here: bool) -> None:
     """
     if local_here:
         os.environ["OPENREYNOLDS_LOCAL"] = "docker"
-    try:
-        import mcp  # noqa: F401
-    except ImportError:
-        click.echo("The MCP server needs the mcp package: pip install 'openreynolds[mcp]'", err=True)
-        raise SystemExit(1) from None
     from .mcp.local import serve
 
     serve()
@@ -1060,10 +1061,25 @@ def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
         _check_model(cfg),
         _check_capture(cfg) if kind is None or signed_in else (
             "capture", True, "not signed in, so nothing is uploaded"),
+        _check_sharing(cfg),
         _check_toolbox(),
         _check_terminal(),
         _check_video(),
     ]
+
+
+def _check_sharing(cfg: Config) -> tuple[str, bool, str]:
+    """Whether this machine shares a trace of each study. Informational: on and off are
+    both fine. Read only -- unlike `sharing status`, it leaves the queue as it is."""
+    try:
+        if not sharing_mod.signed_in(cfg):
+            return "sharing", True, "not signed in, so nothing is shared"
+        state = sharing_mod.load_state()
+        if state.unreadable or sharing_mod.env_off() or not state.enabled:
+            return "sharing", True, "off on this machine"
+        return "sharing", True, "on: a trace of each study (openreynolds sharing off)"
+    except Exception as exc:  # a status line must never stop doctor
+        return "sharing", True, f"could not be read ({type(exc).__name__})"
 
 
 FOAM_PROBE = "blockMesh -help >/dev/null && echo OpenFOAM ${WM_PROJECT_VERSION:-?} && nproc"
@@ -1194,7 +1210,7 @@ def _check_capture(cfg: Config) -> tuple[str, bool, str]:
     after itself: a check that changes the thing it is checking.
     """
     if not cfg.capture:
-        return "capture", True, "off for this configuration; nothing is uploaded"
+        return "capture", True, "off for this configuration; the transcript stays on this machine"
     if not (cfg.foamd_url and cfg.foamd_api_key):
         return "capture: not configured", False, ""
 
@@ -1512,6 +1528,14 @@ def session(
             else:
                 backend = LocalBackend()
                 console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
+                if not backend.bashrc and shutil.which("blockMesh") is None:
+                    # Allowed -- the shell still works -- but every mesh and solve will
+                    # fail, and that should be said once here, not found by the agent.
+                    console.print(
+                        "[yellow]no OpenFOAM found on this machine:[/] the agent's commands "
+                        "run, but meshing and solving will fail. Set OPENREYNOLDS_FOAM_BASHRC "
+                        "to its etc/bashrc, or use --local for the Docker workspace."
+                    )
             client, resolved_instance = None, "local"
         elif settled == solvers.AUTO:
             # The solver is chosen from the person's first message, and a workspace
@@ -1570,9 +1594,11 @@ def session(
             _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
 
-    if pending is None and getattr(backend, "was_already_running", False):
-        # For a workspace still coming up this is said once the start has answered,
-        # because the start's reply is what settles it (`_bring_up`).
+    if pending is None and local_kind != "native" and getattr(backend, "was_already_running", False):
+        # A native workspace is this machine itself, always "already running", so
+        # there is nothing to say. For a workspace still coming up this is said once
+        # the start has answered, because the start's reply is what settles it
+        # (`_bring_up`).
         console.print(
             _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
@@ -1955,7 +1981,6 @@ def session(
                 # the web app keeps for refusals. A choice that failed still is one.
                 if chosen.failed:
                     view.notice(routed_notice(chosen))
-                    console.print(f"[yellow]{routed_notice(chosen)}[/]")
                 else:
                     view.info(routed_notice(chosen))
                 started = begin_workspace(chosen.solver)
@@ -3556,7 +3581,8 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
         console.print(f"[dim]your copy of them: {store.files_dir}[/]")
         console.print(f"[dim]resume with:  openreynolds{_local_flag()} --study {study}[/]")
         console.print(f"[dim]look at them: openreynolds files --study {study}[/]")
-        console.print(f"[dim]bring more:   openreynolds pull --study {study} --all[/]")
+        if local_workspace() is None:
+            console.print(f"[dim]bring more:   openreynolds pull --study {study}[/]")
         return
     names = ", ".join(job.name or job.job_id[:8] for job in live)
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")

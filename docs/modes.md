@@ -7,8 +7,8 @@ never touches `bash`, `write_file`, `read_file`, `fetch`, `job_check` or `job_ki
 | Mode | Label | What it gates |
 | --- | --- | --- |
 | `auto` | Full auto | Nothing. The agent decides everything and nothing waits for you. The default. |
-| `partial` | Ask before compute | Every `job_start` and every `mesh` call is put to you before it runs. |
-| `structured` | Structured | The study goes in stages: you approve a plan, then each stage at a checkpoint. `job_start` and `mesh` are held until a plan has been approved. |
+| `partial` | Ask before compute | Every `job_start` call is put to you before it runs. |
+| `structured` | Structured | The study goes in stages: you approve a plan, then each stage at a checkpoint. `job_start` is held until a plan has been approved. |
 
 The source of truth is `openreynolds/modes.py`. The loop, the briefing, `/help modes`
 and these docs all read their wording from there or describe it.
@@ -27,18 +27,15 @@ agent's.
 
 ## Full auto (`auto`)
 
-The briefing is the same bytes it was before modes existed, the tool list has no
-`checkpoint`, and no tool call is ever held. This is how every earlier version of
+The briefing is the same bytes it was before modes existed, and no tool call is ever
+held. `checkpoint` is in the tool list, as it is in every mode, but here it only answers
+that checkpoints are structured mode's. This is how every earlier version of
 OpenReynolds ran.
 
 ## Ask before compute (`partial`)
 
-`job_start` and `mesh` are the two calls that spend compute: a detached solve, and the
-mesh desk (a second agent building a mesh on the workspace). Each one is put to you
-before it runs, with what would run:
-
-- a job shows its name, its command and its working directory;
-- a mesh shows the shape as the agent described it and the case it goes into.
+`job_start` is the call that spends compute: a detached solve. Each one is put to you
+before it runs, with its name, its command and its working directory.
 
 You answer with one of three things:
 
@@ -60,12 +57,9 @@ and the question waits for a fresh answer.
 The briefing carries one sentence saying you chose this, so the agent is not surprised
 by a declined call.
 
-The mesh desk runs its own `bash` loop inside a `mesh` call. The question is asked once,
-on the outer `mesh` call: approving it approves the desk's work.
-
 ## Structured (`structured`)
 
-The agent gets a ninth tool, `checkpoint`, with three fields: `stage`, `summary` and
+The agent's `checkpoint` tool, in the list in every mode, does its work here. It has three fields: `stage`, `summary` and
 `next`. Calling it puts the summary and what comes next in front of you and waits:
 
 - **approve** (`/yes`): the result tells the agent you approved and to carry on with
@@ -74,7 +68,7 @@ The agent gets a ninth tool, `checkpoint`, with three fields: `stage`, `summary`
   nothing is approved;
 - **approve all** (`/all`): approves, and switches the session to full auto.
 
-`job_start` and `mesh` are **held** until at least one checkpoint has been approved
+`job_start` is **held** until at least one checkpoint has been approved
 since the session entered structured mode. A held call does not run; the agent gets an
 error result saying it was held, why, and that nothing ran. After that first approval,
 the plan, they run without further questions. Further checkpoints are the agent
