@@ -6,6 +6,8 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-18
+
 ### Changed
 
 - **Signing in with no model key of its own uses Reynolds' model.** A machine with no
@@ -1238,7 +1240,8 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.1...v0.3.2
