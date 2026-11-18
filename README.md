@@ -42,7 +42,7 @@ Every one of these is from a real run, with its transcript published beside it a
 ```bash
 pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
 openreynolds login           # email and password, or --browser for Google; the app.tryreynolds.com account
-openreynolds config          # which model, and its key — bring your own, any vendor
+openreynolds config          # optional: your own model key, any vendor, instead of Reynolds' model
 openreynolds doctor          # check it can all be reached, before spending anything
 openreynolds                 # start a study
 ```
@@ -55,6 +55,12 @@ password sign-in for one of those fails exactly like a wrong password, and the s
 cannot tell the two apart, so the terminal names the browser flow whenever a sign-in
 fails rather than offering to create a second account for an address that already has
 one.
+
+With no model of its own (no provider, endpoint or key of any vendor in the config file
+or the environment), a machine that signs in uses Reynolds' model, metered to the account.
+`openreynolds config --provider anthropic` (or another vendor) switches it to a key of
+your own. While the browser code waits for approval, a gateway error or a dropped
+connection is waited through; only a refusal or the code expiring ends it.
 
 **A company email address starts a 30-day Pro trial with 15 full-depth studies**,
 covering the hosted workspace and Reynolds' own metered model together; a personal

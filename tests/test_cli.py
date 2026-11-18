@@ -1946,6 +1946,199 @@ def test_login_reports_a_service_that_cannot_be_reached(monkeypatch, tmp_path):
     assert "nowhere.example" in result.output
 
 
+def _no_model_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    for name in ("FOAMD_API_KEY", "FOAMD_URL", "OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL",
+                 "OPENREYNOLDS_LLM_API_KEY", "OPENREYNOLDS_LLM_BASE_URL",
+                 "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+
+
+def _browser_login(monkeypatch, answers):
+    """A code flow whose polls answer, in order, with `answers` (an exception is raised)."""
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {
+        "device_code": "dc", "user_code": "K7QF-M2ZR", "expires_in": 600, "interval": 1})
+    polls = []
+
+    def token(url, device):
+        polls.append(device)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(cli.hosted, "device_token", token)
+    return polls
+
+
+def test_login_keeps_waiting_through_a_gateway_error_and_a_dropped_connection(monkeypatch, tmp_path):
+    """A 502 from the edge while the person was approving the code ended the sign-in,
+    and the code with it: the page then said no terminal was waiting."""
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        None,
+        BackendError("<html>502 Bad Gateway</html>", code="http_error", status=502),
+        BackendError("cannot reach the service: reset", code="unreachable"),
+        BackendError("slow down", code="rate_limited", status=429),
+        {"api_key": "of_live_newkey", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert len(polls) == 5
+    assert json.loads((tmp_path / "c.json").read_text())["foamd_api_key"] == "of_live_newkey"
+    assert result.output.count("still waiting") == 1
+    assert "HTTP 502" in result.output and "<html>" not in result.output
+
+
+def test_login_stops_when_the_service_refuses_the_code(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        BackendError("This code was denied.", code="access_denied", status=400),
+        {"api_key": "never", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert len(polls) == 1
+    assert "denied" in result.output
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_login_backs_off_when_rate_limited(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    waits = []
+    monkeypatch.setattr(cli.time, "sleep", waits.append)
+    _browser_login(monkeypatch, [
+        BackendError("slow down", code="rate_limited", status=429),
+        BackendError("slow down", code="rate_limited", status=429),
+        {"api_key": "of_live_newkey", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert waits == [1.0, 2.0, 4.0]
+
+
+def test_a_permanent_server_error_is_not_waited_through(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        BackendError("Not Implemented", code="http_error", status=501),
+        {"api_key": "never", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert len(polls) == 1
+
+
+def test_a_key_handed_over_on_a_lost_reply_is_named_as_that(monkeypatch, tmp_path):
+    """The service hands the key over exactly once and answers 410 after. When the
+    reply carrying it was lost, the next poll's 410 is not a code that was never used."""
+    _no_model_settings(monkeypatch, tmp_path)
+    _browser_login(monkeypatch, [
+        BackendError("Gateway Timeout", code="http_error", status=504),
+        BackendError("this device code was already used", code="gone", status=410),
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    out = " ".join(result.output.split())
+    assert "reply that was lost" in out and "Machines" in out
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_a_code_that_expires_during_an_outage_says_so(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    clock = iter([0.0, 0.0, 1.0, 2.0, 999.0])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {
+        "device_code": "dc", "user_code": "X", "expires_in": 10, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: (_ for _ in ()).throw(
+        BackendError("Bad Gateway", code="http_error", status=502)))
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert "while the service was not answering" in " ".join(result.output.split())
+
+
+@pytest.mark.parametrize("name, value", [
+    ("OPENAI_API_KEY", "sk-own"),
+    ("OPENREYNOLDS_LLM_BASE_URL", "http://localhost:11434/v1"),
+    ("OPENREYNOLDS_LLM_API_KEY", "own"),
+])
+def test_sign_in_never_moves_a_machine_that_brought_its_own_model(monkeypatch, tmp_path, name, value):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.delenv("OPENREYNOLDS_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv(name, value)
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text()).get("provider") != "reynolds"
+
+
+def test_a_first_sign_in_with_no_model_key_uses_reynolds_model(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["provider"] == "reynolds"
+    out = " ".join(result.output.split())
+    assert "Reynolds' model, metered to your plan" in out
+    assert "model key is still needed" not in out
+    assert cli.Config.load().model_key_missing() is None
+
+
+def test_sign_in_keeps_the_persons_own_model_key(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-own")
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved.get("provider") == "anthropic"
+    assert "metered to your plan" not in result.output
+
+
+def test_sign_in_keeps_a_provider_someone_chose_and_says_how_to_switch(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    (tmp_path / "c.json").write_text(json.dumps({"provider": "openai"}))
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text())["provider"] == "openai"
+    out = " ".join(result.output.split())
+    assert "model key is still needed" in out
+    assert "openreynolds config --provider reynolds" in out
+
+
+def test_a_password_sign_in_with_no_model_key_uses_reynolds_model_too(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    _auth_stubs(monkeypatch, sessions=[{"access_token": "jwt-1"}])
+
+    result = CliRunner().invoke(cli.main, ["login"], input="a@example.com\npw\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text())["provider"] == "reynolds"
+
+
 def _auth_stubs(monkeypatch, *, sessions, signups=None, minted=None, terms=None):
     """The service and its identity provider, scripted."""
     calls = {"terms": [], "mint": [], "signup": []}
