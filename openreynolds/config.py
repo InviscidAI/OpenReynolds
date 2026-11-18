@@ -132,6 +132,16 @@ def stored_service_key() -> tuple[str, str]:
     return str(stored.get("foamd_url") or ""), str(stored.get("foamd_api_key") or "")
 
 
+def model_chosen() -> bool:
+    """Whether anyone chose whose model this machine uses: the config file names a
+    provider, a model or an endpoint, or the environment does. Raises
+    `ConfigUnreadable`."""
+    if any(os.environ.get(name) for name in ("OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL")):
+        return True
+    stored = _stored()
+    return any(stored.get(key) for key in ("provider", "model", "llm_base_url"))
+
+
 def forget_service_key() -> bool:
     """Remove the service key from the config file, leaving every other setting as it
     was written (not as the environment has it now). Whether the file named one.

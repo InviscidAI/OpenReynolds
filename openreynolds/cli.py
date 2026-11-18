@@ -35,7 +35,8 @@ from . import ceiling, convergence, modes, solvers
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import (
-    ACCOUNT_PAGE_URL, Config, ConfigUnreadable, config_path, forget_service_key, stored_service_key,
+    ACCOUNT_PAGE_URL, Config, ConfigUnreadable, config_path, forget_service_key, model_chosen,
+    stored_service_key,
 )
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
@@ -500,12 +501,13 @@ def login_cmd(
 
     cfg.foamd_url = url
     cfg.foamd_api_key = str(token["key"])
+    on_reynolds = _model_from_the_service(cfg)
     path = cfg.save()
     console.print(f"\n[green]Signed in as {email}.[/] This machine's key ([bold]{token.get('name') or label}[/]) is saved to {path}")
     notice = sharing_mod.take_notice(cfg)
     if notice:
         console.print(notice, markup=False, highlight=False)
-    _say_what_is_next(cfg)
+    _say_what_is_next(cfg, on_reynolds)
 
 
 @main.command("logout")
@@ -608,12 +610,33 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     return session
 
 
-def _say_what_is_next(cfg: Config) -> None:
+def _model_from_the_service(cfg: Config) -> bool:
+    """At sign-in, a machine with no model of its own gets Reynolds' model, metered to
+    the account, so a new sign-in can start a study without a second key to find.
+    Only when nothing chose otherwise: no provider, model or endpoint in the config file
+    or the environment, and no key for the default provider either. Whether it did."""
+    if cfg.model_key_missing() is None:
+        return False
+    try:
+        if model_chosen():
+            return False
+    except ConfigUnreadable:
+        return False
+    _apply_preset(cfg, REYNOLDS)
+    return True
+
+
+def _say_what_is_next(cfg: Config, on_reynolds: bool = False) -> None:
+    if on_reynolds:
+        console.print(
+            "Studies use Reynolds' model, metered to your plan. To use your own key "
+            "instead: [bold]openreynolds config --provider anthropic[/] (or openai)."
+        )
     still = cfg.model_key_missing()
     if still:
         console.print(
-            f"The model key is still needed: set [bold]{still}[/] or run "
-            "[bold]openreynolds config[/]. Then [bold]openreynolds doctor[/]."
+            f"The model key is still needed: set [bold]{still}[/], or use Reynolds' model "
+            "with [bold]openreynolds config --provider reynolds[/]. Then [bold]openreynolds doctor[/]."
         )
     else:
         console.print("Next: [bold]openreynolds doctor[/], then [bold]openreynolds[/].")
@@ -621,6 +644,16 @@ def _say_what_is_next(cfg: Config) -> None:
 
 LOGIN_POLL_CAP_S = 15.0
 """The service says how often to ask; this is how often is too often to be polite."""
+
+
+def _passing(exc: BackendError) -> bool:
+    """An error worth asking again after: the service unreachable, rate-limiting, or
+    failing on its side. A refusal (expired, denied, unknown code) is final."""
+    return exc.code == "unreachable" or exc.status == 429 or (exc.status or 0) >= 500
+
+
+def _short(exc: BackendError) -> str:
+    return f"HTTP {exc.status}" if exc.status else exc.code
 
 
 def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
@@ -650,6 +683,7 @@ def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
     deadline = time.monotonic() + float(offer.get("expires_in", 600))
     device = str(offer.get("device_code", ""))
     token: dict[str, Any] | None = None
+    said_wait = False
     while token is None:
         if time.monotonic() > deadline:
             console.print("[red]The code expired before it was approved.[/] Run login again.")
@@ -658,17 +692,24 @@ def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
         try:
             token = hosted.device_token(url, device)
         except BackendError as exc:
-            console.print(f"[red]Signing in failed:[/] {exc.message}")
-            raise SystemExit(1) from None
+            if not _passing(exc):
+                console.print(f"[red]Signing in failed:[/] {escape(exc.message)}")
+                raise SystemExit(1) from None
+            # The code is still good on the service: a gateway error or a dropped
+            # connection while the person is approving it must not throw it away.
+            if not said_wait:
+                console.print(f"[dim]The service did not answer ({escape(_short(exc))}); still waiting.[/]")
+                said_wait = True
 
     cfg.foamd_url = str(token.get("base_url") or url).rstrip("/")
     cfg.foamd_api_key = str(token["api_key"])
+    on_reynolds = _model_from_the_service(cfg)
     path = cfg.save()
     console.print(f"\n[green]Signed in.[/] Key [bold]{token.get('name') or label}[/] saved to {path}")
     notice = sharing_mod.take_notice(cfg)
     if notice:
         console.print(notice, markup=False, highlight=False)
-    _say_what_is_next(cfg)
+    _say_what_is_next(cfg, on_reynolds)
 
 
 def _apply_preset(cfg: Config, name: str) -> None:

@@ -6,6 +6,21 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Signing in with no model key of its own uses Reynolds' model.** A machine with no
+  provider, model or endpoint chosen, and no key for the default provider, is set to
+  the `reynolds` preset at `openreynolds login`, metered to the account, and is told
+  how to switch to its own key. A machine that has a key or chose a provider keeps it,
+  and is now told `openreynolds config --provider reynolds` is the other way.
+
+### Fixed
+
+- **`openreynolds login --browser` waits through a brief outage.** A 5xx, a 429 or a
+  dropped connection while the code waited for approval ended the sign-in, so the
+  page then said no terminal was waiting for the code. It now keeps asking until the
+  code is approved, refused or expired, and says once that the service did not answer.
+
 ## [0.4.1] - 2026-11-17
 
 ### Added
