@@ -775,6 +775,80 @@ def test_the_launch_note_tells_threads_from_cores(ctx, backend):
     assert "up to 4 ranks" in content and "6 ranks is more than the 4 cores" in content
 
 
+CAVITY_DICT = """\
+FoamFile { version 2.0; format ascii; class dictionary; object controlDict; }
+application     icoFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         0.5;
+deltaT          0.005;
+writeControl    timeStep;
+writeInterval   20;
+"""
+"""The cavity tutorial's run control: `writeInterval` counts time steps, not seconds."""
+
+
+def _launched(ctx, backend, text: str) -> str:
+    backend.files["/work/s/run/system/controlDict"] = text.encode()
+    backend.exec_results[LISTING] = ExecResult(0, "", False, None)
+    content, _ = dispatch(ctx, "job_start", {"cmd": "cd /work/s/run && icoFoam"})
+    assert content.startswith("started job")
+    return content
+
+
+def _written(ctx, text: str) -> str:
+    content, _ = dispatch(ctx, "write_file", {"path": "/work/s/run/system/controlDict",
+                                              "content": text})
+    return content
+
+
+def test_a_write_interval_in_time_steps_is_counted_in_time_steps(ctx, backend):
+    """Under `writeControl timeStep` -- OpenFOAM's default, and the cavity tutorial's --
+    `writeInterval 20` means every 20th step. Divided into `endTime` as if it were
+    seconds, the cavity run (100 steps, 5 writes) was announced as "0 write times"."""
+    launched = _launched(ctx, backend, CAVITY_DICT)
+    assert "0 write times" not in launched
+    assert "writeInterval 20 time steps (5 write times)" in launched
+    written = _written(ctx, CAVITY_DICT)
+    assert "= 0 write times" not in written
+    assert "5 write times" in written and "100 steps at that timestep" in written
+
+
+def test_an_absent_write_control_is_time_steps(ctx, backend):
+    """OpenFOAM reads `writeControl` with `timeStep` as its default."""
+    text = CAVITY_DICT.replace("writeControl    timeStep;\n", "")
+    assert "writeInterval 20 time steps (5 write times)" in _launched(ctx, backend, text)
+    assert "5 write times" in _written(ctx, text)
+
+
+def test_a_write_interval_in_simulated_time_is_counted_in_simulated_time(ctx, backend):
+    text = CAVITY_DICT.replace("timeStep;", "adjustableRunTime;").replace(
+        "writeInterval   20;", "writeInterval   0.1;")
+    assert "writeInterval 0.1 (5 write times)" in _launched(ctx, backend, text)
+    assert "endTime 0.5 / writeInterval 0.1 = 5 write times" in _written(ctx, text)
+
+
+def test_time_steps_under_an_adjustable_timestep_are_not_counted(ctx, backend):
+    """With the solver choosing its own timestep the number of steps is not known, so
+    neither is the number of writes every 20 steps implies: none is claimed."""
+    text = CAVITY_DICT + "adjustTimeStep  yes;\nmaxCo           0.5;\n"
+    launched = _launched(ctx, backend, text)
+    assert "writeInterval 20 time steps" in launched and "write times" not in launched
+    written = _written(ctx, text)
+    assert "write times" not in written and "every 20 time steps" in written
+
+
+def test_a_wall_clock_write_interval_is_not_counted_against_end_time(ctx, backend):
+    """`clockTime` and `cpuTime` count seconds of the machine's time, not the flow's."""
+    text = CAVITY_DICT.replace("timeStep;", "clockTime;").replace(
+        "writeInterval   20;", "writeInterval   60;")
+    launched = _launched(ctx, backend, text)
+    assert "writeInterval 60 s of clockTime" in launched and "write times" not in launched
+    written = _written(ctx, text)
+    assert "write times" not in written and "every 60 s of clockTime" in written
+
+
 def test_job_check_advances_the_offset(ctx, backend, store):
     dispatch(ctx, "job_start", {"cmd": "simpleFoam"})
     backend.logs["job-1"] = b"line one\nline two\n"
