@@ -56,8 +56,8 @@ cannot tell the two apart, so the terminal names the browser flow whenever a sig
 fails rather than offering to create a second account for an address that already has
 one.
 
-With no model key of its own (none in the config file or the environment, and no
-provider chosen), a machine that signs in uses Reynolds' model, metered to the account.
+With no model of its own (no provider, endpoint or key of any vendor in the config file
+or the environment), a machine that signs in uses Reynolds' model, metered to the account.
 `openreynolds config --provider anthropic` (or another vendor) switches it to a key of
 your own. While the browser code waits for approval, a gateway error or a dropped
 connection is waited through; only a refusal or the code expiring ends it.

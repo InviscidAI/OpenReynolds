@@ -630,7 +630,8 @@ def _say_what_is_next(cfg: Config, on_reynolds: bool = False) -> None:
     if on_reynolds:
         console.print(
             "Studies use Reynolds' model, metered to your plan. To use your own key "
-            "instead: [bold]openreynolds config --provider anthropic[/] (or openai)."
+            "instead, set it (e.g. [bold]ANTHROPIC_API_KEY[/]) and run "
+            "[bold]openreynolds config --provider anthropic[/], or add [bold]--key-file[/]."
         )
     still = cfg.model_key_missing()
     if still:
@@ -647,9 +648,10 @@ LOGIN_POLL_CAP_S = 15.0
 
 
 def _passing(exc: BackendError) -> bool:
-    """An error worth asking again after: the service unreachable, rate-limiting, or
-    failing on its side. A refusal (expired, denied, unknown code) is final."""
-    return exc.code == "unreachable" or exc.status == 429 or (exc.status or 0) >= 500
+    """An error worth asking again after: the service unreachable, or one of the
+    statuses every other call to it retries (`hosted._RETRY_STATUSES`). A refusal
+    (expired, denied, unknown code) is final."""
+    return exc.code == "unreachable" or exc.status in hosted._RETRY_STATUSES
 
 
 def _short(exc: BackendError) -> str:
@@ -683,23 +685,41 @@ def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
     deadline = time.monotonic() + float(offer.get("expires_in", 600))
     device = str(offer.get("device_code", ""))
     token: dict[str, Any] | None = None
-    said_wait = False
+    failing = False  # whether the last poll got no answer
+    answer_lost = False  # whether any poll did
     while token is None:
         if time.monotonic() > deadline:
-            console.print("[red]The code expired before it was approved.[/] Run login again.")
+            if failing:
+                console.print("[red]The code expired while the service was not answering.[/] "
+                              "Run login again once it is back.")
+            else:
+                console.print("[red]The code expired before it was approved.[/] Run login again.")
             raise SystemExit(1)
         time.sleep(interval)
         try:
             token = hosted.device_token(url, device)
         except BackendError as exc:
             if not _passing(exc):
-                console.print(f"[red]Signing in failed:[/] {escape(exc.message)}")
+                if answer_lost and exc.status == 410:
+                    # The service hands the key over once. A poll whose answer was
+                    # lost on the way back can have been that once.
+                    console.print(
+                        "[red]Signing in failed:[/] the service had already handed this "
+                        "machine's key over, on a reply that was lost on the way back. "
+                        f"Revoke the newest key under Machines at {ACCOUNT_PAGE_URL}/#/account, "
+                        "then run login again.")
+                else:
+                    console.print(f"[red]Signing in failed:[/] {escape(exc.message)}")
                 raise SystemExit(1) from None
             # The code is still good on the service: a gateway error or a dropped
             # connection while the person is approving it must not throw it away.
-            if not said_wait:
+            if not failing:
                 console.print(f"[dim]The service did not answer ({escape(_short(exc))}); still waiting.[/]")
-                said_wait = True
+            failing = answer_lost = True
+            if exc.status == 429:
+                interval = min(interval * 2, LOGIN_POLL_CAP_S)
+            continue
+        failing = False
 
     cfg.foamd_url = str(token.get("base_url") or url).rstrip("/")
     cfg.foamd_api_key = str(token["api_key"])

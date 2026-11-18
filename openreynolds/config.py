@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .llm.presets import (
     FALLBACK_CONTEXT_WINDOW,
+    PRESETS,
     REYNOLDS,
     REYNOLDS_SUCCESSORS,
     context_window_for,
@@ -132,14 +133,21 @@ def stored_service_key() -> tuple[str, str]:
     return str(stored.get("foamd_url") or ""), str(stored.get("foamd_api_key") or "")
 
 
+_CHOSEN_BY = ("OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL", "OPENREYNOLDS_LLM_BASE_URL",
+              "OPENREYNOLDS_LLM_API_KEY")
+
+
 def model_chosen() -> bool:
     """Whether anyone chose whose model this machine uses: the config file names a
-    provider, a model or an endpoint, or the environment does. Raises
-    `ConfigUnreadable`."""
-    if any(os.environ.get(name) for name in ("OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL")):
+    provider, a model, an endpoint or a key, or the environment does -- any vendor's
+    own key variable included (`OPENAI_API_KEY` with no provider set is still someone
+    bringing their own model). Raises `ConfigUnreadable`."""
+    names = set(_CHOSEN_BY) | {p.key_env for p in PRESETS.values() if p.key_env}
+    if any(os.environ.get(name) for name in names):
         return True
     stored = _stored()
-    return any(stored.get(key) for key in ("provider", "model", "llm_base_url"))
+    return any(stored.get(key) for key in
+               ("provider", "model", "llm_base_url", "llm_api_key", "anthropic_api_key"))
 
 
 def forget_service_key() -> bool:

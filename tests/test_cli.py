@@ -2008,6 +2008,84 @@ def test_login_stops_when_the_service_refuses_the_code(monkeypatch, tmp_path):
     assert not (tmp_path / "c.json").exists()
 
 
+def test_login_backs_off_when_rate_limited(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    waits = []
+    monkeypatch.setattr(cli.time, "sleep", waits.append)
+    _browser_login(monkeypatch, [
+        BackendError("slow down", code="rate_limited", status=429),
+        BackendError("slow down", code="rate_limited", status=429),
+        {"api_key": "of_live_newkey", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert waits == [1.0, 2.0, 4.0]
+
+
+def test_a_permanent_server_error_is_not_waited_through(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        BackendError("Not Implemented", code="http_error", status=501),
+        {"api_key": "never", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert len(polls) == 1
+
+
+def test_a_key_handed_over_on_a_lost_reply_is_named_as_that(monkeypatch, tmp_path):
+    """The service hands the key over exactly once and answers 410 after. When the
+    reply carrying it was lost, the next poll's 410 is not a code that was never used."""
+    _no_model_settings(monkeypatch, tmp_path)
+    _browser_login(monkeypatch, [
+        BackendError("Gateway Timeout", code="http_error", status=504),
+        BackendError("this device code was already used", code="gone", status=410),
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    out = " ".join(result.output.split())
+    assert "reply that was lost" in out and "Machines" in out
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_a_code_that_expires_during_an_outage_says_so(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    clock = iter([0.0, 0.0, 1.0, 2.0, 999.0])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {
+        "device_code": "dc", "user_code": "X", "expires_in": 10, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: (_ for _ in ()).throw(
+        BackendError("Bad Gateway", code="http_error", status=502)))
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert "while the service was not answering" in " ".join(result.output.split())
+
+
+@pytest.mark.parametrize("name, value", [
+    ("OPENAI_API_KEY", "sk-own"),
+    ("OPENREYNOLDS_LLM_BASE_URL", "http://localhost:11434/v1"),
+    ("OPENREYNOLDS_LLM_API_KEY", "own"),
+])
+def test_sign_in_never_moves_a_machine_that_brought_its_own_model(monkeypatch, tmp_path, name, value):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.delenv("OPENREYNOLDS_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv(name, value)
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text()).get("provider") != "reynolds"
+
+
 def test_a_first_sign_in_with_no_model_key_uses_reynolds_model(monkeypatch, tmp_path):
     _no_model_settings(monkeypatch, tmp_path)
     _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
