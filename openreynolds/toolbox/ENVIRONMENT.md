@@ -99,9 +99,12 @@ Their flags, so the first call is the real one (two studies in a row spent a rou
 on `render.py --help` before rendering anything):
 
 - `python3 /work/.toolbox/render.py <case> [--scene all|mesh|fields] [--fields U p vorticity]
-  [--time T] [--normal z] [--zoom F | --bounds xmin xmax ymin ymax zmin zmax] [--out DIR]`
+  [--time T] [--normal z] [--zoom F | --bounds xmin xmax ymin ymax zmin zmax] [--contours N]
+  [--diff OTHER_CASE] [--out DIR]`
   — fixed-camera PNGs of the mesh cut and field slices; `--out` defaults to `<case>/renders`;
-  without `--time` the latest time is drawn.
+  without `--time` the latest time is drawn. `--contours N` adds N iso-contour lines over a
+  field slice. `--diff OTHER_CASE` draws the field for both runs on one colour scale and one
+  camera plus their difference, and refuses two runs that are not over the same domain.
 - `python3 /work/.toolbox/mesh_look.py [<case>] [--out look.png] [--json measured.json]
   [--no-check]` — one captioned picture of a mesh plus its measured bounds, cell count and
   patch table; runs `checkMesh` unless told not to. A relative `--out` (and `--json`) is
