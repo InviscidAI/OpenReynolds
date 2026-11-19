@@ -399,6 +399,17 @@ and names the flag that supplies it rather than being assumed. `--json` for a
 machine-readable verdict; exit `0` when every check passes, `1` when one fails, `2` when
 the case could not be read.
 
+Both graders, and both Felix graders, run on every pull request. Neither of these
+cases can be committed whole, so what `tests/data/` carries is each finished run cut
+down to the files its grader opens: the Felix `solution.vtu` files trimmed to the cells
+the grader samples, and the moving-mesh runs' `postProcessing/*/*.dat`, dictionaries and
+`sum(weights)` log lines. Every number the graders print from the cut-down copies is
+identical to what they print from the full cases; `tests/data/moving_mesh/PROVENANCE.md`
+says what was dropped. The `benchmarks` job in CI prints a verdict per benchmark, and the
+recorded verdict is what it holds them to, failures included. The one eval that costs a
+model turn, `benchmarks/deliverables/run.py`, now refuses to run without `--spend`, so no
+automated sweep of `benchmarks/` can bill anyone.
+
 Two of its checks are findings rather than formalities. The sliding interface held its
 **area** to 43 ppm of unity while the two wall torques, which conservation makes equal
 and opposite exactly, disagreed by **0.91%** — against 0.011% on the same annulus meshed

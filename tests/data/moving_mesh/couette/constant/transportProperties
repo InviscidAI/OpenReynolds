@@ -1,0 +1,15 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      transportProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+transportModel  Newtonian;
+
+// light oil: nu = 1e-4 m2/s, rho = 900 kg/m3  ->  mu = 0.09 Pa.s
+nu              1e-04;
