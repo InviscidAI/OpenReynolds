@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
+import sys
 from pathlib import Path
 
 import pytest
 
 TOOLBOX = Path(__file__).resolve().parents[1] / "openreynolds" / "toolbox"
+sys.path.insert(0, str(TOOLBOX))
 
 
 def load(name: str):
@@ -490,3 +493,72 @@ def test_the_coarser_triplets_are_reported_beside_the_fine_one(grid):
     assert len(analysis["pairs"]) == 3
     assert [round(p["ratio"], 6) for p in analysis["pairs"]] == [2.0, 2.0, 2.0]
     assert "the coarser triplets" in grid.report(analysis, [])
+
+
+# -- reading a case ------------------------------------------------------------
+
+FORCES_HEADER = (
+    "# Forces\n#\n# Time          \ttotal_x total_y total_z\tpressure_x pressure_y pressure_z"
+    "\tviscous_x viscous_y viscous_z\n")
+
+
+def _forces(path: Path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(f"{t:<16g} 0 0 0 0 0 0 0 0 {v:.8g}\n" for t, v in rows)
+    path.write_text(FORCES_HEADER + body, encoding="utf-8")
+
+
+def test_a_series_qualified_quantity_names_one_of_several_force_series(grid, tmp_path):
+    """A forces case repeats viscous_z in force.dat and moment.dat of every object;
+    the refusal to guess must suggest a selector that actually works."""
+    case = tmp_path / "ladder"
+    for function, scale in (("forces", 1.0), ("torqueOuter", 1000.0)):
+        for filename, factor in (("force.dat", 1.0), ("moment.dat", 10.0)):
+            _forces(case / "postProcessing" / function / "0" / filename,
+                    [(0.1, scale * factor), (0.2, scale * factor * 2)])
+
+    plain = grid.quantity_from_case(case, "viscous_z")
+    assert plain["value"] is None and "more than one series" in plain["note"]
+
+    picked = grid.quantity_from_case(case, "torqueOuter/moment.dat:viscous_z")
+    assert picked["value"] == pytest.approx(20000.0)
+    assert picked["column"] == "viscous_z" and picked["series"] == "torqueOuter/moment.dat"
+    assert picked["files"][0].replace("\\", "/").endswith("torqueOuter/0/moment.dat")
+    assert grid.quantity_from_case(case, "forces/force.dat:viscous_z")["value"] == pytest.approx(2.0)
+
+
+def test_a_single_force_series_still_reads_by_plain_column_name(grid, tmp_path):
+    """One series still reads by a case-insensitive bare column name, with no selector."""
+    case = tmp_path / "one"
+    _forces(case / "postProcessing" / "forces" / "0" / "force.dat",
+            [(0.1, 1.0), (0.2, 2.0), (0.3, 3.0)])
+    result = grid.quantity_from_case(case, "VISCOUS_Z", tail=2)
+    assert result["value"] == pytest.approx(2.5)
+    assert result["column"] == "viscous_z" and result.get("series") == "forces/force.dat"
+
+
+def test_an_unmatched_series_selector_refuses_instead_of_guessing(grid, tmp_path):
+    case = tmp_path / "one"
+    _forces(case / "postProcessing" / "forces" / "0" / "force.dat", [(0.1, 1.0)])
+    result = grid.quantity_from_case(case, "noSuch/force.dat:viscous_z")
+    assert result["value"] is None and "no such series" in result["note"].lower()
+
+
+def test_a_restart_stitch_drops_superseded_rows(grid, tmp_path):
+    """A restart from 0.2 leaves the old file's rows past 0.2 from the abandoned run;
+    grid must use `results.read_history` to drop them, like the other readers."""
+    import results  # toolbox added to sys.path at module import
+
+    case = tmp_path / "restarted"
+    early = case / "postProcessing" / "forces" / "0" / "force.dat"
+    late = case / "postProcessing" / "forces" / "0.2" / "force.dat"
+    _forces(early, [(0.1, 1.0), (0.2, 2.0), (0.3, 99.0), (0.4, 99.0)])
+    _forces(late, [(0.2, 2.0), (0.25, 2.5), (0.3, 3.0)])
+    os.utime(early, (1_000_000, 1_000_000)); os.utime(late, (1_000_001, 1_000_001))
+
+    expected = results.read_history([early, late])
+    assert len(expected["rows"]) == 4  # 0.1, 0.2, 0.25, 0.3
+    measured = grid.quantity_from_case(case, "viscous_z", tail=100)
+    assert measured["rows"] == len(expected["rows"])
+    assert measured["value"] == pytest.approx(
+        sum(r[expected["columns"].index("viscous_z")] for r in expected["rows"]) / 4)

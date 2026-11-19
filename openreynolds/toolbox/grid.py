@@ -543,17 +543,16 @@ def dimension_from_case(case: Path) -> tuple[int | None, str]:
 def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, Any]:
     """One quantity out of a case's `postProcessing`, with its provenance.
 
-    `results.parse_dat` does the reading, including keeping the header's `# key : value`
-    lines out of the column names, and `results.series_name`/`written_order` stitch a
-    restarted series back into one history -- a run restarted at 0.2 writes
-    `forceCoeffs_0.2.dat` beside `forceCoeffs.dat`, and reading only one of them is how
-    half a ladder's rungs end up quoting different parts of their runs.
-
     `tail` averages the last n rows. The default is 1, the last row, which is the
     answer for a converged steady case. For a shedding case the last row is whichever
     phase of the cycle the final write landed on, and comparing three meshes' arbitrary
     phases as though they were three answers is a grid study measuring the clock --
     `results.py` prints the tail mean beside the last value for the same reason.
+
+    A `forces` object writes every column into both its `force.dat` and `moment.dat`, and
+    a case logging two patches has two such objects. `quantity` may therefore be
+    `<function>/<file>:<column>` (e.g. `torqueOuter/moment.dat:viscous_z`) to pick one;
+    a bare name keeps the old meaning, still refused when it matches several series.
     """
     import results  # numpy and matplotlib come with it, so not at import time
 
@@ -568,20 +567,20 @@ def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, An
         name, _ = results.series_name(dat)
         series.setdefault((str(dat.parent.parent.relative_to(base)), name), []).append(dat)
 
+    wanted_series, column_name = _split_quantity(quantity)
+    labels = {key: _series_label(key) for key in series}
+
     found = []
+    no_such_series = wanted_series is not None
     for key in sorted(series):
+        label = labels[key]
+        if wanted_series is not None and not _series_matches(wanted_series, key, label):
+            continue
+        no_such_series = False
         paths = sorted(series[key], key=results.written_order)
-        columns: list[str] = []
-        rows: list[list[float]] = []
-        for path in paths:
-            parsed = results.parse_dat(path.read_text(errors="replace"))
-            if not parsed["rows"]:
-                continue
-            if not columns:
-                columns = parsed["columns"]
-            if len(parsed["columns"]) == len(columns):
-                rows.extend(parsed["rows"])
-        index = _column_index(columns, quantity)
+        history = results.read_history(paths)
+        columns, rows = history["columns"], history["rows"]
+        index = _column_index(columns, column_name)
         if index is None or not rows:
             continue
         taken = rows[-max(1, tail):]
@@ -589,24 +588,54 @@ def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, An
             "value": sum(row[index] for row in taken) / len(taken),
             "column": columns[index],
             "column_index": index,
+            "series": label,
             "files": [str(p) for p in paths],
             "rows": len(rows),
             "rows_averaged": len(taken),
         })
 
+    if no_such_series:
+        available = sorted(labels.values())
+        return {"value": None, "note": (
+            f"no such series {wanted_series!r} under {base}; the series there are "
+            + (", ".join(available) if available else "none that parsed"))}
     if not found:
         listed = sorted({c for key in series for c in
                          results.parse_dat(series[key][0].read_text(errors="replace"))["columns"]})
         return {"value": None, "note": (
-            f"no column called {quantity!r} under {base}; the columns there are "
+            f"no column called {column_name!r} under {base}; the columns there are "
             + (", ".join(listed) if listed else "none that parsed"))}
     if len(found) > 1:
         files = "; ".join(f["files"][0] for f in found)
+        names = "; ".join(f["series"] for f in found)
         return {"value": None, "note": (
-            f"{quantity!r} is a column in more than one series ({files}); name the one "
-            "you mean with a more specific --quantity, since picking for you is picking "
-            "which number the whole study is about")}
+            f"{column_name!r} is a column in more than one series ({files}); name the one "
+            f"you mean with --quantity <series>:{column_name}, e.g. "
+            f"--quantity {found[0]['series']}:{column_name} (series here: {names})")}
     return found[0]
+
+
+def _split_quantity(quantity: str) -> tuple[str | None, str]:
+    """Split `<series>:<column>`; a bare name is a column, as before. A colon is not
+    legal in a column or a `function/file.dat` key, so the first one is the separator."""
+    series, sep, column = quantity.partition(":")
+    if not sep or not series or not column:
+        return None, quantity
+    return series, column
+
+
+def _series_label(key: tuple[str, str]) -> str:
+    """`torqueOuter/moment.dat` from a `(function, file)` key, always with `/`."""
+    function, name = key
+    return f"{function.replace(chr(92), '/')}/{name}"
+
+
+def _series_matches(wanted: str, key: tuple[str, str], label: str) -> bool:
+    """Exact, case-insensitive match on the whole label, function, or file name. A
+    substring would let `force` select `torqueOuter/force.dat` by accident."""
+    wanted = wanted.replace(chr(92), "/").lower()
+    function, name = key
+    return wanted in (label.lower(), function.replace(chr(92), "/").lower(), name.lower())
 
 
 def _column_index(columns: list[str], quantity: str) -> int | None:
@@ -779,7 +808,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("cases", nargs="*", type=Path,
                         help="two or more case directories, in any order")
-    parser.add_argument("--quantity", help="the column name in postProcessing/*.dat")
+    parser.add_argument("--quantity", help="the column name in postProcessing/*.dat; when "
+                        "one occurs in several series, use <series>:<column>, e.g. "
+                        "torqueOuter/moment.dat:viscous_z")
     parser.add_argument("--tail", type=int, default=1,
                         help="average the last n rows of the series (default 1, the last row)")
     parser.add_argument("--grid", action="append", default=[], metavar="CELLS:VALUE",
