@@ -86,13 +86,16 @@ jobs:
             -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
             "$IMAGE" bash -lc '
               set -e
+              # A login shell is how the image puts OpenFOAM on PATH, and its profile
+              # leaves the shell in HOME rather than where -w pointed it.
+              cd /src
               # `pip install` is refused in this image on purpose
               # (docker/workspace/install-guard.sh shadows the console script); the pip
               # module is not, and is what the image installs itself with. Only pytest
               # is asked for beside the package: the rest of [dev] is already here, and
               # naming pyvista would make the resolver put plain vtk over vtk-osmesa
               # and take off-screen rendering with it.
-              python3 -m pip install -q --break-system-packages -e . pytest pytest-asyncio
+              python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
               python3 -m pytest -q
             '
 
