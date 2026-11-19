@@ -1,0 +1,19 @@
+{
+  "_what_this_is": "An example --template for report.py. Copy it, edit it, pass it with --template. Every key is optional and falls back to the built-in default; a key this file does not know about is carried along and ignored, so a company template can keep its own bookkeeping in here. Keys starting with _ are comments.",
+
+  "title": "Flow study -- CFD report",
+  "subtitle": "prepared for the customer, from the study's own artifacts",
+
+  "_front_matter": "Fixed lines printed under the study identity on the cover: whatever has to appear on every document you send. They are printed as given and nothing checks them.",
+  "front_matter": [
+    "Prepared by: Engineering",
+    "Confidential -- for the addressee only",
+    "Method: OpenFOAM, settings reproduced in the methods section"
+  ],
+
+  "_sections": "The order the sections are written in, and which are written at all. Known: summary (cover, key numbers, hero figure), figures, methods, gaps (what was asked for and not produced). A name this does not know is reported and skipped; an empty or all-unknown list falls back to all four.",
+  "sections": ["summary", "figures", "methods", "gaps"],
+
+  "_footer": "One paragraph at the foot of the cover.",
+  "footer": "Numbers as produced. Whether they are converged, mesh independent or right is not decided here."
+}
