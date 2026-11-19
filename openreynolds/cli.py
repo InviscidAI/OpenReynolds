@@ -32,6 +32,7 @@ from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
+from .compare import compare as compare_studies
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import (
@@ -89,7 +90,7 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
-JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor"})
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare"})
 """Subcommands that have a structured answer for the group's `--output-format` to mean
 something. Everything else it is given with is refused rather than answered in prose."""
 
@@ -349,6 +350,204 @@ def studies_cmd(ctx: click.Context, as_json: bool) -> None:
         suffix = f" - {live} job(s) running" if live else ""
         title = item.title or "(untitled)"
         console.print(f"[bold]{item.study_id}[/]  {title}  instance={item.instance_id}{suffix}")
+
+
+def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:
+    """Print rows as aligned columns, the first row being the header.
+
+    Escaped, because these cells carry file names and `checkMesh` numbers and a
+    `[` in one of them is markup to rich.
+    """
+    if not rows:
+        return
+    span = max(len(row) for row in rows)
+    width = [max((len(str(row[i])) for row in rows if i < len(row)), default=0)
+             for i in range(span)]
+    for number, row in enumerate(rows):
+        line = indent + "  ".join(
+            str(cell).ljust(width[i]) for i, cell in enumerate(row)).rstrip()
+        console.print(f"[bold]{escape(line)}[/]" if number == 0 else escape(line))
+
+
+def _number(value: Any, missing: str = "missing") -> str:
+    """A cell: five significant figures, or why there is nothing to print."""
+    if value is None:
+        return missing
+    if isinstance(value, float):
+        return f"{value:.5g}"
+    if isinstance(value, list):
+        return " / ".join(str(item) for item in value)
+    return str(value)
+
+
+@main.command("compare")
+@click.argument("left", required=False)
+@click.argument("right", required=False)
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option(
+    "--studies-dir",
+    "studies_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Where the studies are. Defaults to ./studies, as a session uses.",
+)
+@click.pass_context
+def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
+                as_json: bool, studies_dir: Path | None) -> None:
+    """Put two local studies side by side.
+
+    A second run is the point of the first: a mesh refined, a model swapped, a
+    boundary condition corrected -- and the question afterwards is what actually
+    changed. This reads both studies off disk and reports the force and coefficient
+    histories, how each run ended, each mesh's `checkMesh` metrics, the numbers the
+    figures were stamped with, and what each study produced that the other did not.
+
+    No session, no workspace, no model: it reads `./studies` and spends nothing.
+    Given no ids it takes the two newest and says which it chose. A quantity only one
+    study has is reported as missing rather than left out -- the comparison it could
+    not make is the thing worth knowing.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cfg = Config.load()
+    root = studies_dir or cfg.studies_dir
+    chose = ""
+    if not (left and right):
+        ids = [item.study_id for item in list_studies(root)]
+        if len(ids) < 2:
+            console.print(
+                f"[red]compare needs two studies[/] and {root} has "
+                f"{len(ids)}; `openreynolds studies` lists them."
+            )
+            raise SystemExit(1)
+        # Newest first, as every other --study-less subcommand reads that list, so
+        # `compare` with nothing named is the newest run against the one before it.
+        if not left:
+            left, right = ids[1], ids[0]
+            chose = f"nothing named, so: a = {left} (older), b = {right} (newest)"
+        else:
+            # One id named is "this one against the latest", and the latest must not
+            # be the one named -- a study compared with itself is a page of zeroes.
+            right = next((one for one in ids if one != left), ids[0])
+            chose = f"one id named, so: a = {left}, b = {right} (the newest other study)"
+
+    try:
+        report = compare_studies(root, left, right)
+    except FileNotFoundError as exc:
+        console.print(
+            f"[red]No study at[/] {exc} -- `openreynolds studies` lists the ids "
+            f"under {root}."
+        )
+        raise SystemExit(1) from exc
+    report["chose"] = chose
+
+    if as_json:
+        sys.stdout.write(json.dumps(report, default=str) + "\n")
+        return
+
+    a, b = report["studies"]["a"], report["studies"]["b"]
+    if chose:
+        console.print(chose)
+    console.print("")
+    _aligned([
+        ("", "a", "b"),
+        ("study", a["study_id"], b["study_id"]),
+        ("title", a["title"] or "(untitled)", b["title"] or "(untitled)"),
+        ("when", a["created_at"] or "-", b["created_at"] or "-"),
+        ("model", a["model"] or "-", b["model"] or "-"),
+        ("solver", a["solver"] or "-", b["solver"] or "-"),
+        ("instance", (a["instance_id"] or "-")[:12], (b["instance_id"] or "-")[:12]),
+        ("messages", a["messages"], b["messages"]),
+    ])
+
+    console.print("\n[bold]headline numbers[/] (difference is b - a, relative to the larger)")
+    rows: list[tuple[Any, ...]] = [
+        ("series", "a last", "a mean", "b last", "b mean", "b - a (mean)", "relative")
+    ]
+    for row in report["forces"]["series"]:
+        side_a, side_b = row["a"], row["b"]
+        relative = row["tail_mean"]["relative"]
+        rows.append((
+            row["name"],
+            _number(side_a and side_a["last"]),
+            _number(side_a and side_a["tail_mean"]),
+            _number(side_b and side_b["last"]),
+            _number(side_b and side_b["tail_mean"]),
+            _number(row["tail_mean"]["absolute"], "-"),
+            "-" if relative is None else f"{relative * 100:.1f}%",
+        ))
+    if len(rows) == 1:
+        rows.append(("none logged", "", "", "", "", "", ""))
+    _aligned(rows)
+    for side in ("a", "b"):
+        for why in [report["forces"]["unavailable"][side]] + report["forces"]["notes"][side]:
+            if why:
+                console.print(f"  {side}: {escape(why)}")
+
+    console.print("\n[bold]convergence[/]")
+    for side in ("a", "b"):
+        for line in report["convergence"]["ended"][side] or ["nothing read"]:
+            console.print(f"  {side}: {escape(line)}")
+        why = report["convergence"]["unavailable"][side]
+        if why:
+            console.print(f"  {side}: {escape(why)}")
+    _aligned([("field", "a", "a last", "b", "b last")] + [
+        (row["field"],
+         (row["a"] or {}).get("shape", "missing"), _number((row["a"] or {}).get("last")),
+         (row["b"] or {}).get("shape", "missing"), _number((row["b"] or {}).get("last")))
+        for row in report["convergence"]["fields"]
+    ])
+
+    console.print("\n[bold]mesh[/]")
+    _aligned([("metric", "a", "b")] + [
+        (row["metric"], _number(row["a"]), _number(row["b"]))
+        for row in report["mesh"]["metrics"]
+    ] or [("metric", "a", "b")])
+    for side in ("a", "b"):
+        for line in (report["mesh"]["failures"][side] + report["mesh"]["warnings"][side]
+                     + [report["mesh"]["unavailable"][side]]):
+            if line:
+                console.print(f"  {side}: {escape(line)}")
+
+    console.print("\n[bold]claims[/] (stamped into the figures themselves)")
+    rows = [("claim", "a", "b", "apart", "")]
+    for row in report["claims"]:
+        if row["missing"]:
+            held = row["a"] or row["b"]
+            rows.append((row["name"], _number(row["a"] and row["a"]["value"]),
+                         _number(row["b"] and row["b"]["value"]), "-",
+                         f"missing in {row['missing']} ({held['units'] or 'no unit'})"))
+            continue
+        verdict = ("agree" if row["agree"] else "DIFFER") if row["comparable"] else (
+            f"not comparable: {row['a']['units'] or 'no unit'} against "
+            f"{row['b']['units'] or 'no unit'}")
+        rows.append((
+            row["name"],
+            f"{row['a']['value']:.5g} {row['a']['units']}".strip(),
+            f"{row['b']['value']:.5g} {row['b']['units']}".strip(),
+            "-" if row["apart"] is None else f"{row['apart'] * 100:.1f}%",
+            verdict,
+        ))
+    _aligned(rows)
+
+    console.print("\n[bold]artifacts[/]")
+    _aligned([("kind", "a", "b", "")] + [
+        (row["kind"], row["a"], row["b"],
+         f"only in {row['missing'] and ('a' if row['missing'] == 'b' else 'b')}"
+         if row["missing"] else "")
+        for row in report["artifacts"]
+    ])
+
+    short = report["summary"]
+    console.print("\n[bold]what this adds up to[/]")
+    console.print(f"  {short['compared']} quantities compared")
+    if not (short["differ"] or short["one_sided"] or short["not_comparable"]):
+        console.print("  [green]no differences[/]: every quantity compared matched")
+    for line in short["differ"]:
+        console.print(f"  [yellow]differs[/] {escape(line)}")
+    for line in short["one_sided"]:
+        console.print(f"  [yellow]not compared[/] {escape(line)}")
+    for line in short["not_comparable"]:
+        console.print(f"  [yellow]not compared[/] {escape(line)}")
 
 
 @main.command("config")

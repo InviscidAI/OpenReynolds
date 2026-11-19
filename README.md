@@ -417,12 +417,13 @@ down to **0.567**.
 | `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
 | `--solver auto\|openfoam\|felix` | Which solver the study runs: OpenFOAM on the workspace's CPU cores, or Felix, an incompressible GPU solver whose solves run on cloud GPUs (hosted workspace only). `auto`, the default, chooses it from your first message, by a request of its own before the agent's first turn, and the workspace -- of that solver's kind -- starts only then; the reason is shown to you and told to the agent, and a request that cannot choose leaves the study on OpenFOAM, said so. Fixed for the whole study; a resumed study keeps its solver and ignores a different flag. `OPENREYNOLDS_SOLVER` sets it when the flag is not given. |
 | `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
-| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
+| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies`, `doctor` or `compare` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` approves a short code in a browser, which is the device-code flow and the only way in for a Google account. |
 | `openreynolds logout` | Sign this machine out: its service key is revoked on the service and removed from the config, and traces queued to share are deleted unsent. If the service cannot be reached nothing changes; `--here-only` removes the key from this machine regardless. Studies on the service stay. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
 | `openreynolds doctor` | Check every surface: settings, workspace, model, capture, sharing, toolbox, terminal, video. Read-only on the service's workspace; with `--local` it pulls the image and starts the container to run `blockMesh` in it. `--json` answers in one object. |
 | `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
+| `openreynolds compare <a> <b>` | Put two local studies side by side: identity, every force and coefficient series, how each run ended and what its residuals were doing, the `checkMesh` metrics, the numbers stamped into the figures, and what each study produced that the other did not. A quantity only one study has is reported as missing rather than left out, and two claims under different unit labels as not comparable rather than converted. No session and no model: it reads `./studies`. With no ids it takes the two newest and says which. `--studies-dir` reads studies elsewhere; `--json` answers in one object. |
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
 | `openreynolds pull` | Bring this study's files down to this machine. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
@@ -475,6 +476,7 @@ Two questions come before a session, and both answer as data:
 
     openreynolds doctor --json     # {"ok": …, "failed": […], "checks": [{"check", "ok", "detail"}, …]}
     openreynolds studies --json    # {"dir": …, "studies": [{"study_id", "title", "instance_id", "model", …}, …]}
+    openreynolds compare --json    # {"studies": {"a", "b"}, "forces", "convergence", "mesh", "claims", "artifacts", "summary"}
 
 Straight to stdout, one object, no markup, and `doctor`'s exit code is unchanged for a
 caller that only reads that. These two existed only as styled terminal lines, so the
