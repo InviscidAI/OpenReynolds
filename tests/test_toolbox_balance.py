@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -369,6 +370,22 @@ def test_a_drop_referred_to_a_wall_is_refused_rather_than_divided_by_zero(tmp_pa
     with pytest.raises(SystemExit) as err:
         balance.main([str(manifold(tmp_path)), "--drop", "inlet", "walls"])
     assert "no flux" in str(err.value.code)
+
+
+def test_a_closed_domain_has_no_throughflow_and_is_not_divided_by_it(tmp_path):
+    """The lid-driven cavity, which the suite already ships: every patch is a wall, the
+    moving one has a tangential velocity and no normal flux, and there is no inflow to
+    take a share of. It is the case where the shares and the relative closure are 0/0, so
+    they come back absent rather than as a number or a traceback."""
+    cavity = shutil.copytree(HERE / "data" / "cavity", tmp_path / "cavity")
+    report = run(cavity)
+    closure = report["balance"]
+    assert closure["inflow"] == 0 and closure["outflow"] == 0
+    assert closure["closure_error"] == 0
+    assert closure["closure_error_relative"] is None
+    assert not closure["inflow_patches"] and not closure["outflow_patches"]
+    assert "movingWall" in closure["closed_patches"]
+    assert all(row["share_pct"] is None for row in report["patches"])
 
 
 def test_the_png_draws_the_split(tmp_path):
