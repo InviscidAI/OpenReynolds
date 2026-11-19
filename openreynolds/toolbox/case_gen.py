@@ -1584,12 +1584,12 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
     if is_les(model) and study == "steady":
         raise SystemExit(
             f"--study steady with --turbulence {model} is a contradiction, and it is one "
-            "that runs: `simpleFoam` would drop the ddt term, every eddy the subgrid "
-            "model exists to be a subgrid to would be averaged away by the solver "
-            "itself, and what came out would be a converged steady field with an LES "
-            "dictionary beside it. There is no steady LES. --study transient, with "
-            "--end-time long enough for the mean to start where --average-from says "
-            "it does"
+            "that runs: `simpleFoam` would drop the ddt term, so the solver itself "
+            "would average away every eddy this case exists to resolve, and what came "
+            "out would be a converged steady field with a resolved-turbulence "
+            "dictionary beside it. There is no steady LES and no steady DNS. --study "
+            "transient, with --end-time long enough for the mean to start where "
+            "--average-from says it does"
         )
     delta = les_delta(model, opts) if model in LES_FIELDS else ""
     files = {
@@ -1730,8 +1730,8 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
     if not is_les(model):
         return []
     notes = [
-        f"LES        {model}" + (f", delta {delta}" if delta else "")
-        + ("   (no subgrid model: DNS)" if model == "DNS" else ""),
+        "DNS        no subgrid model, simulationType laminar" if model == "DNS"
+        else f"LES        {model}, delta {delta}",
         f"           schemes changed for LES: ddt {LES_DDT} and div(phi,U) "
         f"{LES_DIV_U}, where a RAS transient run gets backward and Gauss linear",
         "           (near-central on purpose: upwind dissipation acts at the grid "
