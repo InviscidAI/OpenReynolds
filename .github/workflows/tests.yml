@@ -89,6 +89,10 @@ jobs:
               # A login shell is how the image puts OpenFOAM on PATH, and its profile
               # leaves the shell in HOME rather than where -w pointed it.
               cd /src
+              # The checkout is the runner user's and this container is root, so git
+              # refuses to read it; a test that asks what commit it is on gets "" and
+              # fails for a reason that is nothing to do with the image.
+              git config --global --add safe.directory /src
               # `pip install` is refused in this image on purpose
               # (docker/workspace/install-guard.sh shadows the console script); the pip
               # module is not, and is what the image installs itself with. Only pytest
@@ -100,7 +104,8 @@ jobs:
             '
 
       - name: The Docker backend against the real image
-        if: steps.pull.outputs.image
+        # Whatever the suite in the container made of itself: these are other tests.
+        if: ${{ !cancelled() && steps.pull.outputs.image }}
         # On the runner, not in the container: these drive `docker` themselves, and
         # the image now being pulled is the whole of what they were gated on.
         env:
