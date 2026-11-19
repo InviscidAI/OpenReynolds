@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # So the suite can be run off the laptop on demand, on any branch:
+  #     gh workflow run tests.yml --ref <branch>
+  workflow_dispatch:
 
 jobs:
   test:
@@ -47,3 +50,58 @@ jobs:
           assert not missing, f"missing from the wheel: {sorted(missing)}"
           print(f"toolbox ships: {len(expected)} files present")
           PY
+
+  # The same suite inside the workspace image, which is the only place the tests gated
+  # on a real OpenFOAM, blockMesh, gmsh, a kernel and an off-screen renderer run at
+  # all. They have never run in CI, so this lands advisory: `continue-on-error` keeps
+  # it out of the merge gate until the failures it finds are triaged.
+  image:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    env:
+      # What .github/workflows/workspace-image.yml publishes and DEFAULT_IMAGE names.
+      IMAGE: ghcr.io/inviscidai/reynolds-workspace:2512
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pull the workspace image
+        id: pull
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker pull -q "$IMAGE"; then
+            echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=no workspace image::$IMAGE could not be pulled -- the package is private on GHCR until an org owner makes it public, so this job ran no tests. Not a failure."
+          fi
+
+      - name: Test in the image
+        if: steps.pull.outputs.image
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
+            "$IMAGE" bash -lc '
+              set -e
+              # `pip install` is refused in this image on purpose
+              # (docker/workspace/install-guard.sh shadows the console script); the pip
+              # module is not, and is what the image installs itself with. Only pytest
+              # is asked for beside the package: the rest of [dev] is already here, and
+              # naming pyvista would make the resolver put plain vtk over vtk-osmesa
+              # and take off-screen rendering with it.
+              python3 -m pip install -q --break-system-packages -e . pytest pytest-asyncio
+              python3 -m pytest -q
+            '
+
+      - name: The Docker backend against the real image
+        if: steps.pull.outputs.image
+        # On the runner, not in the container: these drive `docker` themselves, and
+        # the image now being pulled is the whole of what they were gated on.
+        env:
+          OPENREYNOLDS_TEST_IMAGE: ${{ steps.pull.outputs.image }}
+        run: |
+          pip install -e . pytest pytest-asyncio
+          python -m pytest -q tests/test_docker_backend.py
