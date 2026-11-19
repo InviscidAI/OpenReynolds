@@ -1,9 +1,13 @@
-"""The MCP tools, once, for every server that offers them.
+"""The nine capabilities, once, for every face that offers them.
 
-`build_server(host)` defines the tools; a `Host` answers them from wherever studies
-run (`local.LocalHost` here; the hosted service has its own). What the tools say --
-their arguments, the states a study is in, how the transcript is condensed for a
-calling model, what to do next -- is all here, so the two servers cannot drift.
+A `Host` answers them from wherever studies run (`local.LocalHost` here; the hosted
+service has its own), and the capabilities themselves -- `begin_study`, `look_once`,
+`status_answer`, `said_text`, `approval_line`, `studies_list`, `study_results` -- are
+plain blocking calls over one. Three faces put them in front of a caller:
+`build_server(host)` as MCP tools, `openreynolds.serve` as HTTP, `openreynolds.sdk` as
+a library. What they say -- their arguments, the states a study is in, how the
+transcript is condensed for a calling model, what to do next -- is all here, so no two
+faces can drift.
 
 A host's methods are plain blocking calls, run on a worker thread for each tool call
 (`asyncio.to_thread`, which carries the caller's context: a host that keeps who is
@@ -549,6 +553,222 @@ DESCRIPTIONS: dict[str, str] = {
 """Each tool's description, and `get_results:next`, the line its answer ends with."""
 
 
+def description(host: Host | None, tool: str) -> str:
+    """What a tool, or a face's endpoint, says it does: the host's own words or the default."""
+    return (host.descriptions.get(tool) if host is not None else None) or DESCRIPTIONS[tool]
+
+
+# -- the capabilities, once ----------------------------------------------------------------
+#
+# Each of these is one of the nine things a caller can do, as a plain blocking call over a
+# `Host`. They were the bodies of the MCP tools; they are out here because the MCP server is
+# not the only face over a Host any more -- `openreynolds serve` answers the same nine over
+# HTTP and `openreynolds.sdk` answers them to a library caller, and three faces deriving a
+# state name or condensing a transcript each their own way is exactly the drift this module
+# exists to prevent. `build_server` below is now a thin async wrapper over these.
+
+
+def begin_study(host: Host, deliveries: "Deliveries", task: str, *,
+                upload_ids: list[str] | None = None, study_id: str | None = None,
+                depth: str = "quick", mode: str = "auto", model: str | None = None,
+                effort: str | None = None, notes: str | None = None,
+                solver: str = "auto") -> dict[str, Any]:
+    """Start a study (or continue one) and answer with its session_id."""
+    if not task or not task.strip():
+        raise McpError("say what to simulate in task")
+    files: list[dict[str, Any]] = []
+    for upload_id in upload_ids or []:
+        if not UPLOAD_ID.match(upload_id or ""):
+            raise McpError(f"{upload_id!r} is not an upload id")
+        found = host.staged(upload_id)
+        if found is None:
+            raise McpError(f"upload {upload_id} has no file yet -- run its curl command first")
+        if found.size > MAX_UPLOAD_BYTES:
+            raise McpError(f"upload {upload_id} is {found.size} bytes; the limit is {MAX_UPLOAD_BYTES}")
+        files.append({"key": found.key, "name": found.name})
+    note = CALLER_NOTE + (f"\n\n{notes.strip()}" if notes and notes.strip() else "")
+    body: dict[str, Any] = {
+        "style": depth, "mode": mode, "notes": note[:NOTES_MAX],
+        "message": None if files else task.strip(),
+    }
+    if study_id:
+        body["study_id"] = study_id
+    if model:
+        body["model"] = model
+    if effort:
+        body["effort"] = effort
+    if solver and solver != "auto":
+        body["solver"] = solver
+    elif files:
+        # The task waits for the files, and the files for a workspace an open
+        # solver only starts once chosen: choose it from the task now.
+        body["route_on"] = task.strip()
+    session = host.start_session(body)
+    session_id = str(session.get("session_id") or "")
+    if files:
+        deliveries.record(session_id, {"task": task.strip(), "files": files, "at": time.time()})
+        deliveries.watch(session_id)
+    answer = {
+        "session_id": session_id, "study_id": session.get("study_id") or study_id or None,
+        "state": "starting", "model": session.get("model"),
+        "next": "Call study_status with this session_id. The study_id appears once the "
+                "study is named, within the first minute.",
+    }
+    if session.get("sharing_notice"):
+        # A host that shares traces says what it shares the first time, and this
+        # is the only place a person driving through an agent will see it.
+        answer["sharing_notice"] = session["sharing_notice"]
+        answer["next"] = ("Show the person sharing_notice, one line, word for word: it "
+                          "says what this machine shares and how to turn it off. "
+                          "Then " + answer["next"][0].lower() + answer["next"][1:])
+    return answer
+
+
+def look_once(host: Host, deliveries: "Deliveries",
+              session_id: str) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    """One look at a session: its row, its picture and the state it is in.
+
+    Each face runs its own wait loop around this -- the MCP server on the event loop,
+    the HTTP face on the thread serving the request -- and stops on the same condition:
+    a state that is no longer `starting` or `working`."""
+    row, picture = host.observe(session_id)
+    delivering = False
+    if deliveries.pending(session_id) is not None:
+        done = deliveries.attempt(session_id)
+        delivering = not done or deliveries.unseen(session_id, picture)
+    return row, picture, state_of(row, picture, delivering)
+
+
+def wait_for_change(host: Host, deliveries: "Deliveries", session_id: str,
+                    wait_s: float = 0.0) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    """Look until the study wants something, or until `wait_s` is up: a long poll.
+
+    The blocking twin of the loop `build_server`'s `study_status` runs on the event
+    loop. The HTTP face and the SDK each hold a thread of their own open instead, so
+    they sleep rather than await, and both stop on the same condition."""
+    deadline = time.monotonic() + max(0.0, min(float(wait_s or 0.0), MAX_WAIT_S))
+    while True:
+        row, picture, state = look_once(host, deliveries, session_id)
+        left = deadline - time.monotonic()
+        if state not in ("starting", "working") or left <= 0:
+            return row, picture, state
+        time.sleep(min(POLL_S, left))
+
+
+def status_answer(host: Host, session_id: str, row: dict[str, Any], picture: dict[str, Any] | None,
+                  state: str, after_seq: int = 0) -> dict[str, Any]:
+    """What the study is doing, and what has been said since `after_seq`."""
+    say = host.say_text
+    items = list((picture or {}).get("items") or [])
+    session = (picture or {}).get("session") or {}
+    study = str(session.get("study_id") or row.get("study_id") or "")
+    if not items and study:
+        items = list(host.transcript_items(study, int(after_seq or 0)) or [])
+    rows, cursor, cut = transcript_since(items, int(after_seq or 0), say)
+    jobs = [
+        {"name": j.get("name") or j.get("job_id"), "status": j.get("status"),
+         "cmd": clip(j.get("cmd"), 160)}
+        for j in (picture or {}).get("jobs") or []
+    ]
+    answer: dict[str, Any] = {
+        "state": state, "session_id": session_id, "study_id": study or None,
+        "stage": (picture or {}).get("stage") or "", "narration": (picture or {}).get("narration") or "",
+        "jobs": jobs[-12:], "transcript": rows, "next_after_seq": cursor,
+        "next": NEXT.get(state, ""),
+    }
+    approvals = open_approvals(picture, host)
+    if state == "waiting_for_approval" and any(a["about"] == "ceiling" for a in approvals):
+        answer["next"] = CEILING_NEXT
+    if cut:
+        answer["more"] = "There is more transcript; call study_status again with next_after_seq."
+    if approvals:
+        answer["approvals"] = approvals
+    side = side_chat(picture)
+    if side:
+        answer["side"] = side
+    if state in ("waiting_for_input", "ended", "error"):
+        answer["last_message"] = clip(last_agent_message(items), 8000)
+    if row.get("error") or session.get("error"):
+        answer["error"] = row.get("error") or session.get("error")
+    return answer
+
+
+def said_text(text: str) -> str:
+    """The line `send_message` puts on a session, refused when there is nothing in it."""
+    if not text or not text.strip():
+        raise McpError("nothing to say")
+    return text.strip()
+
+
+APPROVAL_WORDS = {"approve": "/yes", "decline": "/no", "approve_all": "/all"}
+
+
+def approval_line(decision: str, note: str = "") -> str:
+    """The line that answers an open approval, from the decision a caller names."""
+    if decision not in APPROVAL_WORDS:
+        raise McpError('decision is "approve", "decline" or "approve_all"')
+    return APPROVAL_WORDS[decision] + (f" {note.strip()}" if decision == "decline" and note.strip() else "")
+
+
+def studies_list(host: Host, limit: int = 20) -> dict[str, Any]:
+    """This account's studies, newest first, with the live sessions."""
+    got = host.studies()
+    cards = [
+        {"study_id": c.get("study_id"), "title": c.get("title"), "created_at": c.get("created_at")}
+        for c in (got.get("studies") or [])[: max(1, min(int(limit or 20), 100))]
+    ]
+    live = [{"session_id": s.get("session_id"), "study_id": s.get("study_id") or None,
+             "status": s.get("status")} for s in got.get("sessions") or []]
+    return {"studies": cards, "live_sessions": live}
+
+
+def study_results(host: Host, study_id: str) -> dict[str, Any]:
+    """What a study came to: its final message, results.json, reports, pictures, files."""
+    got = host.transcript(study_id)
+    items = list(got.get("items") or [])
+    session = got.get("session") or {}
+    home = str(session.get("home") or f"/work/{study_id}").rstrip("/")
+    answer: dict[str, Any] = {
+        "study_id": study_id, "title": session.get("title"), "workspace": home,
+        "final_message": last_agent_message(items),
+        "jobs": [{"name": j.get("name") or j.get("job_id"), "status": j.get("status"),
+                  "end_reason": j.get("end_reason"), "exit_code": j.get("exit_code")}
+                 for j in session.get("jobs") or []],
+    }
+    raw = host.read_file(study_id, f"{home}/results.json")
+    if raw is not None:
+        try:
+            answer["results_json"] = json.loads(raw)
+        except ValueError:
+            answer["results_json_text"] = clip(raw.decode("utf-8", "replace"), 8000)
+    entries = [e for e in host.files(study_id) if not e.get("is_dir")]
+    reports = [e["path"] for e in entries if str(e.get("path", "")).endswith("results.md")]
+    for path in reports[:3]:
+        raw = host.read_file(study_id, path)
+        if raw is not None:
+            answer.setdefault("reports", []).append(
+                {"path": path, "text": clip(raw.decode("utf-8", "replace"), 6000)})
+    answer["pictures"] = [
+        {"name": r.get("name"), "url": host.render_link(study_id, str(r.get("name")))}
+        for r in (host.renders(study_id) or [])[-20:] if r.get("name")
+    ]
+    answer["files"] = [{"path": e.get("path"), "size": e.get("size")} for e in entries[:300]]
+    if len(entries) > 300:
+        answer["files_note"] = f"{len(entries)} files; the first 300 are listed"
+    answer["next"] = description(host, "get_results:next")
+    return answer
+
+
+def deliveries_for(host: Host) -> "Deliveries":
+    """The host's own `Deliveries`, or one over it. What one has recorded is in the
+    host's `kv`, so a task waiting for its workspace is nudged by whichever face asks
+    for the status next."""
+    return getattr(host, "deliveries", None) or Deliveries(host)
+
+
+# -- the tools -------------------------------------------------------------------------------
+
+
 def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds CFD") -> Any:
     """The MCP server: every tool, answered by `host`."""
     from mcp.server.mcpserver import MCPServer
@@ -557,11 +777,10 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
     from .. import __version__
 
     server = MCPServer(name=name, title=title, instructions=host.instructions, version=__version__)
-    deliveries = getattr(host, "deliveries", None) or Deliveries(host)
-    say = host.say_text
+    deliveries = deliveries_for(host)
 
     def describe(tool: str) -> str:
-        return host.descriptions.get(tool) or DESCRIPTIONS[tool]
+        return description(host, tool)
 
     async def call(fn: Callable[[], Any]) -> Any:
         try:
@@ -589,56 +808,9 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
                           depth: str = "quick", mode: str = "auto", model: str | None = None,
                           effort: str | None = None, notes: str | None = None,
                           solver: str = "auto") -> dict[str, Any]:
-        def run() -> dict[str, Any]:
-            if not task or not task.strip():
-                raise McpError("say what to simulate in task")
-            files: list[dict[str, Any]] = []
-            for upload_id in upload_ids or []:
-                if not UPLOAD_ID.match(upload_id or ""):
-                    raise McpError(f"{upload_id!r} is not an upload id")
-                found = host.staged(upload_id)
-                if found is None:
-                    raise McpError(f"upload {upload_id} has no file yet -- run its curl command first")
-                if found.size > MAX_UPLOAD_BYTES:
-                    raise McpError(f"upload {upload_id} is {found.size} bytes; the limit is {MAX_UPLOAD_BYTES}")
-                files.append({"key": found.key, "name": found.name})
-            note = CALLER_NOTE + (f"\n\n{notes.strip()}" if notes and notes.strip() else "")
-            body: dict[str, Any] = {
-                "style": depth, "mode": mode, "notes": note[:NOTES_MAX],
-                "message": None if files else task.strip(),
-            }
-            if study_id:
-                body["study_id"] = study_id
-            if model:
-                body["model"] = model
-            if effort:
-                body["effort"] = effort
-            if solver and solver != "auto":
-                body["solver"] = solver
-            elif files:
-                # The task waits for the files, and the files for a workspace an open
-                # solver only starts once chosen: choose it from the task now.
-                body["route_on"] = task.strip()
-            session = host.start_session(body)
-            session_id = str(session.get("session_id") or "")
-            if files:
-                deliveries.record(session_id, {"task": task.strip(), "files": files, "at": time.time()})
-                deliveries.watch(session_id)
-            answer = {
-                "session_id": session_id, "study_id": session.get("study_id") or study_id or None,
-                "state": "starting", "model": session.get("model"),
-                "next": "Call study_status with this session_id. The study_id appears once the "
-                        "study is named, within the first minute.",
-            }
-            if session.get("sharing_notice"):
-                # A host that shares traces says what it shares the first time, and this
-                # is the only place a person driving through an agent will see it.
-                answer["sharing_notice"] = session["sharing_notice"]
-                answer["next"] = ("Show the person sharing_notice, one line, word for word: it "
-                                  "says what this machine shares and how to turn it off. "
-                                  "Then " + answer["next"][0].lower() + answer["next"][1:])
-            return answer
-        return await call(run)
+        return await call(lambda: begin_study(
+            host, deliveries, task, upload_ids=upload_ids, study_id=study_id, depth=depth,
+            mode=mode, model=model, effort=effort, notes=notes, solver=solver))
 
     @server.tool(description=describe("study_status"))
     async def study_status(session_id: str, after_seq: int = 0, wait_seconds: int = 30) -> dict[str, Any]:
@@ -648,71 +820,26 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
         await call(lambda: host.check(session_id))
         await call(lambda: host.heartbeat(session_id))
 
-        def look() -> tuple[dict[str, Any], dict[str, Any] | None, str]:
-            row, picture = host.observe(session_id)
-            delivering = False
-            if deliveries.pending(session_id) is not None:
-                done = deliveries.attempt(session_id)
-                delivering = not done or deliveries.unseen(session_id, picture)
-            return row, picture, state_of(row, picture, delivering)
-
         while True:
-            row, picture, state = await call(look)
+            row, picture, state = await call(lambda: look_once(host, deliveries, session_id))
             if state not in ("starting", "working") or time.monotonic() >= deadline:
                 break
             await asyncio.sleep(POLL_S)
 
-        def answer_it() -> dict[str, Any]:
-            items = list((picture or {}).get("items") or [])
-            session = (picture or {}).get("session") or {}
-            study = str(session.get("study_id") or row.get("study_id") or "")
-            if not items and study:
-                items = list(host.transcript_items(study, int(after_seq or 0)) or [])
-            rows, cursor, cut = transcript_since(items, int(after_seq or 0), say)
-            jobs = [
-                {"name": j.get("name") or j.get("job_id"), "status": j.get("status"),
-                 "cmd": clip(j.get("cmd"), 160)}
-                for j in (picture or {}).get("jobs") or []
-            ]
-            answer: dict[str, Any] = {
-                "state": state, "session_id": session_id, "study_id": study or None,
-                "stage": (picture or {}).get("stage") or "", "narration": (picture or {}).get("narration") or "",
-                "jobs": jobs[-12:], "transcript": rows, "next_after_seq": cursor,
-                "next": NEXT.get(state, ""),
-            }
-            approvals = open_approvals(picture, host)
-            if state == "waiting_for_approval" and any(a["about"] == "ceiling" for a in approvals):
-                answer["next"] = CEILING_NEXT
-            if cut:
-                answer["more"] = "There is more transcript; call study_status again with next_after_seq."
-            if approvals:
-                answer["approvals"] = approvals
-            side = side_chat(picture)
-            if side:
-                answer["side"] = side
-            if state in ("waiting_for_input", "ended", "error"):
-                answer["last_message"] = clip(last_agent_message(items), 8000)
-            if row.get("error") or session.get("error"):
-                answer["error"] = row.get("error") or session.get("error")
-            return answer
-        return await call(answer_it)
+        return await call(lambda: status_answer(host, session_id, row, picture, state,
+                                                int(after_seq or 0)))
 
     @server.tool(description=describe("send_message"))
     async def send_message(session_id: str, text: str) -> dict[str, Any]:
         def run() -> dict[str, Any]:
-            if not text or not text.strip():
-                raise McpError("nothing to say")
-            host.say(session_id, text.strip())
+            host.say(session_id, said_text(text))
             return {"sent": True, "next": "Call study_status to see the answer."}
         return await call(run)
 
     @server.tool(description=describe("answer_approval"))
     async def answer_approval(session_id: str, decision: str, note: str = "") -> dict[str, Any]:
         def run() -> dict[str, Any]:
-            words = {"approve": "/yes", "decline": "/no", "approve_all": "/all"}
-            if decision not in words:
-                raise McpError('decision is "approve", "decline" or "approve_all"')
-            line = words[decision] + (f" {note.strip()}" if decision == "decline" and note.strip() else "")
+            line = approval_line(decision, note)
             host.say(session_id, line)
             return {"sent": line, "next": "Call study_status."}
         return await call(run)
@@ -725,54 +852,11 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
 
     @server.tool(description=describe("list_studies"))
     async def list_studies(limit: int = 20) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
-            got = host.studies()
-            cards = [
-                {"study_id": c.get("study_id"), "title": c.get("title"), "created_at": c.get("created_at")}
-                for c in (got.get("studies") or [])[: max(1, min(int(limit or 20), 100))]
-            ]
-            live = [{"session_id": s.get("session_id"), "study_id": s.get("study_id") or None,
-                     "status": s.get("status")} for s in got.get("sessions") or []]
-            return {"studies": cards, "live_sessions": live}
-        return await call(run)
+        return await call(lambda: studies_list(host, limit))
 
     @server.tool(description=describe("get_results"))
     async def get_results(study_id: str) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
-            got = host.transcript(study_id)
-            items = list(got.get("items") or [])
-            session = got.get("session") or {}
-            home = str(session.get("home") or f"/work/{study_id}").rstrip("/")
-            answer: dict[str, Any] = {
-                "study_id": study_id, "title": session.get("title"), "workspace": home,
-                "final_message": last_agent_message(items),
-                "jobs": [{"name": j.get("name") or j.get("job_id"), "status": j.get("status"),
-                          "end_reason": j.get("end_reason"), "exit_code": j.get("exit_code")}
-                         for j in session.get("jobs") or []],
-            }
-            raw = host.read_file(study_id, f"{home}/results.json")
-            if raw is not None:
-                try:
-                    answer["results_json"] = json.loads(raw)
-                except ValueError:
-                    answer["results_json_text"] = clip(raw.decode("utf-8", "replace"), 8000)
-            entries = [e for e in host.files(study_id) if not e.get("is_dir")]
-            reports = [e["path"] for e in entries if str(e.get("path", "")).endswith("results.md")]
-            for path in reports[:3]:
-                raw = host.read_file(study_id, path)
-                if raw is not None:
-                    answer.setdefault("reports", []).append(
-                        {"path": path, "text": clip(raw.decode("utf-8", "replace"), 6000)})
-            answer["pictures"] = [
-                {"name": r.get("name"), "url": host.render_link(study_id, str(r.get("name")))}
-                for r in (host.renders(study_id) or [])[-20:] if r.get("name")
-            ]
-            answer["files"] = [{"path": e.get("path"), "size": e.get("size")} for e in entries[:300]]
-            if len(entries) > 300:
-                answer["files_note"] = f"{len(entries)} files; the first 300 are listed"
-            answer["next"] = describe("get_results:next")
-            return answer
-        return await call(run)
+        return await call(lambda: study_results(host, study_id))
 
     @server.tool(description=describe("download_url"))
     async def download_url(study_id: str, path: str) -> dict[str, Any]:

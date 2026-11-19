@@ -430,6 +430,7 @@ down to **0.567**.
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` also kills solver processes that outlived their job. |
 | `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
+| `openreynolds serve` | Serve this machine's own studies over HTTP, for a program that would rather speak REST than MCP: `--bind`, `--port`, `--token`, `--local`. A local control surface, not the hosted API. See *Driving it from a program*. |
 | `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
@@ -534,6 +535,68 @@ says when it is your turn. Anything on stdin that is not an object this understa
 ignored rather than guessed at. Commands go the same way: `{"type": "user", "text":
 "/status"}`. An `approval` is answered with a `user` line saying `/yes`, `/no <reason>`
 or `/all`, and until it is answered the session waits.
+
+### Three faces, one set of capabilities
+
+Driving a session from a terminal is one way in; there are three others, and they are
+the same thing wearing different clothes. Nine capabilities -- start a study, read its
+state, say something to it, answer an approval, end it, list studies, read results,
+download a file, stage an upload -- are defined once in `openreynolds/mcp/core.py`
+against a `Host`, which is where the studies actually run. Each face is a thin adapter
+over it, so a state name, a condensed transcript row or a refusal reads the same
+whichever one you use, and none of them can drift from the others.
+
+**Python.** `import openreynolds` is a library, not a CLI to shell out to:
+
+```python
+import openreynolds
+
+study = openreynolds.start("drag on a sphere at Re=1000, SI units")
+for event in study.events():          # the state, and what is new since the last one
+    print(event["state"], event["stage"])
+print(study.results()["final_message"])
+print(study.file(f"/work/{study.study_id}/results.json").read_text())
+```
+
+`start`, `studies`, `results`, `fetch`, `upload`, `shutdown` and `Study` are the whole
+surface, and `openreynolds.__all__` is the promise. The import itself is cheap -- the
+names are fetched on first use, so reading `__version__` does not load the TUI or a
+model client. Studies run in your process, one thread each, with the configuration and
+the workspace a terminal session would use; `shutdown()` ends every live one as `End`
+does, and it runs at interpreter exit too, because a study left running holds a
+workspace that is being paid for.
+
+**HTTP.** `openreynolds serve` puts the same capabilities on a local port:
+
+    openreynolds serve                     # 127.0.0.1:8787, prints the token it generates
+    openreynolds serve --port 9000 --token "$MY_TOKEN" --local
+
+| Request | What it is |
+| --- | --- |
+| `POST /studies` | Start a study, or continue one: `{"task", "depth", "mode", "model", "effort", "notes", "solver", "study_id", "upload_ids"}`. Answers with the `session_id`. |
+| `GET /sessions/<session_id>?after_seq=0&wait=30` | What it is doing, and what was said since `after_seq`. Holds the call open for up to `wait` seconds (50 maximum) and returns the moment the study needs you. |
+| `POST /sessions/<session_id>/messages` | `{"text": "..."}` -- an answer, a requirement, a slash command. |
+| `POST /sessions/<session_id>/approvals` | `{"decision": "approve" \| "decline" \| "approve_all", "note": "..."}`. |
+| `DELETE /sessions/<session_id>` | End the session: jobs and workspace stopped, files kept. |
+| `GET /studies` / `GET /studies/<id>/results` | The studies here; one study's final message, `results.json`, reports, pictures and file list. |
+| `GET /studies/<id>/file?path=...` | One of its files, as bytes. A path outside the study's workspace is refused. |
+| `POST /uploads` | `{"path": "wing.stl"}` stages an input file by its path on this machine. |
+| `GET /` | Every route, what each one does, and the state names. |
+
+Every request carries the token: `Authorization: Bearer <token>`, or
+`X-Reynolds-Token`. It is printed at startup unless `--token` or
+`OPENREYNOLDS_SERVE_TOKEN` gives one, and there is no unauthenticated mode -- this
+process starts compute that costs money. It is the standard library's `http.server`, so
+there is no web framework in the dependencies and none is wanted.
+
+**This is a local control surface, not the hosted service's public API.** Every study it
+starts runs in that process, with this machine's configuration, workspace and
+`studies/` directory, and the files it hands back are this machine's files. It listens
+on localhost; a `--bind` that is not a loopback address is warned about, loudly.
+
+**MCP.** `openreynolds mcp` is the third face, for a calling agent rather than a
+program. See *Using it from Claude Code (MCP)*: the tools are these capabilities with
+the same arguments and the same answers.
 
 ## Configuration
 

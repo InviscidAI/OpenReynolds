@@ -49,6 +49,7 @@ from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
 from .terminal import tolerant_stdout
+from . import serve as serve_mod
 from . import sharing as sharing_mod
 from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
@@ -127,6 +128,20 @@ def _keep_stdout_for_json() -> None:
     # the middle of the NDJSON stream and a strict reader, resynchronising inside a
     # base64 blob, never recovered. The mode is the fact; the file descriptor is not.
     images.suppress()
+
+
+def quiet_stdout() -> None:
+    """Keep the caller's stdout clean: everything this module says moves to stderr.
+
+    The seam a library caller needs. A session run inside somebody else's process still
+    prints through this module's console at roughly fifteen call sites -- hard errors,
+    the joined-workspace warning, close-down -- and in a library that is the caller's
+    own stdout, which may be a protocol or a pipe. `mcp/local.py` kept stdout clean by
+    assigning `cli.console` from outside, which is a module global reached into from
+    another module and not something `openreynolds.sdk` should ask of anyone. This is
+    the same move with a name on it; `_keep_stdout_for_json` is its other caller.
+    """
+    _keep_stdout_for_json()
 
 
 def _is_refusal(exc: BackendError) -> bool:
@@ -1099,6 +1114,35 @@ def mcp_cmd(local_here: bool) -> None:
     from .mcp.local import serve
 
     serve()
+
+
+@main.command("serve")
+@click.option("--bind", default=serve_mod.DEFAULT_BIND, show_default=True,
+              help="Address to listen on. Anything but a loopback address exposes this "
+                   "machine's studies to whoever can reach it, and is warned about.")
+@click.option("--port", default=serve_mod.DEFAULT_PORT, show_default=True, type=int,
+              help="Port to listen on. 0 picks a free one and prints it.")
+@click.option("--token", default=None,
+              help="The token callers must send. Generated and printed when not given; "
+                   f"{serve_mod.TOKEN_ENV} sets it too.")
+@click.option("--local", "local_here", is_flag=True,
+              help="Run studies on this machine's Docker workspace instead of a Reynolds one.")
+def serve_cmd(bind: str, port: int, token: str | None, local_here: bool) -> None:
+    """Serve this machine's own studies over HTTP: a local control surface.
+
+    The same capabilities `openreynolds mcp` offers an MCP client, shaped as REST, for a
+    program that would rather speak HTTP: start a study, read its state with a cursor
+    and an optional long poll, send it a message, answer an approval, end it, list
+    studies, read results, download a file. `GET /` lists every route.
+
+    This is NOT the hosted Reynolds service's API. Every study runs in this process,
+    with this machine's configuration, workspace and studies/ directory, and its files
+    are this machine's files. The listener is on localhost and needs the token printed
+    at startup (Authorization: Bearer <token>) -- it can start compute that costs money.
+    """
+    if local_here:
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
+    serve_mod.serve(bind=bind, port=port, token=token)
 
 
 @main.command("sharing")
