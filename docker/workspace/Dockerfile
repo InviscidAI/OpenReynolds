@@ -49,10 +49,21 @@ ENV IMAGEIO_NO_INTERNET=1
 # --- CAD: one gmsh (CLI and module from the same pinned wheel) and build123d -------
 # The wheel's `gmsh` script says `#!/usr/bin/env python`, a name Ubuntu does not
 # have; pointed at python3 it is the real CLI, the same build as the module.
+#
+# build123d is pinned exactly for the reason the base is: a floor alone is not
+# reproducible. `build123d>=0.9` resolved to 0.9.x when this layer was written and to
+# 0.13.0 by November, whose OCP dropped `TopTools_IndexedMapOfShape` and changed what
+# `Bnd_Box.Get()` returns -- 18 of the suite's tests with it, and the CAD desk's
+# patch-export path among them. 0.11.1 is the version b123d_api.md is checked against.
+# OCP is pinned beside it because OCP is what actually broke and build123d 0.11.1 only
+# bounds it to `>=7.9,<8.0`, three releases wide.
 ARG GMSH_VERSION=4.15.2
+ARG BUILD123D_VERSION=0.11.1
+ARG OCP_VERSION=7.9.3.1.1
 RUN python3 -m pip install --no-cache-dir --break-system-packages "gmsh==${GMSH_VERSION}" \
     && sed -i '1s|.*|#!/usr/bin/python3|' /usr/local/bin/gmsh && chmod +x /usr/local/bin/gmsh \
-    && python3 -m pip install --no-cache-dir --break-system-packages 'build123d>=0.9'
+    && python3 -m pip install --no-cache-dir --break-system-packages \
+        "build123d==${BUILD123D_VERSION}" "cadquery-ocp-novtk==${OCP_VERSION}"
 
 # --- the agent's Python kernel ---------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
@@ -81,4 +92,5 @@ RUN chmod +x /usr/local/bin/reynolds-install-guard \
 
 # --- the checks --------------------------------------------------------------------
 COPY check.sh /tmp/check.sh
-RUN bash /tmp/check.sh "${GMSH_VERSION}" && rm -rf /tmp/check.sh /tmp/gate*
+RUN bash /tmp/check.sh "${GMSH_VERSION}" "${BUILD123D_VERSION}" "${OCP_VERSION}" \
+    && rm -rf /tmp/check.sh /tmp/gate*

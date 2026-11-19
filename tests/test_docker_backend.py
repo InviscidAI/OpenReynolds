@@ -7,6 +7,7 @@ pulled), and mesh rather than solve: blockMesh on the cavity tutorial.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -105,6 +106,25 @@ def test_the_default_image_is_the_one_this_repository_builds():
     assert DEFAULT_IMAGE == f"ghcr.io/inviscidai/reynolds-workspace:{version}"
     workflow = (REPO / ".github/workflows/workspace-image.yml").read_text()
     assert f'VERSION: "{version}"' in workflow
+
+
+def test_the_cad_wheels_are_pinned_exactly_and_the_image_checks_them():
+    """`build123d>=0.9` floated to 0.13.0 and its OCP moved the API this repo's CAD
+    code calls, so a floor here is a reproducibility defect, and a pin nothing asserts
+    is a comment. The versions in these two files have to be the same two versions."""
+    dockerfile = (REPO / "docker/workspace/Dockerfile").read_text(encoding="utf-8")
+    check = (REPO / "docker/workspace/check.sh").read_text(encoding="utf-8")
+    pins = dict(re.findall(r"^ARG (BUILD123D_VERSION|OCP_VERSION)=(\S+)$",
+                           dockerfile, re.MULTILINE))
+    assert set(pins) == {"BUILD123D_VERSION", "OCP_VERSION"}, pins
+    for version in pins.values():
+        assert re.fullmatch(r"[\d.]+", version), f"{version} is not an exact version"
+    assert 'install --no-cache-dir --break-system-packages \\\n' \
+        '        "build123d==${BUILD123D_VERSION}" "cadquery-ocp-novtk==${OCP_VERSION}"' \
+        in dockerfile
+    assert 'check.sh "${GMSH_VERSION}" "${BUILD123D_VERSION}" "${OCP_VERSION}"' in dockerfile
+    assert 'build123d.__version__ == sys.argv[1]' in check
+    assert 'version("cadquery-ocp-novtk") == sys.argv[2]' in check
 
 
 def test_the_default_image_is_the_published_one(tmp_path, monkeypatch):

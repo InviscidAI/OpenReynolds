@@ -1,8 +1,10 @@
 #!/bin/bash
 # What the image promises, each checked by doing it. Run as the last build step.
-# $1 is the gmsh version the build pinned.
+# $1, $2 and $3 are the gmsh, build123d and OCP versions the build pinned.
 set -eo pipefail
 GMSH_VERSION="$1"
+BUILD123D_VERSION="$2"
+OCP_VERSION="$3"
 SHIM=/usr/local/lib/libfoamnotadmin.so
 source /etc/foamd/shellinit.sh  # before -u: OpenFOAM's bashrc reads unset variables
 set -u
@@ -40,10 +42,20 @@ test "$cli" = "$GMSH_VERSION" && test "$mod" = "$GMSH_VERSION"
 gmsh -info | grep OpenCASCADE > /dev/null
 ! dpkg -s gmsh > /dev/null 2>&1
 
-echo "== CAD: a solid built, exported to STEP, re-imported and meshed"
-python3 - <<'PY'
+echo "== CAD: the pinned build123d and OCP, a solid built, exported, re-imported, meshed"
+python3 - "$BUILD123D_VERSION" "$OCP_VERSION" <<'PY'
+import sys
+from importlib.metadata import version
+
 import gmsh
+import build123d
 from build123d import Cylinder, export_step
+
+# The versions, not just that an import worked: `build123d>=0.9` floated to 0.13.0 and
+# took the CAD desk's patch export with it, and OCP is the half that actually broke.
+# b123d_api.md names the build123d version, so a bump here is a bump there.
+assert build123d.__version__ == sys.argv[1], f"build123d {build123d.__version__}"
+assert version("cadquery-ocp-novtk") == sys.argv[2], version("cadquery-ocp-novtk")
 export_step(Cylinder(5, 40) - Cylinder(4, 40), "/tmp/gate.step")
 gmsh.initialize(); gmsh.option.setNumber("General.Terminal", 0)
 shapes = gmsh.model.occ.importShapes("/tmp/gate.step"); gmsh.model.occ.synchronize()
