@@ -472,6 +472,15 @@ def test_lift_is_measured_towards_a_stated_axis_because_nothing_can_measure_it(
     assert sum(float(d) * float(l) for d, l in zip(drag, lift)) == pytest.approx(0, abs=1e-6)
     assert sum(float(c) ** 2 for c in lift) == pytest.approx(1.0, rel=1e-6)
     assert "up is --up x" in printed
+    # pitchAxis is the third axis taken POSITIVE, which is the sign convention Cm is
+    # quoted in. A cross product gets one of the two handednesses backwards -- it
+    # leaves |Cm| alone and flips its sign, so every pitching moment reads the wrong
+    # way round. OpenFOAM's own airFoil2D has dragDir (1 0 0), liftDir (0 1 0),
+    # pitchAxis (0 0 1), and `lift x drag` there is (0 0 -1).
+    pitch = re.search(r"pitchAxis       \(([^)]*)\)", control).group(1).split()
+    assert [float(c) for c in pitch] == [0.0, 0.0, 1.0]
+    assert sum(float(p) * float(d) for p, d in zip(pitch, drag)) == pytest.approx(0, abs=1e-6)
+    assert sum(float(p) * float(l) for p, l in zip(pitch, lift)) == pytest.approx(0, abs=1e-6)
 
 
 # -- the solvers, reported rather than assumed ------------------------------------

@@ -895,11 +895,28 @@ def force_objects(plan, thermo: dict, mach: float, opts) -> tuple[str, list[str]
 
 
 def _pitch_axis(drag, lift) -> tuple[float, float, float]:
-    """lift x drag: the remaining axis of the wind-axis triad, so the moment coefficient
-    is about the axis the lift and drag directions imply rather than a typed-in z."""
-    return (lift[1] * drag[2] - lift[2] * drag[1],
-            lift[2] * drag[0] - lift[0] * drag[2],
-            lift[0] * drag[1] - lift[1] * drag[0])
+    """The remaining axis, taken positive, which is the sign convention Cm is quoted in.
+
+    It is deliberately not a cross product. `lift x drag` and `drag x lift` differ by a
+    sign and OpenFOAM's own tutorials use one of each -- `airFoil2D` has dragDir
+    (1 0 0), liftDir (0 1 0), pitchAxis (0 0 1), which is `drag x lift`, while the 3D
+    motorBike-style cases have liftDir (0 0 1) and pitchAxis (0 1 0), which is
+    `lift x drag`. Both are really "the third coordinate axis, positive", because that
+    is what makes a nose-up moment positive in each layout, and a computed cross
+    product gets one of the two backwards -- which does not change |Cm| and does flip
+    its sign, so every pitching moment reads the wrong way round.
+
+    So: the global axis the wind-axis pair leans on least, pointed positive. For a
+    plane case with the flow along x and lift along y that is z; for the M6 layout
+    (z up, flow 3 degrees off x) it is y, which is the axis CMy is named after.
+    """
+    axes = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+    def leaning(axis) -> float:
+        return abs(sum(axis[i] * drag[i] for i in range(3))) + \
+            abs(sum(axis[i] * lift[i] for i in range(3)))
+
+    return min(axes, key=leaning)
 
 
 def control_dict(plan, thermo: dict, mach: float, opts, solver: str, study: str) -> tuple[str, list[str]]:
