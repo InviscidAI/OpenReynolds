@@ -563,3 +563,303 @@ def test_a_relative_out_is_relative_to_where_it_was_run(report, study, tmp_path,
     assert run(report, [str(study), "--out", "here.pdf"]) == 0
     assert (elsewhere / "here.pdf").is_file()
     assert not (study / "here.pdf").exists()
+
+
+# -- #139: a field is printed by its shape, never by its payload ----------------------
+
+FIELD_U_NONUNIFORM_HEAD = """\
+FoamFile { version 2.0; format ascii; class volVectorField; object U; }
+
+dimensions      [0 1 -1 0 0 0 0];
+internalField   nonuniform List<vector>
+139286
+(
+"""
+
+FIELD_U_NONUNIFORM_TAIL = """\
+)
+;
+
+boundaryField
+{
+    inlet   { type fixedValue; value uniform (1 0 0); }
+    outlet  { type zeroGradient; }
+    walls   { type noSlip; }
+}
+"""
+
+
+def _mapped_field(path: Path, entries: int = 139286) -> Path:
+    """A `0/U` as a mapped, restarted or `setFields`-ed start actually writes one.
+
+    The real file in `studies/20260906-091113-f9cf/.../cylRe100/0/U` is 3.8 MB of
+    `(1.03809 -0.974742 0)` on one logical line, so the fixture is the real shape at
+    the real size rather than a token of it: the defect was that nothing between the
+    file and the page had a width, and a small fixture is what hid it.
+    """
+    body = "\n".join(f"({1.03809 + i * 1e-6:.6g} -0.974742 0)" for i in range(entries))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(FIELD_U_NONUNIFORM_HEAD + body + "\n" + FIELD_U_NONUNIFORM_TAIL)
+    return path
+
+
+def test_a_nonuniform_initial_field_is_summarised_by_shape_not_printed(report, study):
+    """#139: `report.py` wrote a 1308-page PDF in 11 minutes on
+    `studies/20260906-091113-f9cf/.../cylRe100`, because `methods_lines` returned 117
+    lines of which three were 3.8 MB, 1.5 MB and 1.1 MB -- a `0/U` holding
+    `internalField nonuniform List<vector> 139286(...)` printed verbatim and folded at
+    100 characters a page-line, 1280 pages of it. 15 real cases in the corpus have a
+    `0/` file over 5,000 characters. What belongs on the page is the shape.
+    """
+    field = _mapped_field(study / "cylinder" / "0" / "U")
+    assert field.stat().st_size > 3_000_000, "the fixture is the real size on purpose"
+
+    shape = report.field_shape(field.read_text())
+    assert "volVectorField" in shape
+    assert "[0 1 -1 0 0 0 0]" in shape
+    assert "139,286 entries" in shape
+    assert "summarised, not printed" in shape
+    assert "1.03809" not in shape, "the payload is the case, not the methods section"
+
+    case, rule, others = report.choose_case(study, "")
+    lines, _ = report.methods_lines(case, rule, others, layers=False)
+    assert max(len(line) for line in lines) <= report.MAX_VALUE_CHARS, \
+        "no single value may be wider than the cap"
+    assert any("139,286 entries" in line for line in lines)
+    # And the boundary conditions, which are the point of reading the file, survive.
+    text = "\n".join(lines)
+    assert "noSlip" in text and "zeroGradient" in text
+
+
+def test_the_methods_section_page_count_is_capped_and_says_so(report, tmp_path):
+    """#139 again, from the other end: 1,280 methods pages took 11 minutes to draw, so
+    a cap on any one value is not enough on its own -- a `0/` with forty fields in it
+    would still get there. The section is bounded and the cut is stated."""
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    out = tmp_path / "capped.pdf"
+    notes: list[str] = []
+    with PdfPages(str(out)) as pdf:
+        pages = report.text_pages(pdf, "methods", [f"line {i}" for i in range(5000)],
+                                  max_pages=report.METHODS_MAX_PAGES, notes=notes)
+    assert pages == report.METHODS_MAX_PAGES
+    assert _page_count(out) == report.METHODS_MAX_PAGES
+    assert notes and "not printed" in notes[0] and "capped" in notes[0]
+
+
+# -- #145: the three places a person points this at ----------------------------------
+
+
+FORCE_COEFFS_WITH_A_ZERO = """\
+# Force coefficients
+# magUInf     : 1
+# lRef        : 1
+# Aref        : 0.1
+# rhoInf      : 1
+# Time          Cd              Cl              Cs
+1               1.2500          0.0100          3.2709e-20
+2               1.2400          0.0110          3.2711e-20
+3               1.2300          0.0105          3.2708e-20
+4               1.2350          0.0108          3.2709e-20
+"""
+
+
+@pytest.fixture
+def mirrored(tmp_path):
+    """A study laid out the way a mirrored one is on disk: `studies/<id>/` with
+    `files/<id>/<case>` under it, the `.reynolds/` in the case, the manifest's paths
+    relative to `files/<id>`, the pictures in `files/<id>/renders/`, and the case
+    decomposed over four ranks.
+
+    Written by hand rather than through `study_state.record`, because the layout is
+    the defect: `store.py` nests the mirror as `files/<study-id>/<case>` and the
+    manifest was written when the workspace study home was `files/<id>`.
+    """
+    study_id = "20260829-100024-2825"
+    top = tmp_path / "studies" / study_id
+    home = top / "files" / study_id
+    case = home / "case"
+    (case / ".reynolds").mkdir(parents=True)
+    for name, text in (
+        ("system/controlDict", CONTROL_DICT),
+        ("system/fvSchemes", FV_SCHEMES),
+        ("system/fvSolution", FV_SOLUTION),
+        ("constant/transportProperties", TRANSPORT),
+        ("constant/turbulenceProperties", TURBULENCE),
+        ("0/U", FIELD_U),
+        ("log.checkMesh", CHECK_MESH),
+        ("log.simpleFoam", SOLVER_LOG),
+        ("postProcessing/forceCoeffs1/0/coefficient.dat", FORCE_COEFFS_WITH_A_ZERO),
+    ):
+        target = case / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    for rank in range(4):
+        (case / f"processor{rank}" / "constant" / "polyMesh").mkdir(parents=True)
+
+    for name in ("mesh_z.png", "U_y_800.png", "residuals.png"):
+        _png(home / "renders" / name, name)
+    rows = [
+        {"kind": "mesh-full", "path": "renders/mesh_z.png", "case": "case",
+         "label": "mesh: the whole domain", "at": "2026-08-29T02:26:02Z"},
+        {"kind": "velocity", "path": "renders/U_y_800.png", "case": "case",
+         "label": "|U| on y, iter 800", "at": "2026-08-29T02:26:03Z"},
+        {"kind": "residuals", "path": "renders/residuals.png", "case": "case",
+         "label": "residuals", "at": "2026-08-29T02:26:04Z"},
+    ]
+    (case / ".reynolds" / "manifest.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    )
+    return top, home, case
+
+
+def _same(record: dict) -> tuple:
+    """What two invocations have to agree on: the numbers and the figures."""
+    return (
+        tuple(sorted((row["label"], row["text"]) for row in record["numbers"])),
+        tuple(sorted((row["rel"], row["exists"]) for row in record["figures"])),
+    )
+
+
+def test_every_entry_path_into_a_mirrored_study_gives_the_same_numbers_and_figures(
+    report, mirrored, tmp_path
+):
+    """#145: on the real `20260829-100024-2825`, no entry path gave both. The study top
+    gave `key numbers: none`, `no case directory`, four blank pages and a second
+    `.reynolds/manifest.jsonl` at the wrong level; `files/<id>` gave the numbers and
+    "No artifact is registered in this study's manifest" because the manifest is one
+    directory down; `files/<id>/case` gave the numbers and all six figures MISSING
+    while 30 PNGs sat one level up.
+    """
+    top, home, case = mirrored
+    records = {}
+    for label, target in (("top", top), ("home", home), ("case", case)):
+        side = tmp_path / f"{label}.json"
+        assert run(report, [str(target), "--out", str(tmp_path / f"{label}.pdf"),
+                            "--json", str(side)]) == 0
+        records[label] = json.loads(side.read_text())
+
+    for label, record in records.items():
+        assert record["numbers"], f"{label}: no key numbers"
+        assert [row["label"] for row in record["numbers"] if row["label"].startswith("Cd")], \
+            f"{label}: the coefficients were not read"
+        assert len(record["figures"]) == 3, f"{label}: {record['figures']}"
+        assert record["missing"] == [], f"{label}: {record['missing']}"
+        assert record["case"].endswith("case"), f"{label}: {record['case']}"
+        assert Path(record["state_root"]) == case
+        assert Path(record["artifact_base"]) == home
+
+    assert _same(records["top"]) == _same(records["home"]) == _same(records["case"])
+
+
+def test_no_manifest_is_written_into_a_directory_that_is_not_a_study(
+    report, mirrored, tmp_path, study_state
+):
+    """#145: pointed at the study top, this wrote a second `.reynolds/manifest.jsonl`
+    there and split the study's state from the real one in `files/<id>/case/.reynolds/`.
+    A document is still written wherever it is pointed; a study is not invented to
+    register it in."""
+    top, _home, case = mirrored
+    assert run(report, [str(top), "--out", str(tmp_path / "r.pdf")]) == 0
+    found = sorted(path for path in top.rglob(study_state.STATE_DIR) if path.is_dir())
+    assert found == [case / study_state.STATE_DIR], found
+
+    nowhere = tmp_path / "not-a-study"
+    nowhere.mkdir()
+    out = tmp_path / "nowhere.pdf"
+    side = tmp_path / "nowhere.json"
+    assert run(report, [str(nowhere), "--out", str(out), "--json", str(side)]) == 0
+    assert out.is_file(), "exit 0 whatever it finds, and the document is the deliverable"
+    assert not (nowhere / study_state.STATE_DIR).exists()
+    assert json.loads(side.read_text())["registered_as"] == ""
+
+
+def test_a_decomposed_case_counts_as_one_case(report, mirrored):
+    """#145: `is_case_dir` says yes to anything with a `constant/polyMesh`, so
+    `processor0..processor3` each counted, `discover_cases` returned 5 and
+    `choose_case` double-counted the study on top of that -- "the first of 6 cases
+    (case)" on this study, and "the first of 2 cases ()" on single-case
+    `20260906-091113-f9cf`. `--case processor2` would have been honoured and would have
+    described one rank's slice as the study's methods."""
+    _top, _home, case = mirrored
+    chosen, rule, others = report.choose_case(case, "")
+    assert chosen == case
+    assert "only case" in rule, rule
+    assert others == [], others
+    assert "4 processor*" in rule and "the same case" in rule, rule
+    assert "the first of" not in rule
+
+
+def test_a_negligible_coefficient_is_not_a_headline(report, mirrored, tmp_path):
+    """`Cs (last): 3.2709e-20` was printed as a cover key number to five figures. The
+    side force on a symmetric body is zero and that is the solver's round-off; quoting
+    round-off reads as a measurement of something."""
+    top, _home, _case = mirrored
+    side = tmp_path / "went-in.json"
+    assert run(report, [str(top), "--out", str(tmp_path / "r.pdf"), "--json", str(side)]) == 0
+    numbers = json.loads(side.read_text())["numbers"]
+    zeroed = [row for row in numbers if row["label"].startswith("Cs")]
+    assert zeroed, [row["label"] for row in numbers]
+    for row in zeroed:
+        assert row.get("negligible") is True, row
+        assert row["text"].startswith("0 --") and "negligible" in row["text"], row["text"]
+        assert "3.2709e-20" in row["text"], "the file's own value is still printed"
+    # Cd is a headline and Cs is not, so Cd comes first on the page.
+    labels = [row["label"] for row in numbers]
+    assert min(i for i, name in enumerate(labels) if name.startswith("Cd")) \
+        < min(i for i, name in enumerate(labels) if name.startswith("Cs"))
+    # And a final residual of 1e-4 is small but is the answer, not round-off.
+    residuals = [row for row in numbers if row["label"].startswith("final residual")]
+    assert residuals and not any(row.get("negligible") for row in residuals)
+
+
+def test_a_steady_runs_time_column_is_called_iterations(report, mirrored, tmp_path):
+    """`force record: 500 rows, t = 1 to 500` was printed for a steady `simpleFoam`
+    run whose `Time` column is an iteration count, not seconds. The predicate is
+    `openreynolds/convergence.py::is_steady_solver`; `spectra.py` was being fixed for
+    the same confusion in the same sweep."""
+    top, _home, case = mirrored
+    side = tmp_path / "went-in.json"
+    assert run(report, [str(top), "--out", str(tmp_path / "r.pdf"), "--json", str(side)]) == 0
+    record = json.loads(side.read_text())
+    rows = [row for row in record["numbers"] if row["label"] == "force record"]
+    assert rows, [row["label"] for row in record["numbers"]]
+    assert rows[0]["text"] == "4 rows, iterations 1 to 4", rows[0]["text"]
+    assert "t = " not in rows[0]["text"]
+    assert any("iterations, not seconds" in note for note in record["notes"]), record["notes"]
+
+    lines, _ = report.methods_lines(case, "the study's only case (case)", [], layers=False)
+    assert any("last iteration" in line for line in lines), \
+        [line for line in lines if "parsed" in line]
+    assert report.is_steady_solver("simpleFoam") and not report.is_steady_solver("pimpleFoam")
+
+
+def test_the_cover_says_how_many_of_its_numbers_a_stamp_backs(report, mirrored, tmp_path):
+    """The sweep behind #139 and #145 scanned every PNG in `studies/` and
+    `data/qa-runs/` and found not one carrying a `reynolds-claims` stamp: zero of all
+    of them. So on real data `tie_numbers` only ever reaches `unverified`, and a cover
+    page offering three outcomes while always printing the third reads as if it had
+    checked something. When nothing is stamp-backed the page says so."""
+    top, _home, _case = mirrored
+    side = tmp_path / "went-in.json"
+    assert run(report, [str(top), "--out", str(tmp_path / "r.pdf"), "--json", str(side)]) == 0
+    record = json.loads(side.read_text())
+    assert record["numbers"], "there are numbers on this cover"
+    assert not [row for row in record["numbers"] if row["state"] == "verified"]
+    backing = record["stamp_backing"]
+    assert backing.startswith(f"0 of {len(record['numbers'])}"), backing
+    assert "reynolds-claims" in backing and "nothing on this page is backed" in backing
+    assert backing in report.render_summary(record)
+
+
+def test_a_stamp_backed_number_is_counted_as_one(report, study, tmp_path):
+    """The other side of the same sentence: the study fixture does have a stamped
+    figure, and the count has to be the number of numbers a stamp stands behind rather
+    than a constant."""
+    side = tmp_path / "went-in.json"
+    assert run(report, [str(study), "--out", str(tmp_path / "r.pdf"),
+                        "--json", str(side)]) == 0
+    record = json.loads(side.read_text())
+    verified = [row for row in record["numbers"] if row["state"] == "verified"]
+    assert verified
+    assert record["stamp_backing"].startswith(f"{len(verified)} of {len(record['numbers'])}")
