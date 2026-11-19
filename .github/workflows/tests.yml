@@ -81,27 +81,29 @@ jobs:
 
       - name: Test in the image
         if: steps.pull.outputs.image
+        # The script goes in on stdin rather than as an argument: a login shell reads
+        # it the same way, and nothing in it has to survive two levels of quoting.
         run: |
-          docker run --rm -v "$PWD:/src" -w /src \
+          docker run --rm -i -v "$PWD:/src" -w /src \
             -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
-            "$IMAGE" bash -lc '
-              set -e
-              # A login shell is how the image puts OpenFOAM on PATH, and its profile
-              # leaves the shell in HOME rather than where -w pointed it.
-              cd /src
-              # The checkout is the runner user's and this container is root, so git
-              # refuses to read it; a test that asks what commit it is on gets "" and
-              # fails for a reason that is nothing to do with the image.
-              git config --global --add safe.directory /src
-              # `pip install` is refused in this image on purpose
-              # (docker/workspace/install-guard.sh shadows the console script); the pip
-              # module is not, and is what the image installs itself with. Only pytest
-              # is asked for beside the package: the rest of [dev] is already here, and
-              # naming pyvista would make the resolver put plain vtk over vtk-osmesa
-              # and take off-screen rendering with it.
-              python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
-              python3 -m pytest -q
-            '
+            "$IMAGE" bash -l <<'SH'
+          set -e
+          # A login shell is how the image puts OpenFOAM on PATH, and its profile
+          # leaves the shell in HOME rather than where -w pointed it.
+          cd /src
+          # The checkout belongs to the runner and this container is root, so git
+          # refuses to read it; a test that asks what commit it is on would get ""
+          # and fail for a reason that has nothing to do with the image.
+          git config --global --add safe.directory /src
+          # `pip install` is refused in this image on purpose
+          # (docker/workspace/install-guard.sh shadows the console script); the pip
+          # module is not, and is what the image installs itself with. Only pytest
+          # is asked for beside the package: the rest of [dev] is already here, and
+          # naming pyvista would make the resolver put plain vtk over vtk-osmesa and
+          # take off-screen rendering with it.
+          python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
+          python3 -m pytest -q
+          SH
 
       - name: The Docker backend against the real image
         # Whatever the suite in the container made of itself: these are other tests.
