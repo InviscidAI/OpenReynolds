@@ -368,6 +368,18 @@ def test_with_no_ids_it_takes_the_two_newest_and_says_which(studies):
     assert "nothing named" in result.output
 
 
+def test_one_id_named_is_that_one_against_the_newest_other(studies):
+    make_study(studies, "20260101-120000-aaaa")
+    make_study(studies, "20260103-120000-cccc")
+
+    result = run("20260101-120000-aaaa")
+
+    assert result.exit_code == 0, result.output
+    assert "one id named" in result.output
+    # Not itself, which is the newest: a study against itself is a page of zeroes.
+    assert "b = 20260103-120000-cccc" in result.output
+
+
 def test_one_study_is_not_two(studies):
     make_study(studies, "20260101-120000-aaaa")
 

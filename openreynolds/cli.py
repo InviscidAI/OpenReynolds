@@ -412,18 +412,23 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
     root = studies_dir or cfg.studies_dir
     chose = ""
     if not (left and right):
-        studies = list_studies(root)
-        if len(studies) < 2:
+        ids = [item.study_id for item in list_studies(root)]
+        if len(ids) < 2:
             console.print(
                 f"[red]compare needs two studies[/] and {root} has "
-                f"{len(studies)}; `openreynolds studies` lists them."
+                f"{len(ids)}; `openreynolds studies` lists them."
             )
             raise SystemExit(1)
         # Newest first, as every other --study-less subcommand reads that list, so
-        # `compare` with no arguments is the newest run against the one before it.
-        left = left or studies[1].study_id
-        right = right or studies[0].study_id
-        chose = f"nothing named, so: a = {left} (older), b = {right} (newest)"
+        # `compare` with nothing named is the newest run against the one before it.
+        if not left:
+            left, right = ids[1], ids[0]
+            chose = f"nothing named, so: a = {left} (older), b = {right} (newest)"
+        else:
+            # One id named is "this one against the latest", and the latest must not
+            # be the one named -- a study compared with itself is a page of zeroes.
+            right = next((one for one in ids if one != left), ids[0])
+            chose = f"one id named, so: a = {left}, b = {right} (the newest other study)"
 
     try:
         report = compare_studies(root, left, right)
