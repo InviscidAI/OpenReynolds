@@ -46,13 +46,17 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds two working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds three working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
-  `gmshToFoam` and retyped) and `body_in_box.py` (an OCC primitive cut out of a flow box,
-  meshed body-fitted with tetrahedra, converted and retyped). Both run `checkMesh` and end
-  with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked
-  at the top, and run it — the whole 2D or 3D meshing recipe, gotchas included, rather
-  than a page to reconstruct from memory.
+  `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
+  meshed body-fitted with tetrahedra, converted and retyped), and `free_surface.py` (a
+  two-phase VOF dam break: a tank, a water column set by `setFields` as geometry, an open
+  top, and a complete `interFoam` case -- `p_rgh`, `constant/g`, two phases with their own
+  `rho`/`nu` and `sigma`, `maxAlphaCo` as well as `maxCo` -- which is the one of the three
+  whose dictionaries are the real ones rather than stubs for the mesh tools). All three run
+  `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the
+  two numbers marked at the top, and run it — the whole 2D, 3D or two-phase recipe, gotchas
+  included, rather than a page to reconstruct from memory.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 
