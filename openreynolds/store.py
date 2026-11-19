@@ -73,6 +73,31 @@ class Session:
     """
     created_at: str = ""
     title: str = ""
+    project: str = ""
+    """What this study is part of, as the person groups their own work. Free text, set
+    by `openreynolds label --project` or `/project`, and empty on a study nobody has
+    grouped -- which is every study made before this field existed."""
+    tags: list[str] = field(default_factory=list)
+    """This study's own labels, lower-case and in the order they were added
+    (`tag_name`). Empty on a study nobody has tagged."""
+    cloned_from: str = ""
+    """The study this one was made from (`openreynolds clone`, `openreynolds rerun`).
+    Empty on a study started from nothing, which is most of them."""
+    ended_at: str = ""
+    """When a session on this study last closed down. Empty while no session has
+    finished one, and on studies made before it was recorded -- which is why a
+    duration is read from `runtime_s` and not from this minus `created_at`."""
+    runtime_s: float = 0.0
+    """Wall-clock seconds spent in sessions on this study, added up across resumes.
+
+    Not `ended_at - created_at`: a study resumed three days later spent minutes in
+    sessions and three days on a disk, and the second number is not what anybody
+    means by how long the study took. A session that crashed records nothing, so this
+    is a floor rather than an estimate."""
+    tokens: dict[str, int] = field(default_factory=dict)
+    """Tokens this study has sent, by class -- `input`, `cache_read`, `cache_write`,
+    `output` -- added up across sessions (`Loop.token_totals`, recorded at each
+    session's close). Empty on a study whose sessions all predate the record."""
     capture_seq: int = 0
     checkpoint: dict[str, Any] | None = None
     """What the last End established about the workspace's durable copy
@@ -120,7 +145,12 @@ class Store:
         jobs = {jid: JobRecord(**rec) for jid, rec in (raw.pop("jobs", {}) or {}).items()}
         self._solver_on_record = "solver" in raw
         known = {f.name for f in Session.__dataclass_fields__.values()}
-        self.session = Session(**{k: v for k, v in raw.items() if k in known}, jobs=jobs)
+        # A null on disk is dropped as an unknown key is, so the field's own default
+        # stands. Every field that means something by None defaults to None anyway,
+        # and the ones that do not -- `tags`, `tokens` -- are iterated by the dashboard
+        # and the filters, where a None from a hand-edited record would raise.
+        self.session = Session(
+            **{k: v for k, v in raw.items() if k in known and v is not None}, jobs=jobs)
 
     @property
     def recorded_solver(self) -> str | None:
@@ -130,6 +160,19 @@ class Store:
         if self.session.solver in ("openfoam", "felix"):
             return self.session.solver
         return "auto" if self._solver_on_record else None
+
+    def record_accounting(self, seconds: float, tokens: dict[str, int] | None = None) -> None:
+        """Add one session's wall-clock time and token usage to the study's totals.
+
+        Called once as a session closes, so what the study cost in time and tokens
+        survives the session that spent it. Added rather than replaced: a study is
+        resumed, and three sessions of twenty minutes is an hour of work.
+        """
+        self.session.runtime_s = round(self.session.runtime_s + max(float(seconds), 0.0), 1)
+        for name, count in (tokens or {}).items():
+            self.session.tokens[name] = self.session.tokens.get(name, 0) + int(count or 0)
+        self.session.ended_at = _now()
+        self.save()
 
     def save(self) -> None:
         payload = asdict(self.session)
@@ -213,15 +256,33 @@ class Store:
         return self.files_dir
 
 
-def list_studies(root: Path) -> list[Session]:
-    """Every local study, newest first."""
+def list_stores(root: Path) -> list[Store]:
+    """Every local study, newest first, as the Store each was read from.
+
+    Ids are timestamp-prefixed, so reverse name order is newest first. The Store
+    rather than the record, because a caller that then wants the study's own
+    directory, its `recorded_solver` or its transcript would otherwise build a second
+    one for each study it has just been handed.
+    """
     if not root.exists():
         return []
-    sessions = []
-    for child in sorted(root.iterdir(), reverse=True):
-        if (child / "session.json").is_file():
-            sessions.append(Store(root, child.name).session)
-    return sessions
+    return [Store(root, child.name) for child in sorted(root.iterdir(), reverse=True)
+            if (child / "session.json").is_file()]
+
+
+def list_studies(root: Path) -> list[Session]:
+    """Every local study, newest first."""
+    return [store.session for store in list_stores(root)]
+
+
+def tag_name(word: str) -> str:
+    """One tag as it is recorded: trimmed, lower-case, spaces as hyphens.
+
+    `Mesh Study`, `mesh-study` and `mesh study ` are one tag, because somebody
+    filtering by a tag they typed last week should not have to remember how they
+    capitalised it.
+    """
+    return "-".join(word.strip().lower().split())
 
 
 def _now() -> str:

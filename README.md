@@ -293,6 +293,13 @@ A workspace left running is still being used. It stops on its own when idle,
 and `openreynolds stop` ends it now, verifying the jobs are actually dead rather than
 assuming.
 
+What a study spent is recorded on the study: the wall-clock time its sessions took and
+the tokens they sent, by class, which `openreynolds dashboard` reports. Tokens and
+time for every study, and a dollar figure only where your own key paid your own vendor
+directly and that model's rate is known. A study on Reynolds' model is never priced in
+dollars here: what it uses is counted against your plan's studies, which is also how
+the service's own spending cap is reported (*Modes*, `/status`).
+
 ## The workspace
 
 The durable thing is the volume, not the container: an instance can be stopped and
@@ -428,12 +435,16 @@ down to **0.567**.
 | `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
 | `--solver auto\|openfoam\|felix` | Which solver the study runs: OpenFOAM on the workspace's CPU cores, or Felix, an incompressible GPU solver whose solves run on cloud GPUs (hosted workspace only). `auto`, the default, chooses it from your first message, by a request of its own before the agent's first turn, and the workspace -- of that solver's kind -- starts only then; the reason is shown to you and told to the agent, and a request that cannot choose leaves the study on OpenFOAM, said so. Fixed for the whole study; a resumed study keeps its solver and ignores a different flag. `OPENREYNOLDS_SOLVER` sets it when the flag is not given. |
 | `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
-| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies`, `doctor` or `compare` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
+| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies`, `dashboard`, `doctor` or `compare` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` approves a short code in a browser, which is the device-code flow and the only way in for a Google account. |
 | `openreynolds logout` | Sign this machine out: its service key is revoked on the service and removed from the config, and traces queued to share are deleted unsent. If the service cannot be reached nothing changes; `--here-only` removes the key from this machine regardless. Studies on the service stay. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
 | `openreynolds doctor` | Check every surface: settings, workspace, model, capture, sharing, toolbox, terminal, video. Read-only on the service's workspace; with `--local` it pulls the image and starts the container to run `blockMesh` in it. `--json` answers in one object. |
-| `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
+| `openreynolds studies` | List the studies on this machine, newest first. `--project <name>`, `--tag <tag>` (repeatable, and every tag given must be on the study), `--text <words>` (over the title and the project) and `--state new|finished|unknown` narrow it, and they combine. `--json` answers in one object. |
+| `openreynolds dashboard` | Every study on one screen, newest first: what it is called and filed under, what became of it, how many of its jobs ran and how many were last seen running, how long its sessions took and how many tokens they sent. Takes the same filters as `studies`. It reads `./studies` and starts nothing -- a study whose job rows were last written `running` is reported `unknown`, because settling it means asking the workspace service and a listing does not start a machine. Time and tokens for every study; a dollar figure only where your own key paid your own vendor. `--json` answers in one object. |
+| `openreynolds label` | File a study under a project and tag it: `--project <name>` (an empty value clears it), `--tag`, `--untag`, both repeatable, `--study` to pick one other than the newest. Tags are lower-cased and spaces become hyphens, so a tag typed two ways is one tag. `/project` and `/tag` do the same from inside a session. |
+| `openreynolds clone` | Copy a past study's setup and files into a new study, without its conversation: the project and tags, the title, the solver, the model, the provider and its endpoint, the session mode, and everything of it already on this machine. Not the transcript, the instance, the job rows or the accounting. Nothing is started and nothing is spent. |
+| `openreynolds rerun` | A clone, plus the first thing you said in the old study written in as the first thing you say in the new one, word for word. It is left unanswered, so `openreynolds --study <the new id>` answers it as any resume answers an unanswered message. A study whose transcript holds nothing you said is refused by name rather than reconstructed. |
 | `openreynolds compare <a> <b>` | Put two local studies side by side: identity, every force and coefficient series, how each run ended and what its residuals were doing, the `checkMesh` metrics, the numbers stamped into the figures, and what each study produced that the other did not. A quantity only one study has is reported as missing rather than left out, and two claims under different unit labels as not comparable rather than converted. No session and no model: it reads `./studies`. With no ids it takes the two newest and says which. `--studies-dir` reads studies elsewhere; `--json` answers in one object. |
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
 | `openreynolds pull` | Bring this study's files down to this machine. |
@@ -447,7 +458,8 @@ down to **0.567**.
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
-work, `/mode`, `/model` and `/effort` change how the session runs, and anything else you
+work, `/project <name>` and `/tag <tag ...>` file the study where you will find it
+again, `/mode`, `/model` and `/effort` change how the session runs, and anything else you
 type reaches the model at its next step -- a receipt says so at once, and an agent
 holding a wait reads it within a second -- so you can steer a run without stopping it. `/help` has the rest; see *In a session: commands, help and
 completion*.
@@ -488,6 +500,7 @@ Two questions come before a session, and both answer as data:
 
     openreynolds doctor --json     # {"ok": …, "failed": […], "checks": [{"check", "ok", "detail"}, …]}
     openreynolds studies --json    # {"dir": …, "studies": [{"study_id", "title", "instance_id", "model", …}, …]}
+    openreynolds dashboard --json  # the same rows, with "project", "tags", "state", "runtime_s", "tokens", "cost_usd"
     openreynolds compare --json    # {"studies": {"a", "b"}, "forces", "convergence", "mesh", "claims", "artifacts", "summary"}
 
 Straight to stdout, one object, no markup, and `doctor`'s exit code is unchanged for a
