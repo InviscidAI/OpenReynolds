@@ -44,6 +44,30 @@ Each of those four is a test in `tests/test_toolbox_grid.py`, alongside the work
 example from NASA Glenn's spatial-convergence tutorial, which is the published case
 the arithmetic in here is checked against rather than against itself.
 
+why there are guards on the inputs and not only on the arithmetic
+
+Those four are all read off the values. Three more are read off where the values came
+from, and they are here because the script met a real study and printed
+`Cd = 0.27556258 +/- 3.240` with a Richardson limit of -0.80441086 and a GCI of
+1175.75% as the answer, on a pair of cases that happened to be in one directory
+(issue #142):
+
+- **A refinement ratio below 1.3.** Celik's relation and Roache's factors are
+  calibrated on r >= 1.3. At the measured r = 1.1302, `r**p - 1` is 0.277, and a
+  difference of 0.3 in Cd divided by that is the 1175%. See `MIN_RATIO`.
+- **A value that is not a converged value.** The quantity there was the last row of a
+  four-row history -- a run that aborted during its startup transient. See
+  `MIN_HISTORY_ROWS`.
+- **An extrapolation whose sign no input shares.** A negative drag coefficient is not a
+  limit. A value outside the range of every number it was formed from disqualifies
+  itself.
+
+Each is reported as the measurement it is -- the ratio, the row count, the sign change
+-- with the ladder and the values still printed, and the band withheld. A band of
++/- 3.240 on 0.2756 is worse than no band, because it looks like an answer. The
+arithmetic those guards sit in front of is untouched: a well-posed ladder gets exactly
+the numbers it got before.
+
 why the safety factor is in the output
 
 A GCI is a factor times a relative error. The conventional factors are 1.25 where
@@ -64,11 +88,14 @@ was used, because a detected 2D and a declared 2D are not equally strong.
 where the numbers come from
 
 Cell counts are `checkMesh` output through `mesh_digest.parse`. Quantities are
-`postProcessing/*.dat` through `results.parse_dat`, with a restarted series stitched
-back into one history the way `results.py` does it, so half a run's coefficients
-cannot go missing. Every number in the report is printed beside the case, the file and
-the column it came from. A grid ladder is the one place where reading the wrong
-column on one of three cases produces a plausible answer.
+`postProcessing/*.dat` through `results.read_history`, which is the sibling that
+stitches a restarted series back into one history and drops the rows a later run
+superseded, so neither half a run's coefficients nor an abandoned run's tail reaches
+the ladder. Doing that grouping here instead was issue #146 and 1.5% on a real case.
+Every number in the report is printed beside the case, the series, the file and the
+column it came from. A grid ladder is the one place where reading the wrong column on
+one of three cases produces a plausible answer -- and where one column name sits in
+two series, `--quantity series:column` says which.
 
 This script runs no solver, writes no case and applies no threshold: whether a 3% band
 is acceptable depends on what the number is for. The exit code is 0 whatever it finds,
@@ -82,6 +109,7 @@ the rest of the answer rests on.
     python3 grid.py --spacing 1:0.97050 --spacing 2:0.96854 --spacing 4:0.96178
     python3 grid.py coarse medium fine --quantity Cd --dim auto
     python3 grid.py coarse fine --quantity Cd --dim 3 --safety-factor 3.0
+    python3 grid.py L1 L2 L3 --quantity torqueOuter/moment.dat:viscous_z --dim auto
     python3 grid.py c1 c2 c3 --quantity Cd --dim auto --tail 200 --json gci.json --png gci.png
 """
 
@@ -127,6 +155,29 @@ real order and the formulas overflow somewhere past it. The negative half is sea
 on purpose: a p of -2.3 is one of the outcomes this file exists to report, and a solver
 that only looked at positive p would come back with "no order found" and hide the most
 diagnostic thing the triplet had to say."""
+
+MIN_RATIO = 1.3
+"""The smallest refinement ratio these formulas mean anything on.
+
+Celik et al. 2008 -- the paper `_order_residual` cites for the observed-order relation
+-- asks for r >= 1.3, and Roache's safety factors are calibrated on the same
+assumption. Below it the order solve is ill-conditioned and `r**p - 1` is small enough
+that the GCI reports the vanishing denominator rather than an uncertainty.
+
+This is here because of issue #142: on a real pair at r = 1.1302, `r**p - 1 = 0.277`
+turned a difference of 0.2996 in Cd into a band of +/- 3.240 on a value of 0.2756, and
+a GCI of 1175.75% was printed as the answer. That number is arithmetic, not doubt."""
+
+MIN_HISTORY_ROWS = 10
+"""Fewer rows than this in a quantity's history and it is a run that was aborted, not
+one that settled.
+
+Also issue #142. The `case2` of that ladder had a four-row history, all of it startup
+transient, and its last row was quoted as a converged Cd. The two converged runs in the
+same corpus have 3,006 and 8,586 rows, so ten separates an aborted run from a real one
+by two orders of magnitude on either side. That is all it does: it detects a run that
+never ran. It is not a convergence test, and a long history is not evidence of
+convergence -- `--tail` and the solver log are where that question is asked."""
 
 
 # -- the arithmetic ------------------------------------------------------------
@@ -332,6 +383,7 @@ def _two_grid(fine: dict[str, Any], coarse: dict[str, Any], formal_order: float,
     result["gci_fine_percent"] = gci_percent(
         fine["value"], coarse["value"], ratio, formal_order, safety)
     result.update(_band(result))
+    result.update(_disqualify(result, [fine, coarse]))
     return result
 
 
@@ -444,6 +496,8 @@ def _triplet(fine: dict[str, Any], medium: dict[str, Any], coarse: dict[str, Any
     fine_gci, coarse_gci = result["gci_fine_percent"], result["gci_coarse_percent"]
     if fine_gci and coarse_gci:
         result["asymptotic_ratio"] = coarse_gci / (r21**used * fine_gci)
+
+    result.update(_disqualify(result, [fine, medium, coarse]))
     return result
 
 
@@ -483,6 +537,85 @@ def _band(result: dict[str, Any]) -> dict[str, Any]:
             "the difference between the two finest grids: the fine value is zero, so a "
             "relative GCI has nothing to be relative to"
         ),
+    }
+
+
+def _disqualify(result: dict[str, Any], grids: list[dict[str, Any]]) -> dict[str, Any]:
+    """Facts about the inputs that make the band meaningless, each with its number.
+
+    The formulas above are domain-limited and nothing was checking the domain. Issue
+    #142: two real cases of one study were handed over as a ladder, and out came
+    `Cd = 0.27556258 +/- 3.240` with an extrapolated -0.80441086 and a GCI of 1175.75%,
+    printed in the report's "the answer" block, which is the part that gets quoted.
+    Three disqualifying facts were in the script's own hands and all three were
+    ignored: a refinement ratio of 1.1302, a value taken from a four-row history, and
+    an extrapolated drag coefficient whose sign no input shares.
+
+    So the inputs, the refinement and the reason are still printed -- a reader has to
+    be able to check the refusal -- and the extrapolation, the GCI and the band are
+    not. A band of +/- 3.240 on 0.2756 is worse than no band, because it looks like an
+    answer; the refusal is the answer. Each reason states the measurement it is read
+    off rather than only that something was wrong, because "r is too low" is an opinion
+    and "r = 1.1302, below 1.3" is a fact the reader can act on.
+
+    Nothing here touches the arithmetic. A ladder that passes these checks gets exactly
+    the numbers it got before, which is why the published worked example is unchanged.
+    """
+    reasons: list[str] = []
+    order = result.get("order_used") or FORMAL_ORDER
+
+    # A ratio of exactly 1.3 arrives as 1.2999999999999998, because it is a quotient of
+    # two h values that are themselves quotients. The slack is there so the threshold
+    # admits the ratio it is calibrated on rather than the next float below it.
+    floor = MIN_RATIO * (1.0 - 1e-9)
+    low = [result[key] for key in ("ratio_21", "ratio_32")
+           if result.get(key) is not None and result[key] < floor]
+    if low:
+        worst = min(low)
+        reasons.append(
+            f"the refinement ratio is {', '.join(f'{r:.4f}' for r in low)}, below the "
+            f"{MIN_RATIO:g} that Roache's factors and Celik's order relation are "
+            f"calibrated on. At r = {worst:.4f} and p = {order:g} the denominator "
+            f"r**p - 1 is {worst**order - 1.0:.4g}, so what a GCI would report here is "
+            "that denominator vanishing and not an uncertainty."
+        )
+
+    for item in grids:
+        rows = item.get("rows")
+        if rows is None or rows >= MIN_HISTORY_ROWS:
+            continue
+        reasons.append(
+            f"{item['label']}'s value is the mean of the last "
+            f"{item.get('rows_averaged', 1)} of {rows} rows of its history. A run with "
+            f"{rows} rows written has not settled -- it is startup transient, or a run "
+            f"that stopped -- and anything under {MIN_HISTORY_ROWS} rows is not a "
+            "converged value and cannot carry a grid-convergence claim."
+        )
+
+    extrapolated = result.get("extrapolated")
+    values = [item["value"] for item in grids]
+    if extrapolated is not None and (
+            (all(v > 0.0 for v in values) and extrapolated < 0.0)
+            or (all(v < 0.0 for v in values) and extrapolated > 0.0)):
+        reasons.append(
+            f"the extrapolation is {extrapolated:.8g}, and its sign differs from every "
+            f"value it was formed from ({', '.join(f'{v:.6g}' for v in values)}). A "
+            "limit on the far side of zero from the whole ladder -- a negative drag "
+            "coefficient out of a ladder of positive ones -- is a result that "
+            "disqualifies itself rather than one to quote."
+        )
+
+    if not reasons:
+        return {}
+    return {
+        "disqualified": reasons,
+        "extrapolated": None,
+        "gci_fine_percent": None,
+        "gci_coarse_percent": None,
+        "asymptotic_ratio": None,
+        "band": None,
+        "band_source": None,
+        "order_usable": False,
     }
 
 
@@ -543,11 +676,26 @@ def dimension_from_case(case: Path) -> tuple[int | None, str]:
 def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, Any]:
     """One quantity out of a case's `postProcessing`, with its provenance.
 
-    `results.parse_dat` does the reading, including keeping the header's `# key : value`
-    lines out of the column names, and `results.series_name`/`written_order` stitch a
-    restarted series back into one history -- a run restarted at 0.2 writes
-    `forceCoeffs_0.2.dat` beside `forceCoeffs.dat`, and reading only one of them is how
-    half a ladder's rungs end up quoting different parts of their runs.
+    `results.read_history` does the reading and the stitching, which is the whole point
+    of calling it rather than concatenating the files here. A run restarted at 0.2
+    writes `forceCoeffs_0.2.dat` beside `forceCoeffs.dat`, and reading only one of them
+    is how half a ladder's rungs end up quoting different parts of their runs -- but
+    merging all of them is worse, because a run restarted from an earlier write leaves
+    rows in the old file from the run that was abandoned. `read_history` drops those and
+    names each dropped block in `superseded`; it is the reader written after a tail mean
+    was quoted off an abandoned run, and `compare.py` and `report.py` both go through it.
+
+    This file used to do its own grouping, which is issue #146: on a real case it merged
+    783 superseded rows and reported 9,369 rows where `read_history` gives 8,586, giving
+    1.21093 at `--tail 1000` where the right answer is 1.20803, and 1.5% out on another.
+    A 1.5% error in the value is an order larger than the band this script exists to
+    produce, and the row count it printed as provenance was wrong too.
+
+    `quantity` may name the series as well as the column, as `SERIES:COLUMN` --
+    `torqueOuter/moment.dat:viscous_z`. It has to be sayable: every column of a `forces`
+    function object appears in both `force.dat` and `moment.dat`, so a bare column name
+    is ambiguous on every case that logs forces, and before #146 the refusal advised a
+    "more specific --quantity" in a syntax that did not exist.
 
     `tail` averages the last n rows. The default is 1, the last row, which is the
     answer for a converged steady case. For a shedding case the last row is whichever
@@ -561,52 +709,83 @@ def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, An
     if not base.is_dir():
         return {"value": None, "note": f"no {base} in this case"}
 
-    series: dict[tuple[str, str], list[Path]] = {}
+    wanted, column = split_quantity(quantity)
+
+    series: dict[str, list[Path]] = {}
     for dat in sorted(base.rglob("*.dat")):
         if not dat.is_file():
             continue
+        parts = dat.relative_to(base).parts
         name, _ = results.series_name(dat)
-        series.setdefault((str(dat.parent.parent.relative_to(base)), name), []).append(dat)
+        function = "/".join(parts[:-2] if len(parts) >= 3 else parts[:-1])
+        series.setdefault(f"{function}/{name}" if function else name, []).append(dat)
 
-    found = []
+    found: list[dict[str, Any]] = []
+    columns_seen: set[str] = set()
+    matched_series: list[str] = []
     for key in sorted(series):
-        paths = sorted(series[key], key=results.written_order)
-        columns: list[str] = []
-        rows: list[list[float]] = []
-        for path in paths:
-            parsed = results.parse_dat(path.read_text(errors="replace"))
-            if not parsed["rows"]:
-                continue
-            if not columns:
-                columns = parsed["columns"]
-            if len(parsed["columns"]) == len(columns):
-                rows.extend(parsed["rows"])
-        index = _column_index(columns, quantity)
+        history = results.read_history(sorted(series[key], key=results.written_order))
+        columns, rows = history["columns"], history["rows"]
+        columns_seen.update(columns)
+        if wanted is not None and not _series_matches(key, wanted):
+            continue
+        matched_series.append(key)
+        index = _column_index(columns, column)
         if index is None or not rows:
             continue
         taken = rows[-max(1, tail):]
         found.append({
             "value": sum(row[index] for row in taken) / len(taken),
+            "series": key,
             "column": columns[index],
             "column_index": index,
-            "files": [str(p) for p in paths],
+            "files": history["sources"],
             "rows": len(rows),
             "rows_averaged": len(taken),
+            "superseded": history["superseded"],
         })
 
     if not found:
-        listed = sorted({c for key in series for c in
-                         results.parse_dat(series[key][0].read_text(errors="replace"))["columns"]})
+        if wanted is not None and not matched_series:
+            return {"value": None, "note": (
+                f"no series under {base} matches {wanted!r}; --quantity takes "
+                f"SERIES:COLUMN and the series here are "
+                + (", ".join(sorted(series)) if series else "none"))}
         return {"value": None, "note": (
-            f"no column called {quantity!r} under {base}; the columns there are "
-            + (", ".join(listed) if listed else "none that parsed"))}
+            f"no column called {column!r} under {base}; the columns there are "
+            + (", ".join(sorted(columns_seen)) if columns_seen else "none that parsed"))}
     if len(found) > 1:
-        files = "; ".join(f["files"][0] for f in found)
+        candidates = [f"{item['series']}:{item['column']}" for item in found]
         return {"value": None, "note": (
-            f"{quantity!r} is a column in more than one series ({files}); name the one "
-            "you mean with a more specific --quantity, since picking for you is picking "
-            "which number the whole study is about")}
+            f"{column!r} is a column in {len(found)} series here; name the one you mean "
+            f"as SERIES:COLUMN -- --quantity {candidates[0]} -- since picking for you is "
+            "picking which number the whole study is about. The candidates are "
+            + ", ".join(candidates))}
     return found[0]
+
+
+def split_quantity(quantity: str) -> tuple[str | None, str]:
+    """`torqueOuter/moment.dat:viscous_z` as its series and its column.
+
+    Issue #146: `--quantity` could only name a column, every column of a `forces`
+    function object is in both `force.dat` and `moment.dat`, and so the case-reading
+    path of this script was unreachable on any case that logged forces -- it refused,
+    correctly, and then asked for a syntax that did not exist. This is that syntax. No
+    colon means the whole string is the column, which is what every existing call is.
+    """
+    series, separator, column = quantity.rpartition(":")
+    if not separator:
+        return None, quantity
+    return series, column
+
+
+def _series_matches(key: str, wanted: str) -> bool:
+    """Whether a series key is the one asked for: a case-insensitive substring, so
+    `forces`, `forces/moment.dat` and `moment.dat` all name the same series and a
+    partial name that still fits two series is answered by listing both rather than by
+    picking. Backslashes are normalised because a reader copying a series out of the
+    report on Windows copies them."""
+    return wanted.lower().replace("\\", "/") in key.lower()
 
 
 def _column_index(columns: list[str], quantity: str) -> int | None:
@@ -679,6 +858,16 @@ def report(analysis: dict[str, Any], provenance: list[str]) -> str:
         elif not primary.get("order_usable"):
             lines.append("  the band is an estimate: see the note below, the order it "
                          "rests on was not measured")
+    elif primary.get("disqualified"):
+        label = analysis.get("quantity") or "value"
+        lines.append(f"  no band on {label}: the inputs above disqualify this estimate, "
+                     "and the reasons are measurements you can check")
+        for reason in primary["disqualified"]:
+            for position, chunk in enumerate(_wrap(reason, 82)):
+                lines.append(f"    {'- ' if position == 0 else '  '}{chunk}")
+        lines.append(f"  the values themselves stand: "
+                     + ", ".join(f"{g['label']} = {g['value']:.8g}"
+                                 for g in analysis["grids"]))
     else:
         lines.append("  no value with an uncertainty: see the note below")
 
@@ -775,11 +964,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="\n".join(__doc__.splitlines()[-6:]),
+        epilog="\n".join(__doc__.splitlines()[-7:]),
     )
     parser.add_argument("cases", nargs="*", type=Path,
                         help="two or more case directories, in any order")
-    parser.add_argument("--quantity", help="the column name in postProcessing/*.dat")
+    parser.add_argument("--quantity", metavar="[SERIES:]COLUMN",
+                        help="the column in postProcessing/*.dat, optionally qualified "
+                             "by its series: Cd, or torqueOuter/moment.dat:viscous_z "
+                             "where one column name appears in more than one series")
     parser.add_argument("--tail", type=int, default=1,
                         help="average the last n rows of the series (default 1, the last row)")
     parser.add_argument("--grid", action="append", default=[], metavar="CELLS:VALUE",
@@ -800,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
 
     grids: list[dict[str, Any]] = []
     provenance: list[str] = []
-    quantity = opts.quantity or "value"
+    quantity = split_quantity(opts.quantity)[1] if opts.quantity else "value"
 
     for h, value in _explicit(opts.spacing, "--spacing"):
         grids.append({"h": h, "value": value, "label": f"h={h:g}"})
@@ -836,14 +1028,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{case}: {measured['note']}", file=sys.stderr)
             continue
         grids.append({"h": representative_spacing(count, dimension),
-                      "value": measured["value"], "label": case.name})
+                      "value": measured["value"], "label": case.name,
+                      # Carried so `_disqualify` can see a four-row history. The band is
+                      # a claim about the quantity, and how many rows the quantity is a
+                      # mean of is part of whether there is a quantity at all (#142).
+                      "rows": measured["rows"],
+                      "rows_averaged": measured["rows_averaged"]})
         provenance.append(
             f"{case.name}: {count:,} cells from {where}; {opts.quantity} = "
             f"{measured['value']:.8g} from column {measured['column']!r} "
-            f"(index {measured['column_index']}) of {measured['files'][0]}"
+            f"(index {measured['column_index']}) of series {measured['series']}, "
+            f"{measured['files'][0]}"
             + (f" and {len(measured['files']) - 1} more file(s) of the same series"
                if len(measured["files"]) > 1 else "")
             + f", mean of the last {measured['rows_averaged']} of {measured['rows']} rows"
+            + (f" ({len(measured['superseded'])} block(s) of rows dropped as superseded "
+               "by a later restart)" if measured["superseded"] else "")
             + f"; h = N**(-1/{dimension}), {route}")
 
     if len(grids) < 2:

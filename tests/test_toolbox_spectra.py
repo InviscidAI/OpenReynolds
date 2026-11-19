@@ -433,3 +433,270 @@ def test_the_report_prints_the_number_behind_every_judgement():
     assert "x over the spectrum's median" in found["basis"] or "median" in found["basis"]
     assert f"{found['peak']['prominence']:.4g}" in found["basis"]
     assert "half-record standard deviations" in found["settling"]["basis"]
+
+
+# -- the time axis -------------------------------------------------------------
+#
+# Everything below this line exists because of one incident. `spectra.py` landed with
+# the suite above green and was then pointed at its first real case: a cylinder at
+# Re = 100 whose `system/controlDict` says `application simpleFoam`, `deltaT 1`,
+# `endTime 500`. It reported `shedding: periodic` at 0.0133 Hz, a period of 75, 6.66
+# cycles in the record and `St = 0.00133385` -- against the 0.164 that case sheds at,
+# which `benchmarks/moving_mesh/grade.py` holds a transient run to within 2% of --
+# and `settling: settled -- stationary from index 0` with a mean of 0.00177695 on a
+# series whose last value is -0.107. The axis was an iteration count, the peak was in
+# bin 3 of 101, and the halves test had been passed by a record that rises and then
+# falls. Each test here holds one of those three down.
+
+
+def write_case_dicts(case: Path, application: str = "simpleFoam", ddt: str = "Euler",
+                     delta_t: str = "1", end_time: str = "500") -> Path:
+    """The two dictionaries the axis is read from, in OpenFOAM's layout."""
+    system = case / "system"
+    system.mkdir(parents=True, exist_ok=True)
+    (system / "controlDict").write_text(
+        "FoamFile\n{\n    version 2;\n    object controlDict;\n}\n\n"
+        f"application     {application};\n\nstartFrom       latestTime;\n\n"
+        f"deltaT          {delta_t};\n\nendTime         {end_time};\n\n"
+        "writeControl    timeStep;\n\nwriteInterval   1;\n", encoding="utf-8")
+    (system / "fvSchemes").write_text(
+        "FoamFile\n{\n    version 2;\n    object fvSchemes;\n}\n\n"
+        f"ddtSchemes\n{{\n    default         {ddt};\n}}\n\n"
+        "gradSchemes\n{\n    default         Gauss linear;\n}\n", encoding="utf-8")
+    return case
+
+
+def iteration_history(samples: int = 500,
+                      period: float = 25.0) -> tuple[np.ndarray, np.ndarray]:
+    """A series on an iteration axis that oscillates hard enough to be called
+    `periodic`, so that what the axis suppresses is visible rather than absent."""
+    iterations = np.arange(1.0, samples + 1.0)
+    return iterations, np.sin(2.0 * np.pi * iterations / period)
+
+
+def test_a_steady_case_refuses_the_frequency_period_strouhal_and_cycle_count(tmp_path):
+    """The incident itself: `application simpleFoam` means the Time column counts
+    SIMPLE iterations, and a frequency, a period, a Strouhal number and a count of
+    cycles in the record are all meaningless on that axis. The script printed all
+    four, to six figures, and the Strouhal it printed was a factor of 100 off the
+    0.164 the case sheds at.
+
+    `openreynolds/convergence.py:99-104` already knew which solvers are steady ones
+    and nothing here asked it. The series itself is still reported -- the spectrum of
+    an iteration history says something about how the solve wandered -- so this
+    checks that the four numbers are refused BY NAME and that the record is not
+    quietly dropped with them."""
+    case = write_case_dicts(tmp_path / "case")
+    iterations, values = iteration_history()
+    write_dat(case / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              iterations, {"Cd": np.full(iterations.size, 1.2), "Cl": values})
+
+    found = spectra.analyse(case, column="Cl", length=0.1, speed=1.0)
+    assert found["axis"]["kind"] == "iterations"
+    assert found["axis"]["assumed"] is False
+    assert "simpleFoam" in found["axis"]["basis"]
+    assert found["strouhal"] is None, "St = f L / U has no f on an iteration axis"
+
+    text = spectra.report(found)
+    assert "time axis: iterations" in text
+    for refused in ("frequency", "period", "cycles in record"):
+        line = next(row for row in text.splitlines() if row.strip().startswith(refused))
+        assert "not reported" in line, line
+        assert "iterations" in line, line
+    assert "strouhal: not computed" in text
+    assert "iterations" in text.split("strouhal: not computed")[1].split("\n")[0]
+    assert "Hz" not in text, "no number is in Hz when the axis is not in seconds"
+    # Still a report about a series, not a refusal to read one.
+    assert f"record: {iterations.size} samples" in text
+    assert "tallest bin       bin" in text
+    assert "prominence" in text
+
+
+def test_a_steadystate_ddt_scheme_is_the_second_signal_for_an_iteration_axis(tmp_path):
+    """The predicate copied from `convergence.py` is careful about what it claims: a
+    `foamRun` with a `steadyState` ddt scheme cannot be told from its name, and it
+    does not pretend otherwise. So the axis is read from `system/fvSchemes` as well,
+    where `ddtSchemes default steadyState` says it outright -- there is no time
+    derivative in the equations being solved, whatever the executable is called. The
+    real case carried both signals; a `foamRun` case carries only this one."""
+    assert not spectra.is_steady_solver("foamRun"), "the name cannot say, and must not"
+    case = write_case_dicts(tmp_path / "case", application="foamRun", ddt="steadyState")
+    iterations, values = iteration_history()
+    write_dat(case / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              iterations, {"Cd": np.full(iterations.size, 1.2), "Cl": values})
+
+    found = spectra.analyse(case, column="Cl", length=0.1, speed=1.0)
+    assert found["axis"]["kind"] == "iterations"
+    assert "fvSchemes" in found["axis"]["basis"]
+    assert "steadyState" in found["axis"]["basis"]
+    assert found["strouhal"] is None
+    assert "not reported" in spectra.report(found)
+
+    # The same dictionaries with a transient solver and a transient scheme read as
+    # seconds, or this would pass on a script that has learned to refuse everything.
+    moving = write_case_dicts(tmp_path / "transient", application="pimpleFoam", ddt="Euler")
+    t, x = sine(1.7, span=20.0, samples=2001)
+    write_dat(moving / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cl": x})
+    unsteady = spectra.analyse(moving, column="Cl", length=0.1, speed=1.0)
+    assert unsteady["axis"]["kind"] == "seconds"
+    assert unsteady["axis"]["assumed"] is False
+    assert unsteady["strouhal"] is not None
+
+
+def test_a_bare_dat_with_no_case_says_seconds_are_assumed(tmp_path):
+    """Handed a file with no case above it, there is nothing to read the axis from.
+    Seconds are then what the numbers are taken to mean, and the report has to say
+    that this is an assumption: the frequency it prints is right if the assumption is
+    and meaningless if it is not, and the reader is the only one who can tell. Saying
+    so is the difference between a reading and a guess."""
+    t, x = sine(1.7, span=20.0, samples=2001)
+    path = tmp_path / "loose" / "history.csv"
+    path.parent.mkdir(parents=True)
+    path.write_text("Time,y\n" + "\n".join(f"{a:.8g},{b:.8g}" for a, b in zip(t, x)) + "\n",
+                    encoding="utf-8")
+
+    found = spectra.analyse(path, column="y")
+    assert found["axis"]["kind"] == "seconds"
+    assert found["axis"]["assumed"] is True
+    assert "ASSUMED" in found["axis"]["basis"]
+    text = spectra.report(found)
+    assert "time axis: seconds (ASSUMED)" in text
+    # The assumption does not cost the measurement: it is stated, not withheld.
+    assert abs(found["peak"]["frequency"] - 1.7) < found["peak"]["resolution"]
+    assert "dominant" in text
+
+
+def test_a_peak_in_the_lowest_bins_is_trend_dominated_and_names_the_bin():
+    """`PROMINENCE_PERIODIC`'s own docstring recorded that an AR(1) at 0.98 measures
+    2530x and that only the printed frequency would catch it. Nothing caught it: the
+    real record measured 2.552e+10x, was called `periodic`, and its peak sat at
+    0.0133 Hz on a 0.005 Hz bin grid -- bin 3 of 101, the bottom of the spectrum. A
+    median over the whole spectrum is a global floor and cannot tell a slope rising
+    towards DC from a peak, so the bin INDEX has to be part of the verdict.
+
+    The fixture is that record's shape: a slow wander of about six cycles per record
+    on a decaying transient, which measures bin 3 and 2.5e+10x here too. The cost of
+    this rule is stated in `TREND_BINS` and is real -- a genuine tone in the lowest
+    three bins is refused the same way, and its route is a longer record, or `--from`
+    past the transient."""
+    iterations = np.arange(1.0, 501.0)
+    values = (0.04 * np.sin(2.0 * np.pi * iterations / 75.0)
+              + 0.3 * np.exp(-(iterations - 1.0) / 20.0))
+    found = measure(iterations, values)
+    assert found["peak"]["bin"] <= spectra.TREND_BINS
+    assert found["peak"]["prominence"] > spectra.PROMINENCE_PERIODIC
+    assert found["peak"]["periods"] >= spectra.MIN_PERIODS, "not refused for being short"
+    assert found["verdict"] == "trend-dominated"
+    assert f"bin {found['peak']['bin']}" in found["basis"]
+    assert f"of {found['peak']['bins']}" in found["basis"]
+    # A tone in the body of the spectrum is still a tone.
+    assert measure(*sine(1.7))["verdict"] == "periodic"
+
+
+def test_the_nyquist_limit_is_reported_and_an_unresolvable_strouhal_is_named(tmp_path):
+    """The most useful line the script could have printed about that case, and did
+    not. The history was written every iteration of a `deltaT 1` run, so the band it
+    resolves tops out at 0.5 per unit, while St = 0.164 at L = 0.1 m and U = 1 m/s
+    needs 1.64 per second. Nothing at the shedding frequency could have been in that
+    record at any amplitude, so neither the peak that was found nor the absence of
+    one said anything at all about the shedding."""
+    case = write_case_dicts(tmp_path / "case")
+    iterations, values = iteration_history()
+    write_dat(case / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              iterations, {"Cl": values})
+
+    found = spectra.analyse(case, column="Cl", length=0.1, speed=1.0, expect=0.164)
+    assert found["record"]["nyquist"] == pytest.approx(0.5)
+    assert found["requested"]["frequency"] == pytest.approx(1.64)
+    assert found["requested"]["resolvable"] is False
+    text = spectra.report(found)
+    assert "nyquist limit     0.5" in text
+    assert "UNRESOLVABLE" in text
+    assert "at any amplitude" in text
+
+    # A St the sampling can hold is not called unresolvable.
+    inside = spectra.analyse(case, column="Cl", length=0.1, speed=1.0, expect=0.02)
+    assert inside["requested"]["resolvable"] is True
+    assert "UNRESOLVABLE" not in spectra.report(inside)
+
+
+# -- settling, after the halves test was found to have a null space ------------
+
+
+def test_a_record_that_rises_then_falls_is_not_settled_from_index_zero():
+    """The third defect, on a fixture built from the real series' shape.
+
+    That Cl read +0.0078 at iteration 1, +0.018 by 250 and -0.107 by 500, with the Cd
+    beside it starting at 7.74 and falling to 1.17. Because it is not MONOTONE its
+    two halves have nearly the same mean: it scored 0.58 on the halves test, passed
+    at sample ZERO, and the mean reported -- 0.00177695 +/- 0.01714 (95%) -- was an
+    average over the startup transient of a record whose oscillation had by then
+    grown sixfold. `test_a_drifting_series_is_still_moving_and_a_stationary_one_is_settled`
+    only ever asked about a ramp, and a ramp, being monotone, is the one shape the
+    halves test cannot miss.
+
+    So the fixture is the shape that defeats it: a large decaying transient at the
+    start, a mild rise then fall through the middle, and an oscillation that grows
+    across the record the way a steady solver losing stability does. What it must not
+    report is `settled` from index 0 with a mean carrying the transient."""
+    iterations = np.arange(1.0, 501.0)
+    transient = 0.08 * np.exp(-(iterations - 1.0) / 10.0)
+    rise_then_fall = 0.0078 + 1.2e-4 * (iterations - 1.0) - 4.2e-7 * (iterations - 1.0) ** 2
+    growing = (0.010 * np.exp((iterations - 1.0) / 200.0)
+               * np.sin(2.0 * np.pi * iterations / 80.0))
+    values = transient + rise_then_fall + growing
+
+    found = spectra.settle(iterations, values)
+    assert found["verdict"] != "settled"
+    assert found["index"] is None, "no window of a record still growing is stationary"
+    assert spectra.scatter_growth(values) > spectra.SCATTER_GROWTH
+    assert f"{spectra.scatter_growth(values):.2f}" in found["basis"]
+
+    # And the number it does print is the tail's, not the transient's: the first fifty
+    # samples average +0.0317 here while the last quarter averages -0.0211, so the two
+    # are not even on the same side of zero. Printed, as before, as a number and not a
+    # result -- the record is not stationary and the report says which it is.
+    assert found["mean"] == pytest.approx(float(np.mean(values[-(values.size // 4):])))
+    assert found["mean"] < 0.0 < float(np.mean(values[:50]))
+
+
+def test_the_halves_test_alone_would_have_passed_that_record():
+    """The other half of the same point, and why the two new checks are not redundant
+    with the old one. On this fixture the halves ratio is UNDER the threshold -- the
+    test the script shipped with saw nothing wrong with the record -- while the
+    thirds comparison and the scatter growth refuse it. If a later simplification
+    drops either, this fails instead of the record passing again."""
+    iterations = np.arange(1.0, 501.0)
+    transient = 0.08 * np.exp(-(iterations - 1.0) / 10.0)
+    growing = (0.010 * np.exp((iterations - 1.0) / 200.0)
+               * np.sin(2.0 * np.pi * iterations / 80.0))
+    values = transient + growing
+
+    assert spectra.drift_ratio(values) <= spectra.SETTLED_RATIO, "the null space, measured"
+    assert spectra.scatter_growth(values) > spectra.SCATTER_GROWTH
+    assert spectra.settle(iterations, values)["verdict"] == "still-moving"
+
+    # A limit cycle on the same axis and of the same amplitude, NOT growing: still
+    # settled, or the new checks would have bought a refusal of everything.
+    steady = 1.2 + 0.05 * np.sin(2.0 * np.pi * iterations / 80.0)
+    assert spectra.settle(iterations, steady)["verdict"] == "settled"
+
+
+def test_the_density_integrates_to_the_records_mean_square():
+    """Parseval, which is the only check that can see a constant factor.
+
+    `welch`'s scale read `1.0 / (dt * sum(w**2))` where a one-sided density needs
+    `dt / sum(w**2)`, so every density came back a factor of `1/dt**2` -- the sampling
+    rate squared -- too large. A 1 Pa RMS sine sampled at 10 kHz integrated to 1e8
+    instead of to 1. Every other test here passed throughout, because a peak's
+    frequency, its prominence over the spectrum median and the settling verdict are
+    ratios and a constant factor cancels in all of them. It was found when an absolute
+    sound pressure level was wanted from the same estimator.
+    """
+    fs = 10000.0
+    t = np.arange(4096) / fs
+    x = np.sqrt(2.0) * np.sin(2.0 * np.pi * 200.0 * t)  # 1.0 Pa RMS
+    out = spectra.welch(t, x, segments=1)
+    integral = float(np.sum(out["power"]) * out["resolution"])
+    assert integral == pytest.approx(1.0, rel=0.02), integral

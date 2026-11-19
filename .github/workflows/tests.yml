@@ -51,6 +51,63 @@ jobs:
           print(f"toolbox ships: {len(expected)} files present")
           PY
 
+  # Every grader under `benchmarks/` that reads only files a solver already wrote, run
+  # against real finished cases: the trimmed Felix runs in `tests/data/felix/` and the
+  # 2026-09-12 OpenFOAM moving-mesh runs in `tests/data/moving_mesh/`. The suite above
+  # already asserts the numbers these produce; this job is the per-benchmark verdict,
+  # and it runs each grader through its own command line the way a person does -- the
+  # multi-case `viv` invocation, `--control`, and the exit status.
+  #
+  # `benchmarks/deliverables/run.py` is deliberately absent: it spends a model turn and
+  # a judge call per sample on whoever is configured. The last step holds it to that.
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Cavity Re 1000 against Ghia, Ghia and Shin (1982)
+        run: python benchmarks/felix/grade.py cavity tests/data/felix/cavity_re1000
+
+      - name: Cylinder Re 20 against Schafer and Turek 2D-1 (Cd 5.5795)
+        run: python benchmarks/felix/grade.py cylinder tests/data/felix/cylinder_2d1
+
+      # These two exit 1 on purpose. Each case was kept because of what it failed, so
+      # the recorded verdict is the regression test: the exit status, the check that
+      # fails, and a check that must still pass beside it.
+      - name: Couette AMI -- expected FAIL, the sliding interface's torque imbalance
+        run: |
+          status=0
+          out=$(python benchmarks/moving_mesh/grade.py couette tests/data/moving_mesh/couette --control tests/data/moving_mesh/couette_conformal) || status=$?
+          echo "$out"
+          test "$status" -eq 1
+          echo "$out" | grep -qE "inner/outer imbalance.*FAIL"
+          echo "$out" | grep -qE "inner torque error.*PASS"
+          echo "$out" | grep -qE "AMI sum\(weights\).*PASS"
+
+      - name: VIV -- expected FAIL, the loosely coupled run's energy audit
+        run: |
+          status=0
+          out=$(python benchmarks/moving_mesh/grade.py viv tests/data/moving_mesh/viv_fixed tests/data/moving_mesh/viv_loose tests/data/moving_mesh/viv_tight) || status=$?
+          echo "$out"
+          test "$status" -eq 1
+          echo "$out" | grep -qE "Strouhal number, fixed.*PASS"
+          echo "$out" | grep -qE "\[viv_loose\] net fluid work.*FAIL"
+          echo "$out" | grep -qE "\[viv_tight\] net fluid work.*PASS"
+
+      - name: The eval that costs money refuses to run
+        run: |
+          status=0
+          python benchmarks/deliverables/run.py -n 1 || status=$?
+          test "$status" -eq 2
+
   # The same suite inside the workspace image, which is the only place the tests gated
   # on a real OpenFOAM, blockMesh, gmsh, a kernel and an off-screen renderer run at
   # all. It stays advisory -- `continue-on-error` keeps it out of the merge gate --

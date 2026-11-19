@@ -52,3 +52,16 @@ def test_the_stations_reach_eighty_diameters():
 def test_reading_the_listing_does_not_invent_the_plot():
     out = scenario.respond("bash", {"cmd": "ls -lh case/post"})
     assert "radial" not in out and "centerline_decay.png" in out
+
+
+def test_the_eval_will_not_spend_anything_unless_it_is_told_to(capsys):
+    """The one benchmark in the repository that costs money, held behind a flag.
+
+    Every other grader reads files a solver already wrote, so the benchmark job can run
+    all of them and this one cannot be reached by accident: no flag, no config load, no
+    provider, no call."""
+    import run  # the same benchmarks/deliverables on sys.path as `scenario` above
+
+    assert run.main([]) == 2
+    assert "--spend" in capsys.readouterr().err
+    assert "--spend" in run.__doc__

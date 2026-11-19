@@ -35,12 +35,40 @@ call takes the spectrum of what is left.
 `numpy.fft` only: scipy is not on the image (`ENVIRONMENT.md`), so there is no
 `scipy.signal.welch` to call and this is the thirty lines that replace it.
 
+on the time axis, which is the incident this script was rewritten by
+
+The first real case it met was a cylinder at Re = 100 whose `system/controlDict`
+says `application simpleFoam`, `deltaT 1`, `endTime 500`. That is a STEADY run: the
+`Time` column counts SIMPLE iterations, not seconds. This script read it as seconds
+and reported `shedding: periodic` at 0.0133 Hz, a period of 75, 6.66 cycles in the
+record and `St = 0.00133` -- against the 0.164 a cylinder at that Reynolds number
+sheds at, and which `benchmarks/moving_mesh/grade.py` holds a transient run to
+within 2%. Four numbers, all of them meaningless on an iteration axis, printed to
+six figures.
+
+So the axis is now read rather than assumed. A case's `system/controlDict` gives
+`application`, and a steady name is recognised by the predicate copied from
+`openreynolds/convergence.py:99-104`; `system/fvSchemes` gives `ddtSchemes default`,
+and `steadyState` there is the second signal, the one that catches a `foamRun` whose
+name says nothing. On an iteration axis the frequency, the period, the Strouhal
+number and the cycle count are refused BY NAME -- the spectrum of the iteration
+history is still printed, because the shape of it is informative, but no number that
+needs a clock is. Handed a bare `.dat` with no case anywhere above it, the script
+says that seconds are an assumption rather than quietly making one.
+
+The other line that case wanted: the Nyquist limit. A step of 1 resolves nothing
+above 0.5 per unit, while St = 0.164 at L = 0.1 m and U = 1 m/s needs 1.64 per
+second. Nothing at the shedding frequency could have been in that record at any
+amplitude, and `--strouhal` is how the expectation gets checked against the sampling
+instead of against a spectrum that cannot hold it.
+
 on the Strouhal number
 
 St = f L / U, and only when `--length` and `--speed` are both given. A diameter is
 not guessed from the mesh and a free-stream speed is not guessed from anything:
 `grade.py:_need` refuses rather than assumes, and the same rule holds here. Without
-them the frequency is reported in Hz and St is absent, not defaulted.
+them the frequency is reported in Hz and St is absent, not defaulted. On an
+iteration axis it is refused whatever is given, because there is no f to put in it.
 
 on settling
 
@@ -59,14 +87,25 @@ the error bar by the square root of the integral time scale over the step, which
 a shedding case is a factor of tens. The autocorrelation is summed to its first zero
 crossing (`numpy`, no scipy) and the count divided by `1 + 2 tau/dt`.
 
-Judgements are `periodic`/`aperiodic`/`too-short` and `settled`/`still-moving`/
-`too-short`, and each is printed next to the number it came from -- the prominence,
-the period count, the half-mean difference over the scatter -- so a reader can
-disagree with the threshold without having to rerun anything. Exit code is 0
-whatever it finds.
+The same record is why the halves test grew two more checks. It rose from +0.0078 at
+iteration 1 to +0.018 by 250 and fell to -0.107 by 500, so it is not MONOTONE: the
+two halves have nearly the same mean, the test scored 0.58 and called the record
+stationary from sample zero -- averaging in a startup transient whose Cd begins at
+7.74 and falls to 1.17, and reporting a mean of 0.00178 for a series ending at
+-0.107, wrong by two and a half times its own quoted scatter. A two-halves
+comparison has a null space and any drift symmetric about the midpoint sits in it.
+What is asked now is a first third against a last third as well, and whether the
+fluctuation is still GROWING, which is what that record was really doing.
+
+Judgements are `periodic`/`aperiodic`/`trend-dominated`/`too-short` and
+`settled`/`still-moving`/`too-short`, and each is printed next to the number it came
+from -- the prominence, the bin index, the period count, the half-mean and
+third-mean differences over the scatter -- so a reader can disagree with the
+threshold without having to rerun anything. Exit code is 0 whatever it finds.
 
     python3 spectra.py /work/case
     python3 spectra.py /work/case --column Cl --length 0.01 --speed 1.0
+    python3 spectra.py /work/case --column Cl --length 0.1 --speed 1 --strouhal 0.164
     python3 spectra.py /work/case --column Cd --from 6.8
     python3 spectra.py postProcessing/forceCoeffs/0/coefficient.dat --column Cd --png fft.png
     python3 spectra.py history.csv --column y --json spectra.json
@@ -77,6 +116,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -129,7 +169,148 @@ record is called settled: the later mean sits inside the record's own spread. Fo
 clean limit cycle this is near zero (the halves have the same mean and a large
 spread); for a linear ramp it is 3.5 at every scale, since the half means differ by
 half the range while a half's own std is only a twelfth of it -- which is the point,
-a ramp is never stationary over any window. See `drift_ratio` for which scatter."""
+a ramp is never stationary over any window. See `drift_ratio` for which scatter.
+
+The same number is applied to the first third against the last third, which is the
+check the halves test needed: a ramp scores 3.5 on the halves and 6.9 on the thirds,
+so the threshold is if anything stricter there, and the Re = 100 record that scored
+0.58 on its halves -- rising to iteration 250 and falling after -- scores 1.32 on
+its thirds and is refused."""
+
+TREND_BINS = 3
+"""A peak in the lowest this many bins is a trend, not a tone.
+
+The constant above says a strongly autocorrelated series with no tone in it measures
+2530x prominence and that only the printed frequency catches it. Nothing caught it:
+the Re = 100 record measured 2.552e+10x, was called `periodic`, and its peak sat at
+0.0133 on a 0.005 bin grid -- bin 3, the bottom of the spectrum. A settling
+transient is an exponential and the per-segment detrend removes a line, so what is
+left of it lands here, outbids everything, and is a straight answer to the wrong
+question. Three bins is where a four-segment Welch's leakage from DC dies out; the
+bin index is printed with the verdict so a peak at bin 4 is visibly at bin 4."""
+
+SCATTER_GROWTH = 2.0
+"""The last third's scatter over the first third's, above which a record is still
+growing and no window of it is stationary.
+
+Stationarity is a stable mean AND a stable variance, and only the mean was ever
+asked about. The Re = 100 Cl is the case that showed why: its halves agree, its
+thirds agree from iteration 180 on, and its oscillation grows from 0.011 to 0.072 in
+scatter across the record -- a steady solver losing stability, which a mean over any
+window of it describes badly. Measured on the RECORD and not on a candidate window,
+deliberately: trimming the front of a series that is still growing at the end does
+not make it stationary, and the sub-windows measure less growth than the record only
+because they are shorter. The one-sidedness is also deliberate: a SHRINKING scatter
+is a decaying transient, whose bias the halves and thirds tests already judge.
+
+Two is the threshold because a factor of two in scatter is a factor of four in
+variance, far outside sampling noise, while the hardest honest fixture here -- an
+AR(1) at 0.98, correlated with no trend in it -- measures 1.2. The record measured
+6.3. A startup that grows and then saturates (a shedding case begun from a symmetric
+state) is refused by this and its route is the one `--from` already exists for: crop
+past the growth and ask again."""
+
+
+def is_steady_solver(executable: str) -> bool:
+    """Whether a solver is a steady one, from its name: `simpleFoam`, `rhoSimpleFoam`,
+    `buoyantSimpleFoam`, `SRFSimpleFoam`, `porousSimpleFoam` and their kin all carry
+    SIMPLE in the name and iterate towards a steady state. `foamRun` with a
+    `steadyState` ddt scheme cannot be told from its name, and is not claimed.
+
+    Copied from `openreynolds/convergence.py:99-104`, which is where it belongs and
+    where the docstring above it was written. The copy is here because a toolbox
+    script runs as a standalone file from `/work/.toolbox/` with the `openreynolds`
+    package neither installed nor on the path -- `import openreynolds.convergence`
+    there raises, and `tests/test_toolbox.py` enforces that the only non-stdlib
+    imports a toolbox script may make are the image's libraries and its own
+    siblings. Six words of predicate duplicated beats a script that cannot run. If
+    the list of steady solvers ever changes, it changes in both places; the second
+    signal (`ddtSchemes default steadyState`) is what makes that less load-bearing
+    than it looks."""
+    return "simple" in (executable or "").lower()
+
+
+def foam_entry(text: str, key: str) -> str:
+    """One `key value;` out of an OpenFOAM dictionary, by regex.
+
+    `application`, `deltaT` and `endTime` are one-word entries on their own line and
+    that is all this reads. A dictionary parser is not written here: the toolbox has
+    no OpenFOAM bindings, and a wrong answer from this is a missing axis note rather
+    than a wrong axis -- an unreadable `controlDict` falls through to the same place
+    a missing one does, which says that seconds are assumed."""
+    found = re.search(rf"^\s*{key}\s+([^;\s]+)\s*;", text, re.MULTILINE)
+    return found.group(1) if found else ""
+
+
+def scheme_default(text: str, block: str) -> str:
+    """The `default` entry of one scheme block, e.g. `ddtSchemes { default steadyState; }`."""
+    found = re.search(block + r"\s*\{(.*?)\}", text, re.DOTALL)
+    return foam_entry(found.group(1), "default") if found else ""
+
+
+def find_case(source: Path) -> Path | None:
+    """The case directory a series belongs to, or None if there is none to read.
+
+    A case is a directory with `system/controlDict` in it. The parents are walked
+    because the path handed over is as often the file as the case --
+    `<case>/postProcessing/forceCoeffs/0/coefficient.dat` is three levels down -- and
+    the axis a `.dat` sits on is the axis of the run that wrote it, whichever path
+    was typed."""
+    source = Path(source)
+    for base in ([source] if source.is_dir() else []) + list(source.parents)[:4]:
+        if (base / "system" / "controlDict").is_file():
+            return base
+    return None
+
+
+def time_axis(case: Path | None) -> dict[str, Any]:
+    """What the first column counts: seconds, iterations, or seconds by assumption.
+
+    This is the check whose absence made the script's first real answer wrong in four
+    places at once. A steady run's `Time` column is an iteration counter, and a
+    frequency, a period, a Strouhal number and a cycle count are all nonsense on it
+    -- not imprecise, nonsense -- so they are refused rather than scaled.
+
+    Two signals, because neither alone covers the cases. The solver name is read from
+    `application` and judged by the predicate copied from `convergence.py`, which
+    claims the SIMPLE family and nothing else. `ddtSchemes default` is read from
+    `system/fvSchemes`, and `steadyState` there says it outright: there is no time
+    derivative in the equations being solved, whatever the executable is called."""
+    if case is None:
+        return {"kind": "seconds", "assumed": True, "unit": "Hz", "per": "s",
+                "basis": "no case directory above this file (nothing with "
+                         "system/controlDict in it), so nothing here says what the Time "
+                         "column counts. Seconds are ASSUMED -- that is an assumption and "
+                         "not a reading: on a steady run the column counts iterations and "
+                         "every frequency below is meaningless"}
+    control = (case / "system" / "controlDict").read_text(encoding="utf-8", errors="replace")
+    schemes = ""
+    if (case / "system" / "fvSchemes").is_file():
+        schemes = (case / "system" / "fvSchemes").read_text(encoding="utf-8", errors="replace")
+    application = foam_entry(control, "application")
+    ddt = scheme_default(schemes, "ddtSchemes")
+    signals = []
+    if is_steady_solver(application):
+        signals.append(f"system/controlDict says `application {application}`, which carries "
+                       "SIMPLE in its name and iterates towards a steady state")
+    if ddt.startswith("steadyState"):
+        signals.append("system/fvSchemes says `ddtSchemes default steadyState`, so there is "
+                       "no time derivative in the equations being solved")
+    axis = {"application": application, "ddt": ddt, "case": str(case),
+            "deltaT": foam_entry(control, "deltaT"), "endTime": foam_entry(control, "endTime")}
+    if signals:
+        axis.update({"kind": "iterations", "assumed": False, "unit": "per iteration",
+                     "per": "iteration",
+                     "basis": " and ".join(signals) + ". The Time column counts ITERATIONS, "
+                              f"not seconds (deltaT {axis['deltaT'] or '?'}, endTime "
+                              f"{axis['endTime'] or '?'})"})
+        return axis
+    axis.update({"kind": "seconds", "assumed": False, "unit": "Hz", "per": "s",
+                 "basis": (f"system/controlDict says `application {application}`" if application
+                           else "system/controlDict names no steady application")
+                          + " and nothing says `ddtSchemes default steadyState`, so the Time "
+                            "column is read as seconds"})
+    return axis
 
 
 def read_file_series(path: Path) -> dict[str, Any]:
@@ -236,7 +417,14 @@ def welch(t: np.ndarray, x: np.ndarray, segments: int = 4) -> dict[str, Any]:
     window = np.hanning(nperseg)
     # One-sided density: the sum of the squared window and the step set the scale, and
     # the interior bins carry the power of their negative-frequency twins as well.
-    scale = 1.0 / (dt * float(np.sum(window ** 2)))
+    #
+    # The step multiplies, it does not divide. This read `1.0 / (dt * sum(w**2))` until
+    # an absolute level was wanted from it, which made every density a factor of
+    # `1/dt**2` -- the sampling rate squared -- too large: a 1 Pa RMS sine sampled at
+    # 10 kHz integrated to 1e8 rather than to 1. Nothing this script reports could see
+    # it, since a peak's frequency, its prominence over the median and the settling
+    # verdict are all ratios, and a constant factor cancels in every one of them.
+    scale = dt / float(np.sum(window ** 2))
     step = max(1, nperseg // 2)
     total = np.zeros(nperseg // 2 + 1)
     taken = 0
@@ -293,6 +481,11 @@ def dominant(spectrum: dict[str, Any], span: float) -> dict[str, Any]:
                 estimate = float(freq[peak] + offset * spectrum["resolution"])
     return {"frequency": estimate,
             "bin_frequency": float(freq[peak]),
+            # The bin INDEX, not only its frequency: a peak in the lowest few bins is a
+            # trend the detrend left behind, and that is a statement about the index.
+            "bin": int(peak),
+            "bins": int(power.size),
+            "nyquist": float(freq[-1]),
             "power": float(power[peak]),
             "floor": floor,
             "prominence": float(power[peak] / floor) if floor > 0 else float("inf"),
@@ -300,11 +493,29 @@ def dominant(spectrum: dict[str, Any], span: float) -> dict[str, Any]:
             "resolution": spectrum["resolution"]}
 
 
-def shedding_verdict(peak: dict[str, Any]) -> tuple[str, str]:
-    """`periodic` / `aperiodic` / `too-short`, and the number it came from."""
+def shedding_verdict(peak: dict[str, Any], unit: str = "Hz") -> tuple[str, str]:
+    """`periodic` / `trend-dominated` / `aperiodic` / `too-short`, and the number it
+    came from.
+
+    `trend-dominated` exists because the prominence alone cannot tell a trend from a
+    tone and the docstring on `PROMINENCE_PERIODIC` already said so -- it recorded an
+    AR(1) at 0.98 measuring 2530x -- and then the Re = 100 record measured 2.552e+10x
+    and was called `periodic`. The tell was in the printed output all along: the peak
+    sat at bin 3 of a 101-bin spectrum. So the bin index is now a verdict and not
+    only a number beside one.
+
+    The order is cycle count, then bin, then prominence. A record under two cycles
+    long is too short to say anything else about, which is the case a settling
+    transient usually lands in, and that reading comes first."""
     if peak["periods"] < MIN_PERIODS:
         return "too-short", (f"the record spans {peak['periods']:.2f} cycles of "
-                             f"{peak['frequency']:.4g} Hz, under the {MIN_PERIODS:g} needed")
+                             f"{peak['frequency']:.4g} {unit}, under the {MIN_PERIODS:g} needed")
+    if peak["prominence"] >= PROMINENCE_PERIODIC and peak["bin"] <= TREND_BINS:
+        return "trend-dominated", (
+            f"the tallest bin is bin {peak['bin']} of {peak['bins']}, inside the lowest "
+            f"{TREND_BINS:g}, and stands {peak['prominence']:.4g}x over the spectrum's median: "
+            "that is the shape of a trend the linear detrend did not remove -- a settling "
+            "transient is an exponential, not a line -- and not the shape of a tone")
     if peak["prominence"] >= PROMINENCE_PERIODIC:
         return "periodic", (f"the peak stands {peak['prominence']:.4g}x over the spectrum's "
                             f"median, above {PROMINENCE_PERIODIC:g}")
@@ -337,10 +548,23 @@ def settle(t: np.ndarray, x: np.ndarray, periods: float | None = None) -> dict[s
     """From which sample the series is stationary, and the mean over that window.
 
     The test on a window is that the second half's mean sits inside the first
-    half's scatter. The stationary index is the earliest start for which that is
-    true, found by walking the candidate starts forwards -- the point being to
-    report the longest usable window rather than to confirm that the last 25% of
-    the record looks calm, which it does on a series that is still drifting slowly.
+    half's scatter, that the last THIRD's mean does too, and that the window's
+    scatter is not still growing. The stationary index is the earliest start for
+    which all of that is true, found by walking the candidate starts forwards -- the
+    point being to report the longest usable window rather than to confirm that the
+    last 25% of the record looks calm, which it does on a series that is still
+    drifting slowly.
+
+    The two extra checks are the Re = 100 incident. The halves test has a null
+    space and any drift symmetric about the midpoint is in it: that record rose
+    from +0.0078 at iteration 1 to +0.018 by 250 and fell to -0.107 by 500, its two
+    halves therefore agreed, it scored 0.58, and it was reported `settled` from
+    sample ZERO -- so the mean quoted, 0.00178, averaged in a startup transient
+    whose Cd runs from 7.74 down to 1.17, on a series whose last value is -0.107.
+    Wrong by two and a half times its own quoted scatter, which is not a near miss.
+    A curved trend defeats the halves the same way. The thirds comparison catches
+    both; `SCATTER_GROWTH` catches what that record was actually doing underneath,
+    which was oscillating harder and harder.
 
     The interval on the mean is 1.96 sigma over the root of the EFFECTIVE sample
     size: a force history has one row per time step and consecutive rows are the
@@ -351,15 +575,29 @@ def settle(t: np.ndarray, x: np.ndarray, periods: float | None = None) -> dict[s
     if x.size < MIN_SAMPLES:
         return {"verdict": "too-short", "basis": f"{x.size} samples, under {MIN_SAMPLES}",
                 "index": None, "mean": float(results.tail_mean(x)) if x.size else float("nan")}
-    index, ratio, best = None, float("nan"), float("inf")
+    growth = scatter_growth(x)
+    if growth > SCATTER_GROWTH:
+        return {"verdict": "still-moving",
+                "basis": f"the fluctuation is still GROWING: the last third of the record "
+                         f"scatters {growth:.2f}x as much as the first third, over "
+                         f"{SCATTER_GROWTH:g}. No start is offered, because trimming the front "
+                         f"of a record that is still growing at the END does not make it "
+                         f"stationary -- crop past the growth with --from and ask again",
+                "index": None, "mean": float(results.tail_mean(x)),
+                "scatter_growth": float(growth)}
+
+    index, ratio, thirds = None, float("nan"), float("nan")
+    best, best_thirds = float("inf"), float("inf")
     for candidate in range(0, int(x.size * 0.9), max(1, x.size // 50)):
         window = x[candidate:]
         if window.size < MIN_SAMPLES:
             break
         measure = drift_ratio(window)
-        best = min(best, measure)
-        if measure <= SETTLED_RATIO and window_cycles(t[candidate:], window) >= MIN_PERIODS:
-            index, ratio = candidate, measure
+        across = thirds_ratio(window)
+        best, best_thirds = min(best, measure), min(best_thirds, across)
+        if (measure <= SETTLED_RATIO and across <= SETTLED_RATIO
+                and window_cycles(t[candidate:], window) >= MIN_PERIODS):
+            index, ratio, thirds = candidate, measure, across
             break
     if index is None:
         # Only here does the cycle count get a say, and the order matters. It was
@@ -378,13 +616,16 @@ def settle(t: np.ndarray, x: np.ndarray, periods: float | None = None) -> dict[s
                              f"cycles of the frequency found, under {MIN_PERIODS:g}: over "
                              "less than a cycle a drift and a phase look the same",
                     "index": None, "mean": float(results.tail_mean(x)),
-                    "drift_ratio": float(best)}
+                    "drift_ratio": float(best), "thirds_ratio": float(best_thirds),
+                    "scatter_growth": float(growth)}
         return {"verdict": "still-moving",
                 "basis": f"no start passes: the closest any tried window came was a "
                          f"second-half mean {best:.2f} half-record standard deviations "
-                         f"away, over {SETTLED_RATIO:g}",
+                         f"away and a last-third mean {best_thirds:.2f} away, over "
+                         f"{SETTLED_RATIO:g}",
                 "index": None, "mean": float(results.tail_mean(x)),
-                "drift_ratio": float(best)}
+                "drift_ratio": float(best), "thirds_ratio": float(best_thirds),
+                "scatter_growth": float(growth)}
 
     window = x[index:]
     dt = float(np.mean(np.diff(t))) if t.size > 1 else 1.0
@@ -393,9 +634,11 @@ def settle(t: np.ndarray, x: np.ndarray, periods: float | None = None) -> dict[s
     half_width = 1.96 * sigma / np.sqrt(correlation["independent"])
     return {"verdict": "settled",
             "basis": f"from t = {t[index]:g} on, the second half's mean sits "
-                     f"{ratio:.2f} half-record standard deviations away, "
-                     f"under {SETTLED_RATIO:g}",
+                     f"{ratio:.2f} half-record standard deviations away and the last "
+                     f"third's {thirds:.2f}, both under {SETTLED_RATIO:g}, and the "
+                     f"record's scatter grows {growth:.2f}x, under {SCATTER_GROWTH:g}",
             "index": int(index), "from_time": float(t[index]),
+            "thirds_ratio": float(thirds), "scatter_growth": float(growth),
             "mean": float(np.mean(window)), "std": sigma,
             "ci95": float(half_width),
             "samples": int(window.size),
@@ -458,9 +701,49 @@ def drift_ratio(values: np.ndarray) -> float:
     return gap / scatter
 
 
+def thirds_ratio(values: np.ndarray) -> float:
+    """The same comparison between the FIRST third and the LAST third, skipping the
+    middle.
+
+    The halves test's null space, in one line. Two halves of a record that rises and
+    then falls have nearly the same mean -- the Re = 100 Cl rose to iteration 250 and
+    fell to -0.107 by 500 and scored 0.58, passing from sample zero -- and so does
+    any drift symmetric about the midpoint, and so does a curve. Dropping the middle
+    third puts the two ends against each other where a non-monotone drift is visible:
+    the same record scores 1.32 here and is refused.
+
+    It is `drift_ratio` of the two ends concatenated rather than a second copy of the
+    arithmetic, so the choice of scatter -- the smaller of the two blocks', which is
+    what keeps a startup transient from hiding inside its own spread -- is made in
+    one place and documented once."""
+    third = values.size // 3
+    if third < 2:
+        return 0.0
+    return drift_ratio(np.concatenate([values[:third], values[-third:]]))
+
+
+def scatter_growth(values: np.ndarray) -> float:
+    """The last third's standard deviation over the first third's.
+
+    Whether the fluctuation is getting bigger, which is the half of stationarity
+    nothing here asked about: a steady solver losing stability oscillates harder and
+    harder about a mean that stays put, so every test on the MEAN passes while the
+    record is plainly not converged. See `SCATTER_GROWTH` for the threshold, the
+    measurements behind it and why this is asked of the record rather than of each
+    candidate window."""
+    third = values.size // 3
+    if third < 4:
+        return 1.0
+    early = float(np.std(values[:third], ddof=1))
+    late = float(np.std(values[-third:], ddof=1))
+    if early == 0.0:
+        return 1.0 if late == 0.0 else float("inf")
+    return late / early
+
+
 def analyse(source: Path, column: str = "", segments: int = 4,
             length: float | None = None, speed: float | None = None,
-            start: float | None = None) -> dict[str, Any]:
+            start: float | None = None, expect: float | None = None) -> dict[str, Any]:
     """The whole measurement: spectrum, shedding verdict, Strouhal if asked, settling.
 
     `start` drops everything before a time, and it is here because the first call on a
@@ -490,18 +773,34 @@ def analyse(source: Path, column: str = "", segments: int = 4,
         raise results.Unavailable(f"{times.size} rows in {history['series']}, "
                                   f"under the {MIN_SAMPLES} a spectrum needs")
 
+    axis = time_axis(find_case(source))
     grid, resampled, interpolated = uniform_samples(times, values)
     spectrum = welch(grid, resampled, segments=segments)
     span = float(grid[-1] - grid[0])
     peak = dominant(spectrum, span)
-    verdict, basis = shedding_verdict(peak)
+    verdict, basis = shedding_verdict(peak, unit=axis["unit"])
+    nyquist = 0.5 / spectrum["dt"]
+
+    # The expectation is checked against the SAMPLING, not against the spectrum. The
+    # Re = 100 record was written every iteration of a deltaT 1 run, so it resolves
+    # nothing above 0.5 per unit, while St = 0.164 at L = 0.1 and U = 1 needs 1.64 per
+    # second: no amplitude of real shedding could have appeared in it, and that is the
+    # most useful thing the script can say about it.
+    request = None
+    if expect is not None and length is not None and speed is not None and length != 0.0:
+        wanted = expect * speed / length
+        request = {"strouhal": expect, "frequency": wanted, "nyquist": nyquist,
+                   "resolvable": bool(wanted <= nyquist)}
 
     strouhal = None
     if length is not None and speed is not None:
         if speed == 0.0:
             raise results.Unavailable("--speed 0 gives no Strouhal number")
-        strouhal = {"value": peak["frequency"] * length / speed,
-                    "length": length, "speed": speed}
+        # Not on an iteration axis: St = f L / U needs an f per second, and the peak of
+        # an iteration history is per iteration. The refusal is in `report`.
+        if axis["kind"] != "iterations":
+            strouhal = {"value": peak["frequency"] * length / speed,
+                        "length": length, "speed": speed}
 
     return {
         "source": str(Path(source)),
@@ -510,14 +809,16 @@ def analyse(source: Path, column: str = "", segments: int = 4,
         "superseded": history.get("superseded", []),
         "column": name,
         "columns": list(history["columns"]),
+        "axis": axis,
         "record": {"samples": int(times.size), "t0": float(times[0]), "t1": float(times[-1]),
                    "span": span, "dt": spectrum["dt"], "resampled": interpolated,
-                   "cropped": cropped},
+                   "cropped": cropped, "nyquist": nyquist},
         "spectrum": {"nperseg": spectrum["nperseg"], "segments": spectrum["segments"],
                      "resolution": spectrum["resolution"]},
         "peak": peak,
         "shedding": {"verdict": verdict, "basis": basis},
         "strouhal": strouhal,
+        "requested": request,
         "settling": settle(grid, resampled, periods=peak["periods"]),
         "meta": history.get("meta", {}),
         "_arrays": {"t": grid, "x": resampled,
@@ -526,11 +827,23 @@ def analyse(source: Path, column: str = "", segments: int = 4,
 
 
 def report(found: dict[str, Any]) -> str:
-    """The measurement in words, every verdict beside the number behind it."""
-    record, peak = found["record"], found["peak"]
+    """The measurement in words, every verdict beside the number behind it, and on an
+    iteration axis the four numbers that are refused named one by one.
+
+    Refused by name rather than omitted: a reader who asked for a Strouhal number and
+    got a report with no Strouhal line in it concludes the script is broken, or worse,
+    reads the frequency and does the division themselves. The line has to say which
+    number is missing and why the axis cannot carry it."""
+    record, peak, axis = found["record"], found["peak"], found.get("axis") or {}
+    unit = axis.get("unit", "Hz")
+    iterations = axis.get("kind") == "iterations"
+    refused = "not reported -- the Time column counts iterations, not seconds"
     lines = [f"series: {found['series']}  column: {found['column']}",
              f"record: {record['samples']} samples, t = {record['t0']:g} to {record['t1']:g}"
              f" (span {record['span']:g}), mean step {record['dt']:.4g}"]
+    if axis:
+        lines.append(f"time axis: {axis['kind']}"
+                     f"{' (ASSUMED)' if axis.get('assumed') else ''} -- {axis['basis']}")
     if record.get("cropped"):
         lines.append(f"  --from {record['cropped']['from']:g} dropped the first "
                      f"{record['cropped']['dropped']} rows")
@@ -548,14 +861,29 @@ def report(found: dict[str, Any]) -> str:
     lines += ["",
               f"spectrum: Welch, {spectrum['segments']} segment(s) of {spectrum['nperseg']} "
               f"samples, Hann window, linear detrend",
-              f"  bin width         {spectrum['resolution']:.4g} Hz",
-              f"  dominant          {peak['frequency']:.6g} Hz "
-              f"(bin {peak['bin_frequency']:.6g} Hz)",
-              f"  period            {1.0 / peak['frequency']:.6g}" if peak["frequency"] > 0 else
-              "  period            -",
-              f"  prominence        {peak['prominence']:.4g}x the spectrum median",
-              f"  cycles in record  {peak['periods']:.2f}",
-              "",
+              f"  bin width         {spectrum['resolution']:.4g} {unit}",
+              f"  tallest bin       bin {peak['bin']} of {peak['bins']} "
+              f"({peak['bin_frequency']:.6g} {unit})",
+              f"  nyquist limit     {record.get('nyquist', float('nan')):.6g} {unit} "
+              f"-- a step of {record['dt']:.4g} resolves nothing above it"]
+    if iterations:
+        lines += [f"  frequency         {refused}",
+                  f"  period            {refused}",
+                  f"  prominence        {peak['prominence']:.4g}x the spectrum median",
+                  # The shedding verdict below is still derived from an oscillation count,
+                  # so the count is said rather than hidden -- as a fact about the
+                  # sampling, which it is on any axis, and not as cycles of a flow.
+                  f"  cycles in record  {refused} (the series holds "
+                  f"{peak['periods']:.2f} oscillations of that bin, which is a fact about "
+                  f"the sampling and not a count of shedding cycles)"]
+    else:
+        lines += [f"  dominant          {peak['frequency']:.6g} {unit} "
+                  f"(bin {peak['bin_frequency']:.6g} {unit})",
+                  f"  period            {1.0 / peak['frequency']:.6g}" if peak["frequency"] > 0
+                  else "  period            -",
+                  f"  prominence        {peak['prominence']:.4g}x the spectrum median",
+                  f"  cycles in record  {peak['periods']:.2f}"]
+    lines += ["",
               f"shedding: {found['shedding']['verdict']} -- {found['shedding']['basis']}"]
 
     if found["strouhal"] is not None:
@@ -563,10 +891,27 @@ def report(found: dict[str, Any]) -> str:
         lines += ["",
                   f"strouhal: St = {st['value']:.6g}  "
                   f"(f = {peak['frequency']:.6g}, L = {st['length']:g}, U = {st['speed']:g})"]
+    elif iterations:
+        lines += ["",
+                  "strouhal: not computed -- St = f L / U needs a frequency per second and "
+                  "the Time column counts iterations, so there is no f to put in it. A "
+                  "Strouhal number from a steady run is a number about the solver's "
+                  "iteration count, not about the flow."]
     else:
         lines += ["",
                   "strouhal: not computed -- give both --length and --speed. No length scale "
                   "or free-stream speed is assumed here."]
+
+    requested = found.get("requested")
+    if requested is not None:
+        verdict = "resolvable" if requested["resolvable"] else "UNRESOLVABLE"
+        lines.append(f"  expected St = {requested['strouhal']:g} implies "
+                     f"{requested['frequency']:.6g} per second, against a nyquist limit of "
+                     f"{requested['nyquist']:.6g} per unit of the Time column: {verdict}")
+        if not requested["resolvable"]:
+            lines.append("  nothing at that frequency is in this record at any amplitude: the "
+                         "sampling cannot hold it, so neither a peak nor the absence of one "
+                         "says anything about the shedding")
 
     settling = found["settling"]
     lines += ["", f"settling: {settling['verdict']} -- {settling['basis']}"]
@@ -608,19 +953,25 @@ def plot(found: dict[str, Any], target: Path) -> Path:
     else:
         top.set_title(f"{found['column']}: {settling['verdict']} -- {settling['basis']}",
                       fontsize=9)
-    top.set_xlabel("time")
+    top.set_xlabel((found.get("axis") or {}).get("kind", "time"))
     top.set_ylabel(found["column"])
     top.grid(alpha=0.3)
 
     peak = found["peak"]
+    unit = (found.get("axis") or {}).get("unit", "Hz")
     bottom.semilogy(arrays["frequency"][1:], arrays["power"][1:], lw=0.8, color="#d62728")
     bottom.axvline(peak["frequency"], color="#333333", ls="--", lw=1.0)
     bottom.axhline(peak["floor"], color="#888888", ls=":", lw=1.0)
-    label = f"f = {peak['frequency']:.5g} Hz, {peak['prominence']:.4g}x median"
+    # The figure carries the axis too, or it becomes the thing someone quotes a
+    # frequency off after the report refused to give them one.
+    label = (f"bin {peak['bin']} of {peak['bins']} ({peak['bin_frequency']:.5g} {unit}), "
+             f"{peak['prominence']:.4g}x median")
+    if unit == "Hz":
+        label = f"f = {peak['frequency']:.5g} {unit}, {peak['prominence']:.4g}x median"
     if found["strouhal"] is not None:
         label += f", St = {found['strouhal']['value']:.4g}"
     bottom.set_title(f"{found['shedding']['verdict']}: {label}", fontsize=10)
-    bottom.set_xlabel("frequency")
+    bottom.set_xlabel(f"frequency ({unit})")
     bottom.set_ylabel("power")
     bottom.grid(alpha=0.3, which="both")
 
@@ -663,6 +1014,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="length scale L for St = f L / U; nothing is assumed without it")
     parser.add_argument("--speed", type=float, default=None,
                         help="free-stream speed U for St = f L / U")
+    parser.add_argument("--strouhal", type=float, default=None,
+                        help="the St you EXPECT (with --length and --speed): its frequency "
+                             "U St / L is checked against the Nyquist limit of the sampling, "
+                             "which is how a record that could not have held the shedding at "
+                             "all says so")
     parser.add_argument("--png", type=Path, default=None,
                         help="write the two-panel figure here (relative to where you run)")
     parser.add_argument("--json", type=Path, default=None,
@@ -676,7 +1032,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"columns: {', '.join(history['columns'])}")
             return 0
         found = analyse(args.source, column=args.column, segments=max(1, args.segments),
-                        length=args.length, speed=args.speed, start=args.start)
+                        length=args.length, speed=args.speed, start=args.start,
+                        expect=args.strouhal)
     except results.Unavailable as exc:
         # Not being able to measure something is a reading, and a reading is what this
         # offers; `reattach.py` and `layer_report.py` exit 0 on theirs for the same reason.

@@ -27,7 +27,12 @@ three ways to the same number, in order of how directly the run said it
    uses -- and nu read off `constant/transportProperties`. nu is REFUSED rather than
    assumed: a y+ computed from a guessed viscosity is a number that looks like a
    measurement and is not one, so a case whose nu cannot be read is reported with
-   the flag that would supply it and no number at all.
+   the flag that would supply it and no number at all. The KINEMATIC reading of
+   that field is checked against the field's own `dimensions` rather than assumed:
+   a compressible solver writes the wall shear as a stress in Pa, where mass appears
+   in the dimensions, and `sqrt(|tau|)` is not a velocity for it. No case in the
+   corpus wrote one, so that path was never exercised; it is refused by name against
+   its dimensions instead of being reported in the wrong units.
 
 Whatever is present is reported, each labelled with where it came from, because the
 three disagreeing is itself worth seeing.
@@ -43,6 +48,41 @@ works around with `foamToVTK` -- a conversion of the whole case to answer a ques
 about a few hundred numbers. So this parses, with `preflight.py`'s brace matching,
 and needs no render stack: it runs on a login node, and on a case the reader cannot
 open.
+
+what this reports about a patch, and what it refuses to say about one
+
+The four rules below are all one lesson, and it was paid for after this script
+shipped on a green suite: issues #138 and #144, found by running it over the real
+corpus. Every one of them was a silent guess dressed as a measurement.
+
+* A `format binary;` field is DECODED, never regexed. 5 of the 74 yPlus and
+  wallShearStress files in the corpus are binary -- `writeFormat binary` in
+  `controlDict` is ordinary -- and running a number regex over an IEEE-754 payload
+  finds whatever digits happen to fall out of the bytes. On the hull case that
+  produced `hull 4 faces, 0 / 1.5 / 3, viscous sublayer 100%` while the run's own
+  function object, at the same time 1500, said `32.86 / 83.73 / 223.5, log layer`:
+  a factor of 75, reported at status `ok`, with a fabricated per-face distribution
+  behind it. So the payloads are lifted out through `locate.py`'s binary reader --
+  the `arch` note gives the byte order and the scalar width, the list head gives the
+  count, and the byte just past the payload has to be the closing parenthesis or the
+  file is refused by name rather than guessed at. A binary file never produces a
+  number presented as measured: either the decode is exact (it reproduces the hull's
+  32.86 / 83.73 / 223.5 to every digit) or the source is declined and says so.
+* Only a WALL is reported. y+ is a wall quantity, and `boundaryField` carries an
+  entry for every patch -- an inlet's `calculated` / `uniform 0` was being reported
+  as a measured `y+ = 0, viscous sublayer 100%`, on the cylinder case as the whole
+  report and the whole plot. The patch type comes off `constant/polyMesh/boundary`
+  through `locate.read_boundary` (which reads the binary spelling too), with the
+  `nut` conditions as the fallback where there is no mesh to read. Non-wall patches
+  are LISTED as excluded with their type, because dropping a source without saying
+  so is the pattern behind both of these defects.
+* A `uniform` entry is reported as uniform. One value is not a distribution: it was
+  becoming `faces: 1` and then a 100% per-face fraction. What is printed is the
+  value, the word uniform, and the patch's real face count where the mesh states one.
+* Time 0 is not a result. `0/yPlus` is the initial condition the function object
+  wrote before the run started, and it was being reported as a measurement "at time
+  0" beside a function object saying the same wall ran at y+ 2.5 to 1289. It is
+  passed over by default, with a note saying so, and read only if `--time 0` asks.
 
 the three regions
 
@@ -148,14 +188,25 @@ def regime_fractions(values: np.ndarray) -> dict[str, float]:
 
 def patch_record(patch: str, values: np.ndarray | None,
                  summary: tuple[float, float, float] | None = None,
-                 faces: int | None = None) -> dict[str, Any]:
+                 faces: int | None = None, uniform: bool = False) -> dict[str, Any]:
     """One patch's row, from per-face values where there are any and from a
-    summary's three numbers where that is all the run wrote."""
+    summary's three numbers where that is all the run wrote.
+
+    `uniform` is the third state, and it exists because of #144: a `boundaryField`
+    entry written `uniform 0` is ONE value for the whole patch, and it was being
+    turned into `faces: 1` and from there into a 100% per-face fraction. A single
+    value carries no distribution, so the fractions are stated as unavailable the
+    way a `.dat` summary's are, and the face count is the mesh's where the mesh
+    states one rather than the length of a one-element array.
+    """
     if values is not None and np.asarray(values).size:
         values = np.asarray(values, dtype=float)
         low, high, mean = float(values.min()), float(values.max()), float(values.mean())
-        fractions: dict[str, float] | None = regime_fractions(values)
-        faces = int(values.size) if faces is None else faces
+        fractions: dict[str, float] | None = (
+            None if uniform else regime_fractions(values)
+        )
+        if faces is None and not uniform:
+            faces = int(values.size)
     elif summary is not None:
         low, high, mean = summary
         fractions = None
@@ -169,6 +220,7 @@ def patch_record(patch: str, values: np.ndarray | None,
         "faces": faces,
         "spans": regimes_spanned(low, high),
         "fractions": fractions,
+        "uniform": bool(uniform),
     }
 
 
@@ -265,8 +317,15 @@ def dat_files(case: Path) -> dict[str, list[Path]]:
     return grouped
 
 
-def from_dat(case: Path, requested: str | None = None) -> list[dict[str, Any]]:
-    """One source record per yPlus series the case logged, histories stitched."""
+def from_dat(case: Path, requested: str | None = None,
+             dropped: list[str] | None = None) -> list[dict[str, Any]]:
+    """One source record per yPlus series the case logged, histories stitched.
+
+    A `--time` that no row sits on drops the series, and until #138 and #144 were
+    fixed it dropped it in silence -- `--time 1075` on the wing case left the
+    function object's own answer out of the report with nothing said. What was
+    passed over, and the times that were there instead, go into `dropped`.
+    """
     sources: list[dict[str, Any]] = []
     for key, paths in sorted(dat_files(case).items()):
         rows: list[dict[str, Any]] = []
@@ -281,9 +340,20 @@ def from_dat(case: Path, requested: str | None = None) -> list[dict[str, Any]]:
         times = sorted({row["time"] for row in rows})
         if requested is not None:
             wanted = float(requested)
-            times = [t for t in times if abs(t - wanted) <= results.time_tolerance(wanted)]
-            if not times:
+            matched = [
+                t for t in times if abs(t - wanted) <= results.time_tolerance(wanted)
+            ]
+            if not matched:
+                if dropped is not None:
+                    near = min(times, key=lambda t: abs(t - wanted))
+                    dropped.append(
+                        f"{key} holds no row at time {requested}: {len(times)} writes "
+                        f"from {times[0]:g} to {times[-1]:g}, the nearest at {near:g}. "
+                        "This source was passed over rather than reported at a time "
+                        "that was not asked for"
+                    )
                 continue
+            times = matched
         at = times[-1]
         latest: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -307,6 +377,17 @@ def from_dat(case: Path, requested: str | None = None) -> list[dict[str, Any]]:
 
 
 _NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+_FORMAT = re.compile(r"\bformat\s+(\w+)\s*;")
+_ARCH = re.compile(r'\barch\s+"([^"]*)"')
+_LIST_HEAD = re.compile(r"(\d+)\s*\(")
+_LIST_OF = re.compile(r"List<(\w+)>")
+_PAYLOAD = re.compile(r"@payload (\d+)@")
+
+_LIST_ITEMS: dict[str, int] = {
+    "scalar": 1, "sphericalTensor": 1, "vector": 3, "symmTensor": 6, "tensor": 9,
+}
+"""How many scalars one item of each list type is written as. The list head states
+the item count, not the scalar count, so the payload width needs both."""
 
 
 def field_components(text: str) -> int:
@@ -315,15 +396,117 @@ def field_components(text: str) -> int:
     return 3 if match and "Vector" in match.group(1) else 1
 
 
-def boundary_values(text: str) -> dict[str, np.ndarray | None]:
+def header_format(text: str) -> str:
+    """The `format` entry of the FoamFile header: `ascii` or `binary`.
+
+    Read out of the header and not assumed, which is the whole of #138: nothing
+    looked at this entry, so a binary payload went through a number regex and the
+    digits that fell out of the bytes were reported as measured y+. Only the header
+    region is searched, because a binary payload can contain the word anywhere.
+    """
+    match = _FORMAT.search(text[:4096])
+    return match.group(1).lower() if match else "ascii"
+
+
+def decode_binary(path: Path) -> tuple[str, list[np.ndarray]]:
+    """A binary field as its text with every payload lifted out, and the payloads.
+
+    `locate.py` already reads both spellings of an OpenFOAM file -- it decodes the
+    bytes latin-1, which is lossless, so one string serves for the regexes and for
+    the byte offsets -- and this is that reader applied to a field rather than a
+    mesh. Each `<count> ( <bytes> )` list is replaced in the text by an
+    `@payload <n>@` marker, so `preflight.py`'s brace matching then runs over text
+    that holds no payload bytes at all: a `{`, a `}` or a `;` inside an IEEE-754
+    double cannot be mistaken for structure, and the `value` keyword is never looked
+    for inside a payload.
+
+    Every assumption the layout rests on is checked and the file is REFUSED by name
+    rather than guessed at when one fails -- the byte just past a payload has to be
+    its closing parenthesis, which is the check that would have caught #138 on the
+    first run. Raises `WallError`, which `measure` reports as a skipped source.
+    """
+    fobj = locate.foam_file(path)
+    if fobj is None:
+        raise WallError(f"{path.name} declares format binary and could not be read")
+    arch = _ARCH.search(fobj.text[:4096])
+    if arch is None:
+        raise WallError(
+            f"{path.parent.name}/{path.name} declares format binary but carries no "
+            "arch note, so the byte order and scalar width it was written with are "
+            "not stated; foamFormatConvert would rewrite it as ascii"
+        )
+    if not arch.group(1).upper().startswith("LSB"):
+        raise WallError(
+            f"{path.parent.name}/{path.name} is binary and big-endian "
+            f"(arch \"{arch.group(1)}\"); only the little-endian spelling is decoded "
+            "here, so this source is refused rather than byte-swapped on a guess"
+        )
+    if fobj.scalar_bytes not in (4, 8):
+        raise WallError(
+            f"{path.parent.name}/{path.name} is binary with a "
+            f"{fobj.scalar_bytes * 8}-bit scalar, which is neither of the widths "
+            "decoded here"
+        )
+    default_items = 3 if "Vector" in fobj.cls else 1
+    pieces: list[str] = []
+    payloads: list[np.ndarray] = []
+    at = fobj.body_at
+    while True:
+        head = _LIST_HEAD.search(fobj.text, at)
+        if head is None:
+            pieces.append(fobj.text[at:])
+            break
+        count = int(head.group(1))
+        opened = head.end() - 1
+        kinds = _LIST_OF.findall(fobj.text[max(at, head.start() - 60):head.start()])
+        items = _LIST_ITEMS.get(kinds[-1], default_items) if kinds else default_items
+        width = count * items * fobj.scalar_bytes
+        closes = opened + 1 + width
+        if fobj.data[closes:closes + 1] != b")":
+            raise WallError(
+                f"{path.parent.name}/{path.name} is binary and its payload of "
+                f"{count} items does not end where the header's widths say it should "
+                f"(byte {closes} is not a closing parenthesis), so it is refused "
+                "rather than read at an offset that is already known to be wrong; "
+                "foamFormatConvert would rewrite it as ascii"
+            )
+        payloads.append(
+            np.frombuffer(fobj.data[opened + 1:closes], dtype=f"<f{fobj.scalar_bytes}")
+        )
+        pieces.append(fobj.text[at:opened + 1] + f"@payload {len(payloads) - 1}@")
+        at = closes
+    return "".join(pieces), payloads
+
+
+def read_field(path: Path) -> tuple[str, list[np.ndarray] | None]:
+    """A field's text, and its binary payloads where it has any.
+
+    `None` for an ascii file, which is the common case and is read exactly as
+    before. A binary file is decoded here or refused here; it never reaches the
+    number regex, which is what #138 was.
+    """
+    text = preflight.read_text(path)
+    if header_format(text) != "binary":
+        return text, None
+    return decode_binary(path)
+
+
+def boundary_values(text: str,
+                    payloads: list[np.ndarray] | None = None
+                    ) -> dict[str, np.ndarray | None]:
     """`{patch: magnitudes}` out of a field's `boundaryField`, one per wall face.
 
     The brace matching is `preflight.py`'s, so a nested patch entry is not read as
     the end of the block. A `uniform` entry comes back as a single value rather than
     tiled: numpy broadcasts it against the per-face heights later, and a size of one
-    is also the honest record of what the file says. A patch that wrote no `value`
-    at all -- `calculated` on a patch the function object skipped -- comes back
-    `None` rather than as an empty array, which would read as a measured nothing.
+    is also the honest record of what the file says -- `patch_record` is told so
+    rather than counting it as one face. A patch that wrote no `value` at all --
+    `calculated` on a patch the function object skipped -- comes back `None` rather
+    than as an empty array, which would read as a measured nothing.
+
+    `payloads` is `decode_binary`'s, and an `@payload n@` marker is resolved from it
+    instead of being handed to the number regex. Without it the reading is the ascii
+    one it has always been, which is what `heat.py` calls this for.
     """
     components = field_components(text)
     found: dict[str, np.ndarray | None] = {}
@@ -341,11 +524,19 @@ def boundary_values(text: str) -> dict[str, np.ndarray | None]:
         # from the opening parenthesis on is.
         if "(" in tail:
             tail = tail[tail.index("("):]
-        numbers = [float(token) for token in _NUMBER.findall(tail)]
-        if not numbers:
-            found[patch] = None
-            continue
-        values = np.asarray(numbers, dtype=float)
+        marker = _PAYLOAD.search(tail)
+        if marker is not None and payloads is not None:
+            index = int(marker.group(1))
+            values = payloads[index].astype(float) if index < len(payloads) else None
+            if values is None:
+                found[patch] = None
+                continue
+        else:
+            numbers = [float(token) for token in _NUMBER.findall(tail)]
+            if not numbers:
+                found[patch] = None
+                continue
+            values = np.asarray(numbers, dtype=float)
         if components == 3:
             if values.size % 3:
                 found[patch] = None
@@ -355,44 +546,165 @@ def boundary_values(text: str) -> dict[str, np.ndarray | None]:
     return found
 
 
-def field_file(case: Path, name: str, requested: str | None) -> Path | None:
+def is_wall_type(kind: str) -> bool:
+    """Whether a patch type out of a mesh `boundary` is a wall.
+
+    `wall` is what OpenFOAM writes; `mappedWall` and the other derived spellings end
+    in it. Everything else -- `patch`, `empty`, `symmetryPlane`, `slip`, `cyclic` --
+    has no wall and therefore no wall resolution.
+    """
+    return kind == "wall" or kind.lower().endswith("wall")
+
+
+def patch_types(case: Path) -> tuple[dict[str, str], dict[str, int], str]:
+    """`{patch: type}`, `{patch: face count}` and where they were read.
+
+    #144: `boundaryField` holds an entry per patch and every one of them was being
+    reported as a measured wall, so an inlet's `calculated` / `uniform 0` came out
+    as `y+ 0, viscous sublayer 100%`. The type was available three ways over and
+    none was used. This is the mesh's own answer, through `locate.read_boundary`
+    rather than a reader written here, because that one reads the binary spelling of
+    `boundary` as well -- the same `writeFormat binary` case that produced #138
+    stamps the header on this file too. It also carries `nFaces`, which is the honest
+    face count for a `uniform` entry.
+
+    The `nut` conditions are the fallback where there is no mesh to read: a
+    `nut*WallFunction` is on a wall by construction. A laminar case has no `nut` at
+    all, which is why the mesh comes first.
+    """
+    boundary = locate.read_boundary(Path(case) / "constant" / "polyMesh" / "boundary")
+    if boundary:
+        return (
+            {name: str(entry["type"]) for name, entry in boundary.items()},
+            {name: int(entry["nFaces"]) for name, entry in boundary.items()},
+            "constant/polyMesh/boundary",
+        )
+    parsed, where = nut_types(Path(case))
+    if not where:
+        return {}, {}, ""
+    types: dict[str, str] = {}
+    for name in parsed.get("names", []):
+        kind = resolve_type(parsed, name)
+        types[name] = "wall" if kind.endswith("WallFunction") else kind
+    return types, {}, where
+
+
+def field_file(case: Path, name: str, requested: str | None,
+               dropped: list[str] | None = None) -> Path | None:
     """The latest written `name`, or the one in `--time`. Time directories are
     `locate.py`'s. Only the case's own times are read: in a decomposed run that was
     never reconstructed each `processor*` holds a slice of every patch, and a
-    per-patch range taken off one slice is a range over part of a wall."""
+    per-patch range taken off one slice is a range over part of a wall.
+
+    Time 0 is passed over unless `--time 0` asks for it: `0/yPlus` is the field as
+    the function object wrote it before the run started, and #144 had it reported as
+    a measurement "at time 0" -- hull y+ 0 -- next to a function object saying the
+    same hull ran at y+ 2.5 to 1289. Whatever is passed over is appended to
+    `dropped`, because a source that disappears without a word is the shape of both
+    of the defects this file was fixed for.
+    """
     times = locate.time_dirs(Path(case))
+
+    def holds(folder: Path) -> Path | None:
+        for candidate in (folder / name, folder / f"{name}.gz"):
+            if candidate.is_file():
+                return candidate
+        return None
+
     if requested is not None:
-        times = [
+        matched = [
             (value, folder) for value, folder in times
             if folder.name == requested
             or (locate.is_time_name(requested) and value == float(requested))
         ]
-    for _, folder in reversed(times):
-        for candidate in (folder / name, folder / f"{name}.gz"):
-            if candidate.is_file():
-                return candidate
+        if not matched and dropped is not None:
+            elsewhere = [folder.name for _, folder in times if holds(folder)]
+            if elsewhere:
+                dropped.append(
+                    f"--time {requested} names no time directory in this case, so the "
+                    f"written {name} field was not read; it is there at "
+                    + ", ".join(elsewhere)
+                )
+        times = matched
+
+    for value, folder in reversed(times):
+        found = holds(folder)
+        if found is None:
+            continue
+        if requested is None and value == 0.0:
+            if dropped is not None:
+                dropped.append(
+                    f"{found.parent.name}/{found.name} is the field as it stood before "
+                    "the run, written at time 0: an initial condition and not a "
+                    "result, so it is not reported as a measurement here (--time 0 "
+                    "reads it anyway, labelled)"
+                )
+            continue
+        return found
     return None
 
 
-def from_field(case: Path, requested: str | None = None) -> dict[str, Any] | None:
+def from_field(case: Path, requested: str | None = None,
+               dropped: list[str] | None = None) -> dict[str, Any] | None:
     """A written `yPlus` field, which carries the distribution and not only its
-    summary -- so the regime fractions off this source are real fractions."""
-    path = field_file(case, "yPlus", requested)
+    summary -- so the regime fractions off this source are real fractions.
+
+    Walls only, binary decoded or refused, and a `uniform` entry reported as one
+    value rather than as a one-face histogram. The three rules are #138 and #144,
+    and the module docstring has the numbers they were found with.
+    """
+    path = field_file(case, "yPlus", requested, dropped)
     if path is None:
         return None
-    values = boundary_values(preflight.read_text(path))
-    patches = [
-        patch_record(name, array)
-        for name, array in sorted(values.items())
-        if array is not None and array.size
-    ]
-    if not patches:
+    text, payloads = read_field(path)
+    values = boundary_values(text, payloads)
+    types, faces, typed_from = patch_types(Path(case))
+    patches: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for name, array in sorted(values.items()):
+        if array is None or not array.size:
+            continue
+        kind = types.get(name)
+        if kind is not None and not is_wall_type(kind):
+            excluded.append({"patch": name, "type": kind})
+            continue
+        uniform = array.size == 1
+        expected = faces.get(name)
+        # The cheap guard #138 asked for, kept even though the decode makes it
+        # unreachable on the corpus: a count that is neither one nor the patch's
+        # faces is a read that went wrong, and `4 faces` on a wall of 1008 was all
+        # it ever took to know.
+        if expected is not None and not uniform and array.size != expected:
+            problems.append(
+                f"patch '{name}' in {path.parent.name}/{path.name}: {array.size} "
+                f"values against {expected} faces in constant/polyMesh/boundary, so "
+                "the file and the mesh do not describe the same patch; not reported "
+                "as a measurement"
+            )
+            continue
+        patches.append(patch_record(
+            name, array, faces=expected if uniform else None, uniform=uniform
+        ))
+    if not patches and not excluded:
+        if problems:
+            raise WallError("; ".join(problems))
         return None
+    at = float(path.parent.name) if locate.is_time_name(path.parent.name) else None
+    detail = f"{path.parent.name}/{path.name}"
+    if payloads is not None:
+        detail += ", binary, payloads decoded"
+    if at == 0.0:
+        detail += ", AN INITIAL CONDITION AND NOT A RESULT (--time 0 was asked for)"
     return {
         "source": "written yPlus field",
-        "detail": f"{path.parent.name}/{path.name}",
-        "time": float(path.parent.name) if locate.is_time_name(path.parent.name) else None,
+        "detail": detail,
+        "time": at,
+        "initial": at == 0.0,
         "patches": patches,
+        "excluded": excluded,
+        "typed_from": typed_from,
+        "problems": problems,
     }
 
 
@@ -412,8 +724,41 @@ def viscosity(case: Path, given: float | None) -> tuple[float | None, str]:
     return None, ""
 
 
+def kinematic_or_refused(path: Path, text: str) -> str:
+    """How the shear field is dimensioned, or a refusal of it.
+
+    `u_tau = sqrt(|tau|)` holds only for the KINEMATIC wall shear -- tau/rho, m2/s2
+    -- which is what an incompressible OpenFOAM solver writes. A compressible solver
+    writes a stress in Pa, kg m-1 s-2, and the square root of that is not a
+    velocity: it is out by sqrt(rho), about 1.2 for air at room conditions and far
+    more in a gas at pressure. No case in the corpus wrote a compressible
+    `wallShearStress`, so that path was never exercised by the audit that found #138
+    and #144 -- untested, which is not the same as clean. Rather than leave the
+    conversion assumed, the field's own `dimensions` are read with `preflight.py`'s
+    reader and a stress that carries MASS is refused by name. Converting it properly
+    needs rho at the wall, which a compressible case does not state as a constant,
+    and a guessed rho is exactly the kind of number this script refuses to print.
+    """
+    dimensions = preflight.parse_dimensions(text)
+    if dimensions is None:
+        return "no dimensions stated in the field, so it is read as kinematic"
+    if dimensions[0]:
+        shown = " ".join(f"{value:g}" for value in dimensions)
+        raise WallError(
+            f"{path.parent.name}/{path.name} has dimensions [{shown}]: mass appears, "
+            "so this is a dynamic wall shear stress in Pa and not the kinematic "
+            "tau/rho an incompressible solver writes, and u_tau = sqrt(|tau|) is not "
+            "a velocity for it. Converting it needs rho at the wall, which this does "
+            "not read, so the source is refused rather than reported out by a factor "
+            "of sqrt(rho); pass a case whose shear is kinematic, or read y+ off a "
+            "yPlus function object"
+        )
+    return "kinematic (no mass in the field's own dimensions)"
+
+
 def from_wall_shear(case: Path, requested: str | None = None,
-                    nu: float | None = None) -> dict[str, Any] | None:
+                    nu: float | None = None,
+                    dropped: list[str] | None = None) -> dict[str, Any] | None:
     """y+ built from `wallShearStress`, the mesh and nu, for a run that wrote the
     shear and never asked for y+.
 
@@ -422,8 +767,12 @@ def from_wall_shear(case: Path, requested: str | None = None,
     height, the distance to the cell centre, which is the y OpenFOAM's own yPlus
     uses. `layer_report.py` supplies that height per face straight out of
     `constant/polyMesh`, so this needs nothing the run did not already write.
+
+    Walls only, since #144: on the cylinder case this source is the only one, so its
+    `inlet`, `outlet`, `topWall` and `bottomWall` rows at y+ 0 were the whole report
+    and the whole plot. The mesh `layer_report.py` already loaded here types them.
     """
-    path = field_file(Path(case), "wallShearStress", requested)
+    path = field_file(Path(case), "wallShearStress", requested, dropped)
     if path is None:
         return None
     nu = _need(nu, "nu", "constant/transportProperties", "--nu")
@@ -431,15 +780,22 @@ def from_wall_shear(case: Path, requested: str | None = None,
         raise WallError(
             f"nu read as {nu:g}, which no y+ can be divided by; pass --nu"
         )
+    text, payloads = read_field(path)
+    convention = kinematic_or_refused(path, text)
     mesh = layer_report.load(Path(case))
-    values = boundary_values(preflight.read_text(path))
+    values = boundary_values(text, payloads)
     patches: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
     problems: list[str] = []
     for name, tau in sorted(values.items()):
         if tau is None or tau.size == 0:
             continue
         if name not in mesh["boundary"]:
             problems.append(f"the field has a patch '{name}' the mesh does not")
+            continue
+        kind = str(mesh["boundary"][name]["type"])
+        if not is_wall_type(kind):
+            excluded.append({"patch": name, "type": kind})
             continue
         height, _ = layer_report.first_cell_heights(mesh, name)
         if tau.size not in (1, height.size):
@@ -449,19 +805,26 @@ def from_wall_shear(case: Path, requested: str | None = None,
             continue
         y_plus = np.sqrt(np.abs(tau)) * (height / 2.0) / nu
         patches.append(patch_record(name, y_plus, faces=int(height.size)))
-    if not patches:
+    if not patches and not excluded:
         if problems:
             raise WallError("; ".join(problems))
         return None
+    detail = (
+        f"{path.parent.name}/{path.name}, nu = {nu:g} m2/s, "
+        "y = half the first-cell height from layer_report.py, "
+        f"tau {convention}"
+    )
+    if payloads is not None:
+        detail += ", binary, payloads decoded"
     return {
         "source": "derived from wallShearStress",
-        "detail": (
-            f"{path.parent.name}/{path.name}, nu = {nu:g} m2/s, "
-            "y = half the first-cell height from layer_report.py"
-        ),
+        "detail": detail,
         "time": float(path.parent.name) if locate.is_time_name(path.parent.name) else None,
+        "initial": False,
         "nu": float(nu),
         "patches": patches,
+        "excluded": excluded,
+        "typed_from": "constant/polyMesh/boundary",
         "problems": problems,
     }
 
@@ -547,9 +910,10 @@ def measure(case: Path, time: str | None = None, nu: float | None = None) -> dic
         "problems": [],
     }
 
-    found["sources"].extend(from_dat(case, time))
-    for producer in (lambda: from_field(case, time),
-                     lambda: from_wall_shear(case, time, read_nu)):
+    dropped: list[str] = []
+    found["sources"].extend(from_dat(case, time, dropped))
+    for producer in (lambda: from_field(case, time, dropped),
+                     lambda: from_wall_shear(case, time, read_nu, dropped)):
         try:
             source = producer()
         except (WallError, layer_report.MeshError) as error:
@@ -558,6 +922,9 @@ def measure(case: Path, time: str | None = None, nu: float | None = None) -> dic
         if source is not None:
             found["problems"].extend(source.pop("problems", []))
             found["sources"].append(source)
+    # What was passed over, said out loud. A source that disappears without a word
+    # is the shape of both #138 and #144, so this is reported and not swallowed.
+    found["problems"].extend(dropped)
 
     parsed, nut_from = nut_types(case)
     found["nut_from"] = nut_from
@@ -575,27 +942,66 @@ def measure(case: Path, time: str | None = None, nu: float | None = None) -> dic
 
 def primary(found: dict[str, Any]) -> dict[str, Any] | None:
     """The source to draw and to lead the report with: the one the run computed
-    itself, before one computed here."""
+    itself, before one computed here.
+
+    A source at time 0 is last whatever it is, since #144: an initial condition led
+    the report on one case, and a y+ of 0 from before the run started is not the
+    number anything should be read against. It is still returned when it is all
+    there is, because `--time 0` asking for it is a different thing from it being
+    picked.
+    """
     order = ("yPlus function object", "written yPlus field", "derived from wallShearStress")
-    for name in order:
-        for source in found["sources"]:
-            if source["source"] == name:
-                return source
-    return found["sources"][0] if found["sources"] else None
+    candidates = [s for s in found["sources"] if not s.get("initial")]
+    for pool in (candidates, found["sources"]):
+        for name in order:
+            for source in pool:
+                if source["source"] == name:
+                    return source
+        if pool:
+            return pool[0]
+    return None
 
 
 def _range(row: dict[str, Any]) -> str:
+    if row.get("uniform"):
+        return f"y+ {row['mean']:.3g} uniform over the patch"
     return f"y+ {row['min']:.3g} to {row['max']:.3g} (mean {row['mean']:.3g})"
 
 
 def _regions(row: dict[str, Any], brief: bool = False) -> str:
     """Fractions where there is a distribution to take them over; otherwise the
-    regions the range reaches, labelled as spanned so the two are never read alike."""
+    regions the range reaches, labelled as spanned so the two are never read alike.
+
+    A `uniform` entry gets a third wording, because of #144: one value for a whole
+    patch was being printed as `viscous sublayer 100%`, which reads as a per-face
+    fraction over a distribution that the file does not contain.
+    """
+    if row.get("uniform"):
+        tail = " (uniform)" if brief else (
+            " (uniform; one value for the whole patch, which is not a distribution)"
+        )
+        return regime_of(row["mean"]) + tail
     if row["fractions"] is not None:
         parts = [f"{name} {value:g}%" for name, value in row["fractions"].items() if value]
         return ", ".join(parts) or "no faces in any region"
     tail = " (spanned)" if brief else " (spanned; a summary carries no fractions)"
     return ", ".join(row["spans"]) + tail
+
+
+def _excluded(source: dict[str, Any]) -> str:
+    """The non-wall patches this source left out, with the type that says why.
+
+    Listed and not merely dropped: #144 was non-wall patches reported as measured
+    walls, and the fix for it must not become a second silent drop."""
+    rows = source.get("excluded") or []
+    if not rows:
+        return ""
+    named = ", ".join(f"{row['patch']} (type {row['type']})" for row in rows)
+    where = source.get("typed_from") or "the case"
+    return (
+        f"excluded, not walls and y+ is a wall quantity: {named}"
+        f" -- typed from {where}"
+    )
 
 
 def findings(found: dict[str, Any]) -> list[Finding]:
@@ -606,19 +1012,42 @@ def findings(found: dict[str, Any]) -> list[Finding]:
             f"{row['patch']}: {_range(row)}"
             + (f", {row['faces']} faces" if row["faces"] else "")
             for row in source["patches"]
-        )
+        ) or "no wall patch in this source"
         where = source["detail"]
         at = source.get("time")
         if at is not None:
             where += f" at time {at:g}"
+        left_out = _excluded(source)
+        if left_out:
+            measured += f" | {left_out}"
+        meaning = "; ".join(
+            f"{row['patch']}: {_regions(row)}" for row in source["patches"]
+        )
+        if source.get("initial"):
+            meaning = (
+                "time 0 is the initial condition the field was written from and not "
+                "a result, so this is not a measurement of what the run reached"
+                + (f". {meaning}" if meaning else "")
+            )
         out.append(Finding(
-            "y+", "ok", f"{source['source']}, {where} -- {measured}",
-            "; ".join(f"{row['patch']}: {_regions(row)}" for row in source["patches"]),
+            "y+", "skipped" if source.get("initial") else "ok",
+            f"{source['source']}, {where} -- {measured}", meaning,
         ))
 
     treatment = found["wall_treatment"]
     lead = primary(found)
-    if treatment and lead:
+    if treatment and lead and lead.get("initial"):
+        out.append(Finding(
+            "wall-treatment", "skipped",
+            f"{found['nut_from'] or 'nut'}: " + ", ".join(
+                f"{patch}: {kind or 'no nut entry'}"
+                for patch, kind in sorted(treatment.items())
+            ),
+            "the only y+ this case offers is the field at time 0, which is the "
+            "initial condition and not what the run reached, so there is nothing "
+            "here to put beside the band that wall condition is written for",
+        ))
+    elif treatment and lead:
         rows = {row["patch"]: row for row in lead["patches"]}
         measured_parts: list[str] = []
         meaning_parts: list[str] = []
@@ -694,6 +1123,11 @@ def report(found: dict[str, Any]) -> str:
                 f"    {row['patch']:<16}{faces:>8}{row['min']:>11.4g}"
                 f"{row['mean']:>11.4g}{row['max']:>11.4g}   {_regions(row, brief=True)}"
             )
+        if not source["patches"]:
+            lines.append("    (no wall patch in this source)")
+        left_out = _excluded(source)
+        if left_out:
+            lines.append(f"    {left_out}")
     if found["nu"] is not None:
         lines.append("")
         lines.append(f"  nu {found['nu']:g} m2/s   ({found['nu_from']})")

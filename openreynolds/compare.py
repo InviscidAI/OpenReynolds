@@ -198,9 +198,14 @@ def state_roots(root: Path) -> list[Path]:
 # -- the sections --------------------------------------------------------------------
 
 
-def identity(studies_dir: Path, study_id: str) -> dict[str, Any]:
-    """What the study says about itself, out of `session.json` and the transcript."""
-    store = Store(studies_dir, study_id)
+def identity(studies_dir: Path, study_id: str, store: Store | None = None) -> dict[str, Any]:
+    """What the study says about itself, out of `session.json` and the transcript.
+
+    `store` is the already-open Store when the caller has one (`catalog.row`, which
+    reads every study in the directory): a second read of the same `session.json`
+    per study is the kind of thing a listing pays for once per row.
+    """
+    store = Store(studies_dir, study_id) if store is None else store
     session = store.session
     messages = studies_dir / study_id / "messages.jsonl"
     count = 0
