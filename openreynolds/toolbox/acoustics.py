@@ -799,6 +799,11 @@ def report(found: dict[str, Any]) -> str:
                      + " ".join(f"{value:g}" for value in found["probes"][index]) + ")")
     if found["solver"]["application"]:
         lines.append(f"  solver: {found['solver']['application']}")
+    elif found["solver"]["why"]:
+        # A bare .dat or CSV has no controlDict beside it, so the steady check could
+        # not run. Printed rather than left in the JSON: the whole refusal above rests
+        # on that check, and a file read on its own has not had it.
+        lines.append(f"  {found['solver']['why']}")
     lines.append(
         f"record: {record['samples']} samples, t = {record['t0']:g} to {record['t1']:g} "
         f"(span {record['span']:g}), step {record['dt']:.4g} -> {record['rate']:.4g} Hz "

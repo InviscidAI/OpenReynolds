@@ -121,7 +121,12 @@ def test_a_one_pascal_rms_sine_is_ninety_four_decibels(tmp_path, acoustics):
     assert bands[200] == pytest.approx(93.979, abs=0.05)
     assert found["third_octave"]["loudest"]["nominal"] == 200
     assert found["reference_pressure"] == 20e-6
-    assert "re 2e-05 Pa" in acoustics.report(found)
+    text = acoustics.report(found)
+    assert "re 2e-05 Pa" in text
+    # A file read on its own has no controlDict beside it, so the steady check that
+    # the case path refuses on could not run, and the report says that rather than
+    # leaving the reader to assume it did.
+    assert "system/controlDict was not read" in text
 
 
 def test_the_band_centres_are_the_iso_266_preferred_series(acoustics):
