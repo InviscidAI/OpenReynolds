@@ -225,6 +225,20 @@ def test_a_finer_mesh_of_the_same_domain_is_resampled_onto_the_first(render):
     assert np.max(np.abs(a - b)) < 1e-9
 
 
+def test_a_reordered_mesh_is_resampled_rather_than_subtracted_in_place(render):
+    """The same cell count over the same box, with the points in another order. A
+    point-by-point subtraction there takes one run's value at a point away from the
+    other run's value somewhere else: the shapes agree, nothing raises, and the picture
+    is noise in the right colours. Resampling is the right answer and it is taken."""
+    first = grid(6)
+    shuffled = grid(6).cast_to_unstructured_grid()
+    order = np.arange(shuffled.n_points)[::-1]
+    shuffled.points = np.asarray(shuffled.points)[order]
+    shuffled.point_data["p"] = np.asarray(shuffled.point_data["p"])[order]
+
+    assert render.correspondence(first, shuffled) == "resampled"
+
+
 def test_a_second_run_covering_only_part_of_the_cut_is_refused(render):
     """The other half of the correspondence rule. The boxes agree, so this gets past
     `correspondence`, and the sampling is what finds out: half of the first run's points

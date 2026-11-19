@@ -377,7 +377,16 @@ def correspondence(first, second, name_first: str = "A", name_second: str = "B",
             "A difference between two different domains is a picture of nothing."
         )
     if first.n_points == second.n_points and worst <= 1e-9:
-        return "same-mesh"
+        # The same count over the same box is not yet the same mesh. A mesh whose points
+        # arrive in another order passes both of those and then subtracts one run's
+        # value at a point from the other run's value somewhere else -- the shapes
+        # agree, nothing raises, and the picture is noise drawn in the right colours.
+        # The coordinates settle it, and a mesh that fails it is not refused: resampling
+        # is exactly the right answer for one.
+        here = getattr(first, "points", None)
+        there = getattr(second, "points", None)
+        if here is None or there is None or np.allclose(here, there):
+            return "same-mesh"
     return "resampled"
 
 
