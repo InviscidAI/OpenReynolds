@@ -393,6 +393,22 @@ def test_a_patch_that_is_not_a_wall_is_excluded_and_listed_as_excluded(wall, tmp
     assert "outer" not in finding.meaning
 
 
+def test_a_value_count_that_is_not_the_patchs_face_count_is_not_a_measurement(wall, tmp_path):
+    """The cheap guard issue #138 asked for, kept beside the decode rather than
+    instead of it. `from_wall_shear` already refused a count that was neither one nor
+    the patch's faces and `from_field` had no such check -- and `4 faces` on a wall of
+    1008 was all it ever took to know that read had failed."""
+    case = box(tmp_path)
+    write_field(case / "0.5" / "yPlus", "volScalarField",
+                {"wall": _scalars([40.0] * 5)})
+
+    found = wall.measure(case)
+    assert found["sources"] == []
+    (problem,) = [p for p in found["problems"] if "5 values" in p]
+    assert "8 faces" in problem
+    assert "constant/polyMesh/boundary" in problem
+
+
 def test_a_uniform_entry_is_reported_as_uniform_and_not_as_a_distribution(wall, tmp_path):
     """The second half of #144. `uniform 2.5` is ONE value for a whole patch: it was
     being counted as `faces: 1` and then printed as a 100% per-face fraction, which

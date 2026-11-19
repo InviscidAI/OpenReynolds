@@ -661,6 +661,7 @@ def from_field(case: Path, requested: str | None = None,
     types, faces, typed_from = patch_types(Path(case))
     patches: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
+    problems: list[str] = []
     for name, array in sorted(values.items()):
         if array is None or not array.size:
             continue
@@ -669,10 +670,25 @@ def from_field(case: Path, requested: str | None = None,
             excluded.append({"patch": name, "type": kind})
             continue
         uniform = array.size == 1
+        expected = faces.get(name)
+        # The cheap guard #138 asked for, kept even though the decode makes it
+        # unreachable on the corpus: a count that is neither one nor the patch's
+        # faces is a read that went wrong, and `4 faces` on a wall of 1008 was all
+        # it ever took to know.
+        if expected is not None and not uniform and array.size != expected:
+            problems.append(
+                f"patch '{name}' in {path.parent.name}/{path.name}: {array.size} "
+                f"values against {expected} faces in constant/polyMesh/boundary, so "
+                "the file and the mesh do not describe the same patch; not reported "
+                "as a measurement"
+            )
+            continue
         patches.append(patch_record(
-            name, array, faces=faces.get(name), uniform=uniform
+            name, array, faces=expected if uniform else None, uniform=uniform
         ))
     if not patches and not excluded:
+        if problems:
+            raise WallError("; ".join(problems))
         return None
     at = float(path.parent.name) if locate.is_time_name(path.parent.name) else None
     detail = f"{path.parent.name}/{path.name}"
@@ -688,6 +704,7 @@ def from_field(case: Path, requested: str | None = None,
         "patches": patches,
         "excluded": excluded,
         "typed_from": typed_from,
+        "problems": problems,
     }
 
 
