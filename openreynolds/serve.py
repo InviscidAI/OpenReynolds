@@ -106,8 +106,13 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self, method: str) -> None:
         if not self._authorized():
             # No hint about which part was wrong, and the body is read and dropped so a
-            # caller with the wrong token is not left writing into a closed socket.
-            self._read_body()
+            # caller with the wrong token is not left writing into a closed socket. A
+            # body this cannot even read is still answered 401, not 500: an
+            # unauthenticated request must not reach a traceback.
+            try:
+                self._read_body()
+            except (McpError, OSError):
+                pass
             self._json(HTTPStatus.UNAUTHORIZED,
                        {"error": "a token is required: Authorization: Bearer <token>"})
             return
@@ -258,6 +263,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _file(self, path: str) -> None:
         local = os.fspath(path)
+        if not os.path.isfile(local):
+            # A directory exists, so the host hands it over happily; there is nothing
+            # to send back for one.
+            raise McpError(f"{local} is not a file")
         size = os.path.getsize(local)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/octet-stream")
