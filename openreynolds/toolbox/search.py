@@ -41,8 +41,8 @@ offered it; nothing is inferred, and a query that returned exactly one case is n
 case adopted.
 
 The index is rebuilt when either of its files is missing, when it was built from a
-different tutorial tree, when it was built against a different OpenFOAM, or when its
-schema is older than this code -- because a stale index is worse than no index: it
+different tutorial tree or set of studies, when a study has changed since, when it was
+built against a different OpenFOAM, or when its schema is older than this code -- because a stale index is worse than no index: it
 answers, and it answers about something else. Building needs a tutorial tree and says
 so rather than harvesting the working directory; asking an index that is already there
 needs nothing.
@@ -83,8 +83,19 @@ def read_stamp(out_dir: Path | str) -> dict | None:
         return None
 
 
-def staleness(stamp: dict | None, live_version: str, *, tree: Path | str | None = None) -> str | None:
+def staleness(
+    stamp: dict | None,
+    live_version: str,
+    *,
+    tree: Path | str | None = None,
+    work: Path | str | None = None,
+) -> str | None:
     """Why the index should be rebuilt, or None if it should not.
+
+    `work` is held to the same rule as `tree`, and then the studies under it are
+    compared with the ones the index was built from. A study finishing changes none of
+    schema, tree or version, so without that comparison the earned tier was built once
+    and never again.
 
     The **tree is checked before the version**, and the order is the fix rather than a
     detail. Not knowing the live version returns None below, so with
@@ -117,6 +128,15 @@ def staleness(stamp: dict | None, live_version: str, *, tree: Path | str | None 
             wanted = Path(tree)
         if not _same_path(recorded_tree, wanted):
             return f"index was built from another tree ({recorded_tree}); this is {wanted}"
+    if work is not None:
+        recorded_work = stamp.get("work")
+        wanted_work = corpus._resolved(work)
+        if recorded_work and not _same_path(recorded_work, wanted_work):
+            return (f"index was built from other studies ({recorded_work}); "
+                    f"this is {wanted_work}")
+        recorded_studies = stamp.get("studies")
+        if recorded_studies is not None and recorded_studies != corpus.studies_fingerprint(work):
+            return "the studies have changed since the index was built"
     if live_version == "unknown":
         return None
     recorded = str(stamp.get("of_version") or "unknown")
@@ -128,7 +148,11 @@ def staleness(stamp: dict | None, live_version: str, *, tree: Path | str | None 
 
 
 def rebuild_reason(
-    out_dir: Path | str, *, tree: Path | str | None = None, live_version: str | None = None
+    out_dir: Path | str,
+    *,
+    tree: Path | str | None = None,
+    work: Path | str | None = None,
+    live_version: str | None = None,
 ) -> str | None:
     """Everything that makes an index unusable, not only what the stamp says.
 
@@ -139,7 +163,7 @@ def rebuild_reason(
     said the index is rebuilt when it is missing, and it was not.
     """
     version = corpus.foam_version() if live_version is None else live_version
-    reason = staleness(read_stamp(out_dir), version, tree=tree)
+    reason = staleness(read_stamp(out_dir), version, tree=tree, work=work)
     if reason:
         return reason
     missing = [name for name in (corpus.TUTORIALS_INDEX, corpus.STUDIES_INDEX)
@@ -183,7 +207,7 @@ def ensure(
     quiet: a query that silently took a second longer than usual, on an index that
     silently changed underneath it, is a thing the reader should be told about.
     """
-    reason = "asked for" if rebuild else rebuild_reason(out_dir, tree=tutorials)
+    reason = "asked for" if rebuild else rebuild_reason(out_dir, tree=tutorials, work=work)
     if reason:
         corpus.build(tutorials, out_dir, work=work)
     return load_rows(out_dir), reason
@@ -192,8 +216,12 @@ def ensure(
 # -- what a query can match ----------------------------------------------------
 
 
-def fields_of(row: dict) -> list[tuple[str, str]]:
+def fields_of(row: dict, *, earned: bool = False) -> list[tuple[str, str]]:
     """The values a token can match exactly, as (what it is, what it says).
+
+    `verdict` exists only on an earned row, so it is offered only when the search is
+    held to the earned tier (`earned=True`). Offered in a search across both tiers, it
+    is a field a tutorial cannot match, and the study wins a tie it should not.
 
     The regime class is offered whole *and* in parts, because the design document's
     own example query is "internal incompressible steady" -- three words against a
@@ -209,7 +237,7 @@ def fields_of(row: dict) -> list[tuple[str, str]]:
         ("turbulence", turbulence.get("simulation_type")),
         ("model", turbulence.get("model")),
         ("mesh", row.get("mesh_type")),
-        ("verdict", row.get("verdict")),
+        ("verdict", row.get("verdict") if earned else None),
         ("regime", regime.get("class")),
     ):
         if value:
@@ -231,11 +259,18 @@ def fields_of(row: dict) -> list[tuple[str, str]]:
     return list(dict.fromkeys(pairs))
 
 
-def text_of(row: dict) -> str:
-    """Everything else a token may appear in: the path, and whatever words the study
-    left behind. Bounded on purpose -- the boundary map and the scheme set are not in
-    here, because a free-text hit on `zeroGradient` would match most of the corpus."""
+def text_of(row: dict, *, earned: bool = False) -> str:
+    """Everything else a token may appear in: the path, and -- only when the search is
+    held to the earned tier -- whatever words the study left behind.
+
+    Notes, artifacts and rungs exist only on earned rows. Scored in a search across
+    both tiers, they gave a study points a tutorial could never get, so an identical
+    tutorial and study ranked the study first. Bounded on purpose -- the boundary map
+    and the scheme set are not in here, because a free-text hit on `zeroGradient` would
+    match most of the corpus."""
     parts = [str(row.get("path") or "")]
+    if not earned:
+        return parts[0]
     parts += [str(note) for note in row.get("notes") or []]
     parts += [str(kind) for kind in row.get("artifacts") or {}]
     for rung in row.get("rungs") or []:
@@ -243,12 +278,15 @@ def text_of(row: dict) -> str:
     return " ".join(parts)
 
 
-def score(row: dict, tokens: list[str]) -> tuple[int, list[str]]:
-    """How well this row answers, and the reason, in that order of importance."""
+def score(row: dict, tokens: list[str], *, earned: bool = False) -> tuple[int, list[str]]:
+    """How well this row answers, and the reason, in that order of importance.
+
+    `earned` says the search is held to the earned tier, and only then are the fields
+    only an earned row carries scored (`fields_of`, `text_of`)."""
     total = 0
     why: list[str] = []
-    fields = fields_of(row)
-    text = text_of(row).lower()
+    fields = fields_of(row, earned=earned)
+    text = text_of(row, earned=earned).lower()
     for token in tokens:
         lowered = token.lower()
         matched = [f"{name}={value}" for name, value in fields if value.lower() == lowered]
@@ -278,11 +316,12 @@ def unmatched_tokens(rows: list[dict], text: str, *, tier: str | None = None) ->
     """
     tokens = [token for token in text.split() if token]
     seen: set[str] = set()
+    earned = tier == "earned"
     for row in rows:
         if tier and row.get("tier") != tier:
             continue
-        values = {value.lower() for _, value in fields_of(row)}
-        text_of_row = text_of(row).lower()
+        values = {value.lower() for _, value in fields_of(row, earned=earned)}
+        text_of_row = text_of(row, earned=earned).lower()
         for token in tokens:
             lowered = token.lower()
             if lowered in values or lowered in text_of_row:
@@ -329,7 +368,7 @@ def search_with_held(
     for row in rows:
         if tier and row.get("tier") != tier:
             continue
-        points, why = score(row, tokens)
+        points, why = score(row, tokens, earned=tier == "earned")
         if not points:
             continue
         if runnable_only and not row.get("runs"):
@@ -901,8 +940,8 @@ def main(argv: list[str] | None = None) -> int:
             for line in unattached[-args.log_limit:]:
                 print(f"   {line.get('t')}  {line.get('path')}")
         return 0
-    needed = "asked for" if args.rebuild else rebuild_reason(args.corpus,
-                                                             tree=args.tutorials)
+    needed = "asked for" if args.rebuild else rebuild_reason(args.corpus, tree=args.tutorials,
+                                                             work=args.work)
     if needed and (args.tutorials is None or not args.tutorials.is_dir()):
         # The guard belongs on building, not on asking: an index already on disk and
         # not stale is answerable with no tree in sight, which is every query after

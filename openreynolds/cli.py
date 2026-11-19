@@ -5333,6 +5333,30 @@ def _sync_toolbox(backend: Backend, solver: str = solvers.OPENFOAM) -> None:
         backend.put_tree(_toolbox_for(solver), TOOLBOX_DEST)
     except BackendError as exc:
         console.print(f"[yellow]toolbox sync skipped:[/] {exc}")
+        return
+    if solver != solvers.FELIX:
+        _build_corpus(backend)
+
+
+CORPUS_BUILD = "python3 corpus.py build --if-stale --work .. --out corpus"
+"""Run from the toolbox directory, so the paths are relative and name the same places
+on every backend (a local workspace's root is not `/work`): the studies one level up,
+the index where `search.py` looks for it by default. `--if-stale` makes a sync on an
+unchanged workspace cost a stamp read."""
+
+
+def _build_corpus(backend: Backend) -> None:
+    """Index the tutorials and the finished studies, so a study that finished since the
+    last sync is in the earned tier before the agent asks. A failure is reported and
+    passed over: `search.py` rebuilds on its own when a session missed this."""
+    try:
+        result = backend.exec(CORPUS_BUILD, cwd=TOOLBOX_DEST, timeout_s=300)
+    except BackendError as exc:
+        console.print(f"[yellow]corpus index not built:[/] {exc}")
+        return
+    if result.exit_code not in (0, None):
+        last = (result.output or "").strip().splitlines()[-1:] or ["no output"]
+        console.print(f"[yellow]corpus index not built:[/] {last[0]}")
 
 
 FELIX_TOOLBOX_PREFIX = "felix_"

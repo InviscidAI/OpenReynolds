@@ -202,6 +202,48 @@ def test_both_tiers_are_loaded_and_stay_labelled(search, corpus, built, tmp_path
     assert sorted(r["tier"] for r in rows) == ["earned", "vendor"]
 
 
+def test_a_study_finishing_makes_the_index_stale(search, built):
+    """A study finishing changes no schema, tree or version, so before the stamp
+    carried a fingerprint of the studies the earned tier was built once and never
+    again."""
+    out = built / "corpus"
+    rows, _ = search.ensure(out, tutorials=built / "tutorials", work=built / "work")
+    assert [r["tier"] for r in rows] == ["vendor"]
+
+    study = built / "work" / "a-study"
+    (study / ".reynolds").mkdir(parents=True)
+    (study / ".reynolds" / "phases.json").write_text('{"phases": []}', encoding="utf-8")
+    dictionary(study / "case" / "system" / "controlDict", "application  pimpleFoam;\n")
+
+    rows, reason = search.ensure(out, tutorials=built / "tutorials", work=built / "work")
+    assert reason == "the studies have changed since the index was built"
+    assert sorted(r["tier"] for r in rows) == ["earned", "vendor"]
+
+
+def test_another_work_tree_makes_the_index_stale(search, built, tmp_path):
+    """`--work` pointing somewhere else used to reuse the earned index built from the
+    old one: the stamp recorded `work` and nothing compared it."""
+    out = built / "corpus"
+    search.ensure(out, tutorials=built / "tutorials", work=built / "work")
+    other = tmp_path / "other-work"
+    other.mkdir()
+    _, reason = search.ensure(out, tutorials=built / "tutorials", work=other)
+    assert reason and "other studies" in reason
+
+
+def test_if_stale_builds_once_and_then_leaves_a_current_index_alone(
+    corpus, search, built, capsys
+):
+    """What the harness runs at toolbox sync: build when needed, and otherwise do
+    nothing, so a sync on an unchanged workspace costs a stamp read."""
+    args = ["build", "--if-stale", "--tutorials", str(built / "tutorials"),
+            "--work", str(built / "work"), "--out", str(built / "corpus")]
+    assert corpus.main(args) == 0
+    assert "rebuilding: no index has been built yet" in capsys.readouterr().out
+    assert corpus.main(args) == 0
+    assert "index is current" in capsys.readouterr().out
+
+
 # -- ranking, and why ----------------------------------------------------------
 
 
@@ -496,7 +538,7 @@ def test_the_row_shape_is_pinned_to_the_schema_version(corpus):
     covers the stamp's shape too, because "the shape on disk" is what the version is
     actually about.
     """
-    assert corpus.SCHEMA_VERSION == 3
+    assert corpus.SCHEMA_VERSION == 4
     assert set(row()) == {
         "path", "tier", "solver", "runs", "turbulence", "regions", "regime",
         "mesh_type", "bc_map", "of_version", "of_fork", "verdict", "provenance",
@@ -519,7 +561,7 @@ def test_the_stamp_shape_is_pinned_to_the_schema_version(corpus, tmp_path, monke
 
     assert set(stamp) == {
         "of_version", "of_fork", "built_at", "counts", "schema_version",
-        "tutorials", "work",
+        "tutorials", "work", "studies",
     }
 
 
@@ -898,7 +940,8 @@ def test_a_query_against_an_existing_index_needs_no_tutorial_tree(search, built,
     query after the first."""
     search.ensure(built / "corpus", tutorials=built / "tutorials", work=built / "work")
 
-    code = search.main(["--corpus", str(built / "corpus"), "regime", "simpleFoam"])
+    code = search.main(["--corpus", str(built / "corpus"), "--work", str(built / "work"),
+                        "regime", "simpleFoam"])
 
     assert code == 0
     assert "simpleFoam" in capsys.readouterr().out
@@ -1041,6 +1084,25 @@ def test_unmatched_words_are_judged_against_the_tier_being_searched(search):
             earned_row(path="/work/a-study")]
     assert search.unmatched_tokens(rows, "pitzDaily") == []
     assert search.unmatched_tokens(rows, "pitzDaily", tier="earned") == ["pitzDaily"]
+
+
+def test_an_identical_tutorial_and_study_rank_the_same_across_tiers(search):
+    """Notes, artifacts, rungs and the verdict exist only on earned rows. Scored in a
+    search over both tiers, they handed a study points no tutorial could earn, and an
+    identical tutorial and study ranked the study first."""
+    tutorial = row(path="/tutorials/a/aCase")
+    study = earned_row(path="/work/a-study", verdict="completed",
+                       notes=["solve: converged with kEpsilon"],
+                       artifacts={"mesh-full": 1, "solve": 1})
+    hits = search.search([tutorial, study], "simpleFoam converged completed solve")
+    assert [h["score"] for h in hits] == [3, 3]
+
+
+def test_the_earned_only_fields_still_answer_a_search_held_to_the_earned_tier(search):
+    study = earned_row(notes=["solve: diverged at t=0.31"], verdict="failed")
+    hits = search.failures([row(), study], "diverged failed")
+    assert [h["path"] for h in hits] == ["/work/a-study"]
+    assert hits[0]["why"] == ["text~diverged", "verdict=failed"]
 
 
 def test_a_failure_query_says_when_the_earned_tier_has_none_of_the_words(

@@ -47,6 +47,7 @@ Reading it from another script is the same three calls the command line makes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -228,7 +229,7 @@ def entry(path: Path | str, key: str) -> str | None:
 # -- the vendor tier ---------------------------------------------------------------
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 """Bumped when anything about the shape on disk changes -- a row's fields or the
 stamp's. `search.py` rebuilds rather than reads an index whose schema it does not
 recognise, for the same reason it rebuilds on a version mismatch: a stale index is
@@ -243,6 +244,9 @@ because those rows had no `notes` and there was no way to tell.
 Version 3 added `tutorials` and `work` to the stamp, so a switched tree is detectable.
 An index stamped 2 has neither, and its tree therefore cannot be checked at all --
 which is the reason to make it rebuild once rather than to special-case it forever.
+
+Version 4 added `studies` to the stamp: a fingerprint of the studies under `work`, so a
+study finishing makes the earned tier stale.
 
 `tests/test_toolbox_search.py` pins both shapes against this number so the next change
 has to move it."""
@@ -883,6 +887,26 @@ def harvest_studies(
     return rows, {"indexed": len(rows), "skipped": skipped}
 
 
+def studies_fingerprint(work: Path | str) -> str:
+    """What the studies under `work` look like now, cheaply enough to ask per query.
+
+    Each study's name and the modification times of its two record files. A study
+    starting, finishing, failing or recording an artifact touches one of them, and none
+    of that moves the schema, the tutorial tree or the OpenFOAM version -- so without
+    this the earned tier was built once and never refreshed."""
+    parts = []
+    for study in study_roots(work):
+        state = study / study_state.STATE_DIR
+        times = []
+        for name in (study_state.PHASES_FILE, study_state.MANIFEST):
+            try:
+                times.append(str((state / name).stat().st_mtime_ns))
+            except OSError:
+                times.append("-")
+        parts.append(f"{study.name}:{','.join(times)}")
+    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 def _resolved(path: Path | str) -> str:
     """An absolute path for the stamp, so two spellings of one tree compare equal."""
     try:
@@ -941,6 +965,7 @@ def build(
         # stamp described nothing about.
         "tutorials": _resolved(tree),
         "work": _resolved(work),
+        "studies": studies_fingerprint(work),
     }
     tmp = (out / STAMP).with_suffix(".json.tmp")
     tmp.write_text(json.dumps(stamp, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -983,10 +1008,23 @@ def main(argv: list[str] | None = None) -> int:
         "--out", type=Path, default=Path(CORPUS_DIR), help=f"Where to write (default: {CORPUS_DIR})."
     )
     building.add_argument("--json", action="store_true")
+    building.add_argument(
+        "--if-stale",
+        action="store_true",
+        help="Build only when the index is missing or stale (what the harness runs at sync).",
+    )
 
     args = ap.parse_args(argv)
 
     if args.command == "build":
+        if args.if_stale:
+            import search  # sibling; imported here because it imports this module
+
+            reason = search.rebuild_reason(args.out, tree=args.tutorials, work=args.work)
+            if reason is None:
+                print(f"index is current: {args.out}")
+                return 0
+            print(f"rebuilding: {reason}")
         if args.tutorials is None or not args.tutorials.is_dir():
             print(
                 f"no tutorial tree at {args.tutorials or '$FOAM_TUTORIALS (unset)'}"
