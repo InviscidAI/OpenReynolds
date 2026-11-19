@@ -681,3 +681,22 @@ def test_the_halves_test_alone_would_have_passed_that_record():
     # settled, or the new checks would have bought a refusal of everything.
     steady = 1.2 + 0.05 * np.sin(2.0 * np.pi * iterations / 80.0)
     assert spectra.settle(iterations, steady)["verdict"] == "settled"
+
+
+def test_the_density_integrates_to_the_records_mean_square():
+    """Parseval, which is the only check that can see a constant factor.
+
+    `welch`'s scale read `1.0 / (dt * sum(w**2))` where a one-sided density needs
+    `dt / sum(w**2)`, so every density came back a factor of `1/dt**2` -- the sampling
+    rate squared -- too large. A 1 Pa RMS sine sampled at 10 kHz integrated to 1e8
+    instead of to 1. Every other test here passed throughout, because a peak's
+    frequency, its prominence over the spectrum median and the settling verdict are
+    ratios and a constant factor cancels in all of them. It was found when an absolute
+    sound pressure level was wanted from the same estimator.
+    """
+    fs = 10000.0
+    t = np.arange(4096) / fs
+    x = np.sqrt(2.0) * np.sin(2.0 * np.pi * 200.0 * t)  # 1.0 Pa RMS
+    out = spectra.welch(t, x, segments=1)
+    integral = float(np.sum(out["power"]) * out["resolution"])
+    assert integral == pytest.approx(1.0, rel=0.02), integral

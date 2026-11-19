@@ -417,7 +417,14 @@ def welch(t: np.ndarray, x: np.ndarray, segments: int = 4) -> dict[str, Any]:
     window = np.hanning(nperseg)
     # One-sided density: the sum of the squared window and the step set the scale, and
     # the interior bins carry the power of their negative-frequency twins as well.
-    scale = 1.0 / (dt * float(np.sum(window ** 2)))
+    #
+    # The step multiplies, it does not divide. This read `1.0 / (dt * sum(w**2))` until
+    # an absolute level was wanted from it, which made every density a factor of
+    # `1/dt**2` -- the sampling rate squared -- too large: a 1 Pa RMS sine sampled at
+    # 10 kHz integrated to 1e8 rather than to 1. Nothing this script reports could see
+    # it, since a peak's frequency, its prominence over the median and the settling
+    # verdict are all ratios, and a constant factor cancels in every one of them.
+    scale = dt / float(np.sum(window ** 2))
     step = max(1, nperseg // 2)
     total = np.zeros(nperseg // 2 + 1)
     taken = 0
