@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 from pathlib import Path
 
 import pytest
@@ -183,7 +184,18 @@ def test_an_absurd_observed_order_is_reported_and_flagged(grid):
     """f(h) = 1 + h**8 gives p = 8 against a formal order of 2. The number is real and
     is the most diagnostic thing the triplet has to say, so it is printed; it is not a
     usable order of convergence, so it is not used, and the GCI falls back to the
-    formal order with the clamp named."""
+    formal order with the clamp named.
+
+    Changed by issue #142, and this is the one existing assertion that moved. It used to
+    assert that this ladder still produced a GCI percentage. It no longer does, because
+    extrapolating 2.0, 257.0, 65537.0 on the clamped p = 2 gives -83, a limit on the far
+    side of zero from all three values -- the same self-disqualifying shape as the
+    `-0.80441086` drag coefficient #142 reported, which is now withheld wherever it
+    appears. What the test was for is unchanged and still checked here: the absurd p is
+    printed, is said to be unusable, and is not used. The second ladder below keeps the
+    original claim that a clamped order still yields a band labelled an estimate, on a
+    triplet whose extrapolation stays on the ladder's own side of zero.
+    """
     analysis = grid.analyse(ladder(grid, (1.0, 2.0), (2.0, 257.0), (4.0, 65537.0)))
     primary = analysis["primary"]
 
@@ -192,11 +204,22 @@ def test_an_absurd_observed_order_is_reported_and_flagged(grid):
     assert primary["order_used"] == 2.0
     assert "clamped to the formal order" in primary["order_source"]
     assert "not a usable order" in primary["note"]
-    assert primary["gci_fine_percent"] is not None
+    assert "8.000000" in grid.report(analysis, [])
 
-    text = grid.report(analysis, [])
-    assert "8.000000" in text
-    assert "the band is an estimate" in text
+    # The extrapolation on the clamped order lands at -83, outside the range of every
+    # input, so the band goes with it.
+    assert primary["gci_fine_percent"] is None
+    assert primary["band"] is None
+    assert any("differs from every value" in reason
+               for reason in primary["disqualified"])
+
+    # Same p = 8, same clamp, an extrapolation that does not change sign: the band is
+    # still produced and still labelled an estimate.
+    scaled = grid.analyse(ladder(grid, (1.0, 1.001), (2.0, 1.256), (4.0, 66.537)))
+    assert scaled["primary"]["order_observed"] == pytest.approx(8.0, abs=1e-4)
+    assert scaled["primary"]["order_used"] == 2.0
+    assert scaled["primary"]["gci_fine_percent"] is not None
+    assert "the band is an estimate" in grid.report(scaled, [])
 
 
 def test_a_negative_observed_order_is_reported_and_flagged(grid):
@@ -490,3 +513,317 @@ def test_the_coarser_triplets_are_reported_beside_the_fine_one(grid):
     assert len(analysis["pairs"]) == 3
     assert [round(p["ratio"], 6) for p in analysis["pairs"]] == [2.0, 2.0, 2.0]
     assert "the coarser triplets" in grid.report(analysis, [])
+
+
+# -- the guards on the inputs, from issue #142 ---------------------------------
+#
+# Every test above hands `analyse` numbers. These hand it the numbers a real study
+# handed it, which reported `Cd = 0.27556258 +/- 3.240` on `case2` with an extrapolated
+# value of `-0.80441086` and a GCI of 1175.75% -- in the report's "the answer" block,
+# which is the part that gets quoted -- off a refinement ratio of r = 1.1302 and a
+# quantity that was the mean of the last 1 of 4 rows. The arithmetic was right. Nothing
+# was checking that the inputs were in the domain the arithmetic is defined on.
+
+CASE_CELLS = 262_099
+CASE2_CELLS = 378_396
+"""The two meshes of the #142 ladder, whose 3D cell counts give r = 1.1302."""
+
+
+def real_142_ladder(grid, **overrides):
+    """The #142 pair as `analyse` takes it: h off the real cell counts, the real values,
+    and the row counts of the real histories -- 4 rows on `case2`, and 3,000 on `case`,
+    which is what `results.read_history` gives there now that #146 is fixed too (the
+    report in the issue printed 3,006, six of them superseded by a restart)."""
+    fine = {"h": grid.representative_spacing(CASE2_CELLS, 3), "value": 0.27556258,
+            "label": "case2", "rows": 4, "rows_averaged": 1}
+    coarse = {"h": grid.representative_spacing(CASE_CELLS, 3), "value": 0.57512774,
+              "label": "case", "rows": 3000, "rows_averaged": 1}
+    fine.update(overrides)
+    return [fine, coarse]
+
+
+def test_a_refinement_ratio_below_one_point_three_is_reported_with_no_gci(grid):
+    """Issue #142, the first of its three disqualifying facts.
+
+    262,099 and 378,396 cells in 3D are r = 1.1302, below the 1.3 Celik's order relation
+    and Roache's factors are calibrated on. At that r with p = 2 the denominator
+    `r**p - 1` is 0.277, which is what turned a difference of 0.2996 in Cd into a GCI of
+    1175.75% and a band of `+/- 3.240` on a value of 0.2756. A band 1,176% of its own
+    value is not an uncertainty, it is a vanishing denominator being printed.
+
+    What this protects: the ratio is still reported, with its number, and no GCI, no
+    extrapolation and no band are. The refusal has to be checkable, so the values and
+    the ratio stay in the report; the thing that looked like an answer goes.
+    """
+    # Only this guard: enough rows, and an extrapolation that keeps its sign.
+    analysis = grid.analyse(real_142_ladder(grid, rows=4000, value=0.56))
+    analysis["quantity"] = "Cd"
+    primary = analysis["primary"]
+
+    assert primary["ratio_21"] == pytest.approx(1.1302, abs=5e-5)
+    assert len(primary["disqualified"]) == 1
+    assert "1.1302" in primary["disqualified"][0]
+    assert "1.3" in primary["disqualified"][0]
+    assert primary["gci_fine_percent"] is None
+    assert primary["extrapolated"] is None
+    assert primary["band"] is None
+
+    text = grid.report(analysis, [])
+    assert "r = 1.1302" in text          # the input is still there to be checked
+    assert "no band on Cd" in text
+    assert "GCI on the fine grid" not in text
+    assert "1175" not in text
+    assert "the values themselves stand" in text
+
+
+def test_a_ratio_at_the_threshold_is_still_a_ladder(grid):
+    """The guard is a threshold and a threshold has to not fire on the thing it was
+    calibrated to admit. r = 1.3 is Celik's own lower bound, so it passes and gets the
+    full band; #142's 1.1302 does not. Without this the fix could be a refusal of
+    everything, which is also not an answer."""
+    hs = (1.0, 1.3, 1.69)
+    values = tuple(1.0 + 0.5 * h**2 for h in hs)
+    primary = grid.analyse(ladder(grid, *zip(hs, values)))["primary"]
+    assert primary["ratio_21"] == pytest.approx(1.3)
+    assert "disqualified" not in primary
+    assert primary["order_observed"] == pytest.approx(2.0, abs=1e-7)
+    assert primary["gci_fine_percent"] is not None
+
+
+def test_a_value_from_a_four_row_history_is_refused_by_name(grid):
+    """Issue #142, the second fact. `case2`'s Cd was reported as the `mean of the last 1
+    of 4 rows` -- iteration 4 of a run that aborted in its startup transient, with one
+    time directory and no written result. A single row of a four-row history is not a
+    converged value and cannot carry a grid-convergence claim, and the script had the
+    row count in its own provenance line while quoting the number anyway.
+
+    The refusal names the case, because on a three-rung ladder the reader needs to know
+    which rung to re-run, and states both numbers -- 1 of 4 -- because `mean of the last
+    1 of 3006 rows` is the documented default on a converged steady case and is fine.
+    """
+    primary = grid.analyse(real_142_ladder(grid))["primary"]
+
+    rows_reason = [r for r in primary["disqualified"] if "rows of its history" in r]
+    assert len(rows_reason) == 1
+    assert rows_reason[0].startswith("case2's value is the mean of the last 1 of 4 rows")
+    assert primary["band"] is None
+
+    # The 3,000-row rung is not what is being complained about.
+    assert "case's value" not in " ".join(primary["disqualified"])
+
+    # And a ladder of two settled histories at the same values is not refused for rows.
+    settled = grid.analyse(real_142_ladder(grid, rows=3000, value=0.56))
+    assert not [r for r in settled["primary"]["disqualified"]
+                if "rows of its history" in r]
+
+
+def test_an_extrapolation_whose_sign_no_input_shares_disqualifies_itself(grid):
+    """Issue #142, the third fact: the Richardson limit it printed was `-0.80441086`
+    from two positive drag coefficients, 0.57512774 and 0.27556258. A negative drag
+    coefficient is not a limit. More generally a limit on the far side of zero from
+    every value it was formed from is a result that disqualifies itself -- the sequence
+    cannot be approaching something outside its own range from one side, which is the
+    premise the extrapolation rests on.
+
+    Reported with the number and the inputs rather than as a bare refusal, because
+    `-0.80441086 against 0.2756 and 0.5751` is the evidence and "the extrapolation
+    failed" is not.
+    """
+    primary = grid.analyse(real_142_ladder(grid, rows=4000))["primary"]
+    sign = [r for r in primary["disqualified"] if "far side of zero" in r]
+    assert len(sign) == 1
+    assert "-0.80441086" in sign[0]
+    assert "0.275563" in sign[0] and "0.575128" in sign[0]
+    assert primary["extrapolated"] is None
+    assert primary["band"] is None
+
+    # The mirror image: an all-negative ladder whose limit comes out positive.
+    flipped = grid.analyse(ladder(grid, (1.0, -0.27556258), (1.1302, -0.57512774)))
+    assert any("far side of zero" in r for r in flipped["primary"]["disqualified"])
+
+    # A limit outside the ladder's range but on its own side of zero is ordinary
+    # Richardson extrapolation, which is most of what this script does.
+    fine = grid.analyse(ladder(grid, (1.0, 1.5), (2.0, 3.0), (4.0, 9.0)))["primary"]
+    assert fine["extrapolated"] == pytest.approx(1.0)
+    assert "disqualified" not in fine
+
+
+def test_the_whole_142_ladder_reports_all_three_facts_and_no_answer(grid):
+    """The reproduction from the issue, end to end. All three guards fire on it at once,
+    and the output has to contain the three measurements and none of `+/- 3.240`,
+    `-0.80441086` or `1175.75%`."""
+    analysis = grid.analyse(real_142_ladder(grid))
+    analysis["quantity"] = "Cd"
+    text = grid.report(analysis, [])
+
+    assert len(analysis["primary"]["disqualified"]) == 3
+    assert "1.1302" in text and "1 of 4 rows" in text and "far side of zero" in text
+    assert "Cd = 0.27556258 +/-" not in text
+    assert "3.240" not in text
+    assert "1175" not in text
+    # -0.80441086 stays in the report, as the evidence inside the reason it is being
+    # refused. What is gone is the line that offered it as the value.
+    assert "extrapolated value" not in text
+    assert "-0.80441086" in " ".join(analysis["primary"]["disqualified"])
+    # The values are not in doubt and are still printed, which is what makes the
+    # refusal reviewable rather than only a refusal.
+    assert "0.27556258" in text and "0.57512774" in text
+
+
+# -- reading a quantity off a real case, from issue #146 -----------------------
+
+FORCE_DAT = """\
+# Force
+# CofR         : (0.0000000e+00 0.0000000e+00 0.0000000e+00)
+#
+# Time         \ttotal_x total_y total_z\tpressure_x pressure_y pressure_z\tviscous_x viscous_y viscous_z
+{rows}
+"""
+
+COEFF_DAT = """\
+# Force and moment coefficients
+# magUInf       : 1.00000000e+00
+#
+# Time         \tCd\tCl
+{rows}
+"""
+
+
+def write_dat(path: Path, template: str, rows: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(template.format(rows=rows), encoding="utf-8")
+
+
+def forces_case(root: Path) -> Path:
+    """A case shaped like the `ami_L1` of issue #146: a `forces` function object, which
+    writes `force.dat` and `moment.dat` with the same column names, and a second
+    function object on another patch, which writes two more. The nine columns of a
+    forces object appear in all four files, so a bare `--quantity viscous_z` matches
+    four series on a case that is only logging forces the ordinary way."""
+    case = root / "ami_L1"
+    for function, scale in (("forces", 1.0), ("torqueOuter", 10.0)):
+        for name in ("force.dat", "moment.dat"):
+            factor = scale * (2.0 if name == "moment.dat" else 1.0)
+            rows = "\n".join(
+                f"{t:<16g}" + " ".join(f"{factor * (t + part):.7e}" for part in range(1, 10))
+                for t in range(1, 21))
+            write_dat(case / "postProcessing" / function / "0" / name, FORCE_DAT, rows)
+    return case
+
+
+def test_a_series_qualified_quantity_resolves_a_repeated_column(grid, tmp_path):
+    """Issue #146, part one: `--quantity` could only name a column, and every column of
+    a `forces` function object appears in both its `force.dat` and its `moment.dat`. So
+    on the real `ami_L1/L2/L3` ladder -- and on every case that logs forces at all --
+    `--quantity viscous_z` answered "'viscous_z' is a column in more than one series ...
+    name the one you mean with a more specific --quantity", and no such syntax existed.
+    The case-reading path of the script was unreachable on that shape of study.
+
+    This is the syntax it was asking for. `series:column` is matched against the series
+    keys the function already builds, so `torqueOuter/moment.dat:viscous_z` -- the
+    inner-wall torque that ladder is about -- is sayable.
+    """
+    case = forces_case(tmp_path)
+
+    # The series name narrows it to one file, and the value is that file's.
+    picked = grid.quantity_from_case(case, "torqueOuter/moment.dat:viscous_z")
+    assert picked["value"] == pytest.approx(20.0 * (20 + 9))
+    assert picked["series"] == "torqueOuter/moment.dat"
+    assert picked["column"] == "viscous_z"
+
+    # A different series, the same column name, a different number: which is the whole
+    # reason naming the series cannot be optional.
+    other = grid.quantity_from_case(case, "forces/force.dat:viscous_z")
+    assert other["value"] == pytest.approx(1.0 * (20 + 9))
+    assert other["value"] != picked["value"]
+
+    # A bare column name still works where it is unambiguous, which is every existing
+    # call: nothing has to be requalified.
+    write_dat(tmp_path / "plain" / "postProcessing" / "forceCoeffs" / "0" /
+              "coefficient.dat", COEFF_DAT,
+              "\n".join(f"{t:<16g}{0.4 + t / 1000:.7e} {0.1:.7e}" for t in range(1, 21)))
+    assert grid.quantity_from_case(tmp_path / "plain", "Cd")["value"] == pytest.approx(0.42)
+
+
+def test_an_ambiguous_quantity_names_the_syntax_and_lists_the_series(grid, tmp_path):
+    """Also #146 part one, and the half that made it a dead end rather than a refusal:
+    the message asked for "a more specific --quantity" without saying what one looks
+    like. It now names the form, shows a complete flag the reader can paste, and lists
+    every candidate, since the choice between `forces/moment.dat:viscous_z` and
+    `torqueOuter/moment.dat:viscous_z` is a choice about which number the study is about
+    and is not the script's to make."""
+    case = forces_case(tmp_path)
+    note = grid.quantity_from_case(case, "viscous_z")["note"]
+
+    assert note.startswith("'viscous_z' is a column in 4 series here")
+    assert "SERIES:COLUMN" in note
+    assert "--quantity forces/force.dat:viscous_z" in note
+    for series in ("forces/force.dat", "forces/moment.dat",
+                   "torqueOuter/force.dat", "torqueOuter/moment.dat"):
+        assert f"{series}:viscous_z" in note
+
+    # A partial series name that still fits two series refuses the same way, with the
+    # two it fits, rather than picking one.
+    narrowed = grid.quantity_from_case(case, "forces/:viscous_z")["note"]
+    assert "is a column in 2 series here" in narrowed
+    assert "forces/force.dat:viscous_z" in narrowed
+    assert "torqueOuter" not in narrowed
+
+    # A series name that fits nothing says so, and lists what is there.
+    missing = grid.quantity_from_case(case, "nosuch/moment.dat:viscous_z")["note"]
+    assert "no series" in missing and "nosuch/moment.dat" in missing
+    assert "torqueOuter/moment.dat" in missing
+
+
+def test_a_restart_superseded_history_is_stitched_the_way_read_history_does_it(
+        grid, tmp_path):
+    """Issue #146, part two, and the one that produced wrong numbers rather than a dead
+    end. `quantity_from_case`'s docstring claimed it stitched a restarted series "the
+    way `results.py` does it"; what it did was concatenate every file of the series and
+    take the tail. `results.read_history` additionally drops the rows of a file that lie
+    past the point where a later run restarted -- the rows of the run that was
+    abandoned, which is the whole reason that function exists.
+
+    Measured on `20260829-051829-530e/cyl`: 9369 rows against `read_history`'s 8586,
+    783 rows of abandoned runs merged in, giving 1.21093 at `--tail 1000` where the
+    right answer is 1.20803, 0.24% out; and 1.5% out at `--tail 4000` on
+    `20260830-164816-eee0/case`. This script exists to produce a band of 0.003% to
+    0.36% on that corpus, so a 1.5% error in the value is an order larger than the
+    uncertainty it reports. The row count it printed as provenance -- the line a reader
+    checks -- was wrong by the same 783.
+
+    The case here is that shape in miniature: a run to t = 10 restarted from the write
+    at t = 5, so the first file's rows past 5 are a run that was thrown away.
+    """
+    results = load("results")
+    case = tmp_path / "cyl"
+    first = case / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat"
+    second = case / "postProcessing" / "forceCoeffs" / "5" / "coefficient.dat"
+    write_dat(first, COEFF_DAT,
+              "\n".join(f"{t:<16g}{1.0 + t / 100:.7e} {0.1:.7e}" for t in range(1, 11)))
+    write_dat(second, COEFF_DAT,
+              "\n".join(f"{t:<16g}{2.0 + t / 100:.7e} {0.1:.7e}" for t in range(6, 9)))
+    # `written_order` reads mtimes, and the restart is the file written last.
+    os.utime(first, (1_600_000_000, 1_600_000_000))
+    os.utime(second, (1_600_000_100, 1_600_000_100))
+
+    history = results.read_history([first, second])
+    assert len(history["rows"]) == 8     # 1..5 from the first run, 6..8 from the restart
+    assert history["superseded"]         # and it names what it dropped
+
+    measured = grid.quantity_from_case(case, "Cd", tail=20)
+    assert measured["rows"] == len(history["rows"])
+    assert measured["rows"] == 8         # not the 13 that concatenating the files gives
+    assert measured["rows_averaged"] == 8
+
+    expected = sum(results.column(history, "Cd")) / len(history["rows"])
+    assert measured["value"] == pytest.approx(expected)
+
+    # The superseded blocks are carried out so the provenance line can say rows were
+    # dropped: a reader who sees 8 rows where the files hold 13 needs to be told why.
+    assert measured["superseded"] == history["superseded"]
+
+    # The abandoned rows are the ones with the wrong number in them -- the discarded run
+    # wrote Cd near 1.1 at t = 6..10 where the restart wrote near 2.06 -- so the two
+    # row counts are two different answers and not only two different counts.
+    assert measured["value"] > 1.3
