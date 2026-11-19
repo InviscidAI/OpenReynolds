@@ -377,6 +377,28 @@ def cells_above(mesh: dict[str, Any], values: np.ndarray, threshold: float) -> n
 # -- where the cells are ----------------------------------------------------------
 
 
+def patch_tally(mesh: dict[str, Any], cells: np.ndarray) -> dict[str, int]:
+    """How many of these cells have a face on each patch, worst patch first.
+
+    One pass per patch over its own faces, rather than one pass over every boundary
+    face per cell: the tally is over the whole selection, which on a real mesh is
+    thousands of cells, and the per-cell question is only asked of the worst few.
+    """
+    wanted = np.zeros(mesh["n_cells"], dtype=bool)
+    wanted[cells] = True
+    owner = mesh["owner"]
+    tally: dict[str, int] = {}
+    for name, entry in mesh["boundary"].items():
+        low = int(entry["startFace"])
+        owners = owner[low: low + int(entry["nFaces"])]
+        if owners.size == 0:
+            continue
+        hit = np.unique(owners[wanted[owners]])
+        if hit.size:
+            tally[name] = int(hit.size)
+    return dict(sorted(tally.items(), key=lambda item: -item[1]))
+
+
 def place(mesh: dict[str, Any], cells: np.ndarray, values: np.ndarray | None,
           worst: int = WORST) -> dict[str, Any]:
     """Coordinates, patches and extent for a set of cells -- `locate.py`'s answer.
@@ -392,6 +414,10 @@ def place(mesh: dict[str, Any], cells: np.ndarray, values: np.ndarray | None,
     out: dict[str, Any] = {"cells": int(cells.size), "worst": [], "patches": {}}
     if cells.size == 0:
         return out
+    # `locate.cell_patches` walks every boundary face to answer for ONE cell, which is
+    # the right shape for an extremum and quadratic over a selection of thousands. It
+    # is kept for the worst few, where its answer is the ordered patch list, and the
+    # tally over the whole selection goes the other way round.
     out["fraction_of_mesh"] = round(float(cells.size) / max(mesh["n_cells"], 1), 6)
     centres = layer_report.cell_centres(mesh, cells)
     low = mesh["points"].min(axis=0)
@@ -406,11 +432,7 @@ def place(mesh: dict[str, Any], cells: np.ndarray, values: np.ndarray | None,
 
     order = np.argsort(values)[::-1] if values is not None and values.size == cells.size \
         else np.arange(cells.size)
-    tally: dict[str, int] = {}
-    for row in range(cells.size):
-        for name in locate.cell_patches(mesh, int(cells[row])):
-            tally[name] = tally.get(name, 0) + 1
-    out["patches"] = dict(sorted(tally.items(), key=lambda item: -item[1]))
+    out["patches"] = patch_tally(mesh, cells)
 
     for row in order[:max(worst, 0)]:
         cell = int(cells[row])
