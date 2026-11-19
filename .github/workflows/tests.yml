@@ -53,34 +53,38 @@ jobs:
 
   # The same suite inside the workspace image, which is the only place the tests gated
   # on a real OpenFOAM, blockMesh, gmsh, a kernel and an off-screen renderer run at
-  # all. They have never run in CI, so this lands advisory: `continue-on-error` keeps
-  # it out of the merge gate until the failures it finds are triaged.
+  # all. It stays advisory -- `continue-on-error` keeps it out of the merge gate --
+  # because it builds a whole image and its failures are still being triaged.
   image:
     runs-on: ubuntu-latest
     continue-on-error: true
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
-      packages: read
     env:
-      # What .github/workflows/workspace-image.yml publishes and DEFAULT_IMAGE names.
-      IMAGE: ghcr.io/inviscidai/reynolds-workspace:2512
+      IMAGE: reynolds-workspace:ci
     steps:
       - uses: actions/checkout@v7
 
-      - name: Pull the workspace image
-        id: pull
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          if docker pull -q "$IMAGE"; then
-            echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=no workspace image::$IMAGE could not be pulled -- the package is private on GHCR until an org owner makes it public, so this job ran no tests. Not a failure."
-          fi
+      - uses: docker/setup-buildx-action@v3
+
+      # Built from docker/workspace in THIS checkout, not pulled from the published
+      # `:2512`. That tag moves, so pulling it tested whatever the last publish had
+      # resolved and a change to the Dockerfile could not be tested before it shipped
+      # -- which is how an unpinned `build123d>=0.9` reached the image unnoticed. The
+      # build also runs check.sh, so this job covers the image's own gates too; the gha
+      # cache is the one workspace-image.yml writes, so HiSA is not recompiled.
+      - name: Build the workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/workspace
+          load: true
+          tags: ${{ env.IMAGE }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Test in the image
-        if: steps.pull.outputs.image
         # The script goes in on stdin rather than as an argument: a login shell reads
         # it the same way, and nothing in it has to survive two levels of quoting.
         run: |
@@ -107,11 +111,11 @@ jobs:
 
       - name: The Docker backend against the real image
         # Whatever the suite in the container made of itself: these are other tests.
-        if: ${{ !cancelled() && steps.pull.outputs.image }}
+        if: ${{ !cancelled() }}
         # On the runner, not in the container: these drive `docker` themselves, and
-        # the image now being pulled is the whole of what they were gated on.
+        # the image now being built is the whole of what they were gated on.
         env:
-          OPENREYNOLDS_TEST_IMAGE: ${{ steps.pull.outputs.image }}
+          OPENREYNOLDS_TEST_IMAGE: ${{ env.IMAGE }}
         run: |
           pip install -e . pytest pytest-asyncio
           python -m pytest -q tests/test_docker_backend.py
