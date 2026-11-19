@@ -21,8 +21,10 @@ import ast
 import importlib.util
 import json
 import os
+import struct
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -149,7 +151,8 @@ def test_a_time_that_was_asked_for_is_the_one_reported(wall, tmp_path):
 # -- a written field, which carries the distribution ---------------------------
 
 
-def write_field(path: Path, cls: str, entries: dict[str, str]) -> Path:
+def write_field(path: Path, cls: str, entries: dict[str, str],
+                dimensions: str = "[0 0 0 0 0 0 0]") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     blocks = "\n".join(
         f"    {name}\n    {{\n        type            calculated;\n"
@@ -159,10 +162,51 @@ def write_field(path: Path, cls: str, entries: dict[str, str]) -> Path:
     path.write_text(
         "FoamFile\n{\n    version     2.0;\n    format      ascii;\n"
         f"    class       {cls};\n    object      {path.name};\n}}\n\n"
-        "dimensions      [0 0 0 0 0 0 0];\n\n"
+        f"dimensions      {dimensions};\n\n"
         "internalField   uniform 0;\n\n"
         f"boundaryField\n{{\n{blocks}\n}}\n"
     )
+    return path
+
+
+def write_binary_field(path: Path, entries: dict[str, Any], cls: str = "volScalarField",
+                       arch: str = "LSB;label=32;scalar=64", items: int = 1,
+                       declared: int | None = None) -> Path:
+    """A `format binary;` field with a GENUINE little-endian IEEE-754 payload.
+
+    Hand-written like every other fixture here, and written as bytes because that is
+    the point of it: issue #138 was a number regex run over a payload exactly like
+    this one, which reported the digits that fell out of the doubles as measured y+.
+    A `str` entry is written as ascii (`uniform 0`, or a type with no value), a list
+    of floats as the real binary list OpenFOAM writes. `declared` lies about the
+    item count, which is how the "the payload does not end where the header says"
+    guard is exercised.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parts = [(
+        "FoamFile\n{\n    version     2.0;\n    format      binary;\n"
+        f'    arch        "{arch}";\n'
+        f"    class       {cls};\n    object      {path.name};\n}}\n\n"
+        "dimensions      [0 0 0 0 0 0 0];\n\ninternalField   uniform 0;\n\n"
+        "boundaryField\n{\n"
+    ).encode("ascii")]
+    for name, value in entries.items():
+        parts.append(
+            f"    {name}\n    {{\n        type            calculated;\n".encode("ascii")
+        )
+        if isinstance(value, str):
+            parts.append(f"        value           {value};\n".encode("ascii"))
+        else:
+            count = len(value) // items if declared is None else declared
+            parts.append(
+                "        value           nonuniform List<scalar> \n"
+                f"{count}\n(".encode("ascii")
+            )
+            parts.append(struct.pack(f"<{len(value)}d", *[float(v) for v in value]))
+            parts.append(b");\n")
+        parts.append(b"    }\n")
+    parts.append(b"}\n\n// " + b"*" * 40 + b" //\n")
+    path.write_bytes(b"".join(parts))
     return path
 
 
@@ -207,6 +251,206 @@ def test_a_patch_that_wrote_no_value_is_not_a_measured_nothing(wall, tmp_path):
 
     (source,) = wall.measure(tmp_path)["sources"]
     assert [row["patch"] for row in source["patches"]] == ["hull"]
+
+
+# -- #138 and #144: what a field file may not be read as -----------------------
+#
+# Both defects were found by running this script over the real corpus after it
+# shipped on a green suite, and both have the same shape: a guess printed as a
+# measurement. The fixtures below are the smallest files that still have that shape.
+
+
+HULL = [32.86, 40.0, 50.0, 60.0, 90.0, 120.0, 180.0, 223.5]
+"""Eight y+ values whose min, max and mean are the hull case's own 32.86, 223.5 and
+(to three figures) 83.7's sibling 99.545 -- a real distribution, entirely in the log
+layer, standing in for the 1008 faces issue #138 was filed on."""
+
+
+def box(root: Path) -> Path:
+    """`test_toolbox_layer_report.py`'s box: a `wall` patch of 8 faces typed `wall`
+    in `constant/polyMesh/boundary`, and an `outer` patch typed `patch`."""
+    return write_box(root / "box", XS, YS, LAYERED)
+
+
+def test_a_binary_field_is_decoded_and_not_read_as_the_digits_in_its_bytes(wall, tmp_path):
+    """Issue #138, which is why `format binary;` is now read out of the header.
+
+    The fixture is a genuine binary field: a `FoamFile` saying `format binary;` with
+    an `arch` note and a little-endian double payload packed by `struct`. The ascii
+    reading of those same bytes is asserted to disagree with them first, because a
+    fixture the old reader happens to get right would prove nothing -- on the real
+    hull case the old reading was `4 faces, 0 / 1.5 / 3` against a payload of 1008
+    faces running 32.86 to 223.5.
+    """
+    case = box(tmp_path)
+    path = write_binary_field(
+        case / "1500" / "yPlus", {"wall": HULL, "outer": "uniform 0"}
+    )
+
+    through_the_regex = wall.boundary_values(
+        path.read_text(encoding="utf-8", errors="replace")
+    ).get("wall")
+    assert through_the_regex is None or sorted(through_the_regex.tolist()) != HULL, (
+        "the fixture has to be a file the ascii reader gets wrong, or it proves nothing"
+    )
+
+    (source,) = wall.measure(case)["sources"]
+    assert source["source"] == "written yPlus field"
+    assert "binary" in source["detail"]
+    (row,) = source["patches"]
+    assert row["patch"] == "wall"
+    assert row["faces"] == 8
+    assert row["uniform"] is False
+    assert row["min"] == pytest.approx(min(HULL))
+    assert row["max"] == pytest.approx(max(HULL))
+    assert row["mean"] == pytest.approx(sum(HULL) / len(HULL))
+    assert row["fractions"] == {
+        "viscous sublayer": 0.0, "buffer layer": 0.0, "log layer": 100.0
+    }
+
+
+def test_the_binary_field_and_the_function_object_now_agree(wall, tmp_path):
+    """The regression test for issue #138, with the numbers it was filed on.
+
+    On `20260830-011037-e0c1/case` the report printed, two blocks apart and both at
+    status `ok`: from the `yPlus` function object, `hull 32.86 / 83.73 / 223.5, log
+    layer`; and from the binary `1500/yPlus`, `hull 4 faces, 0 / 1.5 / 3, viscous
+    sublayer 100%`. The second was the digits that fell out of the IEEE-754 bytes --
+    low by a factor of about 75 on the mean, reporting a wall-function wall in the
+    log layer as fully resolved, with a fabricated per-face distribution behind it.
+    Here the same two sources are written over the same eight values and have to come
+    back as the same measurement.
+    """
+    case = box(tmp_path)
+    write_dat(case / "postProcessing" / "yPlus" / "0" / "yPlus.dat",
+              [(1500, "wall", min(HULL), max(HULL), sum(HULL) / len(HULL))])
+    write_binary_field(case / "1500" / "yPlus", {"wall": HULL})
+
+    dat, field = wall.measure(case)["sources"]
+    assert (dat["source"], field["source"]) == (
+        "yPlus function object", "written yPlus field"
+    )
+    (summary,) = dat["patches"]
+    (measured,) = field["patches"]
+    for key in ("min", "max", "mean"):
+        assert measured[key] == pytest.approx(summary[key], rel=1e-9), key
+    assert measured["faces"] == 8, "4 faces was the shape of the wrong answer"
+    assert measured["fractions"]["log layer"] == 100.0
+    assert measured["fractions"]["viscous sublayer"] == 0.0
+
+
+def test_a_binary_payload_that_does_not_fit_its_header_is_refused_by_name(wall, tmp_path):
+    """The guard that would have caught #138 on its first run: the byte just past a
+    payload has to be the parenthesis that closes it. Where it is not, the layout is
+    already known to be wrong, so the source is declined by name and says what would
+    read it -- never read at an offset that is a guess."""
+    case = box(tmp_path)
+    write_binary_field(case / "1500" / "yPlus", {"wall": HULL}, declared=9)
+
+    found = wall.measure(case)
+    assert found["sources"] == [], "a binary file never produces a measured number"
+    (problem,) = [p for p in found["problems"] if "binary" in p]
+    assert "1500/yPlus" in problem
+    assert "foamFormatConvert" in problem
+    assert "refused" in problem
+
+
+def test_a_big_endian_binary_field_is_refused_rather_than_byte_swapped(wall, tmp_path):
+    """The `arch` note states the byte order, so it is read rather than assumed: a
+    guessed endianness is another silently wrong number of the #138 kind."""
+    case = box(tmp_path)
+    write_binary_field(case / "1500" / "yPlus", {"wall": HULL},
+                       arch="MSB;label=32;scalar=64")
+
+    found = wall.measure(case)
+    assert found["sources"] == []
+    (problem,) = [p for p in found["problems"] if "binary" in p]
+    assert "big-endian" in problem and "1500/yPlus" in problem
+
+
+def test_a_patch_that_is_not_a_wall_is_excluded_and_listed_as_excluded(wall, tmp_path):
+    """Issue #144: y+ is a wall quantity, and `boundaryField` carries an entry for
+    every patch. An inlet's `calculated` / `uniform 0` was arriving as a measured
+    `y+ 0, viscous sublayer 100%` -- on the cylinder case four such rows were the
+    whole report and the whole plot. The mesh types the patches, and what was left
+    out is listed with the type that says why, because a silent drop is the other
+    half of this same defect."""
+    case = box(tmp_path)
+    write_field(case / "0.5" / "yPlus", "volScalarField",
+                {"wall": _scalars([40.0] * 8), "outer": _scalars([0.0] * 56)})
+
+    found = wall.measure(case)
+    (source,) = found["sources"]
+    assert [row["patch"] for row in source["patches"]] == ["wall"]
+    assert source["excluded"] == [{"patch": "outer", "type": "patch"}]
+    assert source["typed_from"] == "constant/polyMesh/boundary"
+    assert found["wall_treatment"] == {"wall": ""}, "only a wall is asked about"
+
+    text = wall.report(found)
+    assert "excluded" in text and "outer (type patch)" in text
+    (finding,) = [f for f in wall.findings(found) if f.check == "y+"]
+    assert "outer" in finding.measured and "excluded" in finding.measured
+    assert "outer" not in finding.meaning
+
+
+def test_a_uniform_entry_is_reported_as_uniform_and_not_as_a_distribution(wall, tmp_path):
+    """The second half of #144. `uniform 2.5` is ONE value for a whole patch: it was
+    being counted as `faces: 1` and then printed as a 100% per-face fraction, which
+    is a histogram the file does not contain. What is reported is the value, the word
+    uniform, and the patch's real face count out of the mesh."""
+    case = box(tmp_path)
+    write_field(case / "0.5" / "yPlus", "volScalarField", {"wall": "uniform 2.5"})
+
+    found = wall.measure(case)
+    (source,) = found["sources"]
+    (row,) = source["patches"]
+    assert row["uniform"] is True
+    assert row["fractions"] is None, "one value is not a distribution"
+    assert row["faces"] == 8, "the mesh's face count, not the length of one value"
+    assert row["min"] == pytest.approx(2.5) and row["max"] == pytest.approx(2.5)
+
+    text = wall.report(found)
+    assert "uniform" in text
+    assert "100%" not in text, "no per-face percentage is manufactured from one value"
+
+
+def test_the_field_at_time_zero_is_not_reported_as_a_measurement(wall, tmp_path):
+    """Also #144: `0/yPlus` is the field as the function object wrote it BEFORE the
+    run, and it was reported as a measurement "at time 0" -- hull y+ 0 -- beside a
+    function object saying the same hull ran at y+ 2.5 to 1289. It is passed over,
+    with the reason said out loud, and read only when `--time 0` asks."""
+    case = box(tmp_path)
+    write_field(case / "0" / "yPlus", "volScalarField", {"wall": _scalars([40.0] * 8)})
+
+    found = wall.measure(case)
+    assert found["sources"] == []
+    (dropped,) = [p for p in found["problems"] if "0/yPlus" in p]
+    assert "initial condition" in dropped and "not a result" in dropped
+    assert "[skipped]" in wall.report(found)
+
+    asked = wall.measure(case, time="0")
+    (source,) = asked["sources"]
+    assert source["initial"] is True
+    assert "INITIAL CONDITION" in source["detail"]
+    for finding in [f for f in wall.findings(asked) if f.check == "y+"]:
+        assert finding.status == "skipped", "time 0 is never an ok measurement"
+
+
+def test_a_time_with_no_matching_row_says_which_source_it_dropped(wall, tmp_path):
+    """Found in the same sweep as #138 and #144 and not filed: `--time 1075` on the
+    wing case left the function object's own answer out of the report with nothing
+    said. Silently dropping a source is the pattern behind both filed defects, so
+    what went and what was there instead are stated."""
+    write_dat(tmp_path / "postProcessing" / "yPlus" / "0" / "yPlus.dat",
+              [(1070, "wing", 2.7, 2166, 103.9), (1080, "wing", 2.8, 2170, 104.0)])
+
+    found = wall.measure(tmp_path, time="1075")
+    assert found["sources"] == []
+    (dropped,) = [p for p in found["problems"] if "1075" in p]
+    assert "yPlus" in dropped
+    assert "1070" in dropped and "1080" in dropped
+    assert "passed over" in dropped
+    assert "[skipped]" in wall.report(found)
 
 
 # -- y+ derived where only the shear was written -------------------------------
@@ -288,6 +532,55 @@ def test_a_viscosity_of_zero_is_refused_rather_than_divided_by(wall, tmp_path):
     found = wall.measure(case)
     assert found["sources"] == []
     assert "--nu" in found["problems"][0]
+
+
+def test_only_the_wall_of_the_box_is_derived_from_the_shear(wall, tmp_path):
+    """#144 on the path where there is no `.dat` to lead the report: on the cylinder
+    case this source was the only one, so its `inlet`, `outlet`, `topWall` and
+    `bottomWall` rows at y+ 0 were the whole report and the whole plot. The mesh
+    `layer_report.py` already loaded here types the patches, so nothing extra is
+    read to know that `outer` is not a wall."""
+    case = shear_case(tmp_path, "uniform (0.25 0 0)")
+    path = case / "0.5" / "wallShearStress"
+    path.write_text(path.read_text().replace(
+        "boundaryField\n{\n",
+        "boundaryField\n{\n    outer\n    {\n        type            calculated;\n"
+        "        value           uniform (0 0 0);\n    }\n",
+    ))
+
+    (source,) = wall.measure(case)["sources"]
+    assert [row["patch"] for row in source["patches"]] == ["wall"]
+    assert source["excluded"] == [{"patch": "outer", "type": "patch"}]
+
+
+def test_a_wall_shear_in_pascals_is_refused_against_its_own_dimensions(wall, tmp_path):
+    """The compressible path, which no case in the corpus exercises -- so it was
+    untested rather than clean when #138 and #144 were filed.
+
+    `u_tau = sqrt(|tau|)` holds for the KINEMATIC wall shear an incompressible solver
+    writes, tau/rho in m2/s2. A compressible solver writes a stress in Pa, where mass
+    appears in the dimensions, and the square root of that is not a velocity: it is
+    out by sqrt(rho). Converting it needs rho at the wall, which a compressible case
+    does not state as a constant, so the field's own `dimensions` are read and a
+    stress carrying mass is refused by name rather than reported in the wrong units.
+    """
+    case = shear_case(tmp_path, "uniform (0.25 0 0)")
+    write_field(case / "0.5" / "wallShearStress", "volVectorField",
+                {"wall": "uniform (0.25 0 0)"}, dimensions="[1 -1 -2 0 0 0 0]")
+
+    found = wall.measure(case)
+    assert found["sources"] == []
+    (problem,) = [p for p in found["problems"] if "dimensions" in p]
+    assert "0.5/wallShearStress" in problem
+    assert "Pa" in problem and "rho" in problem
+
+    # And the kinematic spelling is read as before, saying which convention it read.
+    kinematic = shear_case(tmp_path / "kinematic", "uniform (0.25 0 0)")
+    write_field(kinematic / "0.5" / "wallShearStress", "volVectorField",
+                {"wall": "uniform (0.25 0 0)"}, dimensions="[0 2 -2 0 0 0 0]")
+    (source,) = wall.measure(kinematic)["sources"]
+    assert "kinematic" in source["detail"]
+    assert source["patches"][0]["max"] == pytest.approx(100.0)
 
 
 # -- the wall treatment the case actually used ---------------------------------
@@ -374,8 +667,11 @@ def test_json_carries_the_whole_measurement_and_parses(wall, tmp_path, capsys):
     assert set(payload) >= {"case", "sources", "nu", "nu_from", "wall_treatment",
                             "problems", "findings", "worst"}
     (source,) = payload["sources"]
+    # `uniform` joined the row in the #144 fix: one value for a whole patch is a
+    # third state beside a distribution and a summary, and a reader of the JSON has
+    # to be able to tell it apart rather than see `faces: 1`.
     assert set(source["patches"][0]) == {
-        "patch", "min", "max", "mean", "faces", "spans", "fractions"
+        "patch", "min", "max", "mean", "faces", "spans", "fractions", "uniform"
     }
     # preflight's register, so a finding reads the same here as it does there.
     assert set(payload["findings"][0]) == {"check", "status", "measured", "means",
@@ -463,10 +759,23 @@ def test_the_docstring_keeps_the_script_advisory_and_says_how_to_run_it(wall):
         assert imperative not in text.lower()
 
 
-def test_the_mesh_reading_is_layer_reports_and_not_a_second_one(wall):
-    """One first-cell height in the toolbox, not two that nearly agree."""
+def test_the_mesh_reading_is_a_siblings_and_not_a_second_one(wall):
+    """One first-cell height in the toolbox, not two that nearly agree.
+
+    This test used to forbid the literal `/ "polyMesh"` outright. #144 is the reason
+    it no longer can: y+ is a wall quantity and an inlet was being reported as a
+    measured wall, so the patch TYPE has to be read, and `constant/polyMesh/boundary`
+    is where OpenFOAM states it. What the test is for -- no fourth mesh parser living
+    in this script -- is unchanged and is now asserted directly: the geometry comes
+    from `layer_report.py` and the `boundary` file from `locate.py`'s reader, which
+    is the one that handles the binary spelling of it.
+    """
     source = (TOOLBOX / "wall.py").read_text(encoding="utf-8")
     assert "layer_report.first_cell_heights" in source
     assert "layer_report.load" in source
-    for reader in ("read_points", "read_faces", "read_labels", '/ "polyMesh"'):
-        assert reader not in source, "nothing here reads the mesh files itself"
+    assert "locate.read_boundary" in source
+    for reader in ("read_points", "read_faces", "read_labels"):
+        assert reader not in source, "nothing here parses the mesh files itself"
+    assert source.count('"polyMesh"') == 1, (
+        "the only mesh path spelled here is the boundary file locate.py reads"
+    )
