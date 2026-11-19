@@ -39,6 +39,16 @@ from the function object, rotation rate and spring from `dynamicMeshDict`, radii
 mesh points, diameter and free stream from the `forceCoeffs` header). If one is missing,
 the grader stops and names the flag that supplies it rather than assuming a value.
 
+## Graded in CI
+
+The `benchmarks` job of `.github/workflows/tests.yml` runs both graders on every pull
+request, against the 2026-09-12 runs themselves: `tests/data/moving_mesh/` is those five
+cases cut down to the files the grader opens, and they reproduce every number below
+digit for digit. Both benchmarks exit 1 there, because both of these runs failed a check
+and the failure is the finding; the job holds each to its recorded verdict, so a grader
+that stopped reading real output the way it does now is a red tick on the pull request
+rather than a surprise months later.
+
 ## What passing means
 
 The thresholds are in `THRESHOLDS` at the top of `grade.py`, each with where it came
