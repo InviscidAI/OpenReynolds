@@ -669,3 +669,17 @@ def test_an_object_under_a_secret_key_goes_whole():
     from openreynolds.redact import Redactor
 
     assert Redactor().deep({"credentials": {"user": "bob", "pass": "hunter2hunter2"}}) == {"credentials": MARK}
+
+
+def test_a_request_is_never_given_more_than_the_whole_budget(seen, service):
+    """The invariant the test above asserts, held by construction rather than by luck.
+
+    On a Windows runner `deadline - time.monotonic()` came back as 3.000000000000057
+    for a 3.0 second budget -- the clock's own resolution, not elapsed time -- and
+    `main` went red on `test (windows-latest, 3.10)` for 57 femtoseconds. Clamping to
+    the budget makes the read timeout unable to exceed it whatever the clock says."""
+    svc = service()
+    _queue_one(seen)
+    sharing.send(seen, budget_s=3.0)
+    (request,) = svc.requests
+    assert request.extensions["timeout"]["read"] <= 3.0

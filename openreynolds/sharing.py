@@ -544,7 +544,7 @@ def send(cfg: Config, budget_s: float = END_BUDGET_S) -> dict[str, int]:
     try:
         with _client(cfg, max(1.0, min(budget_s, 20.0))) as http:
             for path in waiting:
-                left = deadline - time.monotonic()
+                left = min(budget_s, deadline - time.monotonic())
                 if left <= 0.5:
                     break
                 if _account_of(path) != account:
@@ -596,7 +596,7 @@ def send_now(cfg: Config, recorder: Recorder, budget_s: float = WEB_BUDGET_S) ->
         data = packed(recorder.body())
         with _client(cfg, max(1.0, budget_s)) as http:
             while True:
-                left = deadline - time.monotonic()
+                left = min(budget_s, deadline - time.monotonic())
                 sent = _post_within(http, data, left)
                 if sent is not None and sent.status_code in (200, 201):
                     return True
