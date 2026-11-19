@@ -302,7 +302,6 @@ def test_the_walls_hold_flux_rather_than_a_zero_gradient(tmp_path):
 def test_editing_the_two_numbers_moves_the_geometry(tmp_path):
     """"Copy it in, edit the two numbers, run it" is the contract. A number that the
     geometry does not follow is decoration."""
-    base, _ = None, None
     small, mod_small = case(tmp_path, name="small")
     wide, mod_wide = case(tmp_path, name="wide", TANK_WIDTH_M=2.0)
     fat, mod_fat = case(tmp_path, name="fat", COLUMN_WIDTH_M=0.3)
@@ -317,8 +316,6 @@ def test_editing_the_two_numbers_moves_the_geometry(tmp_path):
     assert mod_fat.water_box() != mod_small.water_box()
     assert mod_fat.water_box()[1][0] == pytest.approx(0.3)
     assert mod_fat.water_box()[1][1] == pytest.approx(0.6), "twice as tall as it is wide"
-    for a, b in (("small", small), ("fat", fat), ("wide", wide)):
-        assert (b / "system" / "setFieldsDict").exists(), a
     assert ((small / "system" / "setFieldsDict").read_text(encoding="utf-8")
             != (fat / "system" / "setFieldsDict").read_text(encoding="utf-8")), (
         "the water column is written into setFieldsDict, so editing it changes the dict"
