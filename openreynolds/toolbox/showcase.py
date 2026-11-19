@@ -17,8 +17,10 @@ show a flow --
                   behind a bluff body.
 - **streamlines** tubes seeded upstream and integrated through the field, coloured by
                   speed. Shows where the flow goes, which a slice cannot.
-- **surface**     the body itself under its own pressure field, which is what a person
-                  recognises as the thing they uploaded.
+- **surface**     the body itself under a surface field -- its pressure by default,
+                  which is what a person recognises as the thing they uploaded, or its
+                  wall shear under `--surface-field wallShearStress`, which is where the
+                  skin friction is and the picture a drag number should be read beside.
 - **slice**       a cut plane, styled the same way, for when the interior is the point.
 - **section**     both at once: the body under a surface field, cut by one plane through
                   the flow around it. `surface` shows what the flow did to the object and
@@ -43,6 +45,7 @@ one. Nothing here imports imageio or shells out to ffmpeg.
     python3 showcase.py /work/case --scene vortices --orbit 72 --fps 20
     python3 showcase.py /work/case --scene streamlines --seed-plane inlet
     python3 showcase.py /work/case --scene surface --patch hull
+    python3 showcase.py /work/case --scene surface --surface-field wallShearStress
     python3 showcase.py /work/case --all            # one of each, plus an orbit
 
 It degrades rather than fails: a scene that cannot be built says why and the others still
@@ -71,10 +74,21 @@ MAPS = {
     "p": "coolwarm",
     "T": "inferno",
     "vorticity": "plasma",
+    "wallShearStress": "magma",
 }
 """Colour map per quantity rather than one default everywhere. Speed reads best on a
 full-range map, pressure wants a diverging one because it has a meaningful zero, and
-temperature reads as heat on inferno to anybody who has seen a thermal camera."""
+temperature reads as heat on inferno to anybody who has seen a thermal camera. A wall
+shear *magnitude* cannot be negative, so it gets a sequential map: a diverging one
+would centre the picture on a value the quantity never takes."""
+
+BARS = {
+    "p": "pressure  p/rho  m2/s2",
+    "wallShearStress": "wall shear  |tau|/rho  m2/s2",
+}
+"""What the bar under a surface field says. OpenFOAM's incompressible `p` and
+`wallShearStress` are both divided by density, which a reader has to know and cannot
+see in the picture. A field not named here is labelled with its own name."""
 
 WINDOW = (1600, 1000)
 FRAME_WINDOW = (1100, 720)
@@ -210,6 +224,29 @@ def body_patch(block, wanted: str | None):
     shared = _common_name(list(pool))
     return _merge_patches(pool), (f"{shared}* ({len(pool)} patches)" if shared
                                   else f"{len(pool)} patches")
+
+
+def surface_scalars(surface, field: str):
+    """`(surface, array name)` for colouring a patch by `field`; the name is `""` if
+    the patch does not carry it.
+
+    Two things the hard-coded `p` never had to do. A patch may carry the field on its
+    faces rather than its points, which shades flat per face rather than across it. And
+    a wall map of a *vector* field -- `wallShearStress`, the one a study wants beside
+    pressure, and which until now this file could only read as a line along a patch --
+    has no single number per point until the magnitude is taken. It is taken here, and
+    the array is named `|wallShearStress|` so the picture says which number it is.
+    """
+    if field and field not in surface.point_data and field in surface.cell_data:
+        surface = surface.cell_data_to_point_data()
+    if not field or field not in surface.point_data:
+        return surface, ""
+    values = np.asarray(surface.point_data[field])
+    if values.ndim > 1 and values.shape[1] > 1:
+        name = f"|{field}|"
+        surface[name] = np.linalg.norm(values, axis=1)
+        return surface, name
+    return surface, field
 
 
 def speed_of(mesh):
@@ -524,18 +561,27 @@ def scene_streamlines(mesh, out: Path, title: str, count: int = 900,
 
 
 def scene_surface(block, out: Path, title: str, patch: str | None,
-                  frames: int = 0, fps: float = 20.0) -> list[Path]:
-    """The body under its own pressure field."""
+                  frames: int = 0, fps: float = 20.0,
+                  surface_field: str = "p") -> list[Path]:
+    """The body under a surface field -- its pressure by default, or its wall shear.
+
+    The field was `p`, written in three places and settable from nowhere, on a script
+    whose own `--surface-field` already existed for `--scene section`. So a study that
+    wanted the wall shear map could get the number along one line of a patch out of
+    `reattach.py` and no picture of it anywhere. Same flag, same default, so every
+    existing call draws exactly the picture it drew.
+    """
     surface, name = body_patch(block, patch)
     if surface is None:
         print("  surface: this case exposes no boundary patches")
         return []
-    field = "p" if "p" in surface.point_data else ("p" if "p" in surface.cell_data else "")
-    if field and field not in surface.point_data:
-        surface = surface.cell_data_to_point_data()
+    surface, field = surface_scalars(surface, surface_field)
+    if not field:
+        print(f"  surface: patch '{name}' carries no {surface_field!r}; drawing it plain")
 
     def draw(plotter):
-        coloured(plotter, surface, field, MAPS["p"], bar="pressure  p/rho  m2/s2",
+        coloured(plotter, surface, field, MAPS.get(surface_field, "viridis"),
+                 bar=BARS.get(surface_field, field) if field else "",
                  smooth_shading=True, specular=0.4, specular_power=25,
                  **({} if field else {"color": "#c3ccd6"}))
         caption(plotter, title, f"patch '{name}', {surface.n_cells:,} faces")
@@ -606,10 +652,9 @@ def scene_section(block, mesh, out: Path, title: str, *, patch: str | None = Non
         print("  section: nothing left of the cut after clipping to the body")
         return []
 
-    body_scalars = surface_field if surface_field in body.point_data else ""
-    if not body_scalars and surface_field in body.cell_data:
-        body = body.cell_data_to_point_data()
-        body_scalars = surface_field
+    # Through the same helper as `surface`, so `--surface-field wallShearStress` means
+    # the same thing in both scenes and a vector field is reduced in one place.
+    body, body_scalars = surface_scalars(body, surface_field)
     if not body_scalars:
         print(f"  section: patch '{name}' carries no {surface_field!r}; "
               "drawing it plain and colouring only the cut")
@@ -628,7 +673,9 @@ def scene_section(block, mesh, out: Path, title: str, *, patch: str | None = Non
 
     def draw(plotter):
         coloured(plotter, body, body_scalars or None, body_map,
-                 bar=surface_field if body_scalars else "", bar_at=BAR_LEFT,
+                 # `body_scalars` rather than `surface_field`: for a vector field they
+                 # differ, and the bar has to name the number that was drawn.
+                 bar=body_scalars, bar_at=BAR_LEFT,
                  smooth_shading=True, specular=0.35, specular_power=22,
                  **({"clim": body_clim} if body_clim else {}),
                  **({} if body_scalars else {"color": "#5a6672"}))
@@ -803,7 +850,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scene", default="vortices",
                     choices=["vortices", "streamlines", "surface", "slice", "section"])
     ap.add_argument("--surface-field", default="p",
-                    help="for --scene section: what to colour the body by")
+                    help="for --scene surface and --scene section: what to colour the "
+                         "body by. `p` by default; `wallShearStress` is drawn as its "
+                         "magnitude.")
     ap.add_argument("--cmap", default="", help="override the colour map for the flow field")
     ap.add_argument("--surface-cmap", default="", help="override it for the body")
     ap.add_argument("--all", action="store_true", help="one still of every scene, then an orbit")
@@ -854,7 +903,8 @@ def main(argv: list[str] | None = None) -> int:
                 written += scene_streamlines(mesh, out, label, args.seeds, orbit,
                                              args.fps, context=context)
             elif scene == "surface":
-                written += scene_surface(block, out, label, args.patch, orbit, args.fps)
+                written += scene_surface(block, out, label, args.patch, orbit, args.fps,
+                                         surface_field=args.surface_field)
             elif scene == "section":
                 written += scene_section(block, mesh, out, label, patch=args.patch,
                                          surface_field=args.surface_field,
