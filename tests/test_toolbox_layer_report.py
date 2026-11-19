@@ -207,6 +207,28 @@ def test_the_first_cell_height_is_the_spacing_that_was_written(layer_report, tmp
     assert np.allclose(centres[:, 2], 0.0), "the wall faces sit on z = 0"
 
 
+def test_a_cell_asked_for_twice_is_the_same_cell_both_times(layer_report, tmp_path):
+    """A corner cell owns two wall faces, so the same cell arrives in the list twice.
+
+    `cell_centres` indexed its rows by `row_of_cell[cells]`, which keeps only the last
+    row of a repeat: the earlier row then got no faces, its volume came out zero and
+    its centre fell back to the mean of nothing, which is the origin. The height off
+    that is `2 |C_face|` -- on the cavity in `test_toolbox_case_gen.py` it put two of
+    twenty-four first-cell heights at 0.016 m and 0.2006 m against 0.0125 m everywhere
+    else, a corner height larger than the domain, and `wall.py` divides a measured y+
+    by that same y. Asking for a cell twice has to give its centre twice.
+    """
+    mesh = layer_report.load(layered(tmp_path))
+    one = layer_report.cell_centres(mesh, np.array([0]))
+    twice = layer_report.cell_centres(mesh, np.array([0, 0]))
+    assert twice.shape == (2, 3)
+    assert np.allclose(twice[0], one[0]) and np.allclose(twice[1], one[0])
+    mixed = layer_report.cell_centres(mesh, np.array([1, 0, 1]))
+    assert np.allclose(mixed[0], mixed[2])
+    assert np.allclose(mixed[1], one[0])
+    assert not np.allclose(mixed[0], 0.0), "a repeated cell used to centre on the origin"
+
+
 def test_a_wall_layered_everywhere_reads_as_full_coverage(layer_report, tmp_path):
     """The cfMesh answer: 100.0%, on a mesh whose mesher reported nothing at all."""
     found = layer_report.measure(layered(tmp_path), ["wall"], ref=bare(tmp_path))
