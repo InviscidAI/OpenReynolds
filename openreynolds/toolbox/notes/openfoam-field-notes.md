@@ -274,7 +274,9 @@ lives, and `tail -30` of a log often skips it.
 pascals is a factor of 1.204, which hides inside any tolerance band wide enough to be
 useful. For water it is 998 and any band catches it. A tolerance band is not the mechanism
 that saves you here; checking dimensions is. The field header states the dimensions, so
-there is no need to assume them.
+there is no need to assume them. A compressible case is the other side of the same coin —
+its `p` really is in pascals, `[1 -1 -2 0 0 0 0]`, and the same factor of ρ is waiting in
+the opposite direction; "Dressing a mesh for a compressible run" below has the rest of it.
 
 **Definitional mismatch.** Two instruments can have identical dimensions, agree with each
 other to a fraction of a percent, and measure a different physical quantity than the
@@ -1114,6 +1116,99 @@ ratio is not an effective Reynolds number for the case -- momentum was nominally
 order, and the bound applies locally, at the extrema where the limiter clipped and at the
 pressure flux that stayed upwind. It is the right size to explain a smeared shock and the
 wrong thing to quote as a global statement about the solve.
+
+## Dressing a mesh for a compressible run
+
+`case_gen.py` writes an incompressible case and says so in its own comments: `0/p` is
+`[0 2 -2 0 0 0 0]`, `constant/transportProperties` carries one kinematic `nu`, and the
+solvers it knows are `simpleFoam` and `pimpleFoam`. `compressible.py` is the sibling
+that writes the other kind, and the two differ in nearly every file. What follows is
+what the three ONERA M6 rounds and the Cp tables that came out of them paid for.
+
+**The pressure is absolute, in pascals.** `dimensions [1 -1 -2 0 0 0 0]`, and
+`internalField` is the real static pressure — 80459 Pa at the M6 altitude, not zero.
+The kinematic-versus-dynamic trap above is the same trap wearing the other face: there
+the risk is reading an m²/s² field as pascals, here it is writing a pascal field with
+the habits of a gauge-pressure case, where the outlet is 0 and the inlet is
+`zeroGradient`. Zero pascals absolute is a vacuum, and `perfectGas` divides by it.
+
+**`thermophysicalProperties` replaces `transportProperties`, and nu stops being a
+number anywhere.** `hePsiThermo` (psiThermo carries compressibility ψ = 1/RT, which the
+compressible pressure equation and `waveTransmissive`'s `thermo:psi` entry both read),
+`pureMixture`, `perfectGas`, `sutherland` transport, `hConst` thermo below about 1000 K
+— above that the vibrational modes come in and `janaf` is the honest choice. The
+viscosity is μ(T) = A_s√T/(1 + T_s/T) and the density is p/RT, so ν = μ/ρ is an output
+of the case and the Reynolds number is a thing the case reports rather than a thing it
+is set to. Air's standard Sutherland pair, A_s = 1.458e−6 and T_s = 110.4 K, gives
+μ = 1.6279e−5 Pa·s at 255.6 K against the 1.6266e−5 the M6 condition set names: 0.08%,
+far under anything a shock position resolves, and a published condition set is still
+allowed to disagree with a correlation, which is why `--mu` refits A_s instead of
+writing a second μ somewhere the solver never reads.
+
+**The energy variable belongs to the solver.** `sensibleEnthalpy` for `rhoSimpleFoam`,
+whose energy equation is in h; `sensibleInternalEnergy` for `rhoCentralFoam`, which
+transports ρE, and for HiSA, whose own example is written in e. Handing a solver the
+variable it does not solve stops it at construction, before any iteration — which is at
+least a cheap failure.
+
+**`transonic yes;` is the switch with no log line.** In `rhoSimpleFoam`'s `SIMPLE`
+block it is what makes the solver form the compressible pressure equation that carries
+`div(phid,p)`. Left at `no`, a transonic case converges cleanly onto the subsonic
+equation and nothing anywhere says which equation was solved. It is the cheapest thing
+in this section to get wrong and the hardest to notice afterwards.
+
+**What lost round 2, precisely.** 1,793,894 cells, farfield at 16 chords, layers
+6.82/8, `checkMesh` max non-orthogonality 64.5°, 3228 iterations, Cd flat to six
+figures — and no shock at any of seven span stations, CL 22% below the AGARD AR-138
+band and CD 50% above it. The mesh was never the problem. The `fvSchemes` had both
+compressible pressure-flux terms first order (`div(phid,p) Gauss upwind`,
+`div((phi|interpolate(rho)),p) bounded Gauss upwind`) and `grad(U) cellLimited Gauss
+linear 1`, fully limited and therefore first order at every extremum — and a shock is
+an extremum. At 269 m/s through a 4.7 mm shock cell the first-order numerical
+diffusivity u·h/2 is 0.63 m²/s against a physical ν of 1.48e−5. That ratio is local, at
+the extrema where the limiter clipped and at the pressure flux that stayed upwind; it is
+the right size to explain a smeared shock and the wrong thing to quote as a global
+statement about the solve. One more thing that run shows: CDv came out within 7.7% and
+that agreement was never evidence of anything, because the wall function imposes skin
+friction largely independently of the outer solution.
+
+**The outlet decides whether a shock stays in the domain.** A `fixedValue` p at a
+subsonic outlet is a perfectly reflecting wall for pressure waves, and an arriving shock
+comes back in as an expansion; `waveTransmissive` solves an advection equation for p on
+the patch with `fieldInf` and a relaxation length `lInf`, so the wave leaves. Above M 1
+the question dissolves: every characteristic points out, so every field is
+`zeroGradient` and imposing anything there is information travelling upstream through a
+supersonic flow. The inlet is the mirror image — `fixedValue` on U and T with
+`zeroGradient` on p while one characteristic still runs back upstream, and the whole
+state fixed once none does. HiSA has its own vocabulary for all of this, the
+`characteristicFarfield*` family, and a far-field patch is none of inlet, outlet or
+wall: flow crosses it both ways over one run, and a name like `farfield` reads as saying
+nothing to a role resolver built for ducts, which makes it a no-slip wall 16 chords out.
+
+**The Courant number is acoustic.** The step is Co·h/(|U| + a), not Co·h/|U|. At M 0.84
+that is a factor of 2.2 and at M 0.1 a factor of 11, so an incompressible step handed to
+a density-based solver diverges in the first few steps and reads like a bad mesh. The
+deeper version of the same arithmetic is why implicit or explicit is a cost question:
+`rhoCentralFoam`'s step comes from the *smallest* cell in the domain, which on a layered
+mesh is the prism layer and not the shock cell — 165 µm against 4.7 mm on the M6, about
+92,000 explicit steps against 6,000 implicit pseudo-steps for the same answer.
+
+**`forceCoeffs` flips branch.** An incompressible case has no density field, so the
+object is handed `rho rhoInf; rhoInf 1.225;`. A compressible case has one, so `rho rho;`
+and the forces come out in newtons. Carrying the incompressible pair across scales every
+coefficient by 1/rhoInf — a clean 1.2 in sea-level air, and ρ itself at altitude.
+`preflight.py`'s `force_units_diagnosis` reads `0/p`'s dimensions and judges the two
+cases in opposite directions, which is the one place in the toolbox where the
+compressible/incompressible distinction is already enforced rather than documented.
+`Aref` is the other half of that trap and is not derivable on a 3D wing: newtons need no
+reference area, and a coefficient divided by a guessed planform is off by exactly that
+ratio.
+
+**A field that only exists here.** `alphat`, the turbulent thermal diffusivity, with
+`compressible::alphatWallFunction` on the walls. The compressible RAS models read it and
+refuse to start without it; the incompressible case has no energy equation for it to
+diffuse anything in, so nothing in `case_gen.py` has ever written one.
+
 
 ## Keeping a study 2D
 
