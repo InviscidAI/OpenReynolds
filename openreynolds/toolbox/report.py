@@ -60,6 +60,33 @@ is not there, or is not readable JSON, is refused by name rather than falling ba
 the built-in default: a document that silently came out in the house default when a
 company template was asked for is a document that gets sent.
 
+what it is pointed at, and what gets printed of a field
+
+A local study on a laptop is `studies/<id>/` with `files/` holding the mirrored
+workspace tree, which itself nests as `files/<study-id>/<case>` (`store.py`). So
+there are three places a person can reasonably point this at -- the study top, the
+study home, the case -- and after #129 not one of them gave both the figures and the
+numbers (#145): the top gave four blank pages and wrote a second
+`.reynolds/manifest.jsonl` at the wrong level, the home gave the numbers and "No
+artifact is registered in this study's manifest" because the manifest is one
+directory down, and the case gave the numbers with all six figures MISSING while 30
+PNGs sat one level up. `locate` is the answer: the study's shape is found rather than
+guessed at, by looking down into `files/<id>/*/` for the `.reynolds/` as well as up,
+and by resolving each manifest path against the directory those paths were written
+relative to -- the state directory, or its parent, or its parent's parent. A
+directory with no `.reynolds/` under it is not a study and does not get one written
+into it.
+
+The other half of the same incident (#139) is what a methods section prints of a
+case: a `0/U` holding `internalField nonuniform List<vector> 139286(...)` was printed
+verbatim, one 3.8 MB "line" folded at 100 characters, and the document came out at
+1308 pages in 11 minutes with 1280 of those pages being three initial fields. 15
+cases in the corpus have a `0/` file over 5,000 characters -- `pointLevel` from
+snappyHexMesh, `alpha.water` from `setFields`, mapped `U`/`p`/`Phi`. So a field is
+printed by its shape (`field_shape`), every value in the section is capped
+(`MAX_VALUE_CHARS`), the section itself is capped (`METHODS_MAX_PAGES`), and in both
+cases the page says it summarised rather than printed.
+
     python3 report.py /work/study
     python3 report.py /work/study --out ~/acme-report.pdf --json went-in.json
     python3 report.py /work/study --template report_template.json --logo acme.png
@@ -71,6 +98,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -115,6 +143,26 @@ BODY_SIZE = 7.6
 LINE_PITCH = 0.0152
 
 FIGURES_PER_PAGE = 4
+
+MAX_VALUE_CHARS = 200
+"""The longest a single value read out of a case may be on a page of this document.
+
+#139: a `0/U` written by a mapped start carries its 139286 values as one
+`internalField` entry, 3.8 MB of it, and nothing between the file and the page had a
+width. Two page-lines is the cap, and a capped line says it was capped -- a reader
+who cannot see that something was left out cannot go and read the file."""
+
+METHODS_MAX_PAGES = 12
+"""And the section as a whole, for the same incident: three capped values still make
+a long document on a case with 40 fields in `0/`, and 1280 pages of methods took 11
+minutes to draw. A methods section longer than this is not a methods section."""
+
+NEGLIGIBLE_FRACTION = 1e-9
+"""Below this much of the record's own largest value, a coefficient is zero.
+
+`Cs (last): 3.2709e-20` went on a cover page as a key number. On a symmetric body the
+side force is zero and the solver's answer is round-off; printing the round-off as a
+headline reads as a measurement of something."""
 
 HERO_KINDS = (
     "velocity", "pressure", "vorticity", "streamlines",
@@ -196,6 +244,98 @@ def load_template(path: Path | str | None) -> tuple[dict[str, Any], list[str]]:
     return template, notes
 
 
+# -- finding the study a person pointed at -------------------------------------------
+
+
+_PROCESSOR = re.compile(r"^processor\d+$")
+"""A decomposed run's per-rank directories. Each has a `constant/polyMesh`, so
+`study_state.is_case_dir` says yes to all four of them and `discover_cases` returned
+"the first of 6 cases" for a study with one case (#145). They are one case."""
+
+
+def locate(given: Path | str) -> dict[str, Any]:
+    """Where this study's state is, and what its manifest paths are relative to.
+
+    #145: a mirrored study is `studies/<id>/files/<id>/<case>/.reynolds/` with the
+    manifest's paths written relative to `files/<id>/`, and `study_state.find_root`
+    only ever walks up. Pointed at the study top it found no state at all and wrote a
+    second one; pointed at the case it found the state and resolved every figure one
+    directory too low. So the state directory is looked for downwards as well, and the
+    base that manifest paths resolve against is chosen by how many of them it actually
+    finds on disk rather than assumed to be the state directory.
+
+    Returns `state_root` (the directory whose `.reynolds/` holds the state), `base`
+    (what manifest paths are relative to), `bases` (every base tried, closest first),
+    and `is_study` -- false when nothing under the given path has a `.reynolds/` at
+    all, which is the one case where nothing may be written.
+    """
+    given = Path(given)
+    notes: list[str] = []
+    state = study_state.STATE_DIR
+    up = study_state.find_root(given)
+    is_study = (up / state).is_dir()
+    state_root = up
+    if not is_study:
+        # Downwards, in the order a study nests: the study home's case, then the
+        # mirrored `files/<id>` and its case.
+        for pattern in (f"*/{state}", f"files/*/{state}", f"files/*/*/{state}"):
+            found = sorted(path for path in given.glob(pattern) if path.is_dir())
+            if found:
+                state_root, is_study = found[0].parent, True
+                notes.append(f"the study's state is under {state_root}, not at {given}")
+                break
+
+    bases = [state_root]
+    for parent in (state_root.parent, state_root.parent.parent):
+        # The same guard `find_root` uses walking up: `/work` is every study's
+        # neighbour, not any study's home, and the filesystem root is nobody's.
+        if parent in bases or parent == parent.parent or parent.name == "work":
+            break
+        bases.append(parent)
+
+    rows = study_state.artifacts(root=state_root, exists=False) if is_study else []
+    base = state_root
+    if rows:
+        scored = [(sum(1 for row in rows if (candidate / str(row["path"])).exists()), -index,
+                   candidate) for index, candidate in enumerate(bases)]
+        best = max(scored)
+        base = best[2]
+        if base != state_root:
+            notes.append(f"{best[0]} of {len(rows)} manifest path(s) resolve under "
+                         f"{base}, not under the state directory {state_root}")
+    return {"given": str(given), "state_root": state_root, "base": base,
+            "bases": bases, "is_study": is_study, "notes": notes}
+
+
+def resolve_path(relative: str, bases: list[Path]) -> Path:
+    """A manifest path against the first base that has it, else the nearest base.
+
+    Per row rather than per manifest: a study restarted in a different layout has rows
+    of both kinds in one file, and a row that resolves nowhere still has to point
+    somewhere for the MISSING panel to name."""
+    for base in bases:
+        candidate = base / relative
+        if candidate.exists():
+            return candidate
+    return bases[0] / relative
+
+
+def manifest_rows(
+    state_root: Path, bases: list[Path], case: str = ""
+) -> list[dict[str, Any]]:
+    """The manifest, with every `abspath` resolved through `resolve_path`.
+
+    `study_state.artifacts` resolves against the state directory, which is the
+    assumption #145 is about; this is the same list with that one thing corrected.
+    """
+    rows = []
+    for row in study_state.artifacts(root=state_root, case=case, exists=False):
+        row = dict(row)
+        row["abspath"] = str(resolve_path(str(row.get("path", "")), bases))
+        rows.append(row)
+    return rows
+
+
 # -- the case the methods section is about -------------------------------------------
 
 
@@ -207,10 +347,22 @@ def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[s
     "this is the mesh and the settings of `cylinder`" is a document, "these are some
     settings from somewhere in the study" is not.
     """
-    cases = study_state.discover_cases(study)
-    if study_state.is_case_dir(study):
-        cases = [study, *cases]
+    found = study_state.discover_cases(study)
+    cases = [case for case in found if not _PROCESSOR.match(case.name)]
+    dropped = len(found) - len(cases)
+    # Said on the page rather than silently dropped: four processor directories are
+    # evidence the run was decomposed, which is worth a reader's attention, and
+    # `--case processor2` describing one rank's slice as the study's methods is not.
+    ranks = (f"; its {dropped} processor* "
+             + ("directory is" if dropped == 1 else "directories are")
+             + " the same case, not others") if dropped else ""
     if wanted:
+        if _PROCESSOR.match(wanted):
+            # #145 noted this would be honoured: a rank's slice described as the
+            # study's methods is a methods section about a quarter of a mesh.
+            return None, (f"--case {wanted} names one rank of a decomposed case, not "
+                          "a case; the case is the directory the processor* ones sit "
+                          "in"), [case.name for case in cases]
         for case in cases:
             if case.name == wanted:
                 return case, f"--case {wanted}", [c.name for c in cases if c != case]
@@ -220,31 +372,98 @@ def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[s
     if not cases:
         return None, "no case directory under the study home", []
     if len(cases) == 1:
-        return cases[0], f"the study's only case ({cases[0].name})", []
+        return cases[0], f"the study's only case ({cases[0].name}){ranks}", []
     return cases[0], (f"the first of {len(cases)} cases ({cases[0].name}); "
-                      "name another with --case"), [c.name for c in cases[1:]]
+                      f"name another with --case{ranks}"), [c.name for c in cases[1:]]
 
 
 # -- the numbers, each one tied to a figure or not ------------------------------------
 
 
-def stamped_claims(study: Path, case: str = "") -> list[dict[str, Any]]:
+def stamped_claims(
+    state_root: Path, bases: list[Path], base: Path, case: str = ""
+) -> list[dict[str, Any]]:
     """Every claim this study has, with whether its figure is still readable.
 
-    `claims.collect` reads the manifest and the PNGs; this adds the one thing a cover
-    page has to know and neither source states -- whether the number can still be read
-    out of the picture's own bytes right now. A claim whose figure has been deleted, or
-    redrawn by something that did not stamp it, is a claim with nothing behind it any
-    more, and that is a different thing from a claim.
+    The two sources are `claims.collect`'s, for its reasons -- the manifest misses a
+    figure drawn before the study had state, the images miss nothing but have to be
+    found -- gathered here rather than there only because of #145: a manifest row's
+    figure resolves through `resolve_path`, and the PNGs are walked from the base the
+    study's paths are relative to, which is where the 30 pictures of
+    `20260829-100024-2825` actually are.
+
+    What this adds is the one thing a cover page has to know and neither source states
+    -- whether the number can still be read out of the picture's own bytes right now.
+    A claim whose figure has been deleted, or redrawn by something that did not stamp
+    it, is a claim with nothing behind it any more.
     """
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def take(figure: Path, rows: Iterable[dict[str, Any]]) -> None:
+        for one in rows:
+            if not isinstance(one, dict) or "value" not in one:
+                continue
+            entry = dict(one)
+            entry["figure"] = str(figure)
+            found[(str(figure), str(entry.get("name", "")))] = entry
+
+    for row in study_state.artifacts(root=state_root, kind=claims.CLAIM_KIND,
+                                     case=case, exists=False):
+        meta = row.get("meta") or {}
+        take(resolve_path(str(row.get("path", "")), bases), meta.get("claims") or [])
+    for png in sorted(base.rglob("*.png")):
+        if study_state.STATE_DIR in png.parts:
+            continue
+        take(png, claims.read_png(png))
+
     out: list[dict[str, Any]] = []
-    for row in claims.collect(study, case=case):
-        figure = Path(str(row.get("figure", "")))
-        entry = dict(row)
+    for key in sorted(found):
+        figure = Path(str(found[key].get("figure", "")))
+        entry = dict(found[key])
         entry["figure_exists"] = figure.is_file()
         entry["in_png"] = bool(claims.read_png(figure)) if entry["figure_exists"] else False
         out.append(entry)
     return out
+
+
+def is_steady_solver(executable: str) -> bool:
+    """Whether a solver is a steady one, from its name.
+
+    Copied from `openreynolds/convergence.py` (`is_steady_solver`), which is above the
+    toolbox and not importable when these scripts are run out of `/work/.toolbox/`.
+    The reason it is needed here: `force record: 500 rows, t = 1 to 500` went on a
+    cover page for a `simpleFoam` run whose `Time` column is an iteration count, not
+    seconds. `spectra.py` was being fixed for the same confusion in the same sweep.
+    """
+    return "simple" in (executable or "").lower()
+
+
+def zero_the_negligible(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Coefficients that are zero to within the record's own scale, reported as zero.
+
+    `Cs (last): 3.2709e-20` was printed as a key number. The side-force coefficient of
+    a symmetric body is zero and what the solver wrote is its round-off; a cover page
+    that quotes the round-off to five figures has made a measurement out of nothing.
+    The scale is the record's own largest value, so nothing here depends on a unit or
+    on what sort of coefficient it is, and the original value is still printed -- this
+    says the number is zero, it does not hide it.
+
+    Only the force record's own rows are passed in. A final residual of 1e-8 is small
+    against a Cd of 1.2 and is not negligible: it is the answer.
+    """
+    values = {id(row): _number_in(row["text"]) for row in rows}
+    scale = max((abs(value) for value in values.values() if value is not None), default=0.0)
+    if scale <= 0.0:
+        return rows
+    for row in rows:
+        value = values.get(id(row))
+        if value is None or value == 0.0 or abs(value) >= NEGLIGIBLE_FRACTION * scale:
+            continue
+        row["negligible"] = True
+        row["text"] = (f"0 -- negligible, not a headline (the file says {value:.5g}, "
+                       f"under {NEGLIGIBLE_FRACTION:g} of this record's largest value "
+                       f"{scale:.5g})")
+    return rows
 
 
 def measured_numbers(case: Path | None) -> tuple[list[dict[str, Any]], list[str]]:
@@ -259,14 +478,27 @@ def measured_numbers(case: Path | None) -> tuple[list[dict[str, Any]], list[str]
     if case is None:
         return rows, ["no case directory, so no coefficients or residuals were read"]
 
+    # A steady solver's `Time` column counts iterations, not seconds, so the force
+    # record's "t = 1 to 500" named the wrong axis on every steady run.
+    application = preflight.parse_control(
+        read_dict(case, "system/controlDict")).get("application", "")
+    steady = is_steady_solver(application)
     try:
         grouped = results.find_force_files(case)
         if grouped:
             key = results.choose_force_series(grouped)
             history = results.read_history(grouped[key])
             columns = results.plot_columns(history["columns"])
+            force_rows: list[dict[str, Any]] = []
             for label, value in results.force_headline(history, columns).items():
-                rows.append({"label": label, "text": str(value), "source": f"{key}"})
+                text = str(value)
+                if steady:
+                    text = text.replace("t = ", "iterations ")
+                force_rows.append({"label": label, "text": text, "source": f"{key}"})
+            rows.extend(zero_the_negligible(force_rows))
+            if steady:
+                notes.append(f"{key} comes from a steady run ({application}), so its "
+                             "Time column is counted in iterations, not seconds")
             for line in history.get("superseded", []) + history.get("ignored", []):
                 notes.append(f"force record: {line}")
         else:
@@ -365,6 +597,9 @@ def tie_numbers(
             "source": str(row.get("source") or ""),
             "state": "unverified",
             "why": "no figure is stamped with this number",
+            # Carried, not recomputed: `zero_the_negligible` decided this against the
+            # force record's own scale, and the cover orders the page by it.
+            "negligible": bool(row.get("negligible")),
         }
         for claimed in figure_claims:
             if not claimed.get("in_png"):
@@ -503,6 +738,42 @@ def boundary_types(case: Path | None, field: str) -> list[tuple[str, str]]:
     return rows
 
 
+_NONUNIFORM = re.compile(r"List<(\w+)>\s*(\d+)?")
+
+
+def field_shape(text: str) -> str:
+    """One `0/` field as its shape: class, dimensions, and what its `internalField`
+    is -- never the payload.
+
+    This is #139. The old line was `internalField {value}` with the value as written,
+    and a mapped, restarted, `setFields`-ed or snappyHexMesh-ed `0/` writes that value
+    as `nonuniform List<vector> 139286((1.03809 -0.974742 0) ...)`: 3.8 MB on one
+    line, folded to 100 characters a page-line, 1280 pages of methods, 11 minutes.
+    What a methods section wants from a field is the initial condition, and the
+    initial condition of a nonuniform field is that it is nonuniform and how many
+    values it has. The contents are the case, which the case already is.
+    """
+    header = preflight.entry_values(preflight.block_body(text, "FoamFile"))
+    values = preflight.entry_values(preflight.outer_text(text))
+    internal = values.get("internalField", "")
+    if "nonuniform" in internal:
+        match = _NONUNIFORM.search(internal)
+        kind = match.group(1) if match else "?"
+        count = (f"{int(match.group(2)):,} entries"
+                 if match and match.group(2) else "entry count not stated")
+        shape = (f"nonuniform List<{kind}>, {count} -- summarised, not printed "
+                 f"({len(internal):,} characters)")
+    elif len(internal) > MAX_VALUE_CHARS:
+        shape = (f"{internal[:MAX_VALUE_CHARS]} ... -- summarised, not printed "
+                 f"({len(internal):,} characters)")
+    else:
+        shape = internal or "not stated"
+    bits = [header.get("class", "") or "class not stated"]
+    if values.get("dimensions"):
+        bits.append(values["dimensions"])
+    return ", ".join(bits) + f", internalField {shape}"
+
+
 def find_check_log(case: Path | None) -> Path | None:
     """The newest `checkMesh` output in the case, whatever it was called.
 
@@ -626,12 +897,8 @@ def methods_lines(
         read.append("0/")
         lines.append(f"initial and boundary conditions (0/: {', '.join(fields)})")
         for field in fields:
-            rows = boundary_types(case, field)
-            initial = preflight.entry_values(
-                preflight.outer_text(read_dict(case, f"0/{field}"))
-            ).get("internalField", "")
-            lines.append(f"  {field}  internalField {initial or 'not stated'}")
-            for patch, patch_type in rows:
+            lines.append(f"  {field}  {field_shape(read_dict(case, f'0/{field}'))}")
+            for patch, patch_type in boundary_types(case, field):
                 lines.append(f"    {patch:<22} {patch_type}")
     else:
         lines.append("initial and boundary conditions: no 0/ directory in the case")
@@ -674,7 +941,9 @@ def methods_lines(
             lines.extend(f"  {wrapped}" for wrapped in _wrap(line, 96, "    "))
         times = data.get("times") or []
         if times:
-            lines.append(f"  time steps parsed {len(times)}, last t = {times[-1]:g}")
+            axis = "last iteration" if is_steady_solver(
+                str(control.get("application", ""))) else "last t ="
+            lines.append(f"  steps parsed {len(times)}, {axis} {times[-1]:g}")
     else:
         lines.append("what the solver did: no solver log in the case")
     lines.append("")
@@ -701,7 +970,22 @@ def methods_lines(
     else:
         lines.append("wall layers: not measured (--no-layers)")
 
-    return lines, read
+    return [_capped(line) for line in lines], read
+
+
+def _capped(line: str) -> str:
+    """One line of the methods section, at most `MAX_VALUE_CHARS` long.
+
+    Applied here, to every line, rather than at each of the fifteen places a value is
+    read: #139 was one unbounded value from one case file reaching the page, and the
+    next one will come from a dictionary nobody has thought about yet. A line that was
+    cut says so, because a reader who cannot see that something was left out cannot go
+    and read the file.
+    """
+    if len(line) <= MAX_VALUE_CHARS:
+        return line
+    return (f"{line[:MAX_VALUE_CHARS]} ... -- summarised, not printed "
+            f"({len(line) - MAX_VALUE_CHARS:,} more characters)")
 
 
 # -- what was asked for and not produced ----------------------------------------------
@@ -875,6 +1159,9 @@ def cover_page(
               "Each number is shown with the figure it was drawn from, or with the "
               "reason there is none.",
               fontsize=7.6, va="top", ha="left", color="#55666f")
+    y -= 0.016
+    axes.text(0.07, y, stamp_backing(numbers), fontsize=7.6, va="top", ha="left",
+              color="#55666f")
     y -= 0.022
 
     colour = {"verified": "#1b5e20", "disagrees": "#b71c1c", "unverified": "#5c6f7d"}
@@ -934,14 +1221,51 @@ def cover_page(
     plt.close(figure)
 
 
+def stamp_backing(numbers: list[dict[str, Any]]) -> str:
+    """How many of the cover's numbers a stamped figure stands behind.
+
+    Written because of what the sweep behind #139 and #145 found: not one PNG in
+    `studies/` or `data/qa-runs/` carries a `reynolds-claims` stamp, so on real data
+    `tie_numbers` only ever reaches `unverified` and the `verified` row this cover was
+    designed around is a shape only the tests have seen. A cover page that offers
+    three outcomes and silently always prints the third is a cover page that reads as
+    if it had checked something. So it counts, and when the count is zero it says
+    zero.
+    """
+    if not numbers:
+        return ("no number reached this page, so none of them is backed by a stamped "
+                "figure")
+    backed = sum(1 for row in numbers if row.get("state") == "verified")
+    if not backed:
+        return (f"0 of {len(numbers)}: no figure in this study carries a "
+                "reynolds-claims stamp, so nothing on this page is backed by one")
+    return (f"{backed} of {len(numbers)} are backed by a figure stamped with the "
+            "value; the rest are not")
+
+
 BODY_WIDTH = 100
 """Monospaced characters that fit across a text page at `BODY_SIZE`. Lines are folded
 to it here rather than where they are built, so one page-geometry number governs every
 section and no section has to know how wide the page is."""
 
 
-def text_pages(pdf: PdfPages, title: str, lines: Iterable[str]) -> int:
-    """A block of already-laid-out monospaced lines, paginated. Returns the pages."""
+def text_pages(
+    pdf: PdfPages,
+    title: str,
+    lines: Iterable[str],
+    *,
+    max_pages: int | None = None,
+    notes: list[str] | None = None,
+) -> int:
+    """A block of already-laid-out monospaced lines, paginated. Returns the pages.
+
+    `max_pages` is #139's other guard. The per-value cap stops one field filling a
+    document, and this stops the section doing it: a `0/` with forty fields in it, or
+    a dictionary nobody has met yet, still cannot turn a four-page report into a
+    thousand-page one. The cut is stated on the last page it writes and in `notes`,
+    because a section that stops early without saying so reads as a section that
+    ended.
+    """
     folded: list[str] = []
     for line in lines:
         if len(line) <= BODY_WIDTH:
@@ -953,6 +1277,13 @@ def text_pages(pdf: PdfPages, title: str, lines: Iterable[str]) -> int:
         folded.extend(pad + piece
                       for piece in _wrap(line.strip(), BODY_WIDTH - len(pad), "    "))
     lines = folded or ["(nothing)"]
+    if max_pages is not None and len(lines) > max_pages * BODY_LINES:
+        room = max_pages * BODY_LINES - 2
+        cut = (f"-- {len(lines) - room:,} further line(s) are not printed: this "
+               f"section is capped at {max_pages} pages.")
+        if notes is not None:
+            notes.append(f"{title}: {cut.lstrip('- ')}")
+        lines = lines[:room] + ["", cut]
     pages = 0
     for start in range(0, len(lines), BODY_LINES):
         chunk = lines[start:start + BODY_LINES]
@@ -1049,7 +1380,7 @@ def figure_pages(pdf: PdfPages, groups: list[tuple[str, list[gallery.Entry]]]) -
 
 
 def write_report(
-    study: Path,
+    given: Path,
     out: Path,
     *,
     template: dict[str, Any],
@@ -1059,15 +1390,22 @@ def write_report(
     layers: bool = True,
 ) -> dict[str, Any]:
     """The document, and a record of what went into it and what was missing."""
-    entries = [entry for entry in gallery.collect(root=study, case=case)
-               if (entry.meta or {}).get("source") != SOURCE_TAG]
+    where = locate(given)
+    study, bases, base = where["state_root"], where["bases"], where["base"]
+    rows = manifest_rows(study, bases, case=case) if where["is_study"] else []
+    entries = [gallery.entry_from_row(row) for row in rows
+               if not gallery.is_own_output(row)
+               and (row.get("meta") or {}).get("source") != SOURCE_TAG]
     groups = gallery.group_by_kind(entries)
-    figure_claims = stamped_claims(study, case=case)
+    figure_claims = stamped_claims(study, bases, base, case=case)
     case_dir, case_rule, others = choose_case(study, case)
     measured, measure_notes = measured_numbers(case_dir)
     numbers = tie_numbers(figure_claims, measured)
+    # A number that is zero to within the record's own scale is not a headline, so it
+    # goes under the ones that are. Stable, so nothing else is reordered.
+    numbers.sort(key=lambda row: bool(row.get("negligible")))
     hero_path, hero_rule = pick_hero(entries, figure_claims, hero)
-    notes = list(measure_notes)
+    notes = where["notes"] + list(measure_notes)
 
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1080,9 +1418,12 @@ def write_report(
     with PdfPages(str(out)) as pdf:
         for section in template["sections"]:
             if section == "summary":
+                digest = study_state.digest(study)
+                if base != study:
+                    digest["study"] = base.name
                 cover_page(
                     pdf, template=template, study=study,
-                    digest=study_state.digest(study), numbers=numbers,
+                    digest=digest, numbers=numbers,
                     hero=hero_path, hero_rule=hero_rule, logo=logo, notes=notes,
                 )
                 pages.append("summary")
@@ -1096,7 +1437,9 @@ def write_report(
                 pages.extend(["figures"] * count)
             elif section == "methods":
                 methods, sources = methods_lines(case_dir, case_rule, others, layers=layers)
-                pages.extend(["methods"] * text_pages(pdf, "methods", methods))
+                pages.extend(["methods"] * text_pages(
+                    pdf, "methods", methods,
+                    max_pages=METHODS_MAX_PAGES, notes=notes))
             elif section == "gaps":
                 gap_lines = gaps(study, case=case)
                 pages.extend(["gaps"] * text_pages(
@@ -1104,6 +1447,11 @@ def write_report(
 
     return {
         "study": str(study),
+        "given": str(given),
+        "state_root": str(study),
+        "artifact_base": str(base),
+        "is_study": where["is_study"],
+        "stamp_backing": stamp_backing(numbers),
         "out": str(out.resolve()),
         "pages": len(pages),
         "page_sections": pages,
@@ -1138,6 +1486,7 @@ def render_summary(record: dict[str, Any]) -> str:
     lines.append("key numbers: " + (", ".join(f"{state} x{count}"
                                               for state, count in sorted(counts.items()))
                                     or "none"))
+    lines.append(f"stamp-backed: {record['stamp_backing']}")
     for row in record["numbers"]:
         if row["state"] != "verified":
             lines.append(f"  {row['state']}: {row['label']}: {row['text']} -- {row['why']}")
@@ -1187,23 +1536,35 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    study = study_state.find_root(args.root)
     record = write_report(
-        study, args.out or study / PDF_NAME,
+        args.root, args.out or study_state.find_root(args.root) / PDF_NAME,
         template=template, case=args.case, hero=args.hero, logo=args.logo,
         layers=args.layers,
     )
     record["template"] = str(args.template) if args.template else "(built in)"
     record["notes"] = template_notes + record["notes"]
 
-    study_state.record(
-        REPORT_KIND, record["out"], root=study, case=args.case,
-        label=f"report pack, {record['pages']} pages", source=SOURCE_TAG,
-    )
-    record["registered_as"] = REPORT_KIND
+    # #145: pointed at a study top, this used to write a second
+    # `.reynolds/manifest.jsonl` beside the real one and split the study's state in
+    # two. A directory with no `.reynolds/` under it is not a study, and the document
+    # is still written -- what is refused is inventing a study to register it in.
+    if record["is_study"]:
+        study_state.record(
+            REPORT_KIND, record["out"], root=Path(record["state_root"]), case=args.case,
+            label=f"report pack, {record['pages']} pages", source=SOURCE_TAG,
+        )
+        record["registered_as"] = REPORT_KIND
+    else:
+        record["registered_as"] = ""
 
     print(render_summary(record))
-    print(f"registered in the manifest under kind '{REPORT_KIND}'")
+    if record["registered_as"]:
+        print(f"registered in the manifest under kind '{REPORT_KIND}' in "
+              f"{record['state_root']}")
+    else:
+        print(f"not registered: nothing under {args.root} has a "
+              f"{study_state.STATE_DIR}/, so it is not a study, and writing one here "
+              "would give it a second state directory")
     if args.sidecar:
         Path(args.sidecar).parent.mkdir(parents=True, exist_ok=True)
         Path(args.sidecar).write_text(json.dumps(record, indent=2, default=str),
