@@ -605,7 +605,11 @@ def test_doctor_finds_the_toolbox_it_would_sync(monkeypatch):
     ok, detail = labels(cli.run_checks(full_config()))["toolbox"]
     assert ok
     scripts = len(list(cli.TOOLBOX_SOURCE.glob("*.py")))
-    assert f"{scripts} scripts" in detail and "3 notes" in detail
+    # Counted, not hardcoded: the check reports what it would sync, and a note added to
+    # the toolbox is not a regression in the doctor.
+    notes = len(list((cli.TOOLBOX_SOURCE / "notes").glob("*.md")))
+    assert f"{scripts} scripts" in detail and f"{notes} notes" in detail
+    assert notes >= 3
 
 
 def test_config_without_a_terminal_explains_instead_of_aborting(monkeypatch, tmp_path):
