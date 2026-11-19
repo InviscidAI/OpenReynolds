@@ -816,6 +816,95 @@ otherwise arrives when someone looks at the result and asks for "the transient o
 transient run (pimpleFoam) costs more but is the honest instrument for a shedding flow;
 a steady run is right for an attached, genuinely steady one.
 
+## Resolving the eddies instead of modelling them
+
+The note above is about a steady solver damping a shedding flow. An LES is the same
+failure one level down, and it is harder to see, because what does the damping there is
+not the solver but the convection scheme.
+
+LES is not a different solver in OpenFOAM. `pimpleFoam` runs it, the same binary that
+runs URANS, and the only file that says which is `constant/turbulenceProperties`:
+`simulationType LES` with an `LES` block instead of `simulationType RAS` with a `RAS`
+one. Everything else about the switch is in the files around it, and that asymmetry is
+why an LES case is so easy to write wrongly: the dictionary that names the subgrid
+model is the one part that is obviously LES, and it is the part that matters least.
+
+**The subgrid model is the smaller half of the dissipation, and sometimes a rounding
+error on it.** A subgrid model exists to remove energy at the grid scale. An
+upwind-biased convection scheme removes energy at the grid scale as well, and it
+removes more. On `Gauss linearUpwind grad(U)` the numerical dissipation dominates
+whatever `WALE` or `kEqn` contributes, so the eddies the run was paid for are smoothed
+by the scheme and what comes out is a URANS answer at an LES price. There is no symptom:
+residuals fall, the run writes fields, the wake looks plausible and smooth. Comparing
+the same mesh on `Gauss linear` and on `linearUpwind` is the measurement -- if the
+resolved spectrum changes, the scheme was the model.
+
+So convection on the momentum equation is central or near-central for a resolved run.
+`Gauss LUST grad(U)` is ESI's own compromise, 75% `linear` and 25% `linearUpwind`:
+central enough that the subgrid model is the dissipation, with a quarter of an upwind to
+keep a real mesh from ringing. Pure `Gauss linear` is the right scheme on a mesh good
+enough for it, and oscillates on one that is not. Which this mesh is, is readable rather
+than arguable: `checkMesh`'s maximum non-orthogonality and skewness, and `locate.py`
+on an oscillation that turned into a divergence.
+
+**Time is second order and the choice between two second-order schemes is not
+cosmetic.** `backward` and `CrankNicolson` are both second order; `CrankNicolson 0.9`
+is the off-centred form (1 is pure Crank-Nicolson and rings, 0 is Euler and damps), and
+it is what the LES tutorials in the installation run. The Courant number is the other
+half: LES wants it below about 1 on the resolved scales, because above 1 those scales
+are advected more than a cell in a step, and they are precisely the scales the subgrid
+model is not modelling. `adjustTimeStep yes` with `maxCo` is how that is held rather
+than hoped for, and the step a mesh implies is arithmetic: `maxCo * h / U` on the
+smallest cell, which `case_gen.py` prints before the run.
+
+**Mesh adequacy is a claim about the mesh and cannot be read off the case files.** A
+wall-resolved LES wants the first cell centre at y+ of order 1 and a cell in the outer
+layer that is roughly isotropic, since an eddy that is resolved in one direction and
+filtered in another is neither resolved nor modelled. A wall-modelled LES wants
+something different -- the first cell in the log region and the streamwise and spanwise
+spacings stated in wall units. A generator can state the implication and not the
+verdict: `layer_report.py` measures the first-cell height off `constant/polyMesh` with
+no solver run at all, the flat-plate correlation turns that into an a priori y+, and
+`wall.py` reads the real y+ off the velocity field once there is one. The gap between
+those two has been large: on a generated aerofoil O-grid the a priori estimate was
+y+ ~ 1200 and the measured range came back 40-1713.
+
+**An LES answer is a mean, and the mean has a start.** The instantaneous field at the
+end time is one realisation of a chaotic flow; quoting a Cd off it is quoting noise to
+three figures. `fieldAverage` with `mean` and `prime2Mean` is the answer, `prime2Mean`
+because the fluctuation is usually what the run was for and cannot be recovered from a
+mean field afterwards. `timeStart` is where the honesty lives: a window that opens
+inside the start-up transient gives the transient diluted, not a mean, and the number
+looks exactly as converged either way. `spectra.py` is the instrument for that -- its
+stationary window is the earliest sample from which the halves' means agree inside the
+halves' own scatter, and its effective sample size is why 20,000 correlated rows are
+not 20,000 measurements.
+
+**Which fields are on disk is per model and not per class.** `WALE`, `Smagorinsky` and
+`sigma` compute k algebraically from grad(U) and read no k file; `kEqn` and
+`dynamicKEqn` solve for k and stop at start-up without `0/k`. The DES hybrids are RAS
+models with an LES length scale inside them, so `SpalartAllmarasDDES` carries `nuTilda`
+and `kOmegaSSTDDES` carries both k and omega. `nut` is a field on disk for every one of
+them. `foamToC -table LESincompressibleMomentumTransportModel` lists what the
+installation has, which is a shorter conversation than a dictionary that parses and a
+solver that exits.
+
+**`delta` is physics and not bookkeeping.** `cubeRootVol` is the cell's own cube root
+and stays that right down to the wall, where the eddies being modelled have stopped
+existing, so the model keeps making nu_t through the viscous sublayer. `vanDriest` is
+the same geometric delta with van Driest damping on it off the local u_tau, which takes
+the subgrid viscosity to zero at the wall; its coefficients sit in a `vanDriestCoeffs`
+block that OpenFOAM reads with `subDict` rather than `optionalSubDict`, so omitting the
+block is a start-up error and not a default. `IDDESDelta` is a third thing, blending the
+cell spacings with the wall distance, and the IDDES models require it by name:
+`SpalartAllmarasIDDES` tests `isA<IDDESDelta>` and exits with "The delta function must
+be set to a IDDESDelta -based model".
+
+A DNS is this same case with the subgrid model removed, which OpenFOAM spells
+`simulationType laminar` -- identical in that one file to a Re 100 duct, and different
+in every other file in the case. The claim a DNS makes is about the mesh, eta = L
+Re^(-3/4), and no dictionary records whether anybody checked it.
+
 ## When the mesh moves
 
 A moving mesh is a second solver underneath the flow solver, with its own dictionary and

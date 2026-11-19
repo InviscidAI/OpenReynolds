@@ -274,9 +274,20 @@ def cell_centres(mesh: dict, cells: np.ndarray) -> np.ndarray:
     a percent of the mesh and walking all of them in Python is the difference
     between a second and a minute.
     """
-    cells = np.asarray(cells, dtype=np.int64)
-    if cells.size == 0:
+    asked = np.asarray(cells, dtype=np.int64)
+    if asked.size == 0:
         return np.zeros((0, 3))
+
+    # One row per DISTINCT cell, and the answer scattered back out to the shape asked
+    # for. A cell in the list twice is not a strange request: a corner cell owns two
+    # wall faces, so `first_cell_heights` on any patch that turns a corner hands this
+    # the same cell twice, every time. `row_of_cell[cells]` keeps only the last row of
+    # a repeat, which left the earlier one with no faces at all -- count 0, volume 0,
+    # centre falling back to the mean of nothing, which is the origin. On the test
+    # cavity that put two of twenty-four first-cell heights at 0.016 m and 0.2006 m
+    # where every other face measured 0.0125 m, a corner-cell height larger than the
+    # domain, and it propagated into `wall.py`'s y+ as y.
+    cells, inverse = np.unique(asked, return_inverse=True)
 
     wanted = np.zeros(mesh["n_cells"], dtype=bool)
     wanted[cells] = True
@@ -309,7 +320,8 @@ def cell_centres(mesh: dict, cells: np.ndarray) -> np.ndarray:
     moment = summed(pyr_ctr * pyr_vol[:, None])
     scale = np.abs(vol).max(initial=0.0)
     good = np.abs(vol) > 1e-12 * max(scale, 1e-300)
-    return np.where(good[:, None], moment / np.where(good, vol, 1.0)[:, None], est)
+    centres = np.where(good[:, None], moment / np.where(good, vol, 1.0)[:, None], est)
+    return centres[inverse.reshape(-1)]
 
 
 def first_cell_heights(mesh: dict, patch: str) -> tuple[np.ndarray, np.ndarray]:
