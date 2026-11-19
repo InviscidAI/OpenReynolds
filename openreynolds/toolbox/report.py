@@ -207,9 +207,11 @@ def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[s
     "this is the mesh and the settings of `cylinder`" is a document, "these are some
     settings from somewhere in the study" is not.
     """
+    # `discover_cases` already puts the study itself first when the study home is the
+    # case (the legacy `/work` layout). Prepending it again counted it twice, so a
+    # one-case study was offered as "the first of 2 cases ()" -- the empty name being
+    # the home directory's own.
     cases = study_state.discover_cases(study)
-    if study_state.is_case_dir(study):
-        cases = [study, *cases]
     if wanted:
         for case in cases:
             if case.name == wanted:

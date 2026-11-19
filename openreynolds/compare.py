@@ -17,6 +17,26 @@ printed its all-clear over the silence, on the very pair it had been written to 
 (`toolbox/claims.py:394`). A comparison tool's one unforgivable failure mode is
 saying "no differences" about a quantity it never looked at.
 
+AND ITS MIRROR IMAGE IS A FALSE ALARM. On two real Ahmed-body runs (#141) this
+printed `CmRoll by 71.6%`, `CmYaw by 115.3%` and `Cs by 91.5%` -- three quantities
+that are identically zero on a symmetric body, compared at 1e-20 against 1e-20 by a
+relative rule with no floor -- and nine `checkMesh` lines that say two meshes are two
+meshes, while `Cd 0.4236 against 0.4067`, a 4.0% change in drag and the entire point
+of the second run, was missing from the summary because 0.040 < the 5% stamp
+tolerance it had borrowed from `claims.py`. A verdict nobody can trust is worth as
+little as no verdict, so `TOL` is a force-coefficient tolerance rather than a
+figure-stamp one, `NEGLIGIBLE` is the floor, and both are printed with the answer.
+
+AND EVERY NUMBER CARRIES THE CASE IT CAME FROM. On a three-case study (#143) side
+a's `Cd`/`Cl`/`Cp` were read from `case/postProcessing/bladeF` and its `total_x/y/z`
+from a different case directory, `case_axisX`, whose sibling is named
+`case_axisX_ruledout` -- spliced into one table with no case column, while the
+primary case's own 13-row force history was never compared and never mentioned.
+Provenance is part of the number here: the case and the series are in the table, a
+series the chooser passed over is named, a case that is marked as ruled out is not
+read unless it is all there is, and a quantity whose two sides come from differently
+named cases says so in the summary line about it.
+
 THE READERS ARE THE TOOLBOX'S. `postProcessing` restarts, the superseded rows of an
 abandoned run, the coefficient-before-newtons preference, `checkMesh`'s one-star
 advisories, what a residual series is doing -- all of that is already solved in
@@ -33,6 +53,7 @@ on a machine without them instead of taking the whole command down.
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,6 +61,42 @@ from typing import Any
 from .store import Store
 
 TOOLBOX = Path(__file__).resolve().parent / "toolbox"
+
+TOL = 0.01
+"""What counts as a difference here, and `--tol` overrides it.
+
+One per cent, not `claims.DEFAULT_TOL`'s five. Five is right for a figure stamp
+against an answer -- a plot label and a number that disagree by 5% disagree about
+something -- and wrong for a force coefficient, where a mesh study is called
+converged when the coefficient stops moving by about a per cent and 4% on Cd is the
+finding, not the noise. Borrowing the stamp tolerance is what hid #141's drag
+change. It is stated in the output, because "no differences" means nothing without
+the number it was measured against.
+"""
+
+NEGLIGIBLE = 1e-3
+"""The floor, as a fraction of the largest coefficient the two runs logged.
+
+`claims.apart` normalises on the larger magnitude, which keeps it symmetric and
+stops it dividing by a near-zero -- and makes 3.3e-20 against 1.9e-20 "71.6%
+apart". On a symmetric body the roll moment, the yaw moment and the side force are
+identically zero and what is logged for them is solver residue, so the scale has to
+come from the data: a quantity whose magnitude on both sides is under a thousandth
+of the biggest coefficient in the same comparison (Cd = 0.42, in #141) is zero on
+both sides, and zero against zero is unchanged. A thousandth and not an absolute
+epsilon, because a run in newtons on a full-scale hull logs numbers in the
+thousands and one in coefficients logs numbers near one.
+"""
+
+RULED_OUT = "ruledout"
+"""A case directory whose name carries this was tried and rejected by whoever ran the
+study, and is not read while another case exists -- #143 compared `case_axisX`, whose
+sibling was `case_axisX_ruledout`, in place of the case the study was named for. It is
+named in the notes either way: skipping it silently is the same failure as choosing it
+silently."""
+
+PROCESSOR = re.compile(r"^processor\d+$", re.IGNORECASE)
+"""`processor0` .. `processor3` are one decomposed case, not four cases."""
 
 NUMERIC_HINT = "needs numpy and matplotlib: pip install 'openreynolds[toolbox]'"
 """Said instead of the forces and convergence sections when the toolbox's own
@@ -61,8 +118,35 @@ def _toolbox(*names: str) -> list[Any]:
 
 
 def cases(root: Path) -> list[Path]:
-    """Every case directory in the mirror: one with a `postProcessing/` under it."""
-    return sorted({path.parent for path in root.rglob("postProcessing") if path.is_dir()})
+    """Every case directory in the mirror: one with a `postProcessing/` under it.
+
+    A decomposed run's `processor0/postProcessing` belongs to the case above it, so
+    those fold into their parent: four processor directories reported as four cases is
+    how a single-case study came back as "the first of 6 cases".
+    """
+    found = set()
+    for path in root.rglob("postProcessing"):
+        if not path.is_dir():
+            continue
+        case = path.parent
+        if PROCESSOR.match(case.name):
+            case = case.parent
+        found.add(case)
+    return sorted(found)
+
+
+def _live_cases(found: list[Path]) -> tuple[list[Path], list[str]]:
+    """The cases worth reading, and what was said about the ones left out.
+
+    A `*_ruledout` directory is skipped while any other case exists, and read anyway
+    when it is all there is -- with a note in both cases.
+    """
+    live = [case for case in found if RULED_OUT not in case.name.lower().replace("_", "")]
+    if found and not live:
+        return found, ["every case directory here is named as ruled out, so they were "
+                       "read anyway: there is nothing else to read"]
+    return live, [f"{case.name} is named as ruled out, so it was not read"
+                  for case in found if case not in live]
 
 
 def _newest(paths: list[Path]) -> Path | None:
@@ -142,20 +226,34 @@ def forces(root: Path) -> dict[str, Any]:
     One series per case, chosen by `results.choose_force_series` -- coefficients
     before newtons, which is its call and not one to make twice. Keyed by the column
     name (`Cd`), because that is the thing two studies have in common; the function
-    object they were written under usually is not.
+    object they were written under usually is not -- so each row carries the `case`
+    and the `series` it was read from, and whatever was passed over is in `notes`.
+
+    Keyed by column name and not by `(case, column)`: the two studies being compared
+    name their cases differently (`case` against `case_Fr0316`), and keying on the
+    case would pair nothing with anything. The case travels with the number instead.
     """
     try:
         results, = _toolbox("results")
     except ImportError as exc:
         return {"unavailable": f"{exc.name}: {NUMERIC_HINT}", "series": {}, "notes": []}
     series: dict[str, dict[str, Any]] = {}
-    notes: list[str] = []
-    for case in cases(root):
+    found = cases(root)
+    live, notes = _live_cases(found)
+    for case in live:
         grouped = results.find_force_files(case)
         if not grouped:
+            notes.append(f"{case.name} logged no force or coefficient file")
             continue
         key = results.choose_force_series(grouped)
+        # Every series the chooser passed over, not only one whose column names
+        # happen to repeat in a later case: #143's 13-row `forces/force.dat` lost to
+        # a one-row `bladeF/force.dat` in the same case and was never mentioned.
+        for passed_over in sorted(set(grouped) - {key}):
+            notes.append(f"{case.name}/{passed_over} is not compared: "
+                         f"{case.name}/{key} was chosen for this case")
         history = results.read_history(grouped[key])
+        taken, said = 0, len(notes)
         for name in results.plot_columns(history["columns"]):
             values = results.column(history, name)
             if not values.size:
@@ -163,6 +261,10 @@ def forces(root: Path) -> dict[str, Any]:
             if name in series:
                 notes.append(f"{name} is also in {case.name}/{key}, which is not compared")
                 continue
+            if values.size == 1:
+                notes.append(f"{name} in {case.name}/{key} has one data row, so its "
+                             "mean is that row rather than a mean")
+            taken += 1
             series[name] = {
                 "last": float(values[-1]),
                 "tail_mean": float(results.tail_mean(values)),
@@ -170,8 +272,18 @@ def forces(root: Path) -> dict[str, Any]:
                 "series": key,
                 "case": case.name,
             }
+        if not taken and len(notes) == said:
+            # Unless the loop above already said why, column by column.
+            notes.append(f"{case.name}/{key} contributed nothing that is compared")
         notes.extend(history["ignored"])
         notes.extend(history["superseded"])
+    mixed = sorted({row["case"] for row in series.values()})
+    if len(mixed) > 1:
+        notes.append("these numbers are not all from one case -- "
+                     + "; ".join(f"{case}: " + ", ".join(
+                         name for name, row in sorted(series.items()) if row["case"] == case)
+                       for case in mixed)
+                     + " -- so the case column, not the table, says what each one is of")
     return {"series": series, "notes": notes, "unavailable": ""}
 
 
@@ -318,15 +430,19 @@ def compare_claims(left: list[dict[str, Any]], right: list[dict[str, Any]],
                    tol: float | None = None) -> list[dict[str, Any]]:
     """Each claim name on either side, with the two values and whether they agree.
 
-    `claims.unit_key` and `claims.apart` and `claims.DEFAULT_TOL`, in that order --
+    `claims.unit_key` and `claims.apart` and this module's `TOL`, in that order --
     comparability before tolerance, which is `claims.contradictions`'s rule and the
     whole of what it learned: two numbers under different unit labels are not
     converted and not called close, they are reported as not comparable. A tolerance
     applied before the labels were looked at is how 6.32 `h` and 6.30 `m` came back
     as an all-clear.
+
+    `TOL` rather than `claims.DEFAULT_TOL`: two studies' stamped numbers for the same
+    named quantity are two measurements of it, which is the `--tol` question, not the
+    does-this-plot-label-match-the-answer question 5% was written for.
     """
     claims, = _toolbox("claims")
-    tol = claims.DEFAULT_TOL if tol is None else tol
+    tol = TOL if tol is None else tol
     by_name: dict[str, tuple[list[dict], list[dict]]] = {}
     for side, rows in ((0, left), (1, right)):
         for row in rows:
@@ -374,6 +490,44 @@ def _claim_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _scale(rows: list[dict[str, Any]]) -> tuple[str, float]:
+    """The biggest coefficient magnitude in this comparison, and whose it is.
+
+    The data's own scale, which is what `NEGLIGIBLE` is a fraction of. Taken over both
+    sides and every paired series, so that it is one number for the whole table and
+    the same number whichever way round the two studies were named.
+    """
+    biggest = ("", 0.0)
+    for row in rows:
+        for side in ("a", "b"):
+            held = row[side]
+            if not held:
+                continue
+            size = abs(float(held["tail_mean"]))
+            if size == size and size > biggest[1]:  # size == size: not a NaN
+                biggest = (row["name"], size)
+    return biggest
+
+
+def _provenance(row: dict[str, Any]) -> str:
+    """What has to be said in the same breath as a force difference: the cases it was
+    read from when they are not the same case, and a side whose "mean" is one row.
+
+    The case names and not the series names: two studies naming their function objects
+    differently (`forceCoeffs` against `forceCoeffs1`) is ordinary and is in the table
+    anyway, while a difference whose two sides are two different cases is the thing
+    #143 printed as a finding about one.
+    """
+    bits = []
+    a, b = row["a"], row["b"]
+    if a["case"] != b["case"]:
+        bits.append(f"a from {a['case']}, b from {b['case']}")
+    for side in ("a", "b"):
+        if row[side]["rows"] == 1:
+            bits.append(f"{side} has one data row, so its mean is that row")
+    return f" ({'; '.join(bits)})" if bits else ""
+
+
 def summary(report: dict[str, Any], tol: float | None = None) -> dict[str, Any]:
     """What the report amounts to: how much was compared, what differs, and -- the
     part that has to be in the same sentence -- what could not be compared at all.
@@ -381,25 +535,41 @@ def summary(report: dict[str, Any], tol: float | None = None) -> dict[str, Any]:
     `compared` without `one_sided` and `not_comparable` beside it is the all-clear
     `claims.py` printed over the pair it was built to catch. The three counts travel
     together so that "no differences" can never be said on its own.
+
+    `tol` and `negligible` travel with them for the same reason, from the other side.
+    A verdict is only as good as the threshold behind it, so the threshold is in the
+    answer; and a quantity put under the floor is listed with the numbers that put it
+    there, because "treated as zero" is a decision this made and not a fact about the
+    study (#141).
     """
-    claims, = _toolbox("claims")
-    tol = claims.DEFAULT_TOL if tol is None else tol
+    tol = TOL if tol is None else tol
     compared = 0
     differ: list[str] = []
     one_sided: list[str] = []
     not_comparable: list[str] = []
+    negligible: list[str] = []
 
     def only(which: str, what: str) -> str:
         return f"{what} only in {'a' if which == 'b' else 'b'}"
 
+    big_name, scale = _scale(report["forces"]["series"])
     for row in report["forces"]["series"]:
         if row["missing"]:
             one_sided.append(only(row["missing"], f"force series {row['name']}"))
             continue
         compared += 1
         relative = row["tail_mean"]["relative"]
+        sides = [float(row[side]["tail_mean"]) for side in ("a", "b")]
+        if scale and max(abs(value) for value in sides) <= NEGLIGIBLE * scale:
+            negligible.append(
+                f"{row['name']}: {sides[0]:.3g} against {sides[1]:.3g}, both under "
+                f"{NEGLIGIBLE:g} of {big_name} = {scale:.3g}, so both are zero here "
+                f"and this is not treated as a difference")
+            continue
         if relative is not None and relative > tol:
-            differ.append(f"{row['name']} by {relative * 100:.1f}% on the tail mean")
+            differ.append(
+                f"{row['name']} by {relative * 100:.1f}% on the tail mean "
+                f"({sides[0]:.5g} against {sides[1]:.5g})" + _provenance(row))
 
     for row in report["convergence"]["fields"]:
         if row["missing"]:
@@ -448,7 +618,9 @@ def summary(report: dict[str, Any], tol: float | None = None) -> dict[str, Any]:
 
     return {
         "compared": compared,
+        "tol": tol,
         "differ": differ,
+        "negligible": negligible,
         "one_sided": one_sided,
         "not_comparable": not_comparable,
     }
@@ -459,8 +631,11 @@ def compare(studies_dir: Path, left: str, right: str,
     """Everything two studies recorded, side by side, as one object.
 
     `a` is the first id given and `b` the second throughout, and a difference is
-    always b - a.
+    always b - a. `tol` is what counts as a difference, `TOL` unless `--tol` said
+    otherwise, and it comes back inside `summary` so that a reader of the report knows
+    what the verdict was measured against.
     """
+    tol = TOL if tol is None else tol
     studies_dir = Path(studies_dir)
     roots = {side: studies_dir / study for side, study in (("a", left), ("b", right))}
     # Before `identity`, which opens a `Store` -- and a Store creates the directory it
