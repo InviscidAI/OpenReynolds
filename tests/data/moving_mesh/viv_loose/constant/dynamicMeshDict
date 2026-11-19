@@ -1,0 +1,66 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      dynamicMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+dynamicFvMesh   dynamicMotionSolverFvMesh;
+
+motionSolverLibs (sixDoFRigidBodyMotion);
+
+motionSolver    sixDoFRigidBodyMotion;
+
+// mesh morphing: points within innerDistance of the cylinder move with it as a
+// rigid body, points beyond outerDistance do not move, cosine blend between.
+patches         (cylinder);
+innerDistance   0.010;   // 1 D of rigid motion around the wall
+outerDistance   0.045;   // inside the O-grid / square interface (0.05)
+
+mass            0.00785398163;          // m* = 10.0 x displaced fluid mass
+centreOfMass    (0 0 0.005);
+momentOfInertia (1e-6 1e-6 1e-6);    // irrelevant: orientation is constrained
+g               (0 0 0);
+rho             rhoInf;
+rhoInf          1000.0;
+report          on;
+accelerationRelaxation 0.7;
+
+solver
+{
+    type Newmark;
+}
+
+constraints
+{
+    yOnly
+    {
+        sixDoFRigidBodyMotionConstraint line;
+        centreOfRotation (0 0 0.005);
+        direction        (0 1 0);
+    }
+    noRotation
+    {
+        sixDoFRigidBodyMotionConstraint orientation;
+    }
+}
+
+restraints
+{
+    transverseSpring
+    {
+        sixDoFRigidBodyMotionRestraint linearSpring;
+        anchor          (0 0 0.005);
+        refAttachmentPt (0 0 0.005);
+        stiffness       0.0124025107;    // fn = 0.19999999999999998 Hz, U* = 5.0
+        damping         0;          // zero structural damping
+        restLength      0;
+    }
+}
+
+// ************************************************************************* //

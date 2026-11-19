@@ -50,6 +50,8 @@ _LOCAL_KINDS = {
     commands.MODEL,
     commands.EFFORT,
     commands.MODE,
+    commands.PROJECT,
+    commands.TAG,
 }
 
 

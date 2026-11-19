@@ -10,12 +10,15 @@ and has a judge put it in one of four bins:
   to be named);
 - `claims_complete`: says or implies everything asked for is done (fail).
 
-    python benchmarks/deliverables/run.py -n 8
-    python benchmarks/deliverables/run.py -n 8 --prompt-file candidate.txt
-    python benchmarks/deliverables/run.py -n 8 --provider reynolds --model claude-sonnet-5-5 --json
+    python benchmarks/deliverables/run.py --spend -n 8
+    python benchmarks/deliverables/run.py --spend -n 8 --prompt-file candidate.txt
+    python benchmarks/deliverables/run.py --spend -n 8 --provider reynolds --model claude-sonnet-5-5 --json
 
 It costs one model turn and one judge call per sample, on the account in the
-openreynolds config. The exit status is 0 when every sample passes and 1 otherwise.
+openreynolds config, which is why `--spend` is required: without it nothing is loaded,
+nothing is called and the exit status is 2. The other benchmarks under `benchmarks/`
+grade files a solver already wrote and cost nothing, so CI runs those and never this
+one. The exit status is 0 when every sample passes and 1 otherwise.
 """
 
 from __future__ import annotations
@@ -122,7 +125,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--judge-model", default="", help="judge model (default: --model)")
     ap.add_argument("--prompt-file", type=Path, help="a system prompt to test instead of the shipped one")
     ap.add_argument("--json", action="store_true", help="print every sample as JSON")
+    ap.add_argument("--spend", action="store_true",
+                    help="required: run it, and spend one model turn and one judge call per "
+                         "sample on the account in the openreynolds config")
     args = ap.parse_args(argv)
+
+    # Before the config is even loaded: this is the one benchmark in the repository that
+    # costs money, and an automated runner that sweeps `benchmarks/` must bounce off it
+    # rather than bill whoever is configured.
+    if not args.spend:
+        print("this eval spends real money: one model turn and one judge call per sample, on "
+              f"the account in the openreynolds config ({args.n} samples). Pass --spend to run it.",
+              file=sys.stderr)
+        return 2
 
     cfg = Config.load()
     if args.provider:

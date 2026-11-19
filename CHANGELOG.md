@@ -6,6 +6,35 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A study record you can ask about: projects, tags, accounting, and running one
+  again.** The record on disk carries a `project`, `tags`, the wall-clock time its
+  sessions took, the tokens they sent by class, when it last ended, and the study it
+  was cloned from. A record written before any of this loads with the defaults, as it
+  always did for a key it did not know.
+  - `openreynolds studies` takes `--project`, `--tag` (repeatable, and every tag given
+    has to be on the study), `--text` over the title and the project, and
+    `--state new|finished|unknown`. Its `--json` keeps every key it answered and adds
+    the new ones.
+  - `openreynolds dashboard` puts every study on one screen, newest first, with its
+    state, its jobs, its time and its tokens. It reads `./studies` and starts nothing:
+    a study whose job rows were last written `running` is reported `unknown`, because
+    settling it means asking the workspace service, and a listing does not start a
+    billed machine to draw a table.
+  - `openreynolds label` files a study under a project and tags it; `/project` and
+    `/tag` do the same from inside a session, answered by the harness with no model
+    call.
+  - `openreynolds clone` copies a past study's setup and local files into a new study
+    without its conversation. `openreynolds rerun` is a clone plus the first thing you
+    said in the old study, written in word for word and left unanswered, so an
+    ordinary resume answers it. A study whose transcript holds nothing you said is
+    refused by name rather than reconstructed.
+  - Cost is reported as wall-clock time and tokens for every study, and as a dollar
+    figure only where your own key paid your own vendor and that model's rate is
+    known. A study on Reynolds' model is never priced in money here, as the service's
+    own spending cap is not.
+
 ## [0.4.2] - 2026-11-18
 
 ### Changed

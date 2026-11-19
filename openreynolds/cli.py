@@ -49,6 +49,7 @@ from .mirror import LiveMirror, local_for, sync as mirror_sync
 from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
+from . import catalog as catalog_mod
 from .terminal import tolerant_stdout
 from . import serve as serve_mod
 from . import sharing as sharing_mod
@@ -91,7 +92,7 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
-JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare"})
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard"})
 """Subcommands that have a structured answer for the group's `--output-format` to mean
 something. Everything else it is given with is refused rather than answered in prose."""
 
@@ -326,45 +327,250 @@ def main(
         raise SystemExit(code)
 
 
+FILTER_HELP = {
+    "project": "Only studies filed under this project.",
+    "tag": "Only studies carrying this tag. Repeatable, and every tag given must be "
+           "on the study.",
+    "text": "Only studies whose title or project contains this.",
+    "state": "Only studies in this state. `unknown` is a study whose job rows were "
+             "last written running, which this machine cannot settle on its own.",
+}
+"""One wording for the four filters `studies` and `dashboard` both take, so the two
+cannot describe the same flag differently."""
+
+
+def _filtered(cfg: Config, project: str, tags: tuple[str, ...], text: str,
+              want: str | None) -> list[dict[str, Any]]:
+    return catalog_mod.filtered(cfg.studies_dir, project, tags, text, want or "")
+
+
+def _nothing_found(cfg: Config, filtered: bool) -> None:
+    console.print(
+        f"No studies {'match those filters ' if filtered else ''}under {cfg.studies_dir}"
+    )
+
+
 @main.command("studies")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option("--project", default="", help=FILTER_HELP["project"])
+@click.option("--tag", "tags", multiple=True, help=FILTER_HELP["tag"])
+@click.option("--text", default="", help=FILTER_HELP["text"])
+@click.option("--state", "want", type=click.Choice(catalog_mod.STATES), default=None,
+              help=FILTER_HELP["state"])
 @click.pass_context
-def studies_cmd(ctx: click.Context, as_json: bool) -> None:
-    """List local studies."""
+def studies_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[str, ...],
+                text: str, want: str | None) -> None:
+    """List local studies, newest first.
+
+    The filters narrow by how the study is filed (`--project`, `--tag`), by what it is
+    called (`--text`, over the title and the project) and by what became of it
+    (`--state`). They combine, and every `--tag` given has to be on the study.
+    """
     as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
-    sessions = list_studies(cfg.studies_dir)
+    found = _filtered(cfg, project, tags, text, want)
     if as_json:
         # This and `doctor --json` are the two commands something has to run before a
         # first session, and both answered only in rich markup -- so the id needed for
         # `--study` had to be recovered by parsing a styled line. Straight to stdout
         # rather than through the console: this is data, and rich would style it.
-        payload = {
-            "dir": str(cfg.studies_dir),
-            "studies": [
-                {
-                    "study_id": item.study_id,
-                    "title": item.title or "",
-                    "instance_id": item.instance_id,
-                    "model": item.model,
-                    "created_at": item.created_at,
-                    "running_jobs": sum(
-                        1 for job in item.jobs.values() if job.status == "running"
-                    ),
-                }
-                for item in sessions
-            ],
-        }
+        payload = {"dir": str(cfg.studies_dir), "studies": found}
         sys.stdout.write(json.dumps(payload, default=str) + "\n")
         return
-    if not sessions:
-        console.print(f"No studies under {cfg.studies_dir}")
+    if not found:
+        _nothing_found(cfg, any([project, tags, text, want]))
         return
-    for item in sessions:
-        live = sum(1 for job in item.jobs.values() if job.status == "running")
+    for item in found:
+        live = item["running_jobs"]
         suffix = f" - {live} job(s) running" if live else ""
-        title = item.title or "(untitled)"
-        console.print(f"[bold]{item.study_id}[/]  {title}  instance={item.instance_id}{suffix}")
+        filed = "  ".join(part for part in (
+            f"project={item['project']}" if item["project"] else "",
+            f"tags={','.join(item['tags'])}" if item["tags"] else "",
+        ) if part)
+        console.print(
+            f"[bold]{escape(item['study_id'])}[/]  "
+            f"{escape(item['title'] or '(untitled)')}  "
+            f"instance={escape(item['instance_id'])}{suffix}"
+            + (f"  {escape(filed)}" if filed else "")
+        )
+
+
+@main.command("dashboard")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option("--project", default="", help=FILTER_HELP["project"])
+@click.option("--tag", "tags", multiple=True, help=FILTER_HELP["tag"])
+@click.option("--text", default="", help=FILTER_HELP["text"])
+@click.option("--state", "want", type=click.Choice(catalog_mod.STATES), default=None,
+              help=FILTER_HELP["state"])
+@click.pass_context
+def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[str, ...],
+                  text: str, want: str | None) -> None:
+    """Every study on this machine on one screen, newest first.
+
+    What each is called and filed under, what became of it, how many of its jobs ran
+    and how many were last seen running, how long its sessions took and how many
+    tokens they sent. Read off `./studies` alone: no session, no model, and -- the part
+    that matters -- no workspace. A job row reading `running` is how the session that
+    started it left the record; whether the process is alive is the workspace's to
+    say, and a dashboard does not start a machine to ask. Such a study is reported
+    `unknown`, with what is known beside it, rather than guessed at either way.
+
+    Money appears only where your own key paid your own vendor. A study on Reynolds'
+    model is reported in time and tokens, as its plan counts it.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cfg = Config.load()
+    found = _filtered(cfg, project, tags, text, want)
+    if as_json:
+        payload = {"dir": str(cfg.studies_dir), "studies": found}
+        sys.stdout.write(json.dumps(payload, default=str) + "\n")
+        return
+    if not found:
+        _nothing_found(cfg, any([project, tags, text, want]))
+        return
+
+    console.print(f"[bold]{len(found)}[/] "
+                  f"{'study' if len(found) == 1 else 'studies'} under {cfg.studies_dir}\n")
+    rows: list[tuple[Any, ...]] = [
+        ("study", "state", "project", "tags", "started", "time", "tokens",
+         "cost (your key)", "jobs", "title")
+    ]
+    for item in found:
+        money = item["cost_usd"]
+        rows.append((
+            item["study_id"],
+            item["state"],
+            item["project"] or "-",
+            ",".join(item["tags"]) or "-",
+            (item["created_at"] or "-")[:16],
+            catalog_mod.elapsed(item["runtime_s"]),
+            f"{item['total_tokens']:,}" if item["total_tokens"] else "-",
+            # A dollar sign only here: what the person's own key cost their own
+            # vendor. A hosted study's cell is `-`, because its cost is not shown as
+            # money anywhere (the module docstring in `catalog.py`).
+            "-" if money is None else f"${money:.2f}",
+            f"{item['running_jobs']} running / {item['finished_jobs']} done",
+            (item["title"] or "(untitled)")[:40],
+        ))
+    _aligned(rows)
+
+    unsure = [item for item in found if item["state"] == catalog_mod.UNKNOWN]
+    if unsure:
+        console.print("\n[bold]not known from here[/]")
+        for item in unsure:
+            console.print(f"  {escape(item['study_id'])}: {escape(item['state_detail'])}")
+            console.print("  [dim]  openreynolds stop --study "
+                          f"{item['study_id']} says what actually stopped[/]")
+    if not any(item["own_key"] for item in found):
+        console.print("\n[dim]time and tokens, not money: what a study on Reynolds' "
+                      "model uses is counted against your plan's studies[/]")
+
+
+def _the_study(cfg: Config, study_id: str | None) -> str:
+    """The study a subcommand was pointed at, or the newest. Refuses an id that is
+    not there rather than opening a Store, which would make the directory."""
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    if not (cfg.studies_dir / chosen / "session.json").is_file():
+        console.print(f"[red]No study called[/] {escape(chosen)} under "
+                      f"{cfg.studies_dir} -- `openreynolds studies` lists the ids.")
+        raise SystemExit(1)
+    return chosen
+
+
+@main.command("label")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--project", default=None,
+              help="File this study under this project. An empty value clears it.")
+@click.option("--tag", "add_tags", multiple=True, help="Add a tag. Repeatable.")
+@click.option("--untag", "drop_tags", multiple=True, help="Drop a tag. Repeatable.")
+def label_cmd(study_id: str | None, project: str | None,
+              add_tags: tuple[str, ...], drop_tags: tuple[str, ...]) -> None:
+    """File a study under a project, and tag it.
+
+    The same record `/project` and `/tag` write from inside a session, for the studies
+    already over. Tags are lower-cased and spaces become hyphens, so a tag typed two
+    ways is one tag. With no option given it says how the study is filed now.
+    """
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    store = Store(cfg.studies_dir, chosen)
+
+    lines: list[str] = []
+    if project is not None:
+        store.session.project = project.strip()
+        store.save()
+        lines.append(f"project: {store.session.project}" if store.session.project
+                     else "project cleared")
+    elif store.session.project:
+        lines.append(f"project: {store.session.project}")
+    lines += commands.tag_lines(store, [*add_tags, *(f"-{tag}" for tag in drop_tags)])
+    console.print(f"[bold]{escape(chosen)}[/]")
+    for line in lines:
+        console.print(f"  {escape(line)}")
+
+
+def _duplicate(study_id: str | None, rerun: bool) -> None:
+    """`clone` and `rerun`: one operation, with and without the opening request."""
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    try:
+        fresh, request = catalog_mod.duplicate(cfg.studies_dir, chosen, rerun=rerun)
+    except catalog_mod.NoOpeningRequest as exc:
+        console.print(f"[red]{escape(str(exc))}.[/]")
+        console.print("[dim]openreynolds clone makes a study with the same setup and "
+                      "the same files, for you to say what you want in[/]")
+        raise SystemExit(1) from None
+
+    console.print(f"[green]{'rerun' if rerun else 'clone'} of[/] {escape(chosen)} "
+                  f"-> [bold]{escape(fresh)}[/]")
+    console.print("  its setup, its project and tags and its local files are copied; "
+                  "its conversation is not")
+    if request:
+        first = request.splitlines()[0][:90]
+        console.print(f"  it opens on what started {escape(chosen)}, word for word: "
+                      f"{escape(first)}{'...' if len(request) > len(first) else ''}")
+        console.print(f"\n  [bold]openreynolds{_local_flag()} --study {fresh}[/] "
+                      "answers it")
+    else:
+        console.print(f"\n  [bold]openreynolds{_local_flag()} --study {fresh}[/] "
+                      "starts it; say what you want in it")
+
+
+@main.command("clone")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+def clone_cmd(study_id: str | None) -> None:
+    """Copy a past study's setup and files into a new one, without its conversation.
+
+    What is carried: the project and tags, the title, the solver, the model, the
+    provider and its endpoint, the session mode, and everything of the study already
+    on this machine (`files/`). What is not: the transcript, the instance, the job
+    rows and the accounting -- those are facts about a run that happened, and this one
+    has not. Nothing is started and nothing is spent; the new study is picked up like
+    any other.
+    """
+    _duplicate(study_id, rerun=False)
+
+
+@main.command("rerun")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+def rerun_cmd(study_id: str | None) -> None:
+    """Ask a past study's opening question again, as a new study.
+
+    A clone, plus the first thing you said in the old study written in as the first
+    thing you say in the new one -- word for word, never a paraphrase. It is left
+    unanswered, which is the state a resume already picks up and answers first, so
+    `openreynolds --study <the new id>` runs it. A study whose transcript holds
+    nothing you said is refused by name: there is no request to repeat, and a
+    plausible reconstruction would be a new study claiming to be a repeat of an old
+    one.
+
+    Nothing is started here and nothing is spent.
+    """
+    _duplicate(study_id, rerun=True)
 
 
 def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:
@@ -1724,6 +1930,9 @@ def session(
         _keep_stdout_for_json()
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
+    began = time.monotonic()
+    """When this session started, for the study's wall-clock total. Monotonic, so a
+    clock the OS corrects mid-study cannot make a session take negative time."""
     # A trace file written on a machine running three studies could not say which
     # study any of its rows belonged to. It can now, and it costs one assignment.
     trace.begin(store.session.study_id)
@@ -2140,6 +2349,9 @@ def session(
         with _timed("view_workspace"):
             view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        # The close-down below is outside this function and records what the study
+        # spent; the loop is the only thing that counts the tokens.
+        shared["loop"] = loop
         if shares:
             recorder, notice = sharing_mod.begin(
                 cfg, store.session.study_id, solver=str(ctx.solver or ""),
@@ -2440,6 +2652,14 @@ def session(
             stream.emit("error", message=f"{type(exc).__name__}: {exc}")
         raise
     finally:
+        # First, and before anything that needs the network: what this session spent
+        # in time and tokens is the study's record, and a close-down that fails
+        # halfway must not take it with it. Added to the totals already on the record,
+        # so three resumes of twenty minutes read as an hour of work.
+        store.record_accounting(
+            time.monotonic() - began,
+            getattr(shared.get("loop"), "token_totals", None),
+        )
         with _timed("close.mirror_stop"):
             live_mirror.stop()
         if ctx.ceiling is not None:
@@ -4146,6 +4366,10 @@ def _local(
         _open_folder(store.dir, view)
     elif command.kind == commands.MODE:
         _switch_mode(command.text, view, loop)
+    elif command.kind == commands.PROJECT:
+        view.status(commands.project_lines(store, command.text))
+    elif command.kind == commands.TAG:
+        view.status(commands.tag_lines(store, command.text))
     elif command.kind == commands.ASIDE:
         # Only reached with side questions off (`Approver` hands one here then).
         view.status([SIDE_OFF])
