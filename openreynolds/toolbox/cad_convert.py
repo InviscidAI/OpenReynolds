@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""STEP and IGES to STL, with the tessellation written down rather than assumed.
+"""STEP, IGES and BREP to STL, with the tessellation written down rather than assumed.
 
-gmsh on this image is built against OpenCASCADE, so a `.step` or `.iges` file is
+gmsh on this image is built against OpenCASCADE, so a `.step`, `.iges` or `.brep` is
 read as real B-rep -- trimmed surfaces, exact circles, declared units -- and not as
 a tessellated approximation. What it is *not* is self-describing: nothing in the
 file says how finely to facet it, and a tessellation chosen badly is a geometry
@@ -21,6 +21,7 @@ this one without the numbers being visible.
     python3 cad_convert.py part.step --clmax 0.002
     python3 cad_convert.py part.step --clmax 0.002 --out constant/triSurface/part.stl
     python3 cad_convert.py part.iges --clmax 0.002 --unit mm --curvature 20
+    python3 cad_convert.py part.brep --clmax 0.002 --unit mm   # BREP declares none
     python3 cad_convert.py part.step --clmax 0.002 --json
 
 It refuses in exactly two cases, both of them cases where a wrong answer looks like a
@@ -50,12 +51,26 @@ import re
 import sys
 from pathlib import Path
 
-CAD_SUFFIXES = (".step", ".stp", ".iges", ".igs")
-"""What this reads. The five toolbox surface readers know the same four suffixes, so
-a CAD file lands as CAD awaiting conversion rather than as an unreadable surface."""
+CAD_SUFFIXES = (".step", ".stp", ".iges", ".igs", ".brep")
+"""What this reads. The toolbox surface readers know the same suffixes, so a CAD file
+lands as CAD awaiting conversion rather than as an unreadable surface.
+
+`.brep` is OpenCASCADE's own serialisation and it joined this list because the one
+call that reads any of them -- `gmsh.model.occ.importShapes` -- already read it, and
+nothing here was letting it. Measured on gmsh 4.15.2, which is the exact version
+`docker/workspace/Dockerfile:60` pins into the image: a box written to `.brep` and
+read back gives 1 volume and 6 faces, the same as the STEP round trip, where `.iges`
+gives 6 faces and 0 volumes because IGES carries surfaces and not solids. That is the
+reason it is worth having -- a shape handed from one session to the next through STL
+has stopped being a solid, and through BREP it has not.
+
+Parasolid (`.x_t`), 3MF and glTF are not here and are not a line of code away: gmsh
+4.15.2 raises on `gmsh.write` for all three, so this image cannot produce one to test
+against, let alone read one."""
 
 STEP_SUFFIXES = (".step", ".stp")
 IGES_SUFFIXES = (".iges", ".igs")
+BREP_SUFFIXES = (".brep",)
 
 CURVATURE_DEFAULT = 20.0
 """`Mesh.MeshSizeFromCurvature`: facets per 2*pi of turning, so curvature drives the
@@ -120,6 +135,16 @@ _SI_PREFIX = {
 }
 
 
+def _format_name(path: Path) -> str:
+    """What to call the file in the report. Three readers, one `importShapes` call."""
+    suffix = path.suffix.lower()
+    if suffix in STEP_SUFFIXES:
+        return "STEP"
+    if suffix in IGES_SUFFIXES:
+        return "IGES"
+    return "BREP" if suffix in BREP_SUFFIXES else suffix.lstrip(".").upper()
+
+
 def declared_unit(path: Path) -> dict:
     """What the file declares its length unit to be, and where that was read.
 
@@ -176,6 +201,18 @@ def declared_unit(path: Path) -> dict:
         return {
             "unit": None, "metres": None,
             "evidence": "IGES Global section names no unit this reads",
+        }
+
+    if suffix in BREP_SUFFIXES:
+        # Not a gap in the reading: a BREP file has no unit field to read. OpenCASCADE
+        # serialises the raw coordinates and the unit lives in whatever wrote them, so
+        # `--unit` is not a fallback here, it is the only source there is. This lands in
+        # the same refusal a unitless STEP lands in, which is the right one: the factor
+        # of 1000 between millimetres and metres is invisible in every later number.
+        return {
+            "unit": None, "metres": None,
+            "evidence": "a BREP file carries no unit: OpenCASCADE writes raw "
+                        "coordinates, so --unit is the only statement of what they are",
         }
 
     return {"unit": None, "metres": None, "evidence": f"{suffix} is not a CAD suffix this reads"}
@@ -589,7 +626,7 @@ def export_patches(
     report: dict = {
         "input": str(path),
         "output": str(out_dir),
-        "format": "STEP" if path.suffix.lower() in STEP_SUFFIXES else "IGES",
+        "format": _format_name(path),
         "declared_unit": declared,
         "supplied_unit": {"unit": unit, "metres": supplied} if supplied else None,
         "clmax": float(clmax),

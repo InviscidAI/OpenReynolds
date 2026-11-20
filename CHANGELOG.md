@@ -37,6 +37,69 @@ All notable changes to this project are recorded here. The format follows
   anything, which is why it is safe where a blind retry is not. Run against that study
   it brought production to 18 rows and 18 distinct seqs. `--dry-run` names the gap.
 
+- **A cinematic flythrough, and the frame writer that made every animation empty.**
+  `showcase.py --flythrough N` puts any of its five scenes on a camera path rather than
+  a circle: wide and high to establish the subject, descending and closing to a pass,
+  climbing back out, behind a title card that holds for 1.6 s. The timing is eased, so
+  the camera accelerates out of the card and settles on the last frame instead of
+  starting and stopping at full speed, which is the single thing that makes a rendered
+  sequence look mechanical. The path is `flight_path`, a list of `(azimuth, elevation,
+  zoom)` and nothing else, so what the camera does is checked by arithmetic rather than
+  by watching a video.
+  - **`--orbit` and `--sweep` wrote no frames at all before this.** All three frame
+    loops staged each PNG under `.frame_0000.png.part` and pyvista validates the
+    extension it is handed: `ValueError: Unsupported extension .part`. Every frame
+    raised, the scene's own `except Exception` swallowed it, and the command printed one
+    line and exited 1 with an empty directory. Measured on pyvista 0.48.4 against a real
+    139,286-cell cylinder case: `--scene slice --orbit 3` wrote 0 of 3 frames before, 3
+    of 3 after. The three loops now go through one `_write_frame`, which stages as
+    `.frame_0000.part.png` the way `animate.py:761` always has.
+  - No audio, and none on offer. The image carries no audio beyond the encoder imageio
+    bundles, and a generated soundtrack would be invented content in a picture whose
+    whole point is that it carries the data. Said in the docstring and in the toolbox
+    index rather than discovered.
+- **`wallShearStress` and `yPlus` are written by cases this toolbox generates.** Three
+  readers wanted them and nothing upstream produced them: `showcase.py --surface-field
+  wallShearStress` draws the skin-friction map a drag number is read beside, `wall.py`
+  derives the achieved y+ from the shear, and `reattach.py` refuses outright and tells
+  the person to post-process and re-run. Measured over the corpus before the change:
+  **1 of 34 real case directories under `studies/` carries a `wallShearStress` field at
+  all**, and that one got it because its session ran `postProcess -func` by hand. Both
+  function objects now go into `case_gen.py`'s `functions` block for any case with a
+  wall patch and a solver, at `writeControl writeTime`, with no `patches` list because
+  both default to every wall and a hand-written list is a second place for a name to be
+  wrong. `tests/test_journey_duct.py:247-254` is the measurement of what it cost: that
+  test post-processes the solved case itself, through the solver, because the generic
+  `postProcess` builds no momentum-transport model.
+  - The map is now graded against an exact answer rather than against a picture.
+    `tests/test_toolbox_wall_shear_map.py` builds a plane channel by hand, puts
+    `6 nu u_mean / H` on its walls, and reads it back through the real path: the
+    renderer's array comes out 3.000000142e-04 against an exact 3.0e-04, a relative
+    error of 4.7e-08 against a float32 eps of 1.2e-07, so the whole discrepancy is
+    VTK's single-precision storage and none of it is the reading.
+- **`explain.py`: what a finished case's numbers mean, caveats first.** It measures
+  nothing. The convergence reading is `log_digest.how_it_ended`'s own sentences, the
+  achieved y+ beside the validity band of the case's own wall condition is
+  `wall.findings`', the mesh grade is `mesh_quality.measure`', and the coefficients are
+  `results.force_headline`'s last-value-and-tail-mean pair with the file they came out
+  of. What it adds is the order -- what would make the numbers wrong before the numbers
+  -- and one verdict, which is never the word converged: `do not quote these numbers`,
+  `a reading, not an answer`, or `nothing here contradicts them`. Run over the whole
+  corpus: 34 real case directories, 0 failures, 10 told not to be quoted (6 never wrote
+  a time past 0, 4 have climbing residuals) and 24 a reading rather than an answer. A
+  reading that could not be made is printed as one, because the gap where a mesh grade
+  should be reads as a mesh that was checked and found fine.
+- **`cad_convert.py` reads `.brep`.** The one call that reads a STEP --
+  `gmsh.model.occ.importShapes` -- already read OpenCASCADE's own serialisation and
+  nothing here was letting it. Measured on gmsh 4.15.2, the exact version
+  `docker/workspace/Dockerfile:60` pins: a box through `.brep` comes back as 1 volume
+  and 6 faces, the same as through STEP, where IGES gives 6 faces and 0 volumes because
+  it carries surfaces and not solids -- which is why it is worth having, since a shape
+  handed between sessions as STL has stopped being a solid. A BREP declares no unit, so
+  every one of them lands in the existing `--unit` refusal; that is correct rather than
+  a gap, and the refusal says so by name. Parasolid, 3MF and glTF are not a line away:
+  gmsh 4.15.2 raises on `gmsh.write` for all three, so this image cannot produce one to
+  test against.
 - **Every case this repository can run is in the tutorial index, with the scale each
   reference is normalised on.** The index listed three of them. `benchmarks/tutorials/`
   carried the heated pipe, the buoyant cavity and the backward-facing step, while the
