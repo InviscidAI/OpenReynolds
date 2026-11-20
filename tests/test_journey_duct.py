@@ -14,7 +14,8 @@ rather than on the exit codes.
 the case, and why its answer is known exactly
 
 `openreynolds/toolbox/templates/duct2d.py` as it ships: a 0.10 x 0.02 m plane duct,
-one cell thick, about ten cells across the height. `case_gen.py` dresses it for a
+one cell thick, which `checkMesh` measures at 1000 cells with a 1.491 mm first row at
+the wall. `case_gen.py` dresses it for a
 steady laminar solve at Re = 10 on the hydraulic diameter. Far enough from the inlet
 the flow is fully developed plane Poiseuille flow, whose answer is not a published
 measurement with an uncertainty on it but the exact solution of the steady
@@ -49,12 +50,16 @@ what is asserted at each seam, and not at the end
   viscosity the solver used is the one the Reynolds number asked for;
 * the solver wrote U and p at a time the readers can find, with p in m^2 s^-2
   (kinematic) -- the unit a force computed from it would be out by rho on;
-* the mass balance closes, and the throughflow equals U * H * thickness, which is
-  the assertion a factor of ten in the mesh's units could not survive;
+* both closures: the solver's own continuity error off its log, which is exact and
+  near machine level, and `balance.py`'s boundary integral, which is a different
+  quantity and carries the discretisation of that integral;
+* the throughflow equals U * H * thickness, which is the assertion a factor of ten in
+  the mesh's units could not survive;
 * the developed profile is a parabola peaking at 1.5 u_mean;
 * the developed pressure gradient is -12 nu u_mean / H^2;
-* y+ is measured from the mesh and the field, with nu read off the case's own
-  dictionary rather than defaulted;
+* every y+ source `wall.py` found implies the exact Poiseuille wall shear, with nu
+  read off the case's own dictionary rather than defaulted and the first-cell height
+  measured off the polyMesh rather than taken from the template's requested size;
 * `report.py`'s key numbers trace back to the residuals in the solver's own log.
 
 Skipped where there is no OpenFOAM. The place this runs is the `journey` job in
@@ -163,9 +168,11 @@ TOL = {
     # The wall shear the measured mean y+ implies, against the exact 6 nu u_mean / H.
     # The loosest number here on purpose: y+ is squared into tau, the entrance region
     # raises the shear over part of the wall, and the first-cell height varies face to
-    # face on a recombined quad mesh. Measured -9.7% and -8.7% on the two walls, so
-    # there is three times the margin. What it still catches is the class of thing
-    # that broke it the first time -- a y+ out by sqrt(2), or a defaulted nu.
+    # face on a recombined quad mesh. Measured -9.7% and -8.7% on the two walls from
+    # the two yPlus sources, and +10.8% and +13.5% from the wallShearStress one, which
+    # brackets the exact answer from both sides with half the band spare. What it still
+    # catches is the class of thing that broke it the first time -- a y+ out by
+    # sqrt(2), or a defaulted nu.
     "tau": 0.30,
     # The two walls of a symmetric duct see the same shear, and the profile either
     # side of the centreline is the same. Any gap is numerical. Measured 0.6%.
