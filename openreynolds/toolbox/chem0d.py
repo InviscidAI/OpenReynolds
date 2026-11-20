@@ -909,7 +909,15 @@ def control_dict(end_time: float, max_delta_t: float) -> str:
             "writeCompression off;\n\n"
             "timeFormat      general;\n\n"
             "timePrecision   6;\n\n"
-            "runTimeModifiable yes;\n")
+            "runTimeModifiable yes;\n\n"
+            "// One `PBiCGStab: Solving for Yi` line per species per step, and the step\n"
+            "// count is set by the chemistry: a run of this is tens of thousands of\n"
+            "// lines about a one-cell linear system that converges on the first\n"
+            "// iteration. The gri tutorial silences it the same way.\n"
+            "DebugSwitches\n"
+            "{\n"
+            "    SolverPerformance 0;\n"
+            "}\n")
 
 
 def fv_schemes() -> str:
