@@ -1,0 +1,30 @@
+I want the simplest case in CFD that has an exact answer, as a check that I can trust this
+thing before I point it at anything real. Laminar flow in a circular pipe, air, Re = 100
+on the diameter, with the wall held at a constant temperature above the fluid: the
+classical Graetz problem, whose fully developed Nusselt number is 3.6568. That is the
+first eigenvalue of the Graetz problem halved, lambda_1^2 / 2 with lambda_1^2 = 7.3136,
+and it is exact rather than a correlation. Please compare against 3.6568 and not against
+the textbook rounding of 3.66, which is 0.09% high and would manufacture a bias of its own
+at the accuracy I am asking about. Note also that 4.364, which is 48/11, is the
+constant-heat-flux answer and not this one; the two get swapped constantly.
+
+Pipe diameter 0.02 m and length 0.3 m, so 15 diameters; mean velocity 0.075 m/s; Prandtl
+number 0.70. An axisymmetric wedge is fine and is what I would use.
+
+Give me the fully developed Nusselt number, averaged over the region where the flow and
+the temperature field are both genuinely fully developed, and tell me where you took the
+average and why that region qualifies: the hydrodynamic and the thermal entrance lengths
+for these numbers, worked out rather than asserted. Nu = h D / k with
+h = q_wall / (T_wall - T_bulk), and I care that T_bulk is the mixed mean and not the area
+average, because in a duct the fluid at the wall is the hot fluid, the two differ, and
+only one of them is what the Nusselt number is defined on.
+
+One thing I would like you to be honest about rather than tidy. The answer depends on how
+you take the wall temperature gradient and on where you put the cell centre of a graded
+radial cell, and on a mesh like this those choices move the number by a few tenths of a
+percent, which is the same size as the error you are reporting. So tell me which stencil
+you used, and if it is cheap, tell me what the answer would have been with a different one.
+I would rather know the number is good to half a percent for a stated reason than be given
+a third significant figure that belongs to the post-processing.
+
+Last: how you know the solve converged, what mesh you used, and what it cost.

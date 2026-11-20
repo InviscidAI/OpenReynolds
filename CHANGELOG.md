@@ -40,6 +40,42 @@ All notable changes to this project are recorded here. The format follows
     `layer_report.py`. And the solver's continuity error and `balance.py`'s closure are
     two different quantities, asserted separately -- conflating them is how a reading
     error gets called a continuity failure.
+- **An index of every validated case, three tutorial cases, and two reference values that
+  turned out to be wrong.** `benchmarks/README.md` lists each case in the repository whose
+  answer is known from outside a solver, with its source, the agreement the real run
+  achieved, and where the remaining difference comes from.
+  `benchmarks/tutorials/` adds three cheap cases as runnable prompts: a heated pipe
+  against the exact Graetz value, a buoyant cavity against de Vahl Davis, and a
+  backward-facing step. Every number was recomputed from the run's own final field and
+  mesh rather than copied from its summary, and `tests/test_benchmarks_index.py` holds the
+  prose to the graders' own constants so the two cannot drift.
+  - **de Vahl Davis's 4.519 is his cavity average, not his hot-wall Nusselt number.** The
+    hot-wall value in his Table V is 4.509. The misattribution is near-universal in
+    secondary sources and worth 0.22%, against a paper whose own stated accuracy at
+    Ra 1e5 is 0.3%, and it flatters the result, which is why it survives. The cavity run
+    recomputes to 4.5335, so +0.54% on 4.509 rather than +0.32% on 4.519.
+  - **Gartling's reattachment length of 6.1 is in channel heights, not step heights**, so
+    12.2 step heights. The step case here was built with the step height as the unit
+    length where Gartling uses the channel height: one mistake, two consequences. It ran
+    at Re 1600 where the benchmark is 800, and its 6.42 step heights were compared with
+    6.1 as though the units matched. In one unit it is about 47% short, not 5% long.
+    `openreynolds/toolbox/reattach.py` and `claims.py` still carry the older reading in
+    their docstrings. The case is documented as a units failure rather than as a passing
+    validation, and Gartling (1990) is paywalled and was not read, which is said rather
+    than smoothed over.
+  - **On four of the eleven cases the reference's own uncertainty is larger than the
+    agreement being claimed**, and the index now prints it beside the number. Ghia's
+    Re 1000 centreline extrema sit 1.46% to 2.20% from Botella & Peyret's spectral
+    solution, so agreeing with him to 0.45% is agreeing to inside his error. The 0.164
+    Strouhal reference is the value at Re 100 of Williamson's parallel-shedding fit
+    (Williamson 1989, *JFM* **206**, eq. 6, reproduced as Fig. 7(a) of the 1996 review,
+    where the number itself is never printed), and it is 0.1643, while Roshko (1954) and
+    Williamson & Brown (1998) both give 0.1671 at the same Reynolds number: the
+    correlations disagree by 1.7% against a result reported as 1.31% high. The SUBOFF
+    resistance is located to Liu & Huang (1998) Table 14 p. 23, configuration 1, where
+    the bare hull is 87.4 N and the appended hull at the same speed is 102.3 N, and its
+    total resistance coefficient is marked as derived because that table publishes none.
+
 - **`advise.py`: which solver, and how many ranks, both read out of the case.** The
   toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
   that family with what each one is, the condition that makes it the one, and whether it
@@ -112,6 +148,40 @@ All notable changes to this project are recorded here. The format follows
     figure only where your own key paid your own vendor and that model's rate is
     known. A study on Reynolds' model is never priced in money here, as the service's
     own spending cap is not.
+
+### Fixed
+
+- **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
+  said it was in four places.** `reattach.py`, `claims.py`,
+  `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told
+  the story of the study that measured one reattachment length twice and believed the
+  wrong script, and all four corroborated the surviving number as "4% above Gartling's
+  6.1". That comparison was not available to it. **Gartling's 6.1 is in units of the
+  downstream channel height**, which at an expansion ratio of 2 is 12.2 step heights,
+  while the study's 6.32 and 7.5667 are both in step heights. In one unit they are about
+  48% and 38% short.
+  - The same wrong unit length set the case up at **Re 1600** on the channel height
+    where Gartling's 800 is on that same length, so the run was never solving the
+    benchmark's flow either. One mistake, two independent consequences, and both of them
+    flattered the result.
+  - The incident the docstrings exist for is unchanged and is now sharper: the study's
+    two scripts disagreed with each other by **16%**, in the same unit, and *neither*
+    could have been checked against the benchmark. What makes 6.32 the right answer is
+    which crossing of its own list it is, not that a benchmark appeared to bless it. The
+    `DEFAULT_TOL` percentages for figure against answer (15%) and figure against the
+    other script (16%) are unaffected, being comparisons between two of the study's own
+    numbers in one unit, which is the only kind `claims.py` makes.
+  - Specimen strings that exercise the number parser are deliberately untouched, including
+    the study's delivered text in `tests/test_toolbox_claims.py` and the sentence
+    `LOOK_AHEAD` was measured off. Those are evidence of how people write, and the
+    physics claim inside them is not the parser's business.
+  - The normalisation is settled from MFIX-Exa's reproduction, which states `H = 1`,
+    "where H is the expanded channel height", and matches its own extrapolated 6.097 to
+    Gartling's 6.10 with no conversion, plus a published table listing him at 12.20 and
+    11.26 step heights (2 x 6.10 and 2 x 5.63, the latter being the upper-wall bubble
+    length 10.48 - 4.85). **Gartling (1990) itself is paywalled and was not read**, which
+    the docstrings now say rather than imply away. Issue #205 tracks closing that and
+    re-running the case at the benchmark's actual Reynolds number.
 
 ## [0.4.2] - 2026-11-18
 

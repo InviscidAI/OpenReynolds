@@ -29,7 +29,7 @@ from .. import cli, modes
 from .. import sharing as sharing_mod
 from ..backend.base import WORKSPACE_ROOT, BackendError
 from ..config import Config
-from ..mirror import local_for
+from ..mirror import OutsideMirror, local_for
 from ..store import Store, TornRecord, list_studies
 from ..study_style import normalize_style, preferences_for
 from ..transcript import TranscriptTail, read_items
@@ -631,9 +631,29 @@ class LocalHost(HostDefaults):
                 if isinstance(i.get("seq"), int) and i["seq"] > after_seq]
 
     def _check_path(self, path: str) -> str:
-        if not path.startswith(WORKSPACE_ROOT + "/") or "/../" in f"{path}/":
+        """A workspace path, or a refusal.
+
+        Two things are being protected and they need two different tests. The backend
+        is asked for `path` verbatim, and nothing here can resolve a path on the far
+        side of it, so that one stays a syntactic test -- now of `..` as a segment
+        under either separator, because `\\` is what `Path` splits on when this runs
+        on Windows (#180). The copy on this machine is protected by the join itself:
+        `_local_for` resolves it and refuses anything that lands outside the study's
+        mirror, which answers spellings this test has never heard of.
+        """
+        parts = path.replace("\\", "/").split("/")
+        if not path.startswith(WORKSPACE_ROOT + "/") or ".." in parts:
             raise McpError(f"{path!r} is not a workspace path (they start {WORKSPACE_ROOT}/)")
         return path
+
+    @staticmethod
+    def _local_for(store: Store, path: str) -> Path:
+        """Where `path` is on this machine -- inside this study's mirror, or nowhere."""
+        try:
+            return local_for(store.files_dir, path)
+        except OutsideMirror as exc:
+            raise McpError(f"{path!r} is not a workspace path "
+                           f"(they start {WORKSPACE_ROOT}/)") from exc
 
     def files(self, study_id: str) -> list[dict[str, Any]]:
         store = self._store(study_id)
@@ -662,7 +682,7 @@ class LocalHost(HostDefaults):
                 return backend.get_file(path, 0, min(size, READ_LIMIT))
             except BackendError:
                 pass
-        local = local_for(store.files_dir, path)
+        local = self._local_for(store, path)
         if local.is_file():
             with local.open("rb") as fh:
                 return fh.read(READ_LIMIT)
@@ -688,7 +708,7 @@ class LocalHost(HostDefaults):
                 browser.pull(path)
             except BackendError as exc:
                 raise McpError(f"could not copy {path} out of the workspace: {exc}") from exc
-        local = local_for(store.files_dir, path)
+        local = self._local_for(store, path)
         if not local.exists():
             raise McpError(f"{path} is not in this machine's copy of the study"
                            + ("" if browser is not None else

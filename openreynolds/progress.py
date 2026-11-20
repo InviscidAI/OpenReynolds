@@ -736,11 +736,12 @@ class Tracker:
     def _read_local(self, path: str) -> str | None:
         if self.local_dir is None:
             return None
-        from .mirror import local_for  # local import: mirror is a peer, not a dependency
+        from .mirror import OutsideMirror, local_for  # local import: mirror is a peer, not a dependency
 
         try:
             return local_for(self.local_dir, path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except (OSError, OutsideMirror):
+            # Not here, or not ours to read: either way there is no local copy.
             return None
 
     def _poll_tool_log(self) -> None:

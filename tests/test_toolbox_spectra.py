@@ -594,6 +594,87 @@ def test_a_peak_in_the_lowest_bins_is_trend_dominated_and_names_the_bin():
     assert measure(*sine(1.7))["verdict"] == "periodic"
 
 
+def test_a_column_with_no_variation_in_it_is_refused_rather_than_given_a_frequency(tmp_path):
+    """Every other test here is a ratio inside the spectrum, and round-off satisfies a
+    ratio as well as a signal does: a flat signal does not give a flat spectrum, it
+    gives a round-off spectrum whose own median is 1e-67, so peak-over-median
+    explodes. 2978 rows of exactly 1.35 behind a real forces header reported
+    `St = 0.167926`, inside the published Re = 100 band of 0.164 to 0.167, with a
+    prominence of 7.446e+05x.
+
+    Two shapes, two scales, both already set by this codebase against this exact
+    failure. The flat column is caught by `FLAT_RELATIVE` against its own magnitude
+    (`acoustics.py`). The second is not flat at all -- a real `pressure_z` of a 2D
+    extruded case decays smoothly over 6e-6 of itself, a variation the first test
+    passes -- and is caught by `NEGLIGIBLE_FRACTION` against the largest value in its
+    own record (`report.py:zero_the_negligible`), because the z-force of that case is
+    zero by construction and what the solver wrote is the round-off of the summation.
+    """
+    t = np.arange(1, 2979) * 0.005
+    write_dat(tmp_path / "flat" / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cd": np.full(t.size, 1.35), "Cl": np.zeros(t.size)})
+    flat = spectra.analyse(tmp_path / "flat", column="Cd", length=0.01, speed=0.01)
+    assert flat["peak"]["prominence"] > spectra.PROMINENCE_PERIODIC, "the ratio is fooled"
+    assert flat["variation"]["flat"] is True
+    assert flat["shedding"]["verdict"] == "no-variation"
+    assert flat["strouhal"]["value"] is None, "no St from a column that does not move"
+    assert "strouhal: St =" not in spectra.report(flat)
+
+    # Round-off that is not flat: a wander at 1e-30 on a base of 1e-25, beside a
+    # sibling at 1e-13. Its RMS about its own trend is 5e-6 of its own magnitude, four
+    # million times `FLAT_RELATIVE`, so the first test passes it.
+    decay = 5.7346e-25 + 3.0e-30 * np.sin(2.0 * np.pi * 1.7 * t)
+    write_dat(tmp_path / "zero" / "postProcessing" / "forces" / "0" / "force.dat",
+              t, {"total_y": np.full(t.size, 7.288e-13), "pressure_z": decay})
+    zero = spectra.analyse(tmp_path / "zero", column="pressure_z", length=0.05, speed=0.0157)
+    assert zero["variation"]["flat"] is False, "it really does vary, 6e-6 of itself"
+    assert zero["variation"]["negligible"] is True
+    assert zero["shedding"]["verdict"] == "no-variation"
+    assert zero["strouhal"]["value"] is None
+
+    # And a real signal at the same tiny absolute level is still a real signal: the
+    # scale is the record's own, so nothing here depends on a unit.
+    small = 1e-25 * (1.0 + np.sin(2.0 * np.pi * 1.7 * t))
+    write_dat(tmp_path / "small" / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cl": small})
+    assert spectra.analyse(tmp_path / "small", column="Cl")["shedding"]["verdict"] == "periodic"
+
+
+def test_no_strouhal_number_is_printed_under_a_verdict_that_rejected_the_peak(tmp_path):
+    """A real Cd record spanning 1.70 cycles printed `shedding: too-short` and then
+    `strouhal: St = 0.0113328` underneath it with nothing linking the two, and `--json`
+    carried them as sibling keys. The same record cropped past its transient gives
+    0.332192, so the printed number was 29x low, and a consumer reading
+    `strouhal.value` had no way to tell.
+
+    The verdict is computed before the division and is the gate. The quotient is still
+    reported, under a name that is not a Strouhal number, because a reader who sees no
+    St line concludes the script is broken and does the division themselves.
+    """
+    t, x = sine(0.01, span=170.0, samples=3401, offset=1.2)
+    write_dat(tmp_path / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cd": x})
+    found = spectra.analyse(tmp_path, column="Cd", length=0.01, speed=0.01)
+    assert found["shedding"]["verdict"] == "too-short"
+    assert found["strouhal"]["value"] is None
+    assert found["strouhal"]["verdict"] == "too-short"
+    assert found["strouhal"]["quotient"] == pytest.approx(found["peak"]["frequency"], rel=1e-9)
+    text = spectra.report(found)
+    assert "strouhal: not reported" in text
+    assert "too-short" in text.split("strouhal: not reported")[1]
+    assert "strouhal: St =" not in text, "no unqualified St under a rejecting verdict"
+
+    # A verdict that accepts the peak still gets its St, or this would pass on a
+    # script that has learned to refuse everything.
+    t2, x2 = sine(1.7, span=20.0, samples=2001, offset=1.2)
+    write_dat(tmp_path / "long" / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t2, {"Cd": x2})
+    good = spectra.analyse(tmp_path / "long", column="Cd", length=0.01, speed=0.017)
+    assert good["shedding"]["verdict"] == "periodic"
+    assert good["strouhal"]["value"] == pytest.approx(1.0, rel=0.05)
+    assert "strouhal: St =" in spectra.report(good)
+
+
 def test_the_nyquist_limit_is_reported_and_an_unresolvable_strouhal_is_named(tmp_path):
     """The most useful line the script could have printed about that case, and did
     not. The history was written every iteration of a `deltaT 1` run, so the band it

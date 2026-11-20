@@ -283,9 +283,19 @@ def test_a_path_outside_the_workspace_is_refused(world):
     world.studies.ready.set()
     sid = call(world, "start_study", task="first")["session_id"]
     study = until(world, sid, "waiting_for_input")["study_id"]
-    for path in ("/etc/passwd", f"/work/{study}/../../etc/passwd"):
+    outside = [
+        "/etc/passwd",
+        f"/work/{study}/../../etc/passwd",
+        # The backslash spelling of the same walk. `Path` splits on it when this runs
+        # on Windows, so before #180 this one came back with the file's contents.
+        f"/work/{study}\\..\\..\\..\\..\\outside-the-study.txt",
+        f"/work/x\\../..\\../outside-the-study.txt",
+    ]
+    for path in outside:
         with pytest.raises(core.McpError, match="not a workspace path"):
             call(world, "download_url", study_id=study, path=path)
+        with pytest.raises(core.McpError, match="not a workspace path"):
+            world.host.read_file(study, path)
 
 
 def test_closing_the_server_ends_every_live_study(world):

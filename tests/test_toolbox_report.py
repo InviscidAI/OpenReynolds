@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 from pathlib import Path
 
 import matplotlib
@@ -873,3 +874,64 @@ def test_a_stamp_backed_number_is_counted_as_one(report, study, tmp_path):
     verified = [row for row in record["numbers"] if row["state"] == "verified"]
     assert verified
     assert record["stamp_backing"].startswith(f"{len(verified)} of {len(record['numbers'])}")
+
+
+# -- #179: a mirrored study with no .reynolds/ at all --------------------------------
+
+
+@pytest.fixture
+def unregistered(mirrored):
+    """The `mirrored` layout with the state directory taken away: `studies/<id>/` with
+    `files/<id>/<case>` under it and no `.reynolds/` anywhere.
+
+    11 of 16 real studies are this shape. #145's fixture has one and its path holds;
+    this is the case where there is none, so `locate` had nothing to descend by.
+    """
+    top, home, case = mirrored
+    shutil.rmtree(case / ".reynolds")
+    return top, home, case
+
+
+def test_a_study_with_no_state_directory_still_finds_its_case_from_the_top(
+    report, unregistered, tmp_path
+):
+    """#179. `locate` descended only as far as a `.reynolds/`, so with none anywhere
+    `state_root` stayed at the study top -- and `discover_cases` looks one level down
+    while a mirrored study keeps its cases two, at `files/<id>/<case>`. So
+    `choose_case`, `measured_numbers` and `gaps` were each handed a directory with
+    nothing under it, and the documented entry point wrote a complete-looking document
+    saying `key numbers: none` and `no case directory under the study home`.
+
+    Measured over 16 real studies: 11 gave 4 pages and no numbers at the top where
+    `files/<id>` gave 5 to 8 pages and 3 to 22 numbers. Every entry path now gives the
+    same document, which is what #145 established for the studies that do have state.
+    """
+    top, home, case = unregistered
+    records = {}
+    for label, target in (("top", top), ("home", home), ("case", case)):
+        side = tmp_path / f"{label}.json"
+        assert run(report, [str(target), "--out", str(tmp_path / f"{label}.pdf"),
+                            "--json", str(side)]) == 0
+        records[label] = json.loads(side.read_text())
+
+    for label, record in records.items():
+        assert record["is_study"] is False, f"{label}: there is no state directory"
+        assert record["numbers"], f"{label}: key numbers: none"
+        assert [row for row in record["numbers"] if row["label"].startswith("Cd")], \
+            f"{label}: the coefficients were not read"
+        assert record["case"].endswith("case"), f"{label}: {record['case']}"
+        assert record["pages"] > 4, f"{label}: {record['pages']} pages"
+    assert _same(records["top"]) == _same(records["home"]) == _same(records["case"])
+
+    # And still nothing written: `is_study` stays false, so the guard #145 added holds.
+    assert not list(top.rglob(".reynolds"))
+
+
+def test_a_study_whose_cases_are_at_the_top_is_not_redirected(report, study, tmp_path):
+    """The fallback fires only where there is no case at this level, so the ordinary
+    layout -- `<study>/<case>`, which `discover_cases` already finds -- is untouched.
+    `wake/cylinder` has a `.reynolds/` as well, which is the other half of the guard.
+    """
+    where = report.locate(study)
+    assert where["state_root"] == study
+    assert where["is_study"] is True
