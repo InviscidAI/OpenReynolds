@@ -676,3 +676,41 @@ def test_the_studies_directory_can_be_named(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "20260102-120000-bbbb" in result.output
+
+
+def test_a_coefficient_is_not_called_zero_because_a_force_in_newtons_shares_the_table(
+        studies):
+    """`forces()` keys by column name across cases by design, so one table holds
+    dimensionless coefficients beside forces in newtons. One scale for the whole table
+    meant a 1311 N `total_z` set the floor at 1.311, and every coefficient of a real
+    wind-turbine-blade study fell under it -- `Cl = 0.73`, that study's answer, was
+    declared zero and dropped from the comparison (#178)."""
+    for study_id in ("20260101-120000-aaaa", "20260102-120000-bbbb"):
+        made = make_study(studies, study_id,
+                          coefficients={"Cd": 0.0108, "Cl": 0.73, "Cp": -0.554})
+        add_case(made, "cavity_axis",
+                 {"total_x": 56.3, "total_y": -12.4, "total_z": 1311.3})
+
+    report = payload("20260101-120000-aaaa", "20260102-120000-bbbb")
+    zeroes = " ".join(report["summary"]["negligible"])
+    for name in ("Cd", "Cl", "Cp"):
+        assert name not in zeroes, zeroes
+    assert report["summary"]["negligible"] == []
+    series = {row["name"]: row for row in report["forces"]["series"]}
+    assert set(series) >= {"Cd", "Cl", "Cp", "total_x", "total_y", "total_z"}
+
+
+def test_a_difference_in_the_coefficients_is_reported_whatever_the_newtons_are(studies):
+    """The `zero on both sides` branch skips the tolerance test, so a floor that is
+    wrong for one side's units is a real difference printed as `no differences` --
+    which is the failure #141 was filed for, reachable again through #141's fix."""
+    made = make_study(studies, "20260101-120000-aaaa", coefficients={"Cl": 0.73})
+    add_case(made, "cavity_axis", {"total_z": 1311.3})
+    made = make_study(studies, "20260102-120000-bbbb", coefficients={"Cl": 1.5})
+    add_case(made, "cavity_axis", {"total_z": 1311.3})
+
+    result = run("20260101-120000-aaaa", "20260102-120000-bbbb")
+    report = payload("20260101-120000-aaaa", "20260102-120000-bbbb")
+    assert any(line.startswith("Cl by ") for line in report["summary"]["differ"]), \
+        report["summary"]
+    assert "no differences" not in result.output

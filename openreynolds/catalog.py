@@ -134,9 +134,12 @@ def row(studies_dir: Path, store: Store) -> dict[str, Any]:
     }
 
 
-def rows(studies_dir: Path) -> list[dict[str, Any]]:
-    """Every local study, newest first, as rows."""
-    return [row(studies_dir, store) for store in list_stores(studies_dir)]
+def rows(studies_dir: Path, torn: list[str] | None = None) -> list[dict[str, Any]]:
+    """Every local study, newest first, as rows.
+
+    `torn` collects the ids of studies whose record will not parse, which are left
+    out rather than shown with invented facts (`store.list_stores`)."""
+    return [row(studies_dir, store) for store in list_stores(studies_dir, torn)]
 
 
 # -- filters -------------------------------------------------------------------
@@ -175,9 +178,10 @@ def filtered(
     tags: Iterable[str] = (),
     text: str = "",
     want: str = "",
+    torn: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     tags = tuple(tags)
-    return [item for item in rows(studies_dir)
+    return [item for item in rows(studies_dir, torn)
             if matches(item, project, tags, text, want)]
 
 

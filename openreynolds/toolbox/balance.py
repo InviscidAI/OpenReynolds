@@ -61,11 +61,26 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import preflight  # noqa: E402
 import probe  # noqa: E402
 import render  # noqa: E402
 
 KINEMATIC = "m^2 s^-2"
 PASCAL = "kg m^-1 s^-2"
+
+NO_FLUX_TYPES = {"symmetry", "symmetryplane", "wedge", "empty"}
+"""Patch types that carry no flux because of what they are, not because of what the
+solve did.
+
+A sign is a measurement and a name is a convention, which is why nothing here reads a
+patch's name -- but `constant/polyMesh/boundary` records a patch's *type*, and that is
+neither. A symmetry plane, a wedge face and an empty patch have no flux through them by
+definition; what `U . Sf` reconstructs over one is the interpolation error of the
+cell-centre velocities onto its faces, and counting that as outflow put a real tube-bank
+case 20.53% out of balance where its own `phi` closes to 0.0000089% (#161).
+
+`cyclic` is deliberately not here: a cyclic patch really does carry flux, and its pair
+carries the opposite, so the two belong in the split."""
 
 
 # -- reading the boundary ----------------------------------------------------------------
@@ -131,6 +146,19 @@ def patches_via_foamtovtk(case: Path, time: float | None, why: Exception):
             float(render.time_from_stem(folder.name)), "foamToVTK")
 
 
+def declared_types(case: Path) -> dict[str, str]:
+    """Each patch's declared type out of `constant/polyMesh/boundary`.
+
+    Through `preflight.parse_boundary`, which is the toolbox's one reader of that file,
+    rather than a second regex here. Empty when the file is not there (a case read
+    straight out of `VTK/`, say), and a patch missing from it is simply unknown -- the
+    sign is still the measurement, this only says which patches cannot have one.
+    """
+    text = preflight.read_text(case / "constant" / "polyMesh" / "boundary")
+    return {str(patch["name"]): str(patch.get("type") or "")
+            for patch in preflight.parse_boundary(text)} if text else {}
+
+
 def pressure_convention(case: Path, time: float):
     """Which `p` this case wrote, off its own `dimensions` entry rather than by guessing.
 
@@ -183,7 +211,7 @@ def weighted(values: np.ndarray, weights: np.ndarray) -> float | None:
 
 
 def patch_record(name: str, surf, rho: float | None, case: Path, time: float,
-                 notes: list[str]) -> dict:
+                 notes: list[str], kind: str = "") -> dict:
     """One patch measured: area, signed flux, and its two pressure averages.
 
     The area average is what a patch looks like; the flux-weighted (mixed) mean is the one
@@ -206,6 +234,7 @@ def patch_record(name: str, surf, rho: float | None, case: Path, time: float,
     total = np.asarray(tri.cell_data["p_total"], float)
     return {
         "patch": name,
+        "type": kind,
         "faces": int(surf.n_cells),
         "area": float(area.sum()),
         "volume_flux": float(volume_flux.sum()),
@@ -243,6 +272,14 @@ def split(rows: list[dict], zero_tol: float) -> dict:
     whose flux is under `zero_tol` of the largest is reported as closed with no share at
     all: a wall's 1e-18 is not a 0.0000001% outlet, and a share list that includes it is a
     share list nobody can read.
+
+    A patch whose declared type is in `NO_FLUX_TYPES` is `no flux` and takes no share
+    either, whatever `U . Sf` came to over it. That number is not small -- on the tube
+    bank its four symmetry planes reconstructed 18.6% of the reported outflow between
+    them -- but it is not flux: it is the interpolation of cell-centre velocities onto
+    faces the solver never fluxes through. The type comes off
+    `constant/polyMesh/boundary`, so this is still a fact the case declared and not a
+    reading of its patch names.
     """
     key = "mass_flux" if rows and rows[0]["mass_flux"] is not None else "volume_flux"
     biggest = max((abs(row[key]) for row in rows), default=0.0)
@@ -250,13 +287,16 @@ def split(rows: list[dict], zero_tol: float) -> dict:
     for row in rows:
         flux = row[key]
         row["flux"] = flux
-        row["direction"] = ("closed" if abs(flux) <= cut
-                            else "inflow" if flux < 0 else "outflow")
+        if str(row.get("type", "")).lower() in NO_FLUX_TYPES:
+            row["direction"] = "no flux"
+        else:
+            row["direction"] = ("closed" if abs(flux) <= cut
+                                else "inflow" if flux < 0 else "outflow")
     inflow = -sum(row["flux"] for row in rows if row["direction"] == "inflow")
     outflow = sum(row["flux"] for row in rows if row["direction"] == "outflow")
     for row in rows:
         total = inflow if row["direction"] == "inflow" else outflow
-        row["share_pct"] = (None if row["direction"] == "closed" or not total
+        row["share_pct"] = (None if row["direction"] in ("closed", "no flux") or not total
                             else 100.0 * abs(row["flux"]) / total)
     throughflow = 0.5 * (inflow + outflow)
     error = inflow - outflow
@@ -269,6 +309,8 @@ def split(rows: list[dict], zero_tol: float) -> dict:
         "inflow_patches": [r["patch"] for r in rows if r["direction"] == "inflow"],
         "outflow_patches": [r["patch"] for r in rows if r["direction"] == "outflow"],
         "closed_patches": [r["patch"] for r in rows if r["direction"] == "closed"],
+        "no_flux_patches": [f"{r['patch']} ({r.get('type')})"
+                            for r in rows if r["direction"] == "no flux"],
         "zero_tol": zero_tol,
     }
 
@@ -385,7 +427,7 @@ def table(result: dict) -> str:
         "the domain",
         "",
         f"{'patch':<18}{'faces':>8}{'area m^2':>14}{'flux':>14}"
-        f"{'share':>10}  {'direction':<9}{'p area':>13}{'p mixed':>13}{'p_total mixed':>15}",
+        f"{'share':>10}  {'direction':<10}{'p area':>13}{'p mixed':>13}{'p_total mixed':>15}",
     ]
     for row in result["patches"]:
         def number(value, width):  # a patch with no flux has no mixed mean, and says so
@@ -394,7 +436,7 @@ def table(result: dict) -> str:
         share = "" if row["share_pct"] is None else f"{row['share_pct']:.2f}%"
         lines.append(
             f"{row['patch']:<18}{row['faces']:>8}{number(row['area'], 14)}"
-            f"{number(row['flux'], 14)}{share:>10}  {row['direction']:<9}"
+            f"{number(row['flux'], 14)}{share:>10}  {row['direction']:<10}"
             f"{number(row['p_area'], 13)}{number(row['p_mixed'], 13)}"
             f"{number(row['p_total_mixed'], 15)}")
     relative = balance["closure_error_relative"]
@@ -409,6 +451,9 @@ def table(result: dict) -> str:
         f"  closed (|flux| under {balance['zero_tol']:g} of the largest): "
         f"{', '.join(balance['closed_patches']) or 'none'}",
     ]
+    if balance.get("no_flux_patches"):
+        lines.append("  no flux by declared patch type, so not in either total: "
+                     + ", ".join(balance["no_flux_patches"]))
     drop = result.get("drop")
     if drop:
         where = (f"patches {drop['from']} -> {drop['to']}" if "from" in drop
@@ -516,7 +561,9 @@ def main(argv: list[str] | None = None) -> int:
         # `patch_surfaces` opens the reader itself, so `probe.open_case`'s guard is
         # never reached and a decomposed case reports its initial condition.
         probe.refuse_decomposed(case, float(time))
-        rows = [patch_record(name, surfaces[name], args.rho, case, time, notes)
+        kinds = declared_types(case)
+        rows = [patch_record(name, surfaces[name], args.rho, case, time, notes,
+                             kinds.get(name, ""))
                 for name in sorted(surfaces)]
     convention, units = pressure_convention(case, time)
     balance = split(rows, args.zero_tol)
