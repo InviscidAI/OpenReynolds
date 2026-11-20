@@ -20,6 +20,13 @@ python benchmarks/moving_mesh/grade.py couette <case> [--control <case without t
 python benchmarks/moving_mesh/grade.py viv <fixed case> <released case> [<continuation> ...]
 ```
 
+`openreynolds/toolbox/viv.py` is the same measurement as an instrument rather than a
+grader: it reads one finished case and prints A/D, the frequency against both the
+structure's own and the fixed shedding, the energy balance per cycle and a figure, and
+`openreynolds/toolbox/templates/viv_cylinder.py` writes the two cases to begin with.
+`tests/test_toolbox_viv.py` holds it to this grader's numbers on the same committed runs,
+digit for digit, which is what makes the second implementation safe to keep.
+
 Add `--json` for a machine-readable result. The exit status is 0 when every graded check
 passes, 1 when one fails, and 2 when the case could not be read.
 
@@ -71,12 +78,26 @@ there by the coupling scheme rather than the physics. The energy audit is the on
 check here that catches that.
 
 **The amplitude is reported, not graded.** No published amplitude for exactly this case
-has been found, so the grader prints A/D without a verdict. The two nearest, both read
-from the papers: Menon and Mittal (arXiv:2006.11649) give about 0.56 at U\* = 5 (2D,
-transverse, Re = 100, undamped, but their m\* = 10 is 2m/(rho D^2), about 6.4 on displaced
-mass); Placzek, Sigrist and Hamdouni (Computers & Fluids 38, 2009) peak at 0.58 at an
+has been found, so the grader prints A/D without a verdict. The two nearest:
+
+*Menon & Mittal*, arXiv:2006.11649, published as *J. Fluid Mech.* **907**, A37 (2021),
+doi 10.1017/jfm.2020.854. Re-read at source 2026-11-21, and two things changed. First,
+**the paper states no amplitude number at all**: it reports "the maximum stationary state
+oscillation amplitude" as a curve, and the value at U\* = 5 is readable only off its
+Figure 5(a), so the "about 0.56" here is a figure read and is written as one from now on.
+Second, its mass-ratio definition is in the text verbatim as `m* = 2m/(rho D^2)`, so its
+m\* = 10 is **6.37** on displaced mass against this case's 10 -- a 57% difference in body
+mass between two papers both saying "m\* = 10". Confirmed verbatim: Re = 100, "two-
+dimensional flow simulations", "there is zero structural damping in the model used here",
+domain 25D x 20D. The body is a superellipse of aspect ratio 1.0 to 1.25, of which 1.0 is
+the circle.
+
+*Placzek, Sigrist and Hamdouni* (Computers & Fluids 38, 2009) peak at 0.58 at an
 effective stiffness k\*eff = 2.32, where this case sits at about 1.48, mostly at a
-lighter mass ratio of 3.3. Both domains have twice this case's blockage.
+lighter mass ratio of 3.3. **This one could not be re-read**: the HAL record
+(hal-00534010) and the publisher both refuse an automated request, so those figures are
+carried over from whoever first read them here and are not verified at source. They are
+not what anything is graded against.
 Lock-in is graded (the response frequency lies nearer the spring's natural frequency
 than the fixed cylinder's shedding frequency), as are the Strouhal gate and the energy
 audit.

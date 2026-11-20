@@ -292,6 +292,66 @@ on the single angle it solved. Any of those wants a `cyclicAMI` sliding mesh and
 `pimpleFoam`, transient, which is what [`../moving_mesh/couette_ami.txt`](../moving_mesh/)
 grades.
 
+## viv_cylinder.py -- a cylinder on a spring, and the two stages that order the work
+
+An O-grid around a cylinder, written as **two complete `pimpleFoam` cases sharing one
+mesh**:
+
+* `fixed/` -- the cylinder bolted still (`staticFvMesh`, `noSlip`). Its job is the
+  Strouhal number, and its job is to be run **first**: a mesh that does not land on the
+  published shedding frequency is not ready to carry a moving-body answer, and finding
+  that out after a 400 s moving-mesh run is the expensive order to find it out in.
+* `released/` -- the same mesh under `dynamicMotionSolverFvMesh` and
+  `sixDoFRigidBodyMotion`, the body on a linear spring with zero structural damping.
+  `--dof 2` frees it in x as well, on an isotropic spring.
+
+Then `blockMesh`, `checkMesh` and `mesh_look.py`. `viv.py` is the instrument for the
+finished run: amplitude, frequency, lock-in and a per-cycle energy balance.
+
+**Edit two numbers:** `DIAMETER_M` and `USTAR`, the reduced velocity `U/(f_n D)`, which
+is what sweeps the response. `--re` sets the free stream from the diameter and
+viscosity, `--mstar` sets the body mass from the displaced fluid mass, and the spring
+stiffness falls out of `USTAR`.
+
+### What is known before the solver starts
+
+**The fixed stage has a reference.** Williamson's `St = 0.164` at these Reynolds
+numbers, and the graded run measures **0.166141**, which is **+1.10%** on the 0.1643
+fit. That is the gate on the mesh.
+
+**The released stage's energy balance is exact and is zero.** Over a cycle in a settled
+state, the work the flow does on the body equals the work the body does on the flow,
+because a linear spring with zero damping stores and returns everything. So the audit
+has no reference to misquote: it compares against nought. `benchmarks/moving_mesh/`
+found teeth in exactly this -- a loose coupling passed every other check while the audit
+read **-10.37% to -10.09%**, and tightening it (`moveMeshOuterCorrectors yes`,
+`accelerationRelaxation 1.0`, which is what this template ships) took it to **+0.044% to
++0.176%**.
+
+**The natural frequency in water is not the natural frequency on paper, and the
+difference changes the story.** A circular cylinder's 2D added mass is the displaced
+fluid mass exactly -- an added-mass coefficient of 1, Lamb art. 68 -- so in still water
+the body rings at
+
+    f_n,water / f_n,vacuum = sqrt( m* / (m* + 1) )
+
+which at the shipped `m* = 10` is **0.95346**. The graded tight run's `f/f_n = 0.9697`
+is therefore **1.70% above** the frequency the body would ring at in water, not 3% below
+a resonance. Those are different statements about the same number, and only the second
+one is about the physics.
+
+**A/D carries no verdict.** Williamson & Govardhan (2004) and Khalak & Williamson
+(1996, 1999) are the sources for the lock-in amplitude range and **none of them could be
+read** -- Annual Reviews and ScienceDirect both answer 403. The graded runs report
+**0.6401929** loose and **0.5670282** tight and stop there. `benchmarks/moving_mesh/`'s
+own README had quoted "about 0.56 at U* = 5" from Menon & Mittal as though the paper
+states it; it does not -- the number is only readable off Figure 5(a) -- and that row now
+says so, with the journal reference added.
+
+One normalisation trap recorded with it: Menon & Mittal define `m* = 2m/(rho D^2)`, so
+their `m* = 10` is **6.37** on displaced mass. Two papers both saying "m* = 10" can mean
+a 57% different body.
+
 ## body_in_box.py -- a body-fitted mesh, and a reference it does not claim
 
 An OpenCASCADE primitive cut out of a rectangular flow box with a boolean, meshed

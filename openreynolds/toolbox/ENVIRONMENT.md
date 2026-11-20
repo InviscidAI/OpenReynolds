@@ -46,7 +46,7 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds six working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds seven working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
   `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
   meshed body-fitted with tetrahedra, converted and retyped), `free_surface.py` (a
@@ -66,10 +66,18 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   the stress analysis solver OpenFOAM has shipped all along and nothing here used, whose
   one distribution tutorial has the thermal half switched off. Its T field is a
   temperature **rise**, because the solver subtracts no reference temperature and an
-  ambient 300 in that field asks for the stress of a 300 K rise). The last four are the
-  ones whose dictionaries are the real ones rather than stubs for the mesh tools. All six
+  ambient 300 in that field asks for the stress of a 300 K rise), and `viv_cylinder.py`
+  (a cylinder on a spring in cross-flow, written as the two `pimpleFoam` cases the study
+  is: one with the body bolted still for the Strouhal number and one on
+  `dynamicMotionSolverFvMesh` + `sixDoFRigidBodyMotion` with zero structural damping,
+  sharing the O-grid `blockMeshDict` of the graded 2026-09-12 run. Releasing is a second
+  run and not a flag, because the motion solver reads its constraints once at start-up,
+  and the released case ships tightly coupled -- `moveMeshOuterCorrectors yes` with
+  `accelerationRelaxation 1.0` -- because the cheaper scheme held a limit cycle 13% too
+  wide and only the energy audit saw it). The last five are the
+  ones whose dictionaries are the real ones rather than stubs for the mesh tools. All seven
   run `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
-  top, and run it -- the whole 2D, 3D, two-phase, rotating, porous or thermal-stress recipe, gotchas
+  top, and run it -- the whole 2D, 3D, two-phase, rotating, porous, thermal-stress or moving-body recipe, gotchas
   included, rather than a page to reconstruct from memory.
 - `lbm.py` and `sph.py` in the toolbox are solvers, and the only two here that are not
   OpenFOAM applications: a D2Q9 two-relaxation-time lattice Boltzmann and a 2D weakly
