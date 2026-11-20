@@ -30,7 +30,19 @@ RUN apt-get update && apt-get install -y \
 
 # pyvista renders off-screen through VTK built against OSMesa, which is not on PyPI:
 # install the stack, drop the vtk pyvista pulled in, install vtk-osmesa in its place.
-RUN python3 -m pip install --no-cache-dir --break-system-packages numpy matplotlib pandas pyvista \
+# Empty means "whatever PyPI serves at build time", which is what this line did for its
+# whole life and is the same shape as the `build123d>=0.9` floor that took the CAD
+# desk down. `check.sh` prints what it resolved either way and asserts each one that
+# is given, so the pins are a measurement rather than a guess.
+ARG NUMPY_VERSION=
+ARG MATPLOTLIB_VERSION=
+ARG PANDAS_VERSION=
+ARG PYVISTA_VERSION=
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        "numpy${NUMPY_VERSION:+==$NUMPY_VERSION}" \
+        "matplotlib${MATPLOTLIB_VERSION:+==$MATPLOTLIB_VERSION}" \
+        "pandas${PANDAS_VERSION:+==$PANDAS_VERSION}" \
+        "pyvista${PYVISTA_VERSION:+==$PYVISTA_VERSION}" \
     && python3 -m pip uninstall -y --break-system-packages vtk \
     && python3 -m pip install --no-cache-dir --break-system-packages \
         --extra-index-url https://wheels.vtk.org vtk-osmesa
@@ -93,4 +105,5 @@ RUN chmod +x /usr/local/bin/reynolds-install-guard \
 # --- the checks --------------------------------------------------------------------
 COPY check.sh /tmp/check.sh
 RUN bash /tmp/check.sh "${GMSH_VERSION}" "${BUILD123D_VERSION}" "${OCP_VERSION}" \
+        "${NUMPY_VERSION}" "${MATPLOTLIB_VERSION}" "${PANDAS_VERSION}" "${PYVISTA_VERSION}" \
     && rm -rf /tmp/check.sh /tmp/gate*

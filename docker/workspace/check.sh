@@ -1,10 +1,19 @@
 #!/bin/bash
 # What the image promises, each checked by doing it. Run as the last build step.
-# $1, $2 and $3 are the gmsh, build123d and OCP versions the build pinned.
+# $1..$3 are the gmsh, build123d and OCP versions the build pinned.
+# $4..$7 are numpy, matplotlib, pandas and pyvista. Each of those four may be
+# empty, which means the build did not pin it: the version is still printed, and
+# only a non-empty one is asserted. That is how the pins were established in the
+# first place -- a build that printed them, on a pull request, which publishes
+# nothing.
 set -eo pipefail
 GMSH_VERSION="$1"
 BUILD123D_VERSION="$2"
 OCP_VERSION="$3"
+NUMPY_VERSION="${4-}"
+MATPLOTLIB_VERSION="${5-}"
+PANDAS_VERSION="${6-}"
+PYVISTA_VERSION="${7-}"
 SHIM=/usr/local/lib/libfoamnotadmin.so
 source /etc/foamd/shellinit.sh  # before -u: OpenFOAM's bashrc reads unset variables
 set -u
@@ -63,6 +72,26 @@ gmsh.model.mesh.generate(3)
 tets = len(gmsh.model.mesh.getElementsByType(4)[0]); gmsh.finalize()
 assert [s for s in shapes if s[0] == 3] and tets > 100, "no solid, or no tetrahedra"
 print("cad ok:", tets, "tets")
+PY
+
+echo "== the Python stack: what it resolved, and the pins if there are any"
+python3 - "$NUMPY_VERSION" "$MATPLOTLIB_VERSION" "$PANDAS_VERSION" "$PYVISTA_VERSION" <<'PY'
+import sys
+from importlib.metadata import version
+
+# Printed in a form that can be pasted straight into the Dockerfile args, because
+# the point of the unpinned build is to tell a human what to pin.
+wanted = dict(zip(("numpy", "matplotlib", "pandas", "pyvista"), sys.argv[1:]))
+wrong = []
+for name, pin in wanted.items():
+    got = version(name)
+    print(f"{name.upper()}_VERSION={got}" + ("" if pin else " (not pinned)"))
+    if pin and got != pin:
+        wrong.append(f"{name}: asked for {pin}, got {got}")
+vtk = version("vtk-osmesa")
+print(f"vtk-osmesa={vtk}")
+if wrong:
+    raise SystemExit("the pins and the image disagree: " + "; ".join(wrong))
 PY
 
 echo "== renders and animations, offline"

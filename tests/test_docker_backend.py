@@ -127,6 +127,37 @@ def test_the_cad_wheels_are_pinned_exactly_and_the_image_checks_them():
     assert 'version("cadquery-ocp-novtk") == sys.argv[2]' in check
 
 
+def test_the_images_python_stack_is_asked_for_by_version_and_checked():
+    """The same defect as the CAD wheels above, in the line next to them.
+
+    `pip install numpy matplotlib pandas pyvista` with no versions resolves whatever
+    PyPI serves at build time, which is how `build123d>=0.9` reached 0.13.0 and took
+    the hosted CAD desk down for four days. This line has more consumers than that
+    one did: every toolbox script imports numpy, every figure is matplotlib, and
+    `lbm.py` and `sph.py` ARE numpy -- they are the solvers a machine with no
+    OpenFOAM has.
+
+    What is pinned here is a measurement, not a guess, so an empty arg is allowed and
+    means "this build did not pin it": `check.sh` prints the resolved version either
+    way and asserts only the ones it was given. What this test holds is the
+    mechanism, because a pin that nothing threads through to the gate is a comment.
+    """
+    dockerfile = (REPO / "docker/workspace/Dockerfile").read_text(encoding="utf-8")
+    check = (REPO / "docker/workspace/check.sh").read_text(encoding="utf-8")
+    names = ("NUMPY", "MATPLOTLIB", "PANDAS", "PYVISTA")
+
+    for name in names:
+        declared = re.findall(rf"^ARG {name}_VERSION=(\S*)$", dockerfile, re.MULTILINE)
+        assert declared == [""] or re.fullmatch(r"[\d.]+", declared[0]), (
+            f"{name}_VERSION is neither empty nor an exact version: {declared}")
+        assert f'"{name.lower()}${{{name}_VERSION:+==${name}_VERSION}}"' in dockerfile, (
+            f"{name} is installed without consulting its arg")
+        assert f'"${{{name}_VERSION}}"' in dockerfile, f"{name} never reaches check.sh"
+
+    assert 'wanted = dict(zip(("numpy", "matplotlib", "pandas", "pyvista")' in check
+    assert "the pins and the image disagree" in check, "the gate reports but never fails"
+
+
 def test_the_default_image_is_the_published_one(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENREYNOLDS_IMAGE", raising=False)
     assert DockerBackend(root=tmp_path).image == DEFAULT_IMAGE
