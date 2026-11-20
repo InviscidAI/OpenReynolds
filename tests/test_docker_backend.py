@@ -159,8 +159,12 @@ def test_the_images_python_stack_is_asked_for_by_version_and_checked():
             f"{name}_VERSION is not an exact version: {declared[0]!r}. An empty arg is "
             "how a version is measured, not how one ships -- run an unpinned build, "
             "read check.sh's output, put the number here.")
-        assert f'"{name.lower()}${{{name}_VERSION:+==${name}_VERSION}}"' in dockerfile, (
-            f"{name} is installed without consulting its arg")
+        assert f'"{name.lower()}==${{{name}_VERSION}}"' in dockerfile, (
+            f"{name} is installed without consulting its arg, or consults it through a "
+            "shell conditional. A plain ${VAR} is what BuildKit scans a RUN for when it "
+            "decides what to reuse: with `${VAR:+==$VAR}` the first pinned build came "
+            "back CACHED from the pip install through check.sh, so the pinned install "
+            "never ran and the gate asserted nothing (run 44809774086, steps #8-#21).")
         assert f'"${{{name}_VERSION}}"' in dockerfile, f"{name} never reaches check.sh"
 
     assert 'wanted = dict(zip(("numpy", "matplotlib", "pandas", "pyvista")' in check

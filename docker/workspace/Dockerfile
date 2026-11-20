@@ -49,11 +49,24 @@ ARG NUMPY_VERSION=2.5.5
 ARG MATPLOTLIB_VERSION=3.11.2
 ARG PANDAS_VERSION=3.1.1
 ARG PYVISTA_VERSION=0.49.2
+# Plain `${VAR}` and not `${VAR:+==$VAR}`, because the shell conditional kept the
+# version out of the layer cache key. BuildKit decides what to reuse by scanning a
+# RUN for the build args it references, and on the first pinned build every layer
+# from the pip install through check.sh came back CACHED (PR #231, run
+# 44809774086, steps #8 to #21) -- so the pinned install never ran and the gate
+# never asserted anything. A pin that a cache hit skips is worse than no pin: it
+# reads as pinned and ships whatever the cached layer happened to have.
+#
+# The conditional existed so an empty arg could mean "do not pin", which is how
+# these five versions were measured. That pass is done and the measurement is
+# above; check.sh still accepts an empty arg, so the next measurement works the
+# same way, but the Dockerfile now requires an exact version for each -- which is
+# what tests/test_docker_backend.py already demands of it.
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
-        "numpy${NUMPY_VERSION:+==$NUMPY_VERSION}" \
-        "matplotlib${MATPLOTLIB_VERSION:+==$MATPLOTLIB_VERSION}" \
-        "pandas${PANDAS_VERSION:+==$PANDAS_VERSION}" \
-        "pyvista${PYVISTA_VERSION:+==$PYVISTA_VERSION}" \
+        "numpy==${NUMPY_VERSION}" \
+        "matplotlib==${MATPLOTLIB_VERSION}" \
+        "pandas==${PANDAS_VERSION}" \
+        "pyvista==${PYVISTA_VERSION}" \
     && python3 -m pip uninstall -y --break-system-packages vtk \
     && python3 -m pip install --no-cache-dir --break-system-packages \
         --extra-index-url https://wheels.vtk.org vtk-osmesa
