@@ -127,6 +127,18 @@ Failed 1 mesh checks.
 """
 
 
+def write_log(case: Path, text: str = FAILING_LOG) -> None:
+    """The log beside the case, with its `cells:` line set to the mesh's own count.
+
+    A log that disagrees with the mesh about how many cells there are is a foreign or
+    stale log and is now dropped rather than reported as this mesh's (#187), so a
+    fixture log has to agree with the fixture mesh.
+    """
+    cells = mesh_of(case)["n_cells"]
+    (case / "log.checkMesh").write_text(
+        re.sub(r"cells:\s+\d+", f"cells:            {cells}", text))
+
+
 def test_the_failing_metric_in_the_log_is_the_one_that_is_named(bent):
     """Which metric failed, by preflight's thresholds, on the log's own numbers.
 
@@ -135,7 +147,7 @@ def test_the_failing_metric_in_the_log_is_the_one_that_is_named(bent):
     fine. All three have to come back separately: a report that said only "failed"
     would send somebody looking at the aspect ratio.
     """
-    (bent / "log.checkMesh").write_text(FAILING_LOG)
+    write_log(bent)
     found = mesh_quality.measure(bent)
 
     status = {row["metric"]: row["status"] for row in found["metrics"]}
@@ -287,16 +299,33 @@ def test_the_report_runs_without_a_checkmesh_log_at_all(clean, capsys):
     assert "none here" in capsys.readouterr().out
 
 
-def test_a_missing_mesh_is_reported_and_exits_zero(tmp_path, capsys):
+def test_a_mesh_that_is_not_there_is_refused_rather_than_given_a_clean_bill(tmp_path,
+                                                                            capsys):
+    """#175: with no `constant/polyMesh` the report claimed "the metrics recomputed here
+    are under the thresholds" two lines above "the mesh could not be read", and exited 0.
+    No metric was recomputed, so a CI gate and a skimming reader both read "nothing
+    wrong" off a mesh nobody measured."""
     case = tmp_path / "empty"
-    case.mkdir()
+    (case / "system").mkdir(parents=True)
 
-    assert mesh_quality.main(["report", str(case)]) == 0
+    code = mesh_quality.main(["report", str(case)])
+    text = capsys.readouterr().out
+
+    assert code != 0, "a mesh nobody could read is not a clean mesh"
+    assert "could not be read" in text
+    assert "no cells were flagged by either route" not in text
+    assert "recomputed here are under the thresholds" not in text
+
+
+def test_a_mistyped_region_is_refused_the_same_way(clean, capsys):
+    """#175: the likelier way in. A region name that is not there reads the same as a
+    clean single-region mesh, and that is how a typo passes a gate."""
+    assert mesh_quality.main(["report", str(clean), "--region", "rotor"]) != 0
     assert "could not be read" in capsys.readouterr().out
 
 
 def test_the_json_sidecar_carries_the_same_facts(bent, tmp_path):
-    (bent / "log.checkMesh").write_text(FAILING_LOG)
+    write_log(bent)
     out = tmp_path / "side" / "bad.json"
 
     assert mesh_quality.main(["report", str(bent), "--json", str(out)]) == 0
@@ -369,6 +398,84 @@ def test_a_cell_set_is_taken_as_cells_and_a_face_set_as_both_sides(bent):
 
     both = mesh_quality.cells_of_set(mesh, {"kind": "faceSet", "labels": np.array([0])})
     assert both.tolist() == sorted({int(mesh["owner"][0]), int(mesh["neighbour"][0])})
+
+
+def test_a_set_checkmesh_never_writes_is_not_reported_as_a_cell_it_flagged(clean, capsys):
+    """#173: `region0` and `region1` are what a `topoSet` rotor/stator split leaves on an
+    AMI mesh, and the mesh's own `log.checkMesh` said `Mesh OK` and wrote no sets at all.
+    Every one of its 12,000 cells was reported as a cell checkMesh flagged and 6,000 were
+    drawn red. The names checkMesh writes are in `CHECKMESH_SETS`, read out of
+    `checkGeometry.C` and `checkTopology.C`; a set under any other name is listed with
+    its count and its provenance named as unknown.
+    """
+    _write_set(clean, "region0", "cellSet", [0, 1, 2, 3])
+    found = mesh_quality.measure(clean)
+    print(mesh_quality.report(found))
+    text = capsys.readouterr().out
+
+    entry = next(row for row in found["sets"] if row["set"] == "region0")
+    assert entry["provenance"] == "unknown"
+    assert entry["count"] == 4, "it is still read: dropping it would hide a real failure"
+    assert not any(row["metric"] == "region0" for row in found["metrics"])
+    assert all(row["cells"] == 0 for row in found["metrics"])
+    assert mesh_quality.worst_metric(found) is None, "nothing of unknown provenance is drawn"
+    assert "the cells checkMesh itself flagged" not in text
+    assert "unknown provenance" in text
+
+
+def test_a_set_checkmesh_does_write_is_still_the_cells_it_flagged(bent):
+    """The other half of #173: the gate is the name, so every name in checkMesh's own
+    source still arrives by the set route and still wins over the recomputed metric."""
+    _write_set(bent, "highAspectRatioCells", "cellSet", [0, 1])
+    found = mesh_quality.measure(bent)
+
+    entry = next(row for row in found["sets"] if row["set"] == "highAspectRatioCells")
+    assert entry["provenance"] == "checkMesh" and entry["check"] == "aspect ratio"
+    row = next(row for row in found["metrics"] if row["metric"] == "aspect_ratio")
+    assert row["route"] == "set" and row["cells"] == 2
+
+
+def test_set_provenance_is_an_exact_name_and_not_a_substring():
+    assert mesh_quality.set_provenance("skewFaces") == "checkMesh"
+    assert mesh_quality.set_provenance("nonOrthoFaces") == "checkMesh"
+    assert mesh_quality.set_provenance("wrongOrientedFaces") == "checkMesh"
+    assert mesh_quality.set_provenance("highAspectRatioCells") == "checkMesh"
+    assert mesh_quality.set_provenance("mySkewCells") == "unknown"
+    assert mesh_quality.set_provenance("region0") == "unknown", (
+        "checkTopology writes region<n> for a disconnected region and topoSet writes it "
+        "for a mesh zone; the file does not say which")
+
+
+def test_a_log_describing_another_mesh_is_dropped_rather_than_reported_as_this_one(bent,
+                                                                                  capsys):
+    """#187: the tool printed its own correct cell count on one line and a foreign log's
+    `aspect_ratio_max 11.8432` on the next, where pitzDaily's own log says 8.1407. The
+    log's `cells:` line was one comparison away and went unread, and `find_log` picks up
+    a stale `log.checkMesh` with no --log typed at all. Aspect ratio is never recomputed
+    here, so a foreign value there has no second opinion to argue with it.
+    """
+    (bent / "log.checkMesh").write_text(FAILING_LOG)  # cells: 94321, not this mesh's
+    found = mesh_quality.measure(bent)
+    print(mesh_quality.report(found))
+    text = capsys.readouterr().out
+
+    assert found["log_describes_another_mesh"]["log_cells"] == 94321
+    assert found["log_describes_another_mesh"]["mesh_cells"] == found["n_cells"]
+    assert all(row["log_value"] is None for row in found["metrics"])
+    assert not (found["verdict"] or {}).get("numbers")
+    assert "11.8432" not in text and "12.41" not in text, "a foreign skewness either"
+    assert "foreign or stale log" in text and "94,321 cells" in text
+
+
+def test_a_log_whose_cell_count_matches_is_read_as_before(bent):
+    """The check is a comparison and not a refusal of every log: a log that agrees with
+    the mesh is the normal case and nothing about it changes."""
+    write_log(bent)
+    found = mesh_quality.measure(bent)
+
+    assert "log_describes_another_mesh" not in found
+    skew = next(row for row in found["metrics"] if row["metric"] == "skewness")
+    assert skew["log_value"] == 12.41
 
 
 def test_set_names_map_onto_metrics_by_substring():
