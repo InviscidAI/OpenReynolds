@@ -146,13 +146,17 @@ def _link(target: Path, page: Path) -> str:
 
     Relative, so the page and the pictures move together and nothing depends on
     where the study sits. `os.path.relpath` across drives raises on Windows -- a
-    page written to a different drive from the study it describes -- and the
-    absolute path is right there to fall back on.
+    `--out` on D: for a study on C: -- and the fallback is a `file:///` URI, not
+    the bare path: a browser resolves `C:/study/renders/x.png` against the page's
+    own directory and fetches nothing.
     """
     try:
         return Path(os.path.relpath(target, page.parent)).as_posix()
     except ValueError:
-        return target.as_posix()
+        try:
+            return target.resolve().as_uri()
+        except (OSError, ValueError):
+            return target.as_posix()
 
 
 def human(count: int) -> str:
