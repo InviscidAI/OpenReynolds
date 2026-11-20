@@ -102,6 +102,29 @@ jobs:
           echo "$out" | grep -qE "\[viv_loose\] net fluid work.*FAIL"
           echo "$out" | grep -qE "\[viv_tight\] net fluid work.*PASS"
 
+      # The two solvers in `openreynolds/toolbox/` that are not OpenFOAM applications.
+      # These graders solve rather than reading a finished run, which the four above
+      # cannot do: an OpenFOAM case costs a cluster an hour, so its output is trimmed
+      # into tests/data/ and read back. These are numpy and finish here, so the number
+      # is re-derived on every pull request instead of being quoted from a commit.
+      - name: LBM -- plane Poiseuille against the closed form, at three viscosities
+        run: python benchmarks/lbm/grade.py poiseuille
+
+      - name: LBM -- cavity Re 1000 against Ghia, Ghia and Shin (1982)
+        run: python benchmarks/lbm/grade.py cavity
+
+      - name: SPH -- hydrostatic pressure against rho g h
+        run: python benchmarks/sph/grade.py hydrostatic
+
+      - name: SPH -- sloshing period against the linear dispersion relation
+        run: python benchmarks/sph/grade.py sloshing
+
+      # Graded on whether the scheme stayed valid, not on the surge front: the front is
+      # printed and deliberately carries no verdict, because Martin & Moyce (1952) could
+      # not be read. benchmarks/sph/README.md is the whole argument.
+      - name: SPH -- dam break, contained and weakly compressible
+        run: python benchmarks/sph/grade.py dambreak
+
       - name: The eval that costs money refuses to run
         run: |
           status=0

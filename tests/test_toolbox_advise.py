@@ -195,7 +195,11 @@ def test_a_mach_number_that_decides_nothing_says_so(tmp_path, advise):
     data = advise.inspect(case, mach=0.5, cores=4)
     assert data["class"] == "free-surface-marine"
     families = {row["family"] for row in data["solvers"]}
-    assert families == {"free-surface"}
+    # The bug this pins is about the Mach number, so what matters is that no
+    # compressible candidate is offered for this class -- not the exact set, which grew
+    # when `sph.py` joined the free-surface comparison.
+    assert "compressible" not in families
+    assert "free-surface" in families
     report = advise.render(data)
     assert "decides nothing here" in report
     assert "undivided" not in report
