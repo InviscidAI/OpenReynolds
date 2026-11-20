@@ -46,7 +46,7 @@ from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
 from . import viewer
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
-from .mirror import LiveMirror, local_for, sync as mirror_sync
+from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
 from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, list_studies, new_study_id
@@ -1639,7 +1639,11 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
     if frames:
         mapped = workspace_path(frames)
         if mapped.startswith(WORKSPACE_ROOT):
-            directory = local_for(store.files_dir, mapped)
+            try:
+                directory = local_for(store.files_dir, mapped)
+            except OutsideMirror:
+                console.print(f"[yellow]{frames} is not inside {WORKSPACE_ROOT}/[/]")
+                raise SystemExit(1) from None
         else:
             directory = Path(frames)
     else:

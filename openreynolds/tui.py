@@ -50,7 +50,7 @@ from textual.widgets.option_list import Option
 from . import commands, images
 from .browse import Entry, human
 from .llm.presets import EFFORTS, models_for
-from .mirror import local_for
+from .mirror import OutsideMirror, local_for
 from .modes import label as mode_label
 from .progress import BAR_WIDTH, Progress
 from .progress import bar as draw_bar
@@ -889,10 +889,11 @@ class OpenReynoldsApp(App):
         store = getattr(self.browser, "store", None)
         if store is None:
             return None
-        target = local_for(store.fetch_dir(), path)
         try:
+            target = local_for(store.fetch_dir(), path)
             size = target.stat().st_size
-        except OSError:
+        except (OSError, OutsideMirror):
+            # Not here, or a path that would land outside this study's copy.
             return None
         entries = self.browser.cached(path)
         if entries:

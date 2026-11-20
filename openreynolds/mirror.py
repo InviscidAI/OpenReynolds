@@ -616,18 +616,35 @@ class _Stopped(Exception):
     """Raised out of a cycle's listing when the mirror stopped while it waited."""
 
 
+class OutsideMirror(ValueError):
+    """A workspace path that would land outside the directory it is being mapped into."""
+
+
 def local_for(local_dir: Path, remote: str) -> Path:
     """Where a workspace path lands once it has been copied out.
 
     `get_tree` preserves the shape a file had relative to the workspace root, so this
     is a prediction rather than a guess -- which is what makes it possible to ask
     whether a file is already here without pulling it to find out.
+
+    The answer is always inside `local_dir`. This is the one place the join happens,
+    so it is the one place that can promise it: a remote path that would land outside
+    -- `..`, however it is spelled, a drive letter, a UNC root, a symlink out -- raises
+    `OutsideMirror` here rather than becoming a read of somebody else's file in each
+    of the five callers. `..` written with a backslash was the spelling that got past
+    the string test in `mcp/local.py::_check_path` on Windows (#180); resolving the
+    joined path and asking whether it is still inside answers every spelling at once.
     """
     if remote.startswith(WORKSPACE_ROOT + "/"):
         relative = remote[len(WORKSPACE_ROOT) + 1 :]
     else:
         relative = Path(remote).name
-    return local_dir / relative
+    landed = local_dir / relative
+    # `strict=False`: the point of a prediction is that the file need not be here yet.
+    root, inside = local_dir.resolve(strict=False), landed.resolve(strict=False)
+    if inside != root and not inside.is_relative_to(root):
+        raise OutsideMirror(f"{remote!r} would land outside {local_dir}")
+    return landed
 
 
 # -- the parts of one sync -----------------------------------------------------
@@ -696,7 +713,17 @@ def _wanted(
                 )
             )
             continue
-        if _already_here(local_for(report.local_dir, entry.path), entry):
+        try:
+            lands = local_for(report.local_dir, entry.path)
+        except OutsideMirror:
+            # A listing that names a path which would land outside the study's own
+            # directory is not copied here. Named and counted, like every other file
+            # left behind, rather than written over whatever is there.
+            report.skipped.append(Skip(entry.path, "would land outside the study", entry.size))
+            if held is not None:
+                blocked.add(held)
+            continue
+        if _already_here(lands, entry):
             report.unchanged += 1
             if held is not None:
                 earlier_here += entry.size
