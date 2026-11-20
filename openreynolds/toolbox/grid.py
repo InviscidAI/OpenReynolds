@@ -659,11 +659,13 @@ def cells_from_case(case: Path) -> tuple[int | None, str]:
         done = subprocess.run(["checkMesh", "-case", str(case)], capture_output=True,
                               text=True, timeout=600)
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"no checkMesh log in {case} and checkMesh did not run ({exc})"
+        return None, (f"no checkMesh log in {case}, no nCells note in its "
+                      f"constant/polyMesh/owner, and checkMesh did not run ({exc})")
     counts = mesh_digest.parse(done.stdout + done.stderr)["counts"]
     if "cells" in counts:
         return counts["cells"], f"checkMesh run here on {case}"
-    return None, f"no cell count in any checkMesh log or run for {case}"
+    return None, (f"no cell count in any checkMesh log, in constant/polyMesh/owner's "
+                  f"note, or in a checkMesh run, for {case}")
 
 
 def dimension_from_case(case: Path) -> tuple[int | None, str]:
