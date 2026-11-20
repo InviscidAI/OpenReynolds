@@ -495,12 +495,12 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
             console.print(f"  {escape(item['study_id'])}: {escape(item['state_detail'])}")
             console.print("  [dim]  openreynolds stop --study "
                           f"{item['study_id']} says what actually stopped[/]")
-    if not any(item["own_key"] for item in found):
+    if any(not item["own_key"] for item in found):
         console.print("\n[dim]time and tokens, not money: what a study on Reynolds' "
                       "model uses is counted against your plan's studies[/]")
     if any(item["own_key"] and item["cost_usd"] is None and item["total_tokens"] for item in found):
-        console.print("\n[dim]a - under cost (your key): its model, or a kind of token it "
-                      "counted, has no rate here, so there is no figure rather than a wrong one[/]")
+        console.print("\n[dim]a - under cost (your key) for a study on your own key: its model, or a "
+                      "kind of token it counted, has no rate here, so there is no figure rather than a wrong one[/]")
 
 
 def _the_study(cfg: Config, study_id: str | None) -> str:
@@ -576,14 +576,18 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
 
     console.print(f"[green]{'rerun' if rerun else 'clone'} of[/] {escape(chosen)} "
                   f"-> [bold]{escape(fresh)}[/]")
-    console.print("  its setup, its project and tags and its local files are copied; "
-                  "its conversation is not")
+    files = Store(cfg.studies_dir, fresh).files_dir
+    copied = files.is_dir() and any(f.is_file() for f in files.rglob("*"))
+    console.print("  its setup, its project and tags" + (" and its local files" if copied else "")
+                  + " are copied; its conversation is not")
     # Its workspace directory is its own and starts empty (#170): the copied files are
     # on this machine, and only `push` sends anything up -- once the clone is running,
     # since before that it has no workspace, and a push would land on another study's.
-    files = Store(cfg.studies_dir, fresh).files_dir
-    console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
-    if not local_workspace():  # `push` reaches the hosted workspace only
+    if copied:
+        console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
+    else:
+        console.print("  its workspace starts empty; the study it came from had no files on this machine")
+    if copied and not local_workspace():  # `push` reaches the hosted workspace only
         console.print(f"  once it is running, [bold]openreynolds push <file> --study {fresh}[/] "
                       "sends one of them up")
     if request:
