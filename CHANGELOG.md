@@ -71,6 +71,13 @@ All notable changes to this project are recorded here. The format follows
   wrong. `tests/test_journey_duct.py:247-254` is the measurement of what it cost: that
   test post-processes the solved case itself, through the solver, because the generic
   `postProcess` builds no momentum-transport model.
+  - One behaviour change worth stating, because a generated `controlDict` looks
+    different afterwards: a case with a wall and no body used to get no `functions`
+    block at all, and now gets one holding the two wall objects. That block was empty by
+    accident rather than by intent -- `force_coeffs` returns nothing without a patch
+    named `body`, and `solverInfo` is bundled inside its entry list, so a bodyless case
+    lost its residual logging too. The rule that an empty block is left out entirely is
+    unchanged and still tested, on a case that genuinely has nothing to put in one.
   - The map is now graded against an exact answer rather than against a picture.
     `tests/test_toolbox_wall_shear_map.py` builds a plane channel by hand, puts
     `6 nu u_mean / H` on its walls, and reads it back through the real path: the

@@ -521,15 +521,27 @@ def test_the_wall_shear_is_written_where_the_case_has_a_wall(case_gen, tmp_path)
     assert "patches" not in block
 
 
-def test_a_case_with_no_wall_is_not_given_wall_quantities(case_gen, tmp_path):
-    """A `functions` block that computes a wall shear on a case with no wall is a
-    dictionary that fails at start-up, and an entry nobody can read is not a feature."""
+def test_a_case_with_no_wall_gets_no_wall_quantities_and_no_empty_block(case_gen,
+                                                                       tmp_path):
+    """Two rules, and this is now the case that exercises both.
+
+    A `functions` block computing a wall shear on a case with no wall is a dictionary
+    that fails at start-up, and an entry nobody can read is not a feature. And a block
+    with nothing in it is left out entirely, because an empty `functions {}` reads as
+    something that was meant to be filled in.
+
+    The second rule used to be checked in `test_toolbox_les.py` on a case that had a
+    wall, which came out blockless only because `force_coeffs` returns nothing without
+    a patch named `body`. `wall_fields` gives that case two entries, so it no longer
+    demonstrates the rule and this one does: no wall, no body, not an LES, so there is
+    genuinely nothing to put anywhere."""
     open_case = mesh_only(tmp_path, "nowall")
     rename_patches(open_case, {"movingWall": ("inlet", "patch"),
                                "fixedWalls": ("outlet", "patch")})
     run(case_gen, open_case, "--length", "0.1")
     text = (open_case / "system" / "controlDict").read_text()
     assert "wallShearStress" not in text and "yPlus" not in text
+    assert "functions" not in text, "nothing to put in it, so no empty block"
 
 
 def test_a_mesh_only_study_asks_for_no_wall_quantities(case_gen, tmp_path):

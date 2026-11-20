@@ -251,16 +251,37 @@ def test_without_a_start_time_the_default_is_half_the_run_and_says_it_is_a_guess
     assert "spectra.py" in printed, "what decides when the flow settled"
 
 
-def test_a_ras_case_gets_no_field_average_and_keeps_its_functions_block(case_gen, tmp_path):
+def test_a_ras_case_gets_the_wall_fields_and_no_field_average(case_gen, tmp_path):
     """A mean is for a run whose answer is one. The forces and residual objects are
-    unchanged by any of this."""
+    unchanged by any of this.
+
+    The claim this test makes about the rest of the block narrowed when
+    `case_gen.wall_fields` landed. It used to assert `"functions" not in text` -- that
+    this case gets no block at all -- and that was true by accident rather than by
+    intent: `force_coeffs` returns nothing because no patch here is called `body`, and
+    `solverInfo` happens to be bundled inside its entry list, so a bodyless case lost
+    its residual logging too and the block came out empty. Nothing decided that a
+    turbulent wall-bounded run should be bare.
+
+    This fixture is the case the wall fields are most clearly *for*: a transient RAS
+    run at Re 50,000 over a patch of type `wall`. y+ is the number that decides whether
+    the wall treatment is valid at all, and `wall.py` exists because a generated O-grid
+    landed at y+ about 1200 under a form written for 300. The `empty` pair is untouched
+    -- both function objects evaluate on wall patches only -- so the case being one cell
+    thick costs nothing here.
+
+    The empty-block rule itself is still worth keeping and now lives where it is still
+    exercised: `test_toolbox_case_gen.py`'s no-wall case, which genuinely has nothing to
+    put in a block.
+    """
     plain = mesh_only(tmp_path, "plain")
     rename_patches(plain, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
     case_gen.main([str(plain), "--length", "0.1", "--study", "transient",
                    "--reynolds", "50000"])
     text = read(plain, "system/controlDict")
-    assert "fieldAverage" not in text
-    assert "functions" not in text, "nothing to put in it, so no empty block"
+    assert "fieldAverage" not in text, "a mean is for a run whose answer is one"
+    assert "wallShearStress" in text and "yPlus" in text
+    assert "forceCoeffs" not in text, "no patch here is a body, so there is no force"
 
     body = mesh_only(tmp_path, "body")
     rename_patches(body, {"movingWall": ("inlet", "patch"), "fixedWalls": ("body", "wall")})
