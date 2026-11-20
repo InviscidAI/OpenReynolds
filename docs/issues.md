@@ -923,9 +923,11 @@ client is not established.
 
 ---
 
-## 31. The workspace path the prompt advertises does not work inside a shell command — RESOLVED for the Docker workspace
+## 31. The workspace path the prompt advertises does not work inside a shell command -- RESOLVED
 
-**Resolved for `--local` (Docker), 2026-11-13.** The workspace directory is mounted at `/work` inside the container, so `/work` in a command is the workspace. `OPENREYNOLDS_LOCAL=native` still has the alias problem described here.
+**Resolved for `--local` (Docker), 2026-11-13.** The workspace directory is mounted at `/work` inside the container, so `/work` in a command is the workspace.
+
+**Resolved for `--native`, 2026-11-21.** `LocalBackend._wrap` rewrites `/work` in the command text to the root as a shell can name it (`local.shell_root`), so the alias now holds in commands as well as in tool arguments, which is what `local.py`'s own docstring had always claimed. The rewrite is deliberately textual: the model is told `/work` by a frozen prompt and reads it again in every toolbox docstring, so a command it writes will say `/work` whatever the backend is, and the alternative to rewriting is a different prompt per backend -- the thing the protocol exists to avoid. `/workspace` and other longer words are left alone, and a root with a space that has no 8.3 short name is refused at construction rather than written into a command the shell would read as two words. Found while testing the no-OpenFOAM path on Windows, where `/work` resolved to Git Bash's own root; it fails the same way on Linux, where there is no `/work` at all.
 
 `LocalBackend._resolve` treats `/work` as an alias for the real workspace root, so every
 *tool argument* — a `cwd`, a path handed to `read_file`, the toolbox destination — lands in

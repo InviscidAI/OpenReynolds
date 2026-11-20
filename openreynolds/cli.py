@@ -24,6 +24,7 @@ from . import __version__
 from .backend import hosted
 from .backend import docker as docker_backend
 from .backend.docker import DockerBackend
+from .backend import local as local_backend
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
@@ -224,8 +225,16 @@ class Cli(click.Group):
     "--local",
     is_flag=True,
     help="Run the workspace on this machine, in Docker, instead of in the cloud; or "
-         "OPENREYNOLDS_LOCAL=docker. OPENREYNOLDS_LOCAL=native uses an OpenFOAM "
-         "installed here instead, with no sandbox.",
+         "OPENREYNOLDS_LOCAL=docker. The published image comes with OpenFOAM, so this "
+         "needs Docker and a 1.2 GB pull but nothing else.",
+)
+@click.option(
+    "--native",
+    is_flag=True,
+    help="Run the workspace on this machine as it is: no Docker, no sandbox, no "
+         "download. Uses whatever OpenFOAM is installed here (OPENREYNOLDS_FOAM_BASHRC "
+         "names it), and where there is none, the toolbox's own numpy solvers -- so a "
+         "laptop with nothing installed can still solve. Or OPENREYNOLDS_LOCAL=native.",
 )
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
@@ -259,16 +268,19 @@ def main(
     solver: str | None,
     no_capture: bool,
     local: bool,
+    native: bool,
     plain: bool,
     keep_alive: bool,
     max_wait: float,
     output_format: str,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
-    if local:
+    if local or native:
         # Through the environment, which is where the session and every subcommand
-        # (`doctor`, `files`, `pull`) already read the choice from.
-        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
+        # (`doctor`, `files`, `pull`) already read the choice from. `--local` wins a
+        # contradiction because it is the sandboxed one: asked for both, the person
+        # gets the workspace that cannot touch their files.
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker" if local else "native"
     if ctx.invoked_subcommand is not None:
         # `--output-format` is a GROUP option, so the obvious thing for an agent to do
         # is put it in front of everything -- and this function used to return here
@@ -1907,12 +1919,30 @@ def _check_docker() -> tuple[str, bool, str]:
 
 
 def _check_native_foam() -> tuple[str, bool, str]:
-    """An OpenFOAM installed on this machine, used with no sandbox."""
+    """What this machine can solve with, used with no sandbox.
+
+    Not "is OpenFOAM installed", which is what it used to ask. On a laptop with
+    neither OpenFOAM nor Docker this printed `FAIL` and counted itself in "2 check(s)
+    failed", in a workspace where `lbm.py poiseuille --n 32` converges in 4.1 s to
+    9.7e-07 of u_max against the exact parabola. A red FAIL reads as "this does not
+    work here", so the absence of OpenFOAM is now reported as the part of the product
+    that is missing rather than as the whole of it. It still fails when nothing at all
+    can solve, which is the answer that was worth a FAIL in the first place."""
     backend = LocalBackend()
     if not backend.bashrc:
-        return "local OpenFOAM (native)", False, (
-            "no OpenFOAM found to source; set OPENREYNOLDS_FOAM_BASHRC to its etc/bashrc, "
-            "or use the Docker workspace (--local)")
+        if local_backend._numpy_here(backend):
+            return "local solvers (native)", True, (
+                "no OpenFOAM here, so its meshers and solvers will fail. The toolbox's "
+                "own solvers do not need it: lbm.py (lattice Boltzmann) and sph.py "
+                "both run in numpy, and advise.py says which suits a case. For "
+                "OpenFOAM, set OPENREYNOLDS_FOAM_BASHRC to an installation's "
+                "etc/bashrc, or use the Docker workspace (--local)")
+        return "local solvers (native)", False, (
+            "no OpenFOAM to source, and no numpy for the interpreter `python3` resolves "
+            "to, which leaves nothing here that can solve. `pip install numpy "
+            "matplotlib` brings the toolbox's own solvers up; or set "
+            "OPENREYNOLDS_FOAM_BASHRC to an OpenFOAM installation's etc/bashrc, or use "
+            "the Docker workspace (--local)")
     result = backend.exec(FOAM_PROBE, timeout_s=60)
     lines = result.output.strip().splitlines()
     if result.exit_code != 0 or len(lines) < 2:
@@ -2335,14 +2365,8 @@ def session(
             else:
                 backend = LocalBackend()
                 console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
-                if not backend.bashrc and shutil.which("blockMesh") is None:
-                    # Allowed -- the shell still works -- but every mesh and solve will
-                    # fail, and that should be said once here, not found by the agent.
-                    console.print(
-                        "[yellow]no OpenFOAM found on this machine:[/] the agent's commands "
-                        "run, but meshing and solving will fail. Set OPENREYNOLDS_FOAM_BASHRC "
-                        "to its etc/bashrc, or use --local for the Docker workspace."
-                    )
+                for note in local_backend.what_is_missing(backend):
+                    console.print(note)
             client, resolved_instance = None, "local"
         elif settled == solvers.AUTO:
             # The solver is chosen from the person's first message, and a workspace

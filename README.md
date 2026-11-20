@@ -359,10 +359,19 @@ The image is `ghcr.io/inviscidai/reynolds-workspace:2512`, built from
 [`docker/workspace`](docker/workspace/Dockerfile): OpenFOAM ESI v2512, HiSA, gmsh,
 build123d, pyvista and the rest of what the agent uses, the same image the hosted
 workspace runs. Build your own with `docker build -t my-workspace docker/workspace`
-and point `OPENREYNOLDS_IMAGE=my-workspace` at it. To use an OpenFOAM installed on your machine instead of Docker, set
-`OPENREYNOLDS_LOCAL=native` (and `OPENREYNOLDS_FOAM_BASHRC` if it is not found). That
-runs the agent's commands directly as you, with no sandbox, and the agent is written for
+and point `OPENREYNOLDS_IMAGE=my-workspace` at it. `--native` (or `OPENREYNOLDS_LOCAL=native`) runs the workspace on your machine as it is:
+no Docker, no download, no sandbox. It uses whatever OpenFOAM is installed here
+(`OPENREYNOLDS_FOAM_BASHRC` names it if it is not found), and the agent is written for
 ESI v2512, so another version or fork will differ in places.
+
+**With no OpenFOAM at all, `--native` still solves.** `lbm.py` and `sph.py` in the
+toolbox are a lattice-Boltzmann and an SPH solver written in numpy, so they need no
+image and no install beyond this package; `advise.py` lists them beside the OpenFOAM
+applications and marks which are actually here. On a Windows laptop with neither
+OpenFOAM nor Docker, `lbm.py poiseuille --n 32` converges in 4.1 s and matches the
+exact parabola to 9.7e-07 of the centreline speed. Neither carries a turbulence model,
+both are 2D and explicit, so they are the small end of the product rather than a
+replacement for it -- but they are the end that runs anywhere.
 
 ## Editing the mesh by hand — the hosted app only
 
