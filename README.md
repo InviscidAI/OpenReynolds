@@ -42,7 +42,7 @@ Every one of these is from a real run, with its transcript published beside it a
 ```bash
 pip install openreynolds     # or: uvx openreynolds · pipx install openreynolds · npm i -g openreynolds
 openreynolds login           # email and password, or --browser for Google; the app.tryreynolds.com account
-openreynolds config          # which model, and its key — bring your own, any vendor
+openreynolds config          # optional: your own model key, any vendor, instead of Reynolds' model
 openreynolds doctor          # check it can all be reached, before spending anything
 openreynolds                 # start a study
 ```
@@ -56,15 +56,22 @@ cannot tell the two apart, so the terminal names the browser flow whenever a sig
 fails rather than offering to create a second account for an address that already has
 one.
 
-**A company email address starts a 30-day Pro trial with 15 full-depth studies**, no card
-needed, covering the hosted workspace and Reynolds' own metered model together; a personal
-address starts a 30-day Starter trial with 5, with a card. Which addresses count is the service's rule and is never guessed at here, because
+With no model of its own (no provider, endpoint or key of any vendor in the config file
+or the environment), a machine that signs in uses Reynolds' model, metered to the account.
+`openreynolds config --provider anthropic` (or another vendor) switches it to a key of
+your own. While the browser code waits for approval, a gateway error or a dropped
+connection is waited through; only a refusal or the code expiring ends it.
+
+**A company email address starts a 30-day Pro trial with 15 full-depth studies**,
+covering the hosted workspace and Reynolds' own metered model together; a personal
+address starts a 30-day Starter trial with 5. Both take a card and renew unless you
+cancel. Which addresses count is the service's rule and is never guessed at here, because
 a domain list copied into a client goes stale and starts telling people the opposite of
 what they are about to get.
 
 **Run `doctor` first.** It checks settings, the workspace service, the model API,
-capture, the toolbox, the terminal and the video encoder, and it writes nothing.
-Almost every confusing first session is one of those seven being wrong, and `doctor`
+capture, sharing, the toolbox, the terminal and the video encoder, and on the service's
+workspace it writes nothing. Almost every confusing first session is one of those being wrong, and `doctor`
 says which in a sentence.
 
 ---
@@ -115,9 +122,12 @@ these.
 | `cad` | Describe a shape in words — or point at a `.step`/`.iges` file already on the workspace — and get back an OpenFOAM mesh of it there. A separate agent does the work on the same machine, one python cell at a time in a kernel: it builds or imports the shape, repairs and tags it, picks the mesher (`snappyHexMesh`, cfMesh, gmsh body-fitted, `blockMesh`), renders the mesh, measures it, and revises until `checkMesh` passes and the shape measures up to what was asked for. Saying it is done is not what ends it — the mesh has to be there, pass, carry patch names somebody chose, and have a script that rebuilds it. You get the picture, the patch table, `checkMesh`'s verdict, the script and where the case is. A mesh only: fields, boundary conditions and the solve stay with the agent. |
 | `mesh_review` | Have an independent reviewer look at a mesh that already exists — one built with `bash`, one the `cad` tool returned, one you uploaded — from several views (2D: overview, cells, zoomed quadrants; 3D: isometric corners, orthographic faces, mid-plane cuts) and say whether it is the shape that was asked for. A fresh model that did not build it and has not seen the conversation, judging the pictures against the request: it fails only for what would change the CFD answer, does not run `checkMesh` and changes nothing. The `cad` desk consults the same reviewer at its own finish. |
 
-A tenth, `checkpoint`, exists only when you choose structured mode (see *Modes*):
-it puts a summary of where the study stands, and what comes next, in front of you and
-waits for your answer. In full auto it is not in the tool list at all.
+Two more are always in the list but are not the agent's working tools. `checkpoint` is
+structured mode's (see *Modes*): there it puts a summary of where the study stands, and
+what comes next, in front of you and waits for your answer; in the other modes it
+answers that checkpoints belong to structured mode and asks you nothing. The list never
+changes with the mode, because a list that changed mid-conversation would break the
+model's thread. `send_to_agent` belongs to the side chat (`/btw`).
 
 ## The rule this repository keeps
 
@@ -242,9 +252,10 @@ Completions works even without a preset.
 
 | Preset | Default model |
 | --- | --- |
-| `reynolds` | `claude-sonnet-5`, metered through the workspace service, no key of your own |
+| `reynolds` | `gpt-6.1-sol`, metered through the workspace service, no key of your own (a Claude model works here too) |
 | `anthropic` | `claude-opus-5` |
 | `openai` | `gpt-5` |
+| `openai-responses` | `gpt-6.1-sol`, through OpenAI's Responses API |
 | `zai` | `glm-4.6` |
 | `deepseek` | `deepseek-chat` |
 | `moonshot` | `kimi-k2-thinking` |
@@ -264,9 +275,11 @@ paid study, and `doctor` makes the same check with a one-pixel image.
 
 ## What it costs
 
-Two meters run at once: the model, charged per token by your provider, and the hosted
-instance, charged per second it is up. Three things move the bill, and each was found
-the expensive way:
+Two things are used at once: the model, charged per token by your provider when it is
+your own key, and the hosted workspace for as long as it is up. On a Reynolds plan,
+what a study uses of the workspace and of Reynolds' own model is counted against the
+plan's studies; a local workspace costs nothing but the model. Three things move the
+cost, and each was found the expensive way:
 
 - **Reasoning effort.** The one knob that changes cost without changing what the agent
   may do.
@@ -276,9 +289,16 @@ the expensive way:
 - **Cores.** Billed whether the solver scales to them or not. A small 2D case on four
   cores can be slower and dearer than the same case on one.
 
-An instance left running is an instance being billed. It stops on its own when idle,
+A workspace left running is still being used. It stops on its own when idle,
 and `openreynolds stop` ends it now, verifying the jobs are actually dead rather than
 assuming.
+
+What a study spent is recorded on the study: the wall-clock time its sessions took and
+the tokens they sent, by class, which `openreynolds dashboard` reports. Tokens and
+time for every study, and a dollar figure only where your own key paid your own vendor
+directly and that model's rate is known. A study on Reynolds' model is never priced in
+dollars here: what it uses is counted against your plan's studies, which is also how
+the service's own spending cap is reported (*Modes*, `/status`).
 
 ## The workspace
 
@@ -296,6 +316,53 @@ Rendering happens on the instance, beside the data, because moving gigabytes hom
 make a hundred-kilobyte picture is the wrong way round. Frames come home and
 `openreynolds video` assembles them here, where a real encoder lives. The instance
 image has no encoder on purpose.
+
+Once they are home, `openreynolds view` puts them on one page and opens it:
+
+    openreynolds view                      # the newest study, in your browser
+
+The page links the pictures where they lie rather than embedding them, so it is a few
+kilobytes whatever the study weighs, and it carries no script, no stylesheet and no
+font -- nothing in it reaches the network. It shows what was rendered; it does not
+rotate the mesh in the browser. For a page that can be attached to a message and
+opened on a machine that has never seen the study, the `gallery.py` toolbox script
+embeds every image instead.
+
+## Running it on your own machine
+
+`--local` puts the workspace on your computer instead of in the cloud. It runs in
+Docker, in the same image the hosted workspace runs (OpenFOAM ESI v2512, cfMesh, the
+toolbox's Python packages), so the agent sees exactly what it sees in the cloud: the
+same `/work`, the same tools, the same version. Nothing is billed but your model.
+
+```bash
+# Docker Desktop on macOS or Windows, or Docker Engine on Linux, then:
+openreynolds config --provider anthropic    # or any preset; ollama needs no key
+openreynolds --local doctor                 # pulls the image, runs blockMesh in it
+openreynolds --local
+```
+
+- **No account needed.** A local workspace asks for a model key and nothing else. A
+  machine that is signed in still shares a trace of each local study (see *Sharing*);
+  `openreynolds sharing off` stops it.
+- **Your files.** The workspace is `~/.openreynolds/work` (`OPENREYNOLDS_LOCAL_WORK`
+  moves it), mounted into the container as `/work`. Everything the agent writes is
+  there, owned by you, and stays when the session ends.
+- **Sandboxed.** Commands run inside the container, as your user, with no network.
+  They can reach the workspace directory and nothing else on your machine.
+- **Jobs outlive the session.** A solve keeps running when you leave, the container
+  stays up for it, and `--study <id> --local` picks the study up again. `docker rm -f`
+  on the container stops everything; the files are kept.
+- **Felix is cloud-only.** Its solves run on cloud GPUs, so a local study is OpenFOAM.
+
+The image is `ghcr.io/inviscidai/reynolds-workspace:2512`, built from
+[`docker/workspace`](docker/workspace/Dockerfile): OpenFOAM ESI v2512, HiSA, gmsh,
+build123d, pyvista and the rest of what the agent uses, the same image the hosted
+workspace runs. Build your own with `docker build -t my-workspace docker/workspace`
+and point `OPENREYNOLDS_IMAGE=my-workspace` at it. To use an OpenFOAM installed on your machine instead of Docker, set
+`OPENREYNOLDS_LOCAL=native` (and `OPENREYNOLDS_FOAM_BASHRC` if it is not found). That
+runs the agent's commands directly as you, with no sandbox, and the agent is written for
+ESI v2512, so another version or fork will differ in places.
 
 ## Editing the mesh by hand — the hosted app only
 
@@ -329,6 +396,15 @@ costs nothing and a rule that is enforced costs everything.
 
 ## Benchmarks
 
+[`benchmarks/README.md`](benchmarks/README.md) is the index: every case here whose answer
+is known from outside a solver, the published or closed-form value it is measured against,
+how close the real run got, and where the remaining difference comes from. Re-checking
+those reference values against their sources changed two of them, so it also carries what
+a wrong reference looks like from the inside.
+[`benchmarks/tutorials/`](benchmarks/tutorials/) holds three cheap cases to start from: a
+heated pipe against the exact Graetz answer, a buoyant cavity against de Vahl Davis, and a
+backward-facing step that is kept for its units rather than its agreement.
+
 [`benchmarks/moving_mesh/`](benchmarks/moving_mesh/) holds the two cases the moving-mesh
 field note rests on, as the verbatim prompts they were run from and a grader: a
 `cyclicAMI` sliding interface cut through a circular-Couette annulus, where the torque is
@@ -350,6 +426,17 @@ and names the flag that supplies it rather than being assumed. `--json` for a
 machine-readable verdict; exit `0` when every check passes, `1` when one fails, `2` when
 the case could not be read.
 
+Both graders, and both Felix graders, run on every pull request. Neither of these
+cases can be committed whole, so what `tests/data/` carries is each finished run cut
+down to the files its grader opens: the Felix `solution.vtu` files trimmed to the cells
+the grader samples, and the moving-mesh runs' `postProcessing/*/*.dat`, dictionaries and
+`sum(weights)` log lines. Every number the graders print from the cut-down copies is
+identical to what they print from the full cases; `tests/data/moving_mesh/PROVENANCE.md`
+says what was dropped. The `benchmarks` job in CI prints a verdict per benchmark, and the
+recorded verdict is what it holds them to, failures included. The one eval that costs a
+model turn, `benchmarks/deliverables/run.py`, now refuses to run without `--spend`, so no
+automated sweep of `benchmarks/` can bill anyone.
+
 Two of its checks are findings rather than formalities. The sliding interface held its
 **area** to 43 ppm of unity while the two wall torques, which conservation makes equal
 and opposite exactly, disagreed by **0.91%** — against 0.011% on the same annulus meshed
@@ -363,29 +450,71 @@ down to **0.567**.
 
 | Command | What it does |
 | --- | --- |
-| `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace. |
+| `openreynolds` | Start a study. `--study <id>` resumes one, `--instance <id>` attaches to a particular workspace, `--keep-alive` leaves the workspace and its jobs running when the session ends. |
 | `-p "..."` | Run non-interactively and exit. Exit code `0` done, `1` the model API failed or the session crashed, `2` hit `--max-wait` with work still running. With a mode other than `auto` it is refused as a usage error, also exit `2`. |
 | `--mode auto\|partial\|structured` | How much the agent does before asking you. See *Modes*. |
 | `--solver auto\|openfoam\|felix` | Which solver the study runs: OpenFOAM on the workspace's CPU cores, or Felix, an incompressible GPU solver whose solves run on cloud GPUs (hosted workspace only). `auto`, the default, chooses it from your first message, by a request of its own before the agent's first turn, and the workspace -- of that solver's kind -- starts only then; the reason is shown to you and told to the agent, and a request that cannot choose leaves the study on OpenFOAM, said so. Fixed for the whole study; a resumed study keeps its solver and ignores a different flag. `OPENREYNOLDS_SOLVER` sets it when the flag is not given. |
 | `--model <id>` / `--effort low\|medium\|high` | The model and reasoning effort for this session; the model is recorded on the study, so a resume carries on on it unless one is named again. `/model` and `/effort` change either mid-study. |
-| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies` or `doctor` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
+| `--output-format stream-json` | One JSON object per line on stdout and nothing else. See *Driving it from a program*. In front of `studies`, `dashboard`, `doctor` or `compare` it means their `--json`; in front of any other subcommand it is refused rather than ignored. |
 | `openreynolds login` | Sign in; this machine gets its own service key. `--browser` approves a short code in a browser, which is the device-code flow and the only way in for a Google account. |
+| `openreynolds logout` | Sign this machine out: its service key is revoked on the service and removed from the config, and traces queued to share are deleted unsent. If the service cannot be reached nothing changes; `--here-only` removes the key from this machine regardless. Studies on the service stay. |
 | `openreynolds config` | Provider, key, model, context window. `--key-file` and `--from-env` keep keys out of shell history. |
-| `openreynolds doctor` | Check all seven surfaces. Read-only. `--json` answers in one object. |
-| `openreynolds studies` | List the studies on this machine. `--json` answers in one object. |
+| `openreynolds doctor` | Check every surface: settings, workspace, model, capture, sharing, toolbox, terminal, video. Read-only on the service's workspace; with `--local` it pulls the image and starts the container to run `blockMesh` in it. `--json` answers in one object. |
+| `openreynolds studies` | List the studies on this machine, newest first. `--project <name>`, `--tag <tag>` (repeatable, and every tag given must be on the study), `--text <words>` (over the title and the project) and `--state new|finished|unknown` narrow it, and they combine. `--json` answers in one object. |
+| `openreynolds dashboard` | Every study on one screen, newest first: what it is called and filed under, what became of it, how many of its jobs ran and how many were last seen running, how long its sessions took and how many tokens they sent. Takes the same filters as `studies`. It reads `./studies` and starts nothing -- a study whose job rows were last written `running` is reported `unknown`, because settling it means asking the workspace service and a listing does not start a machine. Time and tokens for every study; a dollar figure only where your own key paid your own vendor. `--json` answers in one object. |
+| `openreynolds label` | File a study under a project and tag it: `--project <name>` (an empty value clears it), `--tag`, `--untag`, both repeatable, `--study` to pick one other than the newest. Tags are lower-cased and spaces become hyphens, so a tag typed two ways is one tag. `/project` and `/tag` do the same from inside a session. |
+| `openreynolds clone` | Copy a past study's setup and files into a new study, without its conversation: the project and tags, the title, the solver, the model, the provider and its endpoint, the session mode, and everything of it already on this machine. Not the transcript, the instance, the job rows or the accounting. Nothing is started and nothing is spent. |
+| `openreynolds rerun` | A clone, plus the first thing you said in the old study written in as the first thing you say in the new one, word for word. It is left unanswered, so `openreynolds --study <the new id>` answers it as any resume answers an unanswered message. A study whose transcript holds nothing you said is refused by name rather than reconstructed. |
+| `openreynolds compare <a> <b>` | Put two local studies side by side: identity, every force and coefficient series, how each run ended and what its residuals were doing, the `checkMesh` metrics, the numbers stamped into the figures, and what each study produced that the other did not. A quantity only one study has is reported as missing rather than left out, and two claims under different unit labels as not comparable rather than converted. Every force number names the case and series it was read from, a series or case that was passed over is named, and a quantity that is zero on both sides (a symmetric body's roll moment) is reported as unchanged rather than as a large relative difference. No session and no model: it reads `./studies`. With no ids it takes the two newest and says which. `--tol` is what counts as a difference, 0.01 (1% on a tail mean) by default and printed with the answer; `--studies-dir` reads studies elsewhere; `--json` answers in one object. |
+| `openreynolds site --lat <deg> --lon <deg>` | Fetch wind, OpenStreetMap building footprints and terrain for a real location, on this machine, and write one self-describing `site.json`. It runs here and not in the workspace because the workspace has no outbound network (`docker/workspace/install-guard.sh`), so the fetch happens on this side and the workspace reads a file; `openreynolds push site.json` puts it there, and `toolbox/site_abl.py` and `toolbox/site_stl.py` are what read it. Three free sources, no key for any of them: Open-Meteo's ERA5 archive for hourly wind at 10 m and 100 m (a 12-sector rose, per-sector speed statistics, the prevailing sector and a two-height shear fit), Overpass for footprints with their heights and where each height came from, and Copernicus DEM GLO-90 for an elevation grid. Every block names the URL, the query sent, the retrieval time, its units and its licence, and the wind block records the reanalysis grid cell it actually answered for and how far that is from the coordinates asked for -- 5.4 km, on the first real fetch. A source that fails leaves its sentence in place of its block instead of taking the other two down. Nothing personal is sent: the User-Agent is `openreynolds/<version>` and no request carries a name, an address or an account id. `--radius`, `--from`/`--to`, `--samples`, `--no-weather`/`--no-buildings`/`--no-terrain`, `-o`, `--json`. |
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
 | `openreynolds pull` | Bring this study's files down to this machine. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
 | `openreynolds renders` | Every picture and assembled animation. |
+| `openreynolds view` | Look at a pulled study's results in a browser: one local page of every picture it rendered, grouped by the folder that wrote them, with its reports linked under them. No ParaView, no server, no script and no network in the page, so it works offline. `--study`, `--out`, `--no-open`. |
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
-| `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` skips the prompt. |
+| `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` also kills solver processes that outlived their job. |
+| `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
+| `openreynolds serve` | Serve this machine's own studies over HTTP, for a program that would rather speak REST than MCP: `--bind`, `--port`, `--token`, `--local`. A local control surface, not the hosted API. See *Driving it from a program*. |
+| `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
-work, `/mode`, `/model` and `/effort` change how the session runs, and anything else you
+work, `/project <name>` and `/tag <tag ...>` file the study where you will find it
+again, `/mode`, `/model` and `/effort` change how the session runs, and anything else you
 type reaches the model at its next step -- a receipt says so at once, and an agent
 holding a wait reads it within a second -- so you can steer a run without stopping it. `/help` has the rest; see *In a session: commands, help and
 completion*.
+
+## Using it from Claude Code (MCP)
+
+`openreynolds mcp` lets another agent hand Reynolds a CFD task: Claude Code, or any
+client that speaks the Model Context Protocol. It is the same set of tools the hosted
+Reynolds MCP server offers, defined once in `openreynolds/mcp/core.py`, so a caller
+that has used one has used both. It comes with every install, whether by pip, uvx,
+pipx or npm.
+
+    claude mcp add reynolds -- openreynolds mcp            # a Reynolds workspace (after `openreynolds login`)
+    claude mcp add reynolds -- openreynolds mcp --local    # this machine's Docker workspace
+
+| Tool | What it does |
+| --- | --- |
+| `upload_file` | Stage an input file (STL, STEP, a drawing, data) by its path on this machine. |
+| `start_study` | Start a study, or continue one by `study_id`: the task in words, the staged files, `depth` (`quick` or `full`), `mode`, `model`, `effort`, `solver`. Returns a `session_id` at once. |
+| `study_status` | What the study is doing and what was said since `after_seq`; waits up to 50 s for something to change. The state is `starting`, `working`, `waiting_for_approval`, `waiting_for_input`, `ending`, `ended` or `error`. |
+| `send_message` | Say something to the running study: answer a question, change course, `/btw` a side question. |
+| `answer_approval` | Approve or decline what a `partial` or `structured` study asks before it runs. |
+| `end_study` | End the session: jobs and workspace stopped, files kept. |
+| `list_studies` / `get_results` | The studies on this machine; one study's final message, `results.json`, reports, pictures and file list. |
+| `download_url` | The local path of one of a study's files, copied out of a live workspace first. |
+
+Each study runs inside the server process, as `openreynolds` runs it in a terminal: the
+same configuration, the same workspace, the same `studies/` directory under where the
+server was started (Claude Code starts it in your project). A study nobody has polled
+for 30 minutes ends itself at its next prompt, and when the client goes away every live
+study ends as `end_study` would, files kept; `start_study` with its `study_id` carries
+on. The calling agent's note -- that no person is watching, and what its final message
+should hold -- is added after your own `preferences.md`.
 
 ## Driving it from a program
 
@@ -393,6 +522,8 @@ Two questions come before a session, and both answer as data:
 
     openreynolds doctor --json     # {"ok": …, "failed": […], "checks": [{"check", "ok", "detail"}, …]}
     openreynolds studies --json    # {"dir": …, "studies": [{"study_id", "title", "instance_id", "model", …}, …]}
+    openreynolds dashboard --json  # the same rows, with "project", "tags", "state", "runtime_s", "tokens", "cost_usd"
+    openreynolds compare --json    # {"studies": {"a", "b"}, "forces", "convergence", "mesh", "claims", "artifacts", "summary"}
 
 Straight to stdout, one object, no markup, and `doctor`'s exit code is unchanged for a
 caller that only reads that. These two existed only as styled terminal lines, so the
@@ -453,6 +584,68 @@ ignored rather than guessed at. Commands go the same way: `{"type": "user", "tex
 "/status"}`. An `approval` is answered with a `user` line saying `/yes`, `/no <reason>`
 or `/all`, and until it is answered the session waits.
 
+### Three faces, one set of capabilities
+
+Driving a session from a terminal is one way in; there are three others, and they are
+the same thing wearing different clothes. Nine capabilities -- start a study, read its
+state, say something to it, answer an approval, end it, list studies, read results,
+download a file, stage an upload -- are defined once in `openreynolds/mcp/core.py`
+against a `Host`, which is where the studies actually run. Each face is a thin adapter
+over it, so a state name, a condensed transcript row or a refusal reads the same
+whichever one you use, and none of them can drift from the others.
+
+**Python.** `import openreynolds` is a library, not a CLI to shell out to:
+
+```python
+import openreynolds
+
+study = openreynolds.start("drag on a sphere at Re=1000, SI units")
+for event in study.events():          # the state, and what is new since the last one
+    print(event["state"], event["stage"])
+print(study.results()["final_message"])
+print(study.file(f"/work/{study.study_id}/results.json").read_text())
+```
+
+`start`, `studies`, `results`, `fetch`, `upload`, `shutdown` and `Study` are the whole
+surface, and `openreynolds.__all__` is the promise. The import itself is cheap -- the
+names are fetched on first use, so reading `__version__` does not load the TUI or a
+model client. Studies run in your process, one thread each, with the configuration and
+the workspace a terminal session would use; `shutdown()` ends every live one as `End`
+does, and it runs at interpreter exit too, because a study left running holds a
+workspace that is being paid for.
+
+**HTTP.** `openreynolds serve` puts the same capabilities on a local port:
+
+    openreynolds serve                     # 127.0.0.1:8787, prints the token it generates
+    openreynolds serve --port 9000 --token "$MY_TOKEN" --local
+
+| Request | What it is |
+| --- | --- |
+| `POST /studies` | Start a study, or continue one: `{"task", "depth", "mode", "model", "effort", "notes", "solver", "study_id", "upload_ids"}`. Answers with the `session_id`. |
+| `GET /sessions/<session_id>?after_seq=0&wait=30` | What it is doing, and what was said since `after_seq`. Holds the call open for up to `wait` seconds (50 maximum) and returns the moment the study needs you. |
+| `POST /sessions/<session_id>/messages` | `{"text": "..."}` -- an answer, a requirement, a slash command. |
+| `POST /sessions/<session_id>/approvals` | `{"decision": "approve" \| "decline" \| "approve_all", "note": "..."}`. |
+| `DELETE /sessions/<session_id>` | End the session: jobs and workspace stopped, files kept. |
+| `GET /studies` / `GET /studies/<id>/results` | The studies here; one study's final message, `results.json`, reports, pictures and file list. |
+| `GET /studies/<id>/file?path=...` | One of its files, as bytes. A path outside the study's workspace is refused. |
+| `POST /uploads` | `{"path": "wing.stl"}` stages an input file by its path on this machine. |
+| `GET /` | Every route, what each one does, and the state names. |
+
+Every request carries the token: `Authorization: Bearer <token>`, or
+`X-Reynolds-Token`. It is printed at startup unless `--token` or
+`OPENREYNOLDS_SERVE_TOKEN` gives one, and there is no unauthenticated mode -- this
+process starts compute that costs money. It is the standard library's `http.server`, so
+there is no web framework in the dependencies and none is wanted.
+
+**This is a local control surface, not the hosted service's public API.** Every study it
+starts runs in that process, with this machine's configuration, workspace and
+`studies/` directory, and the files it hands back are this machine's files. It listens
+on localhost; a `--bind` that is not a loopback address is warned about, loudly.
+
+**MCP.** `openreynolds mcp` is the third face, for a calling agent rather than a
+program. See *Using it from Claude Code (MCP)*: the tools are these capabilities with
+the same arguments and the same answers.
+
 ## Configuration
 
 Credentials live in a config file outside any repository, and beside it is
@@ -465,20 +658,60 @@ containers want:
 | Variable | Meaning |
 | --- | --- |
 | `OPENREYNOLDS_PROVIDER` | A preset name, or `reynolds` for the metered model. It does not hold a resume to that provider: a study restores the provider it recorded, so name a model too if you mean to move one. |
+| `OPENREYNOLDS_CONFIG` | The path of the config file (default `~/.config/openreynolds/config.json`, or under `%APPDATA%` on Windows). `preferences.md`, `sharing.json` and the sharing queue live beside it. |
+| `OPENREYNOLDS_LLM_BASE_URL` | The model endpoint, for a provider without a preset: anything speaking the Messages API or Chat Completions. |
+| `OPENREYNOLDS_CONTEXT_WINDOW` | The model's context window in tokens, when the preset's is not the one you have. |
+| `OPENREYNOLDS_LLM_TIMEOUT_S` / `OPENREYNOLDS_MAX_TOOL_OUTPUT` | The longest the model API may go without sending a byte before the call is abandoned (default 300 seconds), and how many bytes of a tool's output are shown inline before a marker says where the rest is (default 48,000). |
 | `OPENREYNOLDS_LLM_API_KEY` | The model key. The vendor's own name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) is read too. |
 | `OPENREYNOLDS_MODEL` / `OPENREYNOLDS_EFFORT` | Which model, and how hard it is asked to think (`low`, `medium` or `high`). A resumed study keeps the model it was last running unless `OPENREYNOLDS_MODEL` names one. |
 | `OPENREYNOLDS_SOLVER` | `auto`, `openfoam` or `felix`, read when `--solver` is not given. A resumed study keeps the solver it has. |
 | `OPENREYNOLDS_MODE` | `auto`, `partial` or `structured`, or an alias. A value that is not a mode is ignored with a warning: the config file's `mode` applies, or full auto, and a resumed study keeps its stored mode. |
 | `FOAMD_URL` / `FOAMD_API_KEY` | The workspace service and this machine's key. |
+| `OPENREYNOLDS_LOCAL` | `docker` (what `--local` sets) runs the workspace in Docker on this machine; `native` uses an OpenFOAM installed here, with no sandbox. Any other value that is not off (`1`, `yes`) means `native`, as it did before Docker. |
+| `OPENREYNOLDS_LOCAL_WORK` / `OPENREYNOLDS_IMAGE` | The local workspace's directory (default `~/.openreynolds/work`) and the Docker image it runs in. |
 | `OPENREYNOLDS_MIRROR_INTERVAL_S` | How often files come home. `0` turns it off. |
 | `OPENREYNOLDS_NARRATE_EVERY_S` | How often a long run wakes the model. `0` turns it off. |
 | `OPENREYNOLDS_WORKSPACE_ETA_S` | How long a workspace usually takes to come up (default 30). A session starts talking before its workspace is up; this is the "usually about N seconds" the model is told while it waits. |
-| `OPENREYNOLDS_CAPTURE` | `0` sends nothing to the platform. |
+| `OPENREYNOLDS_CAPTURE` | `0` keeps each study's transcript on this machine: no copy on the service (traces have their own switch, `OPENREYNOLDS_SHARING`). |
+| `OPENREYNOLDS_SHARING` | `off` shares no trace from this environment, and discards what is queued (see *Sharing*). |
 | `OPENREYNOLDS_TRACE` | A file to append cost events to: one JSON object per turn, tool call and mirror cycle, with the token counts split apart rather than summed. Unset writes nothing. |
 
 By default the transcript of every study is uploaded to the workspace service as it
 runs, so a study is kept somewhere other than one laptop. `--no-capture` for a session,
 or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
+
+### Sharing
+
+While this machine is signed in (`openreynolds login`), OpenReynolds shares a trace of
+each study it runs, on the service's workspace or on this machine's, unless you turn
+sharing off. Traces are how we find where the agent goes wrong on real problems. A trace
+has two parts:
+
+- **Usage:** which tools the agent called and whether they worked, the model, token
+  counts, timings, the kind of workspace and solver, the operating system, and the
+  OpenReynolds and Python versions. No messages, commands or files.
+- **Study content:** your messages, the agent's reasoning and replies, and every tool's
+  inputs and outputs, each cut at 20,000 characters. These can include commands, logs
+  and parts of your case files. Images and other binary results go as their
+  descriptions, and nothing is opened just to be sent.
+
+OpenReynolds says so in one line when you sign in (or, on a machine signed in before
+this version, when the next study starts). A study's trace is sent after it ends, so
+`openreynolds sharing off` before then shares nothing. Through `openreynolds mcp` the
+line is in `start_study`'s answer. Model keys
+and the service key are never sent, and they, environment variables named like secrets
+and the shapes of common keys are removed before a trace is queued.
+
+- `openreynolds sharing off` (or `OPENREYNOLDS_SHARING=off`) stops this machine sharing
+  and discards what it has queued; `openreynolds sharing status` says whether it is on.
+- The web app's Account page deletes every trace your account has shared.
+- `openreynolds logout` revokes the machine's key and deletes what it has queued.
+- Without a service key nothing is recorded or sent. A queued trace is sent only under
+  the account and service it was recorded with; signing in as someone else drops it.
+
+Sharing is separate from capture: capture is the study's copy on the service, shown and
+resumed in the web app; a trace is the record used to improve Reynolds. The privacy
+policy says what is kept and for how long: https://tryreynolds.com/privacy.
 
 ## Layout
 
@@ -486,13 +719,14 @@ or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
 | --- | --- |
 | `cli.py` | Entry point, session assembly, subcommands. |
 | `loop.py` | The tool-use loop: streaming, interjections, thread refresh. |
-| `tools.py` | The eight tool schemas, `checkpoint` for structured mode, and their handlers. |
+| `tools.py` | The nine tool schemas, `checkpoint` for structured mode, `send_to_agent` for the side chat, and their handlers. |
 | `modes.py` / `approval.py` | The three modes and what each gates; putting a question to the person and reading the answer. |
 | `commands.py` | The one registry of typed commands, read by the parser, `/help` and both completions. |
 | `switch.py` | Changing the model, provider or effort mid-study. |
 | `cad/` | The CAD desk behind the `cad` tool: its own brief, its own model client, and one python cell a step in a kernel on the workspace — build or import the shape, tag it, mesh it, look at it, revise. `check.py` is the finish line it does not declare for itself, and `cells.py` decides which cells become the script the run leaves behind. Nothing here imports a CAD kernel into this process. Geometry and meshing used to be a stack of generators and a spec language here; an agent replaced all of it on 2026-09-07, and the kernel replaced that agent's bash. |
 | `watch.py` | Job polling, wake facts, progress, narration. |
 | `mirror.py` / `store.py` | Files home, and the local `./studies/<id>/` record. |
+| `sharing.py` / `redact.py` | The trace of each study a signed-in machine shares, its notice, queue and switch; credentials out of it first. |
 | `backend/` | The `Backend` protocol. `hosted.py` is the only module that knows the service exists; `pending.py` stands in for a workspace that is still coming up, so a session talks before its machine is there. |
 | `llm/` | Provider adapters: Messages API, Chat Completions, and the preset table. |
 | `tui.py` / `view.py` | The interface, behind a presentation-only `View` seam. |

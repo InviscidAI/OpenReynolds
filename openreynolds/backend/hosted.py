@@ -528,6 +528,26 @@ def mint_key(base_url: str, jwt: str, name: str, *, transport: Any = None) -> di
     return _json(response)
 
 
+def revoke_own_key(base_url: str, api_key: str, *, transport: Any = None) -> str:
+    """Revoke the key this request carries (`DELETE /v1/keys/self`): "revoked", or
+    "already" when the service no longer knows it, or "unsupported" from a service
+    older than the route. Raises `BackendError` when it cannot be asked or refuses."""
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=30.0, transport=transport,
+                      follow_redirects=False) as client:
+        try:
+            response = _send_following_safe_redirects(
+                client, "DELETE", "/v1/keys/self", headers={"Authorization": f"Bearer {api_key}"})
+        except httpx.HTTPError as exc:
+            raise BackendError(f"cannot reach {base_url}: {exc}", code="unreachable") from exc
+    if response.status_code in (200, 204):
+        return "revoked"
+    if response.status_code == 401:
+        return "already"
+    if response.status_code in (404, 405):
+        return "unsupported"
+    raise _decode_error(response)
+
+
 def device_code(base_url: str, name: str | None = None, *, transport: Any = None) -> dict[str, Any]:
     """Ask the service for a code a person can approve in a browser.
 
@@ -1056,8 +1076,13 @@ class HostedBackend(KernelHost, Backend):
         one line of warning `_close_down` prints on a failure is the honest place
         for it, not a refusal to exit."""
         try:
-            return _json(self._client.request(
+            rows = _json(self._client.request(
                 "GET", self._instance_path("/jobs"), params={"active": 1}))
+            # Each row's id is `job_id`, as in every job answer of the service's. A
+            # reader once asked for `id`, which is never sent, and counted this
+            # session's own job as somebody else's (#197). One spelling, settled here
+            # where the rows come in, for a service that ever answers with `id`.
+            return [{**row, "job_id": row.get("job_id") or row.get("id")} for row in rows]
         except BackendError:
             raise
         except Exception as exc:  # noqa: BLE001 - a bad body is not worth an exit failing

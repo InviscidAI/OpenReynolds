@@ -258,6 +258,20 @@ def an_openfoam_study_unless_told(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def nothing_is_shared(monkeypatch, tmp_path_factory):
+    """A session that reaches the close-down would queue its trace and send it, from
+    whatever machine the suite runs on, as whoever that machine is signed in as. No test
+    may do that: sharing is off, and its files are a temporary folder's, for every test.
+    `tests/test_sharing.py` turns it back on where sharing is the subject."""
+    from openreynolds import sharing
+
+    folder = tmp_path_factory.mktemp("sharing")
+    monkeypatch.setenv("OPENREYNOLDS_SHARING", "off")
+    monkeypatch.setattr(sharing, "state_path", lambda: folder / "sharing.json")
+    monkeypatch.setattr(sharing, "queue_dir", lambda: folder / "queue")
+
+
+@pytest.fixture(autouse=True)
 def retry_waits_are_instant(monkeypatch):
     """A transient model failure is retried after a wait of seconds to minutes
     (`llm.base.TRANSIENT_WAITS`). The suite's failures are scripted, so the waits are

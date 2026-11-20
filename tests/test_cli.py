@@ -476,6 +476,7 @@ def test_doctor_reports_every_check(monkeypatch):
         "workspace service",
         "model API",
         "capture",
+        "sharing",
         "toolbox",
         "terminal",
         "video assembly",
@@ -604,7 +605,11 @@ def test_doctor_finds_the_toolbox_it_would_sync(monkeypatch):
     ok, detail = labels(cli.run_checks(full_config()))["toolbox"]
     assert ok
     scripts = len(list(cli.TOOLBOX_SOURCE.glob("*.py")))
-    assert f"{scripts} scripts" in detail and "3 notes" in detail
+    # Counted, not hardcoded: the check reports what it would sync, and a note added to
+    # the toolbox is not a regression in the doctor.
+    notes = len(list((cli.TOOLBOX_SOURCE / "notes").glob("*.md")))
+    assert f"{scripts} scripts" in detail and f"{notes} notes" in detail
+    assert notes >= 3
 
 
 def test_config_without_a_terminal_explains_instead_of_aborting(monkeypatch, tmp_path):
@@ -1201,7 +1206,7 @@ def test_a_detached_job_nobody_in_this_session_started_keeps_the_workspace_up(
     start the instance also owned it and stopped it on the way out. A detached
     rendering job died that way with six of its eight steps done."""
     out = _said(monkeypatch)
-    backend = Busy(rows=[{"id": "job-9", "name": "render", "status": "running"}])
+    backend = Busy(rows=[{"job_id": "job-9", "name": "render", "status": "running"}])
 
     cli._close_down(backend, store)
 
@@ -1213,9 +1218,14 @@ def test_a_detached_job_nobody_in_this_session_started_keeps_the_workspace_up(
 
 def test_this_sessions_own_jobs_do_not_keep_the_workspace_up(store, quiet_console):
     """They have just been stopped, two lines above. Counting them would mean a
-    session that ran a single solve could never put its own instance down."""
+    session that ran a single solve could never put its own instance down.
+
+    The rows are in the service's own shape, `job_id` (`app/jobs.py`, `_view`). These
+    fakes used to say `id`, as the code did, so both agreed with each other and not
+    with the service: in production every row read as somebody else's, and a session
+    whose kill had not got through left its instance up for its own job (#197)."""
     store.record_job("job-1", cmd="simpleFoam", name="solve")
-    backend = Busy(rows=[{"id": "job-1", "name": "solve", "status": "running"}])
+    backend = Busy(rows=[{"job_id": "job-1", "name": "solve", "status": "running"}])
     backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
 
     cli._close_down(backend, store)
@@ -1428,7 +1438,7 @@ def test_joining_a_workspace_a_neighbour_is_meshing_in_leaves_it_up(store, monke
 def test_joining_a_workspace_with_a_detached_job_on_it_leaves_it_up(store, monkeypatch):
     out = _said(monkeypatch)
     backend = Neighboured(
-        rows=[{"id": "job-9", "name": "render", "status": "running"}],
+        rows=[{"job_id": "job-9", "name": "render", "status": "running"}],
         already_running=True,
     )
 
@@ -1943,6 +1953,199 @@ def test_login_reports_a_service_that_cannot_be_reached(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser", "--service", "https://nowhere.example"])
     assert result.exit_code == 1
     assert "nowhere.example" in result.output
+
+
+def _no_model_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    for name in ("FOAMD_API_KEY", "FOAMD_URL", "OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL",
+                 "OPENREYNOLDS_LLM_API_KEY", "OPENREYNOLDS_LLM_BASE_URL",
+                 "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+
+
+def _browser_login(monkeypatch, answers):
+    """A code flow whose polls answer, in order, with `answers` (an exception is raised)."""
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {
+        "device_code": "dc", "user_code": "K7QF-M2ZR", "expires_in": 600, "interval": 1})
+    polls = []
+
+    def token(url, device):
+        polls.append(device)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(cli.hosted, "device_token", token)
+    return polls
+
+
+def test_login_keeps_waiting_through_a_gateway_error_and_a_dropped_connection(monkeypatch, tmp_path):
+    """A 502 from the edge while the person was approving the code ended the sign-in,
+    and the code with it: the page then said no terminal was waiting."""
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        None,
+        BackendError("<html>502 Bad Gateway</html>", code="http_error", status=502),
+        BackendError("cannot reach the service: reset", code="unreachable"),
+        BackendError("slow down", code="rate_limited", status=429),
+        {"api_key": "of_live_newkey", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert len(polls) == 5
+    assert json.loads((tmp_path / "c.json").read_text())["foamd_api_key"] == "of_live_newkey"
+    assert result.output.count("still waiting") == 1
+    assert "HTTP 502" in result.output and "<html>" not in result.output
+
+
+def test_login_stops_when_the_service_refuses_the_code(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        BackendError("This code was denied.", code="access_denied", status=400),
+        {"api_key": "never", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert len(polls) == 1
+    assert "denied" in result.output
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_login_backs_off_when_rate_limited(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    waits = []
+    monkeypatch.setattr(cli.time, "sleep", waits.append)
+    _browser_login(monkeypatch, [
+        BackendError("slow down", code="rate_limited", status=429),
+        BackendError("slow down", code="rate_limited", status=429),
+        {"api_key": "of_live_newkey", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert waits == [1.0, 2.0, 4.0]
+
+
+def test_a_permanent_server_error_is_not_waited_through(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    polls = _browser_login(monkeypatch, [
+        BackendError("Not Implemented", code="http_error", status=501),
+        {"api_key": "never", "name": "laptop"},
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert len(polls) == 1
+
+
+def test_a_key_handed_over_on_a_lost_reply_is_named_as_that(monkeypatch, tmp_path):
+    """The service hands the key over exactly once and answers 410 after. When the
+    reply carrying it was lost, the next poll's 410 is not a code that was never used."""
+    _no_model_settings(monkeypatch, tmp_path)
+    _browser_login(monkeypatch, [
+        BackendError("Gateway Timeout", code="http_error", status=504),
+        BackendError("this device code was already used", code="gone", status=410),
+    ])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    out = " ".join(result.output.split())
+    assert "reply that was lost" in out and "Machines" in out
+    assert not (tmp_path / "c.json").exists()
+
+
+def test_a_code_that_expires_during_an_outage_says_so(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    clock = iter([0.0, 0.0, 1.0, 2.0, 999.0])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(cli.hosted, "device_code", lambda url, name: {
+        "device_code": "dc", "user_code": "X", "expires_in": 10, "interval": 1})
+    monkeypatch.setattr(cli.hosted, "device_token", lambda url, device: (_ for _ in ()).throw(
+        BackendError("Bad Gateway", code="http_error", status=502)))
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 1
+    assert "while the service was not answering" in " ".join(result.output.split())
+
+
+@pytest.mark.parametrize("name, value", [
+    ("OPENAI_API_KEY", "sk-own"),
+    ("OPENREYNOLDS_LLM_BASE_URL", "http://localhost:11434/v1"),
+    ("OPENREYNOLDS_LLM_API_KEY", "own"),
+])
+def test_sign_in_never_moves_a_machine_that_brought_its_own_model(monkeypatch, tmp_path, name, value):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.delenv("OPENREYNOLDS_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv(name, value)
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text()).get("provider") != "reynolds"
+
+
+def test_a_first_sign_in_with_no_model_key_uses_reynolds_model(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved["provider"] == "reynolds"
+    out = " ".join(result.output.split())
+    assert "Reynolds' model, metered to your plan" in out
+    assert "model key is still needed" not in out
+    assert cli.Config.load().model_key_missing() is None
+
+
+def test_sign_in_keeps_the_persons_own_model_key(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-own")
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads((tmp_path / "c.json").read_text())
+    assert saved.get("provider") == "anthropic"
+    assert "metered to your plan" not in result.output
+
+
+def test_sign_in_keeps_a_provider_someone_chose_and_says_how_to_switch(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    (tmp_path / "c.json").write_text(json.dumps({"provider": "openai"}))
+    _browser_login(monkeypatch, [{"api_key": "of_live_newkey", "name": "laptop"}])
+
+    result = CliRunner().invoke(cli.main, ["login", "--browser", "--no-browser"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text())["provider"] == "openai"
+    out = " ".join(result.output.split())
+    assert "model key is still needed" in out
+    assert "openreynolds config --provider reynolds" in out
+
+
+def test_a_password_sign_in_with_no_model_key_uses_reynolds_model_too(monkeypatch, tmp_path):
+    _no_model_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    _auth_stubs(monkeypatch, sessions=[{"access_token": "jwt-1"}])
+
+    result = CliRunner().invoke(cli.main, ["login"], input="a@example.com\npw\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "c.json").read_text())["provider"] == "reynolds"
 
 
 def _auth_stubs(monkeypatch, *, sessions, signups=None, minted=None, terms=None):
@@ -2638,3 +2841,126 @@ def test_retry_after_lengthens_a_wait_but_never_shortens_it():
     assert base.retry_delay(raised("Wed, 21 Oct 2026 07:28:00 GMT"), 1) == base.TRANSIENT_WAITS[1]
     assert base.retry_delay(ProviderError("x", 429), len(base.TRANSIENT_WAITS)) is None
     assert base.retry_delay(ProviderError("x", 402), 0) is None
+
+
+
+def _signed_in_machine(monkeypatch, tmp_path, *, revoke=None):
+    """A config file with a key and other settings, a queued trace, and the service's
+    revoke faked: `revoke` answers it (an outcome, or an exception to raise)."""
+    path = tmp_path / "c.json"
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(path))
+    monkeypatch.delenv("FOAMD_API_KEY", raising=False)
+    monkeypatch.delenv("FOAMD_URL", raising=False)
+    monkeypatch.setenv("OPENREYNOLDS_MODEL", "from-the-environment")
+    path.write_text(json.dumps({"foamd_url": "https://api.example", "foamd_api_key": "of_live_x", "model": "m1"}))
+    queue = cli.sharing_mod.queue_dir()
+    queue.mkdir(parents=True, exist_ok=True)
+    (queue / "t.json.gz").write_bytes(b"x")
+    asked = []
+
+    def revoke_own_key(url, key):
+        asked.append((url, key))
+        if isinstance(revoke, Exception):
+            raise revoke
+        return revoke or "revoked"
+
+    monkeypatch.setattr(cli.hosted, "revoke_own_key", revoke_own_key)
+    return path, queue, asked
+
+
+def _logout_said(result):
+    return " ".join(result.output.split())
+
+
+def test_logout_revokes_the_key_then_removes_it_and_the_queue(monkeypatch, tmp_path):
+    path, queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == [("https://api.example", "of_live_x")]
+    assert "Signed out." in _logout_said(result) and "revoked on the service" in _logout_said(result)
+    assert "1 queued trace deleted" in _logout_said(result)
+    # Only the key goes: nothing the environment set is written into the file.
+    assert json.loads(path.read_text()) == {"foamd_url": "https://api.example", "model": "m1"}
+    assert not list(queue.iterdir())
+    assert "of_live_x" not in result.output
+
+
+def test_logout_changes_nothing_when_the_service_cannot_revoke(monkeypatch, tmp_path):
+    path, queue, _asked = _signed_in_machine(
+        monkeypatch, tmp_path, revoke=cli.BackendError("cannot reach", code="unreachable"))
+    before = path.read_text()
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 1
+    assert "nothing was changed" in _logout_said(result) and "--here-only" in _logout_said(result)
+    assert path.read_text() == before and list(queue.iterdir())
+
+
+def test_logout_here_only_removes_the_key_without_asking_the_service(monkeypatch, tmp_path):
+    path, _queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.main, ["logout", "--here-only"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == [] and "stays valid on the service" in _logout_said(result)
+    assert "foamd_api_key" not in json.loads(path.read_text())
+
+
+def test_logout_against_a_service_that_cannot_revoke_says_the_key_still_works(monkeypatch, tmp_path):
+    path, _queue, _asked = _signed_in_machine(monkeypatch, tmp_path, revoke="unsupported")
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "cannot revoke keys yet" in _logout_said(result) and "stays valid there" in _logout_said(result)
+    assert "foamd_api_key" not in json.loads(path.read_text())
+
+
+def test_logout_with_an_environment_key_too_does_not_claim_to_be_signed_out(monkeypatch, tmp_path):
+    path, _queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+    monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == [("https://api.example", "of_live_x")], "the file's key is the one revoked"
+    assert "Signed out" not in result.output and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
+    assert json.loads(path.read_text()) == {"foamd_url": "https://api.example", "model": "m1"}
+    assert "of_live_env" not in path.read_text()
+
+
+def test_logout_with_an_unreadable_config_changes_nothing_and_says_why(monkeypatch, tmp_path):
+    path, queue, asked = _signed_in_machine(monkeypatch, tmp_path)
+    path.write_text('{"foamd_api_key": "of_live_x",')
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 1
+    assert "cannot be read" in _logout_said(result) and "nothing to remove" not in result.output
+    assert asked == [] and path.read_text() == '{"foamd_api_key": "of_live_x",' and list(queue.iterdir())
+
+
+def test_logout_prints_a_config_path_with_brackets_as_it_is(monkeypatch, tmp_path):
+    folder = tmp_path / "[bold]work"
+    folder.mkdir()
+    path, _queue, _asked = _signed_in_machine(monkeypatch, folder)
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "[bold]work" in _logout_said(result)
+
+
+def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(tmp_path / "c.json"))
+    monkeypatch.setenv("FOAMD_API_KEY", "of_live_env")
+    monkeypatch.setattr(cli.hosted, "revoke_own_key", lambda url, key: pytest.fail("nothing to revoke"))
+
+    result = CliRunner().invoke(cli.main, ["logout"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to remove" in _logout_said(result) and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
+    assert not (tmp_path / "c.json").exists()

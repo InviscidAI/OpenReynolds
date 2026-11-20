@@ -49,6 +49,11 @@ class Pending:
     desk_model: str
 
 
+def _study_headers(loop: Any) -> dict[str, str]:
+    """The session's `X-Study-Id`, the one its other clients send (`Loop.study_headers`)."""
+    return getattr(loop, "study_headers", None) or {"X-Study-Id": loop.store.session.study_id}
+
+
 def _mode(cfg: Any) -> str:
     return str(getattr(cfg, "mode", "") or "auto")
 
@@ -205,7 +210,7 @@ def request(loop: Any, text: str, env: Mapping[str, str] | None = None) -> list[
         return [f"already on {model} ({provider})"]
     new = candidate(cfg, provider, model, key)
     try:
-        detail = make_provider(new).probe(model, vision=True)
+        detail = make_provider(new, default_headers=_study_headers(loop)).probe(model, vision=True)
     except (ProviderError, ValueError) as exc:
         reason = getattr(exc, "message", "") or str(exc)
         return [f"not switching to {model}: {reason}"]
@@ -259,7 +264,7 @@ def apply(loop: Any) -> bool:
     if rebuild:
         loop.provider = make_provider(
             cfg, timeout=cfg.llm_timeout_s,
-            default_headers={"X-Study-Id": loop.store.session.study_id},
+            default_headers=_study_headers(loop),
         )
         # Whether a mid-conversation system turn is accepted is a fact about an
         # endpoint, and this is a different one.

@@ -1,17 +1,23 @@
 """`reattach.py`: one reattachment length, and the reason it is not the other three.
 
 In P02 the agent wrote two scripts to answer one question. `reattach.py` found the
-wall-shear sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32 -- right,
-and 4% above Gartling's 6.1. `analyze.py`, the one that drew the delivered figure,
-read 7.5667 -- 24% above it. The written answer said 6.4 and pointed the reader at
-the figure. Nothing reconciled any of it, and nothing could have, because there was
-no blessed implementation for either script to be checked against.
+wall-shear sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32, which is
+the right crossing: 0.21 is the corner eddy and 6.32 closes the primary bubble.
+`analyze.py`, the one that drew the delivered figure, took the next crossing up and
+read 7.5667, 16% away. The written answer said 6.4 and pointed the reader at the
+figure. Nothing reconciled any of it, and nothing could have, because there was no
+blessed implementation for either script to be checked against.
+
+The study also reported 6.32 as 4% above Gartling's 6.1, and that comparison was not
+available to it: 6.1 is in downstream channel heights, which at an expansion ratio of
+2 is 12.2 step heights, and both of the study's numbers are in step heights. So the
+benchmark never separated the two scripts, and what distinguishes them is only which
+crossing of the list each one took. That is what these tests pin.
 
 So the series 0.21 / 6.32 / 7.86 / 9.97 is the fixture almost everything here runs
-on: it is the one case where the right answer, the two wrong ones a careless script
-produces, and the benchmark are all known in advance. The rest is a hand-written
-ASCII polyMesh with a wall shear written onto it, so what comes back out is what
-was put in.
+on: it is the one case where the right answer and the two wrong ones a careless
+script produces are all known in advance. The rest is a hand-written ASCII polyMesh
+with a wall shear written onto it, so what comes back out is what was put in.
 """
 
 from __future__ import annotations

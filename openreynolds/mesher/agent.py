@@ -133,8 +133,13 @@ class Mesher:
 
     def __init__(self, cfg: Any, backend: Any, store: Any, home: str,
                  on_step: Callable[[Step], None] | None = None,
-                 interject: Callable[[], str | None] | None = None):
+                 interject: Callable[[], str | None] | None = None,
+                 headers: dict[str, str] | None = None):
         self.cfg = cfg
+        self.headers = dict(headers or {})
+        """Sent on every model request: the session's `X-Study-Id`, so the service bills
+        the mesher's calls to the study and judges them against its ceiling. A trial
+        account's call without it is refused (foamd `trial_needs_study`)."""
         self.backend = backend
         self.store = store
         """The session's transcript, read for what the person actually said."""
@@ -147,7 +152,7 @@ class Mesher:
         well because this desk holds the thread for minutes at a time, and a remark
         that waits that long is a remark that arrives after the thing it was about."""
         self.model = cfg.mesher_model or cfg.model
-        self.provider = make_provider(cfg, model=self.model)
+        self.provider = make_provider(cfg, model=self.model, default_headers=self.headers)
         self._endpoint = endpoint_key(cfg, self.model)
         """What `provider` was built for; see `_follow`."""
         self.effort = cfg.mesher_effort or "high"
@@ -163,7 +168,7 @@ class Mesher:
         endpoint = endpoint_key(self.cfg, self.model)
         if endpoint != self._endpoint:
             self._endpoint = endpoint
-            self.provider = make_provider(self.cfg, model=self.model)
+            self.provider = make_provider(self.cfg, model=self.model, default_headers=self.headers)
 
     def run(self, request: str, case: str | None = None) -> MeshResult:
         self._follow()

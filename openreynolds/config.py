@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .llm.presets import (
     FALLBACK_CONTEXT_WINDOW,
+    PRESETS,
     REYNOLDS,
     REYNOLDS_SUCCESSORS,
     context_window_for,
@@ -104,6 +105,72 @@ _CONFIG_KEYS = (
     "mode",
 )
 
+
+
+class ConfigUnreadable(Exception):
+    """The config file is there but cannot be read as settings."""
+
+
+def _stored() -> dict[str, object]:
+    """The config file as written, nothing from the environment. {} when there is no
+    file; `ConfigUnreadable` when there is one that cannot be read."""
+    path = config_path()
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigUnreadable(f"{path}: {exc}") from exc
+    if not isinstance(stored, dict):
+        raise ConfigUnreadable(f"{path}: not a settings object")
+    return stored
+
+
+def stored_service_key() -> tuple[str, str]:
+    """(service url, service key) as the config file has them; empty strings for
+    either that is not there. Raises `ConfigUnreadable`."""
+    stored = _stored()
+    return str(stored.get("foamd_url") or ""), str(stored.get("foamd_api_key") or "")
+
+
+_CHOSEN_BY = ("OPENREYNOLDS_PROVIDER", "OPENREYNOLDS_MODEL", "OPENREYNOLDS_LLM_BASE_URL",
+              "OPENREYNOLDS_LLM_API_KEY")
+
+
+def model_chosen() -> bool:
+    """Whether anyone chose whose model this machine uses: the config file names a
+    provider, a model, an endpoint or a key, or the environment does -- any vendor's
+    own key variable included (`OPENAI_API_KEY` with no provider set is still someone
+    bringing their own model). Raises `ConfigUnreadable`."""
+    names = set(_CHOSEN_BY) | {p.key_env for p in PRESETS.values() if p.key_env}
+    if any(os.environ.get(name) for name in names):
+        return True
+    stored = _stored()
+    return any(stored.get(key) for key in
+               ("provider", "model", "llm_base_url", "llm_api_key", "anthropic_api_key"))
+
+
+def forget_service_key() -> bool:
+    """Remove the service key from the config file, leaving every other setting as it
+    was written (not as the environment has it now). Whether the file named one.
+    Written whole or not at all. Raises `ConfigUnreadable`."""
+    stored = _stored()
+    if "foamd_api_key" not in stored:
+        return False
+    had = bool(stored.pop("foamd_api_key"))
+    _write_private(config_path(), json.dumps(stored, indent=2) + "\n")
+    return had
+
+
+def _write_private(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 def _seconds_or(text: str | None, default: float) -> float:
     """A non-negative number of seconds from an environment variable, or `default`
@@ -446,12 +513,19 @@ class Config:
             path.chmod(stat.S_IRUSR | stat.S_IWUSR)
         return path
 
-    def missing(self) -> list[str]:
-        """Which required settings are absent. LLM auth is bring-your-own-key."""
+    def missing(self, *, local: bool = False) -> list[str]:
+        """Which required settings are absent. LLM auth is bring-your-own-key.
+
+        A local workspace needs no service, so then only the model's key is required:
+        the open-source agent runs on a laptop with Docker and a key, and nothing else.
+        A model the service provides still needs the service's key, which
+        `model_key_missing` says."""
         gaps = []
-        if not self.foamd_url:
+        preset = preset_for(self.provider)
+        service = not local or (preset is not None and preset.name == REYNOLDS)
+        if service and not self.foamd_url:
             gaps.append("FOAMD_URL")
-        if not self.foamd_api_key:
+        if service and not self.foamd_api_key:
             gaps.append("FOAMD_API_KEY")
         key = self.model_key_missing()
         if key:

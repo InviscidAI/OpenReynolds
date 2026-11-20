@@ -39,6 +39,12 @@ a machine. The exit status is 0 when every graded check passes, 1 when one fails
 and 2 when the case could not be read. The grader needs pyvista (it is in the
 `dev` and `toolbox` extras).
 
+Both cases are graded on every pull request. `tests/data/felix/cavity_re1000` and
+`tests/data/felix/cylinder_2d1` are real Felix runs with their `solution.vtu` trimmed to
+the cells the grader samples, the suite asserts the numbers they give, and the
+`benchmarks` job in `.github/workflows/tests.yml` runs this grader's own command line
+over them and prints the verdict.
+
 ## What the grader reads
 
 Only what the solver wrote: `case.yaml` for `nu`, `solution.vtu` (in the output

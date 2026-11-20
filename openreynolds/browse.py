@@ -12,6 +12,7 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .backend.base import WORKSPACE_ROOT, Backend, BackendError, ExecResult, StoredListing
 from .store import Store
@@ -180,7 +181,8 @@ class Browser:
     # -- listing ---------------------------------------------------------------
 
     def tree(self, path: str = "", depth: int = DEFAULT_DEPTH,
-             *, background: bool = False) -> Listing:
+             *, background: bool = False,
+             before_walk: Callable[[], object] | None = None) -> Listing:
         """Everything under `path`, to a depth, in one round trip.
 
         Asked of the service first, where there is one to ask. A backend that can
@@ -223,6 +225,11 @@ class Browser:
         session's final sync, then left to sit until the reaper took it down at
         02:42). The service's listing now answers that case before any command is
         considered; the poll-first order is kept for the backends that still walk.
+
+        `before_walk` is called once, just before the walk and only if the walk is
+        what runs. The mirror's background cycle passes its wait for a tool call here:
+        the walk is a command on the channel the call is using, and the service's
+        listing is not, so only the walk is worth waiting for (`mirror.GATE_WAIT_S`).
         """
         path = path or self.home
         depth = int(depth)
@@ -247,6 +254,8 @@ class Browser:
         # returns nothing at all -- not an error, just an empty workspace, which is
         # the most convincing wrong answer available. Deeper symlinks are still left
         # alone, so no loop can be walked into.
+        if before_walk is not None:
+            before_walk()
         # Depth first on each line, for `sort`; see LIST_PIPELINE for why the order of
         # the walk is not the order of the listing.
         cmd = (

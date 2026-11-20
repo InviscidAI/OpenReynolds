@@ -223,7 +223,38 @@ being wrong.
 """The prompt of a Felix study. Frozen like `SYSTEM_PROMPT`, and as short: the Felix
 documentation is in the workspace, so the prompt points at it rather than copying it."""
 
-def system_prompt(solver: str = "openfoam") -> str:
+LOCAL_SWAPS = (
+    (
+        f"`{WORKSPACE_ROOT}` is a persistent volume and a network filesystem. It survives "
+        "between your sessions and across restarts of the machine, so anything you leave "
+        "there — cases, scripts, notes to yourself — is there next time; being over the "
+        "network, many small files cost more than one big one, worst on `reconstructPar` "
+        "(`scratch.py` in the toolbox stages a case to local disk and copies back).",
+        f"`{WORKSPACE_ROOT}` is a directory on the person's own computer, mounted into this "
+        "container. It survives between your sessions, so anything you leave there — "
+        "cases, scripts, notes to yourself — is there next time, and the person can open "
+        "it on their side too.",
+    ),
+    (
+        "The container runs as root, and `nproc` reports how many cores it has. The session "
+        "is billed for all of them, busy or idle, and a serial solve uses one;",
+        "The container runs on the person's own computer, as their user, and `nproc` "
+        "reports how many cores it has. Nothing is billed, but the person may be using the "
+        "machine too, and a serial solve uses one;",
+    ),
+)
+"""What is different about a workspace in a container on the person's own machine
+(`backend/docker.py`): the same image, so the same OpenFOAM, packages and `/work`, but
+a local directory rather than a network volume, the person's user rather than root,
+and no bill. Applied to `SYSTEM_PROMPT` as replacements, so the rest stays one text;
+`tests/test_prompt.py` checks each one still finds its sentence."""
+
+LOCAL_PROMPT = SYSTEM_PROMPT
+for _hosted, _local in LOCAL_SWAPS:
+    LOCAL_PROMPT = LOCAL_PROMPT.replace(_hosted, _local)
+
+
+def system_prompt(solver: str = "openfoam", local: bool = False) -> str:
     """The frozen prompt for a study's solver, as a single cacheable block.
 
     Anything that is not Felix is OpenFOAM, whose prompt is the one this function
@@ -235,4 +266,4 @@ def system_prompt(solver: str = "openfoam") -> str:
     `thinking` block. The block is bound to a different conversation")."""
     if solver == "felix":
         return FELIX_PROMPT
-    return SYSTEM_PROMPT
+    return LOCAL_PROMPT if local else SYSTEM_PROMPT

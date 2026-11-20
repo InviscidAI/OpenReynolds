@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -16,10 +17,13 @@ from pathlib import Path
 from typing import Any
 
 import click
+from rich.markup import escape
 from concurrent.futures import ThreadPoolExecutor
 
 from . import __version__
 from .backend import hosted
+from .backend import docker as docker_backend
+from .backend.docker import DockerBackend
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
@@ -28,20 +32,28 @@ from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
+from .compare import TOL as COMPARE_TOL, compare as compare_studies
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
-from .config import ACCOUNT_PAGE_URL, Config, config_path
+from .config import (
+    ACCOUNT_PAGE_URL, Config, ConfigUnreadable, config_path, forget_service_key, model_chosen,
+    stored_service_key,
+)
 from .delivery import Gallery
 from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
 from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
+from . import viewer
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
-from .mirror import LiveMirror, local_for, sync as mirror_sync
+from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
 from .progress import Tracker, felix_job_facts
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
-from .store import Store, list_studies, new_study_id
+from .store import Store, TornRecord, list_studies, new_study_id
+from . import catalog as catalog_mod
 from .terminal import tolerant_stdout
+from . import serve as serve_mod
+from . import sharing as sharing_mod
 from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
@@ -89,7 +101,7 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
-JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor"})
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard"})
 """Subcommands that have a structured answer for the group's `--output-format` to mean
 something. Everything else it is given with is refused rather than answered in prose."""
 
@@ -129,6 +141,20 @@ def _keep_stdout_for_json() -> None:
     images.suppress()
 
 
+def quiet_stdout() -> None:
+    """Keep the caller's stdout clean: everything this module says moves to stderr.
+
+    The seam a library caller needs. A session run inside somebody else's process still
+    prints through this module's console at roughly fifteen call sites -- hard errors,
+    the joined-workspace warning, close-down -- and in a library that is the caller's
+    own stdout, which may be a protocol or a pipe. `mcp/local.py` kept stdout clean by
+    assigning `cli.console` from outside, which is a module global reached into from
+    another module and not something `openreynolds.sdk` should ask of anyone. This is
+    the same move with a name on it; `_keep_stdout_for_json` is its other caller.
+    """
+    _keep_stdout_for_json()
+
+
 def _is_refusal(exc: BackendError) -> bool:
     """The workspace service answered and said no: payment (402), the plan (403), the
     held cap or a paused study (409). Not an outage, and not one a retry clears."""
@@ -157,7 +183,25 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     )
 
 
-@click.group(invoke_without_command=True)
+class Cli(click.Group):
+    """The command group, with one refusal it makes on every command's behalf.
+
+    A `session.json` that is there but will not parse raises `TornRecord` rather than
+    loading as a blank study (#167). Every command either shows that record or writes
+    it, so every command has the same thing to say about one, and it says it here
+    instead of in forty places: what the file is, that nothing has been written to it,
+    and that the transcript beside it is still there.
+    """
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except TornRecord as exc:
+            console.print(f"[red]{escape(str(exc))}[/]")
+            raise SystemExit(1) from None
+
+
+@click.group(cls=Cli, invoke_without_command=True)
 @click.version_option(__version__, "-V", "--version")
 @click.option("-p", "--prompt", "one_shot", help="Run non-interactively and exit.")
 @click.option("--study", "study_id", help="Resume a local study by id.")
@@ -183,7 +227,14 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     type=click.Choice(EFFORTS, case_sensitive=False),
     help="How hard the model thinks this session. /effort changes it mid-study.",
 )
-@click.option("--no-capture", is_flag=True, help="Do not send anything to the platform.")
+@click.option("--no-capture", is_flag=True, help="Keep this study's transcript on this machine: no copy on the service to see or resume in the web app. Sharing has its own switch (openreynolds sharing off).")
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run the workspace on this machine, in Docker, instead of in the cloud; or "
+         "OPENREYNOLDS_LOCAL=docker. OPENREYNOLDS_LOCAL=native uses an OpenFOAM "
+         "installed here instead, with no sandbox.",
+)
 @click.option("--plain", is_flag=True, help="Plain streaming terminal instead of the interface.")
 @click.option(
     "--keep-alive",
@@ -215,12 +266,17 @@ def main(
     mode: str | None,
     solver: str | None,
     no_capture: bool,
+    local: bool,
     plain: bool,
     keep_alive: bool,
     max_wait: float,
     output_format: str,
 ) -> None:
     """A CFD agent with a real OpenFOAM workspace."""
+    if local:
+        # Through the environment, which is where the session and every subcommand
+        # (`doctor`, `files`, `pull`) already read the choice from.
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
     if ctx.invoked_subcommand is not None:
         # `--output-format` is a GROUP option, so the obvious thing for an agent to do
         # is put it in front of everything -- and this function used to return here
@@ -269,7 +325,7 @@ def main(
     if no_capture:
         cfg.capture = False
 
-    missing = cfg.missing()
+    missing = cfg.missing(local=local_workspace() is not None)
     if missing:
         console.print(f"[red]Missing configuration:[/] {', '.join(missing)}")
         console.print(
@@ -298,45 +354,609 @@ def main(
         raise SystemExit(code)
 
 
+FILTER_HELP = {
+    "project": "Only studies filed under this project.",
+    "tag": "Only studies carrying this tag. Repeatable, and every tag given must be "
+           "on the study.",
+    "text": "Only studies whose title or project contains this.",
+    "state": "Only studies in this state. `unknown` is a study whose job rows were "
+             "last written running, which this machine cannot settle on its own.",
+}
+"""One wording for the four filters `studies` and `dashboard` both take, so the two
+cannot describe the same flag differently."""
+
+
+def _filtered(cfg: Config, project: str, tags: tuple[str, ...], text: str,
+              want: str | None, torn: list[str] | None = None) -> list[dict[str, Any]]:
+    return catalog_mod.filtered(cfg.studies_dir, project, tags, text, want or "", torn)
+
+
+def _say_torn(torn: list[str]) -> None:
+    """Name the studies whose record will not parse, rather than leave them out of a
+    listing in silence. Nothing has written to them."""
+    for study_id in torn:
+        console.print(f"[red]{escape(study_id)}: session.json will not parse[/] -- not "
+                      "listed, and not written to. Repair it or move it aside; the "
+                      "transcript beside it is intact.")
+
+
+def _nothing_found(cfg: Config, filtered: bool) -> None:
+    console.print(
+        f"No studies {'match those filters ' if filtered else ''}under {cfg.studies_dir}"
+    )
+
+
 @main.command("studies")
 @click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option("--project", default="", help=FILTER_HELP["project"])
+@click.option("--tag", "tags", multiple=True, help=FILTER_HELP["tag"])
+@click.option("--text", default="", help=FILTER_HELP["text"])
+@click.option("--state", "want", type=click.Choice(catalog_mod.STATES), default=None,
+              help=FILTER_HELP["state"])
 @click.pass_context
-def studies_cmd(ctx: click.Context, as_json: bool) -> None:
-    """List local studies."""
+def studies_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[str, ...],
+                text: str, want: str | None) -> None:
+    """List local studies, newest first.
+
+    The filters narrow by how the study is filed (`--project`, `--tag`), by what it is
+    called (`--text`, over the title and the project) and by what became of it
+    (`--state`). They combine, and every `--tag` given has to be on the study.
+    """
     as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
-    sessions = list_studies(cfg.studies_dir)
+    torn: list[str] = []
+    found = _filtered(cfg, project, tags, text, want, torn)
     if as_json:
         # This and `doctor --json` are the two commands something has to run before a
         # first session, and both answered only in rich markup -- so the id needed for
         # `--study` had to be recovered by parsing a styled line. Straight to stdout
         # rather than through the console: this is data, and rich would style it.
-        payload = {
-            "dir": str(cfg.studies_dir),
-            "studies": [
-                {
-                    "study_id": item.study_id,
-                    "title": item.title or "",
-                    "instance_id": item.instance_id,
-                    "model": item.model,
-                    "created_at": item.created_at,
-                    "running_jobs": sum(
-                        1 for job in item.jobs.values() if job.status == "running"
-                    ),
-                }
-                for item in sessions
-            ],
-        }
+        payload = {"dir": str(cfg.studies_dir), "studies": found,
+                   "unreadable": list(torn)}
         sys.stdout.write(json.dumps(payload, default=str) + "\n")
         return
-    if not sessions:
-        console.print(f"No studies under {cfg.studies_dir}")
+    _say_torn(torn)
+    if not found:
+        _nothing_found(cfg, any([project, tags, text, want]))
         return
-    for item in sessions:
-        live = sum(1 for job in item.jobs.values() if job.status == "running")
+    for item in found:
+        live = item["running_jobs"]
         suffix = f" - {live} job(s) running" if live else ""
-        title = item.title or "(untitled)"
-        console.print(f"[bold]{item.study_id}[/]  {title}  instance={item.instance_id}{suffix}")
+        filed = "  ".join(part for part in (
+            f"project={item['project']}" if item["project"] else "",
+            f"tags={','.join(item['tags'])}" if item["tags"] else "",
+        ) if part)
+        console.print(
+            f"[bold]{escape(item['study_id'])}[/]  "
+            f"{escape(item['title'] or '(untitled)')}  "
+            f"instance={escape(item['instance_id'])}{suffix}"
+            + (f"  {escape(filed)}" if filed else "")
+        )
+
+
+@main.command("dashboard")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option("--project", default="", help=FILTER_HELP["project"])
+@click.option("--tag", "tags", multiple=True, help=FILTER_HELP["tag"])
+@click.option("--text", default="", help=FILTER_HELP["text"])
+@click.option("--state", "want", type=click.Choice(catalog_mod.STATES), default=None,
+              help=FILTER_HELP["state"])
+@click.pass_context
+def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[str, ...],
+                  text: str, want: str | None) -> None:
+    """Every study on this machine on one screen, newest first.
+
+    What each is called and filed under, what became of it, how many of its jobs ran
+    and how many were last seen running, how long its sessions took and how many
+    tokens they sent. Read off `./studies` alone: no session, no model, and -- the part
+    that matters -- no workspace. A job row reading `running` is how the session that
+    started it left the record; whether the process is alive is the workspace's to
+    say, and a dashboard does not start a machine to ask. Such a study is reported
+    `unknown`, with what is known beside it, rather than guessed at either way.
+
+    Money appears only where your own key paid your own vendor. A study on Reynolds'
+    model is reported in time and tokens, as its plan counts it.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cfg = Config.load()
+    torn: list[str] = []
+    found = _filtered(cfg, project, tags, text, want, torn)
+    if as_json:
+        payload = {"dir": str(cfg.studies_dir), "studies": found,
+                   "unreadable": list(torn)}
+        sys.stdout.write(json.dumps(payload, default=str) + "\n")
+        return
+    _say_torn(torn)
+    if not found:
+        _nothing_found(cfg, any([project, tags, text, want]))
+        return
+
+    console.print(f"[bold]{len(found)}[/] "
+                  f"{'study' if len(found) == 1 else 'studies'} under {cfg.studies_dir}\n")
+    rows: list[tuple[Any, ...]] = [
+        ("study", "state", "project", "tags", "started", "time", "tokens",
+         "cost (your key)", "jobs", "title")
+    ]
+    for item in found:
+        money = item["cost_usd"]
+        rows.append((
+            item["study_id"],
+            item["state"],
+            item["project"] or "-",
+            ",".join(item["tags"]) or "-",
+            (item["created_at"] or "-")[:16],
+            catalog_mod.elapsed(item["runtime_s"]),
+            f"{item['total_tokens']:,}" if item["total_tokens"] else "-",
+            # A dollar sign only here: what the person's own key cost their own
+            # vendor. A hosted study's cell is `-`, because its cost is not shown as
+            # money anywhere (the module docstring in `catalog.py`).
+            "-" if money is None else f"${money:.2f}",
+            f"{item['running_jobs']} running / {item['finished_jobs']} done",
+            (item["title"] or "(untitled)")[:40],
+        ))
+    _aligned(rows)
+
+    unsure = [item for item in found if item["state"] == catalog_mod.UNKNOWN]
+    if unsure:
+        console.print("\n[bold]not known from here[/]")
+        for item in unsure:
+            console.print(f"  {escape(item['study_id'])}: {escape(item['state_detail'])}")
+            console.print("  [dim]  openreynolds stop --study "
+                          f"{item['study_id']} says what actually stopped[/]")
+    if any(not item["own_key"] for item in found):
+        console.print("\n[dim]time and tokens, not money: what a study on Reynolds' "
+                      "model uses is counted against your plan's studies[/]")
+    if any(item["own_key"] and item["cost_usd"] is None and item["total_tokens"] for item in found):
+        console.print("\n[dim]a - under cost (your key) for a study on your own key: its model, or a "
+                      "kind of token it counted, has no rate here, so there is no figure rather than a wrong one[/]")
+
+
+def _the_study(cfg: Config, study_id: str | None) -> str:
+    """The study a subcommand was pointed at, or the newest. Refuses an id that is
+    not there rather than opening a Store, which would make the directory.
+
+    A study whose record will not parse is named here rather than read: without this
+    the id is simply absent from the listing, and `--study` with no argument would
+    pick the next one down and file the wrong study (#167)."""
+    torn: list[str] = []
+    studies = list_studies(cfg.studies_dir, torn)
+    _say_torn(torn)
+    if study_id is None and torn and (not studies or torn[0] > studies[0].study_id):
+        # Ids sort by time, so a torn id above the newest readable one is the study
+        # "the newest" means. Saying which beats quietly labelling the one below it.
+        raise SystemExit(1)
+    if not studies and not torn:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or (studies[0].study_id if studies else "")
+    if chosen in torn:
+        raise SystemExit(1)
+    if not (cfg.studies_dir / chosen / "session.json").is_file():
+        console.print(f"[red]No study called[/] {escape(chosen)} under "
+                      f"{cfg.studies_dir} -- `openreynolds studies` lists the ids.")
+        raise SystemExit(1)
+    return chosen
+
+
+@main.command("label")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--project", default=None,
+              help="File this study under this project. An empty value clears it.")
+@click.option("--tag", "add_tags", multiple=True, help="Add a tag. Repeatable.")
+@click.option("--untag", "drop_tags", multiple=True, help="Drop a tag. Repeatable.")
+def label_cmd(study_id: str | None, project: str | None,
+              add_tags: tuple[str, ...], drop_tags: tuple[str, ...]) -> None:
+    """File a study under a project, and tag it.
+
+    The same record `/project` and `/tag` write from inside a session, for the studies
+    already over. Tags are lower-cased and spaces become hyphens, so a tag typed two
+    ways is one tag. With no option given it says how the study is filed now.
+    """
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    store = Store(cfg.studies_dir, chosen)
+
+    lines: list[str] = []
+    if project is not None:
+        store.session.project = project.strip()
+        store.save()
+        lines.append(f"project: {store.session.project}" if store.session.project
+                     else "project cleared")
+    elif store.session.project:
+        lines.append(f"project: {store.session.project}")
+    lines += commands.tag_lines(store, [*add_tags, *(f"-{tag}" for tag in drop_tags)])
+    console.print(f"[bold]{escape(chosen)}[/]")
+    for line in lines:
+        console.print(f"  {escape(line)}")
+
+
+def _duplicate(study_id: str | None, rerun: bool) -> None:
+    """`clone` and `rerun`: one operation, with and without the opening request."""
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    try:
+        fresh, request = catalog_mod.duplicate(cfg.studies_dir, chosen, rerun=rerun)
+    except catalog_mod.NoOpeningRequest as exc:
+        console.print(f"[red]{escape(str(exc))}.[/]")
+        console.print("[dim]openreynolds clone makes a study with the same setup and "
+                      "the same files, for you to say what you want in[/]")
+        raise SystemExit(1) from None
+
+    console.print(f"[green]{'rerun' if rerun else 'clone'} of[/] {escape(chosen)} "
+                  f"-> [bold]{escape(fresh)}[/]")
+    files = Store(cfg.studies_dir, fresh).files_dir
+    copied = files.is_dir() and any(f.is_file() for f in files.rglob("*"))
+    console.print("  its setup, its project and tags" + (" and its local files" if copied else "")
+                  + " are copied; its conversation is not")
+    # Its workspace directory is its own and starts empty (#170): the copied files are
+    # on this machine, and only `push` sends anything up -- once the clone is running,
+    # since before that it has no workspace, and a push would land on another study's.
+    if copied:
+        console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
+    else:
+        console.print("  its workspace starts empty; the study it came from had no files on this machine")
+    if copied and not local_workspace():  # `push` reaches the hosted workspace only
+        console.print(f"  once it is running, [bold]openreynolds push <file> --study {fresh}[/] "
+                      "sends one of them up")
+    if request:
+        first = request.splitlines()[0][:90]
+        console.print(f"  it opens on what started {escape(chosen)}, word for word: "
+                      f"{escape(first)}{'...' if len(request) > len(first) else ''}")
+        console.print(f"\n  [bold]openreynolds{_local_flag()} --study {fresh}[/] "
+                      "answers it")
+    else:
+        console.print(f"\n  [bold]openreynolds{_local_flag()} --study {fresh}[/] "
+                      "starts it; say what you want in it")
+
+
+@main.command("clone")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+def clone_cmd(study_id: str | None) -> None:
+    """Copy a past study's setup and files into a new one, without its conversation.
+
+    What is carried: the project and tags, the title, the solver, the model, the
+    provider and its endpoint, the session mode, and everything of the study already
+    on this machine (`files/`). What is not: the transcript, the instance, the job
+    rows and the accounting -- those are facts about a run that happened, and this one
+    has not. Nothing is started and nothing is spent; the new study is picked up like
+    any other.
+    """
+    _duplicate(study_id, rerun=False)
+
+
+@main.command("rerun")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+def rerun_cmd(study_id: str | None) -> None:
+    """Ask a past study's opening question again, as a new study.
+
+    A clone, plus the first thing you said in the old study written in as the first
+    thing you say in the new one -- word for word, never a paraphrase. It is left
+    unanswered, which is the state a resume already picks up and answers first, so
+    `openreynolds --study <the new id>` runs it. A study whose transcript holds
+    nothing you said is refused by name: there is no request to repeat, and a
+    plausible reconstruction would be a new study claiming to be a repeat of an old
+    one.
+
+    Nothing is started here and nothing is spent.
+    """
+    _duplicate(study_id, rerun=True)
+
+
+def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:
+    """Print rows as aligned columns, the first row being the header.
+
+    Escaped, because these cells carry file names and `checkMesh` numbers and a
+    `[` in one of them is markup to rich.
+    """
+    if not rows:
+        return
+    span = max(len(row) for row in rows)
+    width = [max((len(str(row[i])) for row in rows if i < len(row)), default=0)
+             for i in range(span)]
+    for number, row in enumerate(rows):
+        line = indent + "  ".join(
+            str(cell).ljust(width[i]) for i, cell in enumerate(row)).rstrip()
+        console.print(f"[bold]{escape(line)}[/]" if number == 0 else escape(line))
+
+
+def _case_cell(side: dict[str, Any] | None) -> str:
+    """Which case a force number was read from, in the table.
+
+    A column with no case beside it is how #143's table read as one body of numbers
+    while `Cd` came from `case` and `total_z` from `case_axisX`.
+    """
+    return f"{side['case']}/{side['series']}" if side else "missing"
+
+
+def _mean_cell(side: dict[str, Any] | None) -> str:
+    """A tail mean, or a single row said to be a single row (#143): a one-row
+    `force.dat` printed under "a mean" is a number claiming to be an average of
+    something."""
+    if not side:
+        return "missing"
+    text = _number(side["tail_mean"])
+    return f"{text} (1 row)" if side["rows"] == 1 else text
+
+
+def _number(value: Any, missing: str = "missing") -> str:
+    """A cell: five significant figures, or why there is nothing to print."""
+    if value is None:
+        return missing
+    if isinstance(value, float):
+        return f"{value:.5g}"
+    if isinstance(value, list):
+        return " / ".join(str(item) for item in value)
+    return str(value)
+
+
+@main.command("compare")
+@click.argument("left", required=False)
+@click.argument("right", required=False)
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.option(
+    "--studies-dir",
+    "studies_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Where the studies are. Defaults to ./studies, as a session uses.",
+)
+@click.option(
+    "--tol",
+    "tol",
+    type=float,
+    default=None,
+    help=(f"What counts as a difference, as a fraction. Default {COMPARE_TOL:g} "
+          f"({COMPARE_TOL * 100:g}% on a tail mean), and it is printed with the answer."),
+)
+@click.pass_context
+def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
+                as_json: bool, studies_dir: Path | None, tol: float | None) -> None:
+    """Put two local studies side by side.
+
+    A second run is the point of the first: a mesh refined, a model swapped, a
+    boundary condition corrected -- and the question afterwards is what actually
+    changed. This reads both studies off disk and reports the force and coefficient
+    histories, how each run ended, each mesh's `checkMesh` metrics, the numbers the
+    figures were stamped with, and what each study produced that the other did not.
+
+    No session, no workspace, no model: it reads `./studies` and spends nothing.
+    Given no ids it takes the two newest and says which it chose. A quantity only one
+    study has is reported as missing rather than left out -- the comparison it could
+    not make is the thing worth knowing. Every force number names the case and series
+    it was read from, and the tolerance a verdict was measured against is printed with
+    it; `--tol` moves it.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cfg = Config.load()
+    root = studies_dir or cfg.studies_dir
+    chose = ""
+    if not (left and right):
+        ids = [item.study_id for item in list_studies(root)]
+        if len(ids) < 2:
+            console.print(
+                f"[red]compare needs two studies[/] and {root} has "
+                f"{len(ids)}; `openreynolds studies` lists them."
+            )
+            raise SystemExit(1)
+        # Newest first, as every other --study-less subcommand reads that list, so
+        # `compare` with nothing named is the newest run against the one before it.
+        if not left:
+            left, right = ids[1], ids[0]
+            chose = f"nothing named, so: a = {left} (older), b = {right} (newest)"
+        else:
+            # One id named is "this one against the latest", and the latest must not
+            # be the one named -- a study compared with itself is a page of zeroes.
+            right = next((one for one in ids if one != left), ids[0])
+            chose = f"one id named, so: a = {left}, b = {right} (the newest other study)"
+
+    try:
+        report = compare_studies(root, left, right, tol)
+    except FileNotFoundError as exc:
+        console.print(
+            f"[red]No study at[/] {exc} -- `openreynolds studies` lists the ids "
+            f"under {root}."
+        )
+        raise SystemExit(1) from exc
+    report["chose"] = chose
+
+    if as_json:
+        sys.stdout.write(json.dumps(report, default=str) + "\n")
+        return
+
+    a, b = report["studies"]["a"], report["studies"]["b"]
+    if chose:
+        console.print(chose)
+    console.print("")
+    _aligned([
+        ("", "a", "b"),
+        ("study", a["study_id"], b["study_id"]),
+        ("title", a["title"] or "(untitled)", b["title"] or "(untitled)"),
+        ("when", a["created_at"] or "-", b["created_at"] or "-"),
+        ("model", a["model"] or "-", b["model"] or "-"),
+        ("solver", a["solver"] or "-", b["solver"] or "-"),
+        ("instance", (a["instance_id"] or "-")[:12], (b["instance_id"] or "-")[:12]),
+        ("messages", a["messages"], b["messages"]),
+    ])
+
+    console.print("\n[bold]headline numbers[/] (difference is b - a, relative to the larger)")
+    rows: list[tuple[Any, ...]] = [
+        ("series", "a case", "a last", "a mean", "b case", "b last", "b mean",
+         "b - a (mean)", "relative")
+    ]
+    for row in report["forces"]["series"]:
+        side_a, side_b = row["a"], row["b"]
+        relative = row["tail_mean"]["relative"]
+        rows.append((
+            row["name"],
+            _case_cell(side_a),
+            _number(side_a and side_a["last"]),
+            _mean_cell(side_a),
+            _case_cell(side_b),
+            _number(side_b and side_b["last"]),
+            _mean_cell(side_b),
+            _number(row["tail_mean"]["absolute"], "-"),
+            "-" if relative is None else f"{relative * 100:.1f}%",
+        ))
+    if len(rows) == 1:
+        rows.append(("none logged",) + ("",) * 8)
+    _aligned(rows)
+    for side in ("a", "b"):
+        for why in [report["forces"]["unavailable"][side]] + report["forces"]["notes"][side]:
+            if why:
+                console.print(f"  {side}: {escape(why)}")
+
+    console.print("\n[bold]convergence[/]")
+    for side in ("a", "b"):
+        for line in report["convergence"]["ended"][side] or ["nothing read"]:
+            console.print(f"  {side}: {escape(line)}")
+        why = report["convergence"]["unavailable"][side]
+        if why:
+            console.print(f"  {side}: {escape(why)}")
+    _aligned([("field", "a", "a last", "b", "b last")] + [
+        (row["field"],
+         (row["a"] or {}).get("shape", "missing"), _number((row["a"] or {}).get("last")),
+         (row["b"] or {}).get("shape", "missing"), _number((row["b"] or {}).get("last")))
+        for row in report["convergence"]["fields"]
+    ])
+
+    console.print("\n[bold]mesh[/]")
+    _aligned([("metric", "a", "b")] + [
+        (row["metric"], _number(row["a"]), _number(row["b"]))
+        for row in report["mesh"]["metrics"]
+    ] or [("metric", "a", "b")])
+    for side in ("a", "b"):
+        for line in (report["mesh"]["failures"][side] + report["mesh"]["warnings"][side]
+                     + [report["mesh"]["unavailable"][side]]):
+            if line:
+                console.print(f"  {side}: {escape(line)}")
+
+    console.print("\n[bold]claims[/] (stamped into the figures themselves)")
+    rows = [("claim", "a", "b", "apart", "")]
+    for row in report["claims"]:
+        if row["missing"]:
+            held = row["a"] or row["b"]
+            rows.append((row["name"], _number(row["a"] and row["a"]["value"]),
+                         _number(row["b"] and row["b"]["value"]), "-",
+                         f"missing in {row['missing']} ({held['units'] or 'no unit'})"))
+            continue
+        verdict = ("agree" if row["agree"] else "DIFFER") if row["comparable"] else (
+            f"not comparable: {row['a']['units'] or 'no unit'} against "
+            f"{row['b']['units'] or 'no unit'}")
+        rows.append((
+            row["name"],
+            f"{row['a']['value']:.5g} {row['a']['units']}".strip(),
+            f"{row['b']['value']:.5g} {row['b']['units']}".strip(),
+            "-" if row["apart"] is None else f"{row['apart'] * 100:.1f}%",
+            verdict,
+        ))
+    _aligned(rows)
+
+    console.print("\n[bold]artifacts[/]")
+    _aligned([("kind", "a", "b", "")] + [
+        (row["kind"], row["a"], row["b"],
+         f"only in {row['missing'] and ('a' if row['missing'] == 'b' else 'b')}"
+         if row["missing"] else "")
+        for row in report["artifacts"]
+    ])
+
+    short = report["summary"]
+    console.print("\n[bold]what this adds up to[/]")
+    console.print(f"  {short['compared']} quantities compared, a difference being more "
+                  f"than {short['tol'] * 100:g}% ([bold]--tol[/] moves it)")
+    if not (short["differ"] or short["one_sided"] or short["not_comparable"]):
+        console.print(f"  [green]no differences[/]: every quantity compared matched "
+                      f"to within {short['tol'] * 100:g}%")
+    for line in short["differ"]:
+        console.print(f"  [yellow]differs[/] {escape(line)}")
+    for line in short["negligible"]:
+        console.print(f"  [green]zero on both sides[/] {escape(line)}")
+    for line in short["one_sided"]:
+        console.print(f"  [yellow]not compared[/] {escape(line)}")
+    for line in short["not_comparable"]:
+        console.print(f"  [yellow]not compared[/] {escape(line)}")
+
+
+@main.command("site")
+@click.option("--lat", "lat", type=float, required=True, help="Latitude, degrees north, WGS84.")
+@click.option("--lon", "lon", type=float, required=True, help="Longitude, degrees east, WGS84.")
+@click.option("--name", "name", default="", help="What to call the site in the file. Defaults to the coordinates.")
+@click.option("--radius", "radius", type=float, default=500.0, show_default=True,
+              help="Half-width of the square box for footprints and terrain, in metres.")
+@click.option("--from", "start", default="", help="First day of wind history, YYYY-MM-DD. Defaults to last calendar year.")
+@click.option("--to", "end", default="", help="Last day of wind history, YYYY-MM-DD.")
+@click.option("--samples", "samples", type=int, default=21, show_default=True,
+              help="Elevation samples a side. The DEM is 90 m, so more than ~2*radius/90 buys nothing.")
+@click.option("--levels-height", "levels_height", type=float, default=3.0, show_default=True,
+              help="Metres per storey, for footprints tagged with levels but no height.")
+@click.option("--no-weather", "no_weather", is_flag=True, help="Skip the wind history.")
+@click.option("--no-buildings", "no_buildings", is_flag=True, help="Skip the OSM footprints.")
+@click.option("--no-terrain", "no_terrain", is_flag=True, help="Skip the elevation grid.")
+@click.option("--opentopography-key", "ot_key", default="", envvar="OPENTOPOGRAPHY_API_KEY",
+              help="Accepted and not needed: the DEM used asks for no key.")
+@click.option("-o", "--out", "out", type=click.Path(dir_okay=False, path_type=Path),
+              default=Path("site.json"), show_default=True, help="Where to write the file.")
+@click.option("--json", "as_json", is_flag=True, help="Write to stdout instead of a file.")
+def site_cmd(lat: float, lon: float, name: str, radius: float, start: str, end: str,
+             samples: int, levels_height: float, no_weather: bool, no_buildings: bool,
+             no_terrain: bool, ot_key: str, out: Path, as_json: bool) -> None:
+    """Fetch wind, building footprints and terrain for a real location.
+
+    This runs here, on your machine, because the workspace has no outbound network:
+    `install-guard.sh` refuses anything that needs a fetch. So the fetch happens on
+    this side and the workspace reads one file -- `site.json` by default, with every
+    block naming the URL it came from, the query sent, when it was retrieved, its
+    units and its licence.
+
+    Three free sources, no key for any of them: Open-Meteo's ERA5 archive for hourly
+    wind at 10 m and 100 m, Overpass for OpenStreetMap building footprints, and
+    Copernicus DEM GLO-90 for elevation. The wind is a reanalysis, so it answers for
+    a grid cell tens of kilometres across; the file records the cell centre it
+    actually answered for and how far that is from the coordinates asked for.
+
+    Nothing personal is sent: the User-Agent is `openreynolds/<version>` and no
+    request carries a name, an address or an account id.
+
+    In the workspace, `toolbox/site_abl.py` turns the wind into an atmospheric
+    boundary layer inlet and `toolbox/site_stl.py` turns the footprints and the
+    terrain into surfaces. `openreynolds push site.json` puts the file there.
+    """
+    from . import site as site_mod
+
+    if not start or not end:
+        default_start, default_end = site_mod.default_period()
+        start = start or default_start
+        end = end or default_end
+
+    parts = [part for part, asked in (("wind", not no_weather),
+                                      ("footprints", not no_buildings),
+                                      ("terrain", not no_terrain)) if asked]
+    console.print(f"Fetching {', '.join(parts) or 'nothing'} for {lat}, {lon} ...",
+                  highlight=False)
+    data = site_mod.collect(
+        lat, lon, name=name, radius_m=radius, start=start, end=end, samples=samples,
+        levels_height=levels_height, weather=not no_weather, buildings=not no_buildings,
+        terrain=not no_terrain, opentopography_key=ot_key,
+    )
+
+    if as_json:
+        sys.stdout.write(json.dumps(data) + "\n")
+    else:
+        size = site_mod.write(data, out)
+        console.print("")
+        for line in site_mod.headline(data):
+            console.print(line, highlight=False, markup=False)
+        console.print("")
+        for line in site_mod.attributions(data):
+            console.print(f"[dim]{escape(line)}[/]")
+        console.print(f"\n[bold]{out}[/] ({size / 1024:.0f} kB)")
+        console.print(f"[dim]openreynolds push {out}[/] puts it in the workspace")
+
+    # A file with no usable block is a failure, and a script needs to be able to tell.
+    failed = [key for key in ("weather", "buildings", "terrain")
+              if isinstance(data.get(key), dict) and data[key].get("failed")]
+    asked = sum(1 for flag in (no_weather, no_buildings, no_terrain) if not flag)
+    if failed and len(failed) == asked:
+        raise SystemExit(1)
 
 
 @main.command("config")
@@ -489,9 +1109,72 @@ def login_cmd(
 
     cfg.foamd_url = url
     cfg.foamd_api_key = str(token["key"])
+    on_reynolds = _model_from_the_service(cfg)
     path = cfg.save()
     console.print(f"\n[green]Signed in as {email}.[/] This machine's key ([bold]{token.get('name') or label}[/]) is saved to {path}")
-    _say_what_is_next(cfg)
+    notice = sharing_mod.take_notice(cfg)
+    if notice:
+        console.print(notice, markup=False, highlight=False)
+    _say_what_is_next(cfg, on_reynolds)
+
+
+@main.command("logout")
+@click.option("--here-only", is_flag=True,
+              help="Remove the key from this machine without revoking it on the service.")
+def logout_cmd(here_only: bool) -> None:
+    """Sign this machine out: its service key is revoked on the service and removed
+    from the config, and the traces it queued to share are deleted unsent.
+
+    Revoking first is what stops a copy of the key, and any study still running on
+    this machine, from going on using it. If the service cannot be reached nothing is
+    changed, unless --here-only says to remove the key from this machine regardless.
+    Studies already on the service stay there. A key in FOAMD_API_KEY is not in the
+    config file: it is left alone, and this says so.
+    """
+    path = escape(str(config_path()))
+    try:
+        stored_url, key = stored_service_key()
+    except ConfigUnreadable as exc:
+        console.print(f"[red]The config file cannot be read, so nothing was changed:[/] {escape(str(exc))}")
+        raise SystemExit(1) from None
+
+    outcome = ""
+    url = stored_url or Config.load().foamd_url
+    if key and not here_only:
+        try:
+            outcome = hosted.revoke_own_key(url, key)
+        except BackendError as exc:
+            console.print(f"[red]Could not revoke the key at {escape(url)}, so nothing was changed:[/] {escape(exc.message)}")
+            console.print("Run [bold]openreynolds logout[/] again once the service answers, or "
+                          "[bold]openreynolds logout --here-only[/] to remove the key from this "
+                          "machine only; it would stay valid on the service.")
+            raise SystemExit(1) from None
+    try:
+        removed = forget_service_key()
+    except ConfigUnreadable as exc:
+        console.print(f"[red]The config file cannot be read:[/] {escape(str(exc))}")
+        raise SystemExit(1) from None
+    dropped = sharing_mod.clear_queue()
+    env_key = bool(os.environ.get("FOAMD_API_KEY"))
+
+    if removed:
+        done = "Signed out." if not env_key else "The saved key is gone."
+        if outcome == "revoked":
+            console.print(f"[green]{done}[/] The key is revoked on the service and removed from {path}.")
+        elif outcome == "already":
+            console.print(f"[green]{done}[/] The key is removed from {path}; the service had already revoked it.")
+        elif outcome == "unsupported":
+            console.print(f"[yellow]{done}[/] The key is removed from {path}, but {escape(url)} cannot "
+                          "revoke keys yet, so it stays valid there.")
+        else:
+            console.print(f"[yellow]{done}[/] The key is removed from {path}; it stays valid on the service.")
+    else:
+        console.print(f"No service key is saved in {path}, so there was nothing to remove.")
+    if dropped:
+        console.print(f"{dropped} queued trace{'s' if dropped != 1 else ''} deleted unsent.")
+    if env_key:
+        console.print("[yellow]Still signed in through FOAMD_API_KEY[/], which this does not "
+                      "touch: unset it to sign out.")
 
 
 def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) -> dict[str, Any] | None:
@@ -512,8 +1195,9 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     # whether this address earns it -- a domain list copied into the client goes stale
     # and starts telling people the opposite of what they are about to get.
     console.print(
-        "A company email address starts a 30-day Pro trial with 15 full-depth studies, "
-        "no card needed. A personal address starts a 30-day Starter trial with 5, with a card."
+        "A company email address starts a 30-day Pro trial with 15 full-depth studies; a "
+        "personal address starts a 30-day Starter trial with 5. Both take a card and renew "
+        "unless you cancel."
     )
     if not _can_prompt() or not click.confirm(f"Create an account for {email} with this password?", default=False):
         return None
@@ -534,12 +1218,34 @@ def _offer_account(auth: dict[str, Any], url: str, email: str, password: str) ->
     return session
 
 
-def _say_what_is_next(cfg: Config) -> None:
+def _model_from_the_service(cfg: Config) -> bool:
+    """At sign-in, a machine with no model of its own gets Reynolds' model, metered to
+    the account, so a new sign-in can start a study without a second key to find.
+    Only when nothing chose otherwise: no provider, model or endpoint in the config file
+    or the environment, and no key for the default provider either. Whether it did."""
+    if cfg.model_key_missing() is None:
+        return False
+    try:
+        if model_chosen():
+            return False
+    except ConfigUnreadable:
+        return False
+    _apply_preset(cfg, REYNOLDS)
+    return True
+
+
+def _say_what_is_next(cfg: Config, on_reynolds: bool = False) -> None:
+    if on_reynolds:
+        console.print(
+            "Studies use Reynolds' model, metered to your plan. To use your own key "
+            "instead, set it (e.g. [bold]ANTHROPIC_API_KEY[/]) and run "
+            "[bold]openreynolds config --provider anthropic[/], or add [bold]--key-file[/]."
+        )
     still = cfg.model_key_missing()
     if still:
         console.print(
-            f"The model key is still needed: set [bold]{still}[/] or run "
-            "[bold]openreynolds config[/]. Then [bold]openreynolds doctor[/]."
+            f"The model key is still needed: set [bold]{still}[/], or use Reynolds' model "
+            "with [bold]openreynolds config --provider reynolds[/]. Then [bold]openreynolds doctor[/]."
         )
     else:
         console.print("Next: [bold]openreynolds doctor[/], then [bold]openreynolds[/].")
@@ -547,6 +1253,17 @@ def _say_what_is_next(cfg: Config) -> None:
 
 LOGIN_POLL_CAP_S = 15.0
 """The service says how often to ask; this is how often is too often to be polite."""
+
+
+def _passing(exc: BackendError) -> bool:
+    """An error worth asking again after: the service unreachable, or one of the
+    statuses every other call to it retries (`hosted._RETRY_STATUSES`). A refusal
+    (expired, denied, unknown code) is final."""
+    return exc.code == "unreachable" or exc.status in hosted._RETRY_STATUSES
+
+
+def _short(exc: BackendError) -> str:
+    return f"HTTP {exc.status}" if exc.status else exc.code
 
 
 def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
@@ -576,22 +1293,51 @@ def _login_browser(cfg: Config, url: str, label: str, no_browser: bool) -> None:
     deadline = time.monotonic() + float(offer.get("expires_in", 600))
     device = str(offer.get("device_code", ""))
     token: dict[str, Any] | None = None
+    failing = False  # whether the last poll got no answer
+    answer_lost = False  # whether any poll did
     while token is None:
         if time.monotonic() > deadline:
-            console.print("[red]The code expired before it was approved.[/] Run login again.")
+            if failing:
+                console.print("[red]The code expired while the service was not answering.[/] "
+                              "Run login again once it is back.")
+            else:
+                console.print("[red]The code expired before it was approved.[/] Run login again.")
             raise SystemExit(1)
         time.sleep(interval)
         try:
             token = hosted.device_token(url, device)
         except BackendError as exc:
-            console.print(f"[red]Signing in failed:[/] {exc.message}")
-            raise SystemExit(1) from None
+            if not _passing(exc):
+                if answer_lost and exc.status == 410:
+                    # The service hands the key over once. A poll whose answer was
+                    # lost on the way back can have been that once.
+                    console.print(
+                        "[red]Signing in failed:[/] the service had already handed this "
+                        "machine's key over, on a reply that was lost on the way back. "
+                        f"Revoke the newest key under Machines at {ACCOUNT_PAGE_URL}/#/account, "
+                        "then run login again.")
+                else:
+                    console.print(f"[red]Signing in failed:[/] {escape(exc.message)}")
+                raise SystemExit(1) from None
+            # The code is still good on the service: a gateway error or a dropped
+            # connection while the person is approving it must not throw it away.
+            if not failing:
+                console.print(f"[dim]The service did not answer ({escape(_short(exc))}); still waiting.[/]")
+            failing = answer_lost = True
+            if exc.status == 429:
+                interval = min(interval * 2, LOGIN_POLL_CAP_S)
+            continue
+        failing = False
 
     cfg.foamd_url = str(token.get("base_url") or url).rstrip("/")
     cfg.foamd_api_key = str(token["api_key"])
+    on_reynolds = _model_from_the_service(cfg)
     path = cfg.save()
     console.print(f"\n[green]Signed in.[/] Key [bold]{token.get('name') or label}[/] saved to {path}")
-    _say_what_is_next(cfg)
+    notice = sharing_mod.take_notice(cfg)
+    if notice:
+        console.print(notice, markup=False, highlight=False)
+    _say_what_is_next(cfg, on_reynolds)
 
 
 def _apply_preset(cfg: Config, name: str) -> None:
@@ -759,8 +1505,9 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     """Copy this study's files down to this machine.
 
     A session already does this at the end of every turn, so this is for asking
-    again, for asking about one directory, or for `--all` when the default judgement
-    about what is worth keeping is the wrong one for this study.
+    again, for asking about one directory, or for everything when the default judgement
+    about what is worth keeping is the wrong one for this study (`--readable-only`
+    brings only what can be read).
     """
     cfg = Config.load()
     studies = list_studies(cfg.studies_dir)
@@ -885,6 +1632,54 @@ def renders_cmd(study_id: str | None, open_it: bool) -> None:
         _open_folder(store.renders_dir, view)
 
 
+@main.command("view")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--out", "out_path", default=None, type=click.Path(path_type=Path),
+              help=f"Where the page goes. Defaults to <study>/{viewer.PAGE_NAME}.")
+@click.option("--no-open", "no_open", is_flag=True,
+              help="Write the page and print its path instead of opening a browser.")
+def view_cmd(study_id: str | None, out_path: Path | None, no_open: bool) -> None:
+    """Look at this study's results in a browser: one local page, no ParaView.
+
+    Every picture the study rendered -- the geometry from four angles, the mesh
+    coloured per patch, the field panels, the animation frames -- grouped by the
+    folder it came from, newest first, with the reports and `results.json` linked
+    under them. Purely local: no instance is started, nothing is downloaded, and
+    the page has no script and no network in it, so it works offline.
+
+    The pictures are linked, not embedded, so the page is a few kilobytes whatever
+    the study weighs. For a page that can be attached to a message and opened
+    somewhere else, the `gallery.py` toolbox script embeds them instead.
+
+    It shows what was rendered; it does not rotate the mesh in the browser.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+    if not store.dir.is_dir():
+        console.print(f"[red]No study {chosen} under {cfg.studies_dir}[/]")
+        raise SystemExit(1)
+
+    page, pictures, reports = viewer.build(store.dir, out=out_path, title=chosen)
+    console.print(f"[green]{page}[/]  ({pictures} picture(s), {reports} report(s))")
+    if not pictures and not reports:
+        console.print(
+            f"[dim]nothing was rendered here yet - openreynolds pull --study {chosen}[/]"
+        )
+    if no_open:
+        return
+    try:
+        opened = bool(webbrowser.open(page.resolve().as_uri()))
+    except Exception:  # noqa: BLE001 - a browser that will not open is not an error here
+        opened = False
+    if not opened:
+        console.print("[dim]open that file in a browser[/]")
+
+
 @main.command("video")
 @click.argument("frames", default="")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
@@ -912,7 +1707,11 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
     if frames:
         mapped = workspace_path(frames)
         if mapped.startswith(WORKSPACE_ROOT):
-            directory = local_for(store.files_dir, mapped)
+            try:
+                directory = local_for(store.files_dir, mapped)
+            except OutsideMirror:
+                console.print(f"[yellow]{frames} is not inside {WORKSPACE_ROOT}/[/]")
+                raise SystemExit(1) from None
         else:
             directory = Path(frames)
     else:
@@ -942,6 +1741,75 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
         console.print(f"[red]{exc}[/]")
         raise SystemExit(1) from exc
     console.print(f"[green]{target}[/]  ({len(sequence)} frames at {fps:g} fps, via {tool})")
+
+
+@main.command("mcp")
+@click.option("--local", "local_here", is_flag=True,
+              help="Run studies on this machine's Docker workspace instead of a Reynolds one.")
+def mcp_cmd(local_here: bool) -> None:
+    """Serve Reynolds to an MCP client (Claude Code, ...) over stdio.
+
+    The client starts studies, watches them and reads their results through the same
+    tools the hosted Reynolds MCP server offers. Studies run in this process, with this
+    machine's configuration; when the client goes away they end as End would, files
+    kept. Add it to Claude Code with: claude mcp add reynolds -- openreynolds mcp
+    """
+    if local_here:
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
+    from .mcp.local import serve
+
+    serve()
+
+
+@main.command("serve")
+@click.option("--bind", default=serve_mod.DEFAULT_BIND, show_default=True,
+              help="Address to listen on. Anything but a loopback address exposes this "
+                   "machine's studies to whoever can reach it, and is warned about.")
+@click.option("--port", default=serve_mod.DEFAULT_PORT, show_default=True, type=int,
+              help="Port to listen on. 0 picks a free one and prints it.")
+@click.option("--token", default=None,
+              help="The token callers must send. Generated and printed when not given; "
+                   f"{serve_mod.TOKEN_ENV} sets it too.")
+@click.option("--local", "local_here", is_flag=True,
+              help="Run studies on this machine's Docker workspace instead of a Reynolds one.")
+def serve_cmd(bind: str, port: int, token: str | None, local_here: bool) -> None:
+    """Serve this machine's own studies over HTTP: a local control surface.
+
+    The same capabilities `openreynolds mcp` offers an MCP client, shaped as REST, for a
+    program that would rather speak HTTP: start a study, read its state with a cursor
+    and an optional long poll, send it a message, answer an approval, end it, list
+    studies, read results, download a file. `GET /` lists every route.
+
+    This is NOT the hosted Reynolds service's API. Every study runs in this process,
+    with this machine's configuration, workspace and studies/ directory, and its files
+    are this machine's files. The listener is on localhost and needs the token printed
+    at startup (Authorization: Bearer <token>) -- it can start compute that costs money.
+    """
+    if local_here:
+        os.environ["OPENREYNOLDS_LOCAL"] = "docker"
+    serve_mod.serve(bind=bind, port=port, token=token)
+
+
+@main.command("sharing")
+@click.argument("switch", required=False, type=click.Choice(["on", "off", "status"]), default="status")
+def sharing_cmd(switch: str) -> None:
+    """Whether this machine shares a trace of each study: on, off, or status.
+
+    Shared only while this machine is signed in (`openreynolds login`). Off stops it
+    sharing anything and discards what it has queued; OPENREYNOLDS_SHARING=off does the
+    same for one environment. What a trace contains: https://tryreynolds.com/privacy"""
+    cfg = Config.load()
+    if switch == "off":
+        sharing_mod.set_enabled(False)
+        console.print("Sharing is off on this machine; nothing queued is kept.")
+        return
+    if switch == "on":
+        sharing_mod.set_enabled(True)
+        if sharing_mod.env_off():
+            console.print("Turned on, but OPENREYNOLDS_SHARING=off still keeps it off in this environment.")
+            return
+    for line in sharing_mod.describe(cfg):
+        console.print(line, markup=False, highlight=False)
 
 
 @main.command("doctor")
@@ -988,16 +1856,80 @@ def doctor_cmd(ctx: click.Context, as_json: bool) -> None:
 
 
 def run_checks(cfg: Config) -> list[tuple[str, bool, str]]:
-    """Each check reports a fact. Nothing here changes anything."""
+    """Each check reports a fact. Nothing here changes anything -- except that a local
+    Docker workspace is started if it is not running, since asking it whether OpenFOAM
+    runs is the check, and it is left up as a session would leave it."""
+    kind = local_workspace()
+    if kind is None:
+        workspace = [_check_service(cfg)]
+    elif kind == "docker":
+        workspace = [_check_docker()]
+    else:
+        workspace = [_check_native_foam()]
+    signed_in = bool(cfg.foamd_url and cfg.foamd_api_key)
     return [
         _check_settings(cfg),
-        _check_service(cfg),
+        *workspace,
         _check_model(cfg),
-        _check_capture(cfg),
+        _check_capture(cfg) if kind is None or signed_in else (
+            "capture", True, "not signed in, so nothing is uploaded"),
+        _check_sharing(cfg),
         _check_toolbox(),
         _check_terminal(),
         _check_video(),
     ]
+
+
+def _check_sharing(cfg: Config) -> tuple[str, bool, str]:
+    """Whether this machine shares a trace of each study. Informational: on and off are
+    both fine. Read only -- unlike `sharing status`, it leaves the queue as it is."""
+    try:
+        if not sharing_mod.signed_in(cfg):
+            return "sharing", True, "not signed in, so nothing is shared"
+        state = sharing_mod.load_state()
+        if state.unreadable or sharing_mod.env_off() or not state.enabled:
+            return "sharing", True, "off on this machine"
+        return "sharing", True, "on: a trace of each study (openreynolds sharing off)"
+    except Exception as exc:  # a status line must never stop doctor
+        return "sharing", True, f"could not be read ({type(exc).__name__})"
+
+
+FOAM_PROBE = "blockMesh -help >/dev/null && echo OpenFOAM ${WM_PROJECT_VERSION:-?} && nproc"
+"""What a workspace is asked to prove it can mesh: a utility that runs, and its version."""
+
+
+def _check_docker() -> tuple[str, bool, str]:
+    """The local Docker workspace: Docker there, the image there, OpenFOAM running in it."""
+    try:
+        backend = DockerBackend()
+        result = backend.exec(FOAM_PROBE, timeout_s=120)
+    except BackendError as exc:
+        return "local workspace (Docker)", False, str(exc)
+    lines = result.output.strip().splitlines()
+    if result.exit_code != 0 or len(lines) < 2:
+        return "local workspace (Docker)", False, (
+            f"OpenFOAM did not run in {backend.image}: {result.output.strip()[-300:]}")
+    return "local workspace (Docker)", True, (
+        f"{lines[-2]} on {lines[-1]} core(s) in {backend.image}; "
+        f"{backend.root} is {WORKSPACE_ROOT}")
+
+
+def _check_native_foam() -> tuple[str, bool, str]:
+    """An OpenFOAM installed on this machine, used with no sandbox."""
+    backend = LocalBackend()
+    if not backend.bashrc:
+        return "local OpenFOAM (native)", False, (
+            "no OpenFOAM found to source; set OPENREYNOLDS_FOAM_BASHRC to its etc/bashrc, "
+            "or use the Docker workspace (--local)")
+    result = backend.exec(FOAM_PROBE, timeout_s=60)
+    lines = result.output.strip().splitlines()
+    if result.exit_code != 0 or len(lines) < 2:
+        return "local OpenFOAM (native)", False, (
+            f"blockMesh did not run after sourcing {backend.bashrc}: "
+            f"{result.output.strip()[-300:]}")
+    note = "" if "2512" in lines[-2] else "; the agent is written for ESI v2512, so expect differences"
+    return "local OpenFOAM (native)", True, (
+        f"{lines[-2]} from {backend.bashrc}, no sandbox{note}")
 
 
 NO_TERMINAL_HELP = (
@@ -1090,7 +2022,7 @@ def _check_capture(cfg: Config) -> tuple[str, bool, str]:
     after itself: a check that changes the thing it is checking.
     """
     if not cfg.capture:
-        return "capture", True, "off for this configuration; nothing is uploaded"
+        return "capture", True, "off for this configuration; the transcript stays on this machine"
     if not (cfg.foamd_url and cfg.foamd_api_key):
         return "capture: not configured", False, ""
 
@@ -1196,8 +2128,15 @@ def session(
     model_explicit: bool | None = None,
     solver: str | None = None,
     route_on: str | None = None,
+    sharing: bool | str | None = None,
 ) -> str | None:
     """Run one study to its end.
+
+    `sharing` says whether this session's trace may be shared (`sharing.py`), when the
+    machine shares at all. None means only OpenReynolds' own interfaces: the terminal,
+    `-p` and stream-json, and not an embedder's `interface`. The local MCP server passes
+    True; the hosted web app passes `"web"`: its studies always leave a trace, and it is
+    never shown the notice.
 
     `solver` is `auto`, `openfoam` or `felix` (`solvers.py`), as `--solver` gives it;
     None reads `OPENREYNOLDS_SOLVER`, and with neither the agent chooses (`auto`). A
@@ -1231,6 +2170,9 @@ def session(
         _keep_stdout_for_json()
     resuming = study_id is not None
     store = Store(cfg.studies_dir, study_id or new_study_id())
+    began = time.monotonic()
+    """When this session started, for the study's wall-clock total. Monotonic, so a
+    clock the OS corrects mid-study cannot make a session take negative time."""
     # A trace file written on a machine running three studies could not say which
     # study any of its rows belonged to. It can now, and it costs one assignment.
     trace.begin(store.session.study_id)
@@ -1341,7 +2283,8 @@ def session(
     it is a study opened somewhere else, and it is named by its id rather than
     inheriting the shared workspace root."""
 
-    local = bool(os.environ.get("OPENREYNOLDS_LOCAL"))
+    local_kind = local_workspace()
+    local = local_kind is not None
     asked = solvers.normalize(solver) or solvers.normalize(os.environ.get("OPENREYNOLDS_SOLVER"))
     stored = store.recorded_solver
     if resuming and not local and not (store.dir / "session.json").is_file():
@@ -1388,12 +2331,27 @@ def session(
     is here already (the local one)."""
     try:
         if local:
-            # A workspace on this machine: no container, no bill, and nothing to
-            # reach. Meant for working on the harness itself, where the question is
-            # what the agent does and the answer comes from running it repeatedly.
-            backend = LocalBackend()
+            # A workspace on this machine: nothing billed and nothing to reach. In
+            # Docker it is the hosted image in a container; native, whatever OpenFOAM
+            # the machine has.
+            if local_kind == "docker":
+                backend = DockerBackend()
+                console.print(f"[dim]{docker_backend.describe(backend)}[/]")
+                # Up before the model is asked anything, so no Docker, or no image,
+                # is said here once rather than as every tool call failing.
+                backend.ensure_up()
+            else:
+                backend = LocalBackend()
+                console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
+                if not backend.bashrc and shutil.which("blockMesh") is None:
+                    # Allowed -- the shell still works -- but every mesh and solve will
+                    # fail, and that should be said once here, not found by the agent.
+                    console.print(
+                        "[yellow]no OpenFOAM found on this machine:[/] the agent's commands "
+                        "run, but meshing and solving will fail. Set OPENREYNOLDS_FOAM_BASHRC "
+                        "to its etc/bashrc, or use --local for the Docker workspace."
+                    )
             client, resolved_instance = None, "local"
-            console.print(f"[dim]local workspace: {backend.workspace_root}[/]")
         elif settled == solvers.AUTO:
             # The solver is chosen from the person's first message, and a workspace
             # has one kind: nothing is reserved, started or opened on the platform
@@ -1443,14 +2401,19 @@ def session(
             if streaming_json:
                 _terminal_json("refused", str(exc), store.session.study_id)
             raise SystemExit(ONE_SHOT_EXIT_CODES["refused"]) from exc
-        console.print(f"[red]Could not reach the workspace service:[/] {exc}")
+        if local:
+            console.print(f"[red]Could not start the local workspace:[/] {exc.message}")
+        else:
+            console.print(f"[red]Could not reach the workspace service:[/] {exc}")
         if streaming_json:
             _terminal_json("unreachable", str(exc), store.session.study_id)
         raise SystemExit(1) from exc
 
-    if pending is None and getattr(backend, "was_already_running", False):
-        # For a workspace still coming up this is said once the start has answered,
-        # because the start's reply is what settles it (`_bring_up`).
+    if pending is None and local_kind != "native" and getattr(backend, "was_already_running", False):
+        # A native workspace is this machine itself, always "already running", so
+        # there is nothing to say. For a workspace still coming up this is said once
+        # the start has answered, because the start's reply is what settles it
+        # (`_bring_up`).
         console.print(
             _join_notice(resolved_instance, getattr(backend, "instances_held", 0))
         )
@@ -1539,6 +2502,7 @@ def session(
         on_fetch=_fetch_hook(capture),
         mode=cfg.mode,
         solver=settled,
+        local=local_kind == "docker",
     )
     if cfg.capture and not local and cfg.foamd_url and cfg.foamd_api_key:
         # The study's spending ceiling lives on the platform's row for it, so only a
@@ -1561,6 +2525,19 @@ def session(
     # A render the model just looked at should be on the user's machine now, not at
     # the next cycle. poke() is non-blocking, so looking costs the model nothing.
     ctx.on_render = lambda _path: live_mirror.poke()
+
+    shares = (interface is None) if sharing is None else bool(sharing)
+    trace_source = "web" if sharing == "web" else "openreynolds"
+    shared: dict[str, Any] = {}
+    """The study's recorder once `drive` has made one (`sharing.begin`), for the close-down
+    to queue and send."""
+    if shares and trace_source != "web":
+        # What earlier sessions on this machine left queued goes while this one starts.
+        # Never from the web app's runner, whose process is many people's (`sharing.py`).
+        try:
+            sharing_mod.send_in_background(cfg)
+        except Exception:  # noqa: BLE001 - sharing never fails a study
+            pass
 
     bringing_up = threading.Event()
     """Whether `drive` got as far as starting the thread that resolves `pending`. A
@@ -1612,6 +2589,18 @@ def session(
         with _timed("view_workspace"):
             view.workspace(browser)
         loop = Loop(cfg, ctx, store, view, capture=capture, progress=tracker)
+        # The close-down below is outside this function and records what the study
+        # spent; the loop is the only thing that counts the tokens.
+        shared["loop"] = loop
+        if shares:
+            recorder, notice = sharing_mod.begin(
+                cfg, store.session.study_id, solver=str(ctx.solver or ""),
+                backend=local_kind or "hosted", source=trace_source)
+            if notice:
+                # One line, once, on a machine signed in before this version: the trace
+                # goes after the study ends, and `sharing off` before then shares nothing.
+                view.notice(notice)
+            loop.recorder = shared["recorder"] = recorder
         if pending is not None:
             # A turn is not begun while the workspace start has failed: the person is
             # shown the refusal and the model is not asked (`Loop.run`, `_run_turn`).
@@ -1664,7 +2653,7 @@ def session(
         if openfoam_tools and not cfg.model_key_missing():
             with _timed("review"):
                 reviewer = cad.Reviewer(
-                    cfg, backend,
+                    cfg, backend, headers=getattr(loop, "study_headers", None),
                     on_step=lambda step: _cad_desk_step(view, tracker, step,
                                                         store=store, capture=capture),
                 )
@@ -1686,6 +2675,7 @@ def session(
                     on_step=lambda step: _cad_desk_step(view, tracker, step,
                                                         store=store, capture=capture),
                     reviewer=reviewer if cfg.cad_review else None,
+                    headers=getattr(loop, "study_headers", None),
                 )
         loop.interject = lambda: _typed_while_working(
             loop, view, browser, store, reader, progress=tracker, side=side
@@ -1809,7 +2799,6 @@ def session(
                 # the web app keeps for refusals. A choice that failed still is one.
                 if chosen.failed:
                     view.notice(routed_notice(chosen))
-                    console.print(f"[yellow]{routed_notice(chosen)}[/]")
                 else:
                     view.info(routed_notice(chosen))
                 started = begin_workspace(chosen.solver)
@@ -1903,6 +2892,14 @@ def session(
             stream.emit("error", message=f"{type(exc).__name__}: {exc}")
         raise
     finally:
+        # First, and before anything that needs the network: what this session spent
+        # in time and tokens is the study's record, and a close-down that fails
+        # halfway must not take it with it. Added to the totals already on the record,
+        # so three resumes of twenty minutes read as an hour of work.
+        store.record_accounting(
+            time.monotonic() - began,
+            getattr(shared.get("loop"), "token_totals", None),
+        )
         with _timed("close.mirror_stop"):
             live_mirror.stop()
         if ctx.ceiling is not None:
@@ -1958,18 +2955,23 @@ def session(
         # person waiting on the web app to start their next study.
         if never_started:
             console.print(f"\n[dim]this study's files are in {store.dir}[/]")
-            console.print(f"[dim]  resume: openreynolds --study {store.session.study_id}[/]")
+            console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {store.session.study_id}[/]")
         try:
             if not never_started:
                 with _timed("close.close_down"):
                     _close_down(backend, store, keep_alive=keep_alive)
         finally:
-            # Still bundled if the close-down failed: the files are home either way.
-            if capture:
-                with _timed("close.capture_case"):
-                    _capture_the_case(capture, store, ConsoleView(console))
-                with _timed("close.capture_close"):
-                    capture.close()
+            try:
+                # Still bundled if the close-down failed: the files are home either way.
+                if capture:
+                    with _timed("close.capture_case"):
+                        _capture_the_case(capture, store, ConsoleView(console))
+                    with _timed("close.capture_close"):
+                        capture.close()
+            finally:
+                if shared.get("recorder") is not None:
+                    with _timed("close.sharing"):
+                        _close_sharing(cfg, shared["recorder"], web=trace_source == "web")
         with _timed("close.backend_close"):
             backend.close()
         if stream is not None:
@@ -2002,6 +3004,22 @@ the traceback is worth more than a tidy exit -- and it is mapped anyway so that 
 embedder which swallows the exception cannot turn a crash into a zero."""
 
 WORKSPACE_LISTED = 40
+
+
+def local_workspace() -> str | None:
+    """Which local workspace `OPENREYNOLDS_LOCAL` asks for: `docker`, `native`, or None
+    for the hosted one. `1` is `native`, which is what it meant before there was a
+    choice (`scripts/cad_accept.py` sets it)."""
+    value = os.environ.get("OPENREYNOLDS_LOCAL", "").strip().lower()
+    if value in ("", "0", "false", "no", "off"):
+        return None
+    return "docker" if value == "docker" else "native"
+
+
+def _local_flag() -> str:
+    """` --local` in a command shown to the person, when this session's workspace is the
+    Docker one: a resume without it would look for the study in the cloud."""
+    return " --local" if local_workspace() == "docker" else ""
 
 
 def _settle_solver(stored: str | None, asked: str | None, *, resuming: bool, local: bool) -> str:
@@ -2805,6 +3823,21 @@ def _switch_mode(name: str, view: View, loop: Loop | None) -> None:
     ])
 
 
+def _close_sharing(cfg: Config, recorder: Any, *, web: bool) -> None:
+    """The study's trace at the close-down: queued, then sent within the budget; a web
+    study's sent from memory. Never raises, Ctrl-C included: a second Ctrl-C to skip
+    the wait stops the sending, and what was queued goes at the next study, while the
+    rest of the close-down (the workspace, the backend) still runs."""
+    try:
+        if web:
+            sharing_mod.send_now(cfg, recorder)
+            return
+        recorder.finish()
+        sharing_mod.send(cfg)
+    except (Exception, KeyboardInterrupt):  # noqa: BLE001 - sharing never fails a close-down
+        pass
+
+
 def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     """Upload the case itself, once, at the end of a session.
 
@@ -2832,6 +3865,16 @@ def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     blob, report = casebundle.build(root, study_id=store.session.study_id)
     for line in report.brief():
         view.info(line) if not report.error else view.warn(line)
+    if _TIMING:
+        # The lines above go to the person's console only. This one goes beside the
+        # `[timing]` marks into the runner's logs, so how often a bundle leaves out
+        # part of a study can be counted there (#94).
+        print("[bundle] " + json.dumps({
+            "study_id": store.session.study_id, "tiers": report.included,
+            "skipped": sorted(report.skipped), "partial": sorted(report.partial),
+            "cut": len(report.cut), "files": report.files, "bytes": report.bytes,
+            "oversized": report.oversized, "error": report.error,
+        }), file=sys.stderr, flush=True)
     if blob is None:
         return
     path = store.dir / "case-bundle.tar.gz"
@@ -2928,7 +3971,18 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
         console.print(f"[yellow]could not check for other running jobs ({exc})[/]")
         return []
     mine = {job.job_id for job in store.session.jobs.values()}
-    return [row for row in rows if str(row.get("id") or "") not in mine]
+    return [row for row in rows if _listed_job_id(row) not in mine]
+
+
+def _listed_job_id(row: dict) -> str:
+    """The id of one row of `active_jobs()`: `job_id`, the service's name for it.
+
+    This read `id`, which the service never sends, so every row counted as somebody
+    else's -- this session's own job included. That only showed when this session's
+    kill had not reached the service and the job's row still read running: then the
+    session's own job kept its instance up, billing, until someone stopped it by hand
+    (#197). `HostedBackend.active_jobs` settles the spelling."""
+    return str(row.get("job_id") or "")
 
 
 _NEIGHBOUR_PROBE = r"""self=$$
@@ -3092,7 +4146,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
             console.print(f"[yellow]{len(live)} job(s) still running:[/] {names}")
             console.print("[dim]they keep going, and keep costing, until they finish[/]")
             console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
 
     if live:
@@ -3179,7 +4233,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
         # done, the two animation passes left holding empty output directories, and the
         # job reported `killed / sandbox_expired` with nothing saying who did it.
         names = ", ".join(
-            str(job.get("name") or str(job.get("id") or "")[:8]) for job in running)
+            str(job.get("name") or _listed_job_id(job)[:8]) for job in running)
         console.print(
             f"[yellow]{len(running)} job(s) still running on this workspace:[/] {names}"
         )
@@ -3214,7 +4268,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
             # Still up, so its stop's full copy has not happened either.
             _checkpoint_the_study(backend, store)
 
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
 
 
 END_CHECKPOINT_TIMEOUT_S = 45.0
@@ -3309,11 +4363,11 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
     console.print(f"\n[dim]this study's files are in {store.dir}[/]")
     console.print("[dim]the workspace was still starting when the session ended; nothing ran on it[/]")
     if keep_alive:
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
     if backend.failed:
         console.print("[dim]the workspace did not start, so there is nothing to stop[/]")
-        console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+        console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
         return
     console.print("[dim]waiting for the workspace to come up so it can be put down again[/]")
     try:
@@ -3345,7 +4399,7 @@ def _close_down_pending(backend: PendingBackend, store: Store, keep_alive: Any =
                 console.print("[dim]instance stopped; the workspace volume is untouched[/]")
             except BackendError as exc:
                 console.print(f"[yellow]could not stop the instance ({exc}); it will idle out[/]")
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
 
 
 def _report_on_exit(backend: Backend, store: Store) -> None:
@@ -3362,15 +4416,16 @@ def _report_on_exit(backend: Backend, store: Store) -> None:
         # which one it is.
         console.print(f"\n[dim]this study's files are in {home} on the instance[/]")
         console.print(f"[dim]your copy of them: {store.files_dir}[/]")
-        console.print(f"[dim]resume with:  openreynolds --study {study}[/]")
+        console.print(f"[dim]resume with:  openreynolds{_local_flag()} --study {study}[/]")
         console.print(f"[dim]look at them: openreynolds files --study {study}[/]")
-        console.print(f"[dim]bring more:   openreynolds pull --study {study} --all[/]")
+        if local_workspace() is None:
+            console.print(f"[dim]bring more:   openreynolds pull --study {study}[/]")
         return
     names = ", ".join(job.name or job.job_id[:8] for job in live)
     console.print(f"\n[yellow]{len(live)} job(s) still running on the instance:[/] {names}")
     console.print("[dim]they keep going, and keep costing, until they finish[/]")
     console.print(f"[dim]  your copy of this study so far: {store.files_dir}[/]")
-    console.print(f"[dim]  resume: openreynolds --study {study}[/]")
+    console.print(f"[dim]  resume: openreynolds{_local_flag()} --study {study}[/]")
     console.print(f"[dim]  stop:   openreynolds stop --study {study}[/]")
 
 
@@ -3562,6 +4617,10 @@ def _local(
         _open_folder(store.dir, view)
     elif command.kind == commands.MODE:
         _switch_mode(command.text, view, loop)
+    elif command.kind == commands.PROJECT:
+        view.status(commands.project_lines(store, command.text))
+    elif command.kind == commands.TAG:
+        view.status(commands.tag_lines(store, command.text))
     elif command.kind == commands.ASIDE:
         # Only reached with side questions off (`Approver` hands one here then).
         view.status([SIDE_OFF])
@@ -3891,7 +4950,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
             "The usual cause is a rate limit or usage cap on your model API key, not "
             "your work -- every job and file is safe on the instance and mirrored "
             "here.[/]\n[yellow]Wait a minute and try again, or leave with /exit and "
-            f"resume in a fresh, smaller thread: [bold]openreynolds --study {study}[/][/]"
+            f"resume in a fresh, smaller thread: [bold]openreynolds{_local_flag()} --study {study}[/][/]"
         )
     else:
         view.info("the thread is intact - say something to continue, or /exit")

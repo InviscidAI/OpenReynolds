@@ -9,6 +9,7 @@ nobody should have to assume.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 from pathlib import Path
 
@@ -226,3 +227,65 @@ def test_a_missing_constant_names_the_flag_instead_of_guessing(tmp_path, capsys)
     assert grade.main(["couette", str(tmp_path / "c")]) == 2
     assert "--nu" in capsys.readouterr().err
     assert grade.main(["couette", str(tmp_path / "c"), "--nu", "1e-4"]) == 0
+
+
+# ------------------------------------------------------------------- the real 2026-09-12 runs
+
+# `tests/data/moving_mesh/` holds what the solver wrote on the two runs
+# `benchmarks/moving_mesh/README.md` records under "The known result", cut down to the
+# files the grader opens (PROVENANCE.md says exactly what was cut and what was not).
+# The synthetic fixtures above can be made to hold a swapped column or an overlapping
+# restart on purpose; these cannot, and catch the opposite mistake -- a grader that
+# stops reading real output the way it used to. The values are the README's.
+REAL = Path(__file__).parent / "data" / "moving_mesh"
+
+
+def _graded(argv):
+    """The grader's own CLI, as the benchmark job runs it: (exit status, the JSON)."""
+    import io
+    from contextlib import redirect_stdout
+
+    out = io.StringIO()
+    with redirect_stdout(out):
+        status = grade.main([*argv, "--json"])
+    return status, json.loads(out.getvalue())
+
+
+def test_the_real_sliding_interface_run_grades_as_it_did_by_hand():
+    status, result = _graded(["couette", str(REAL / "couette"),
+                              "--control", str(REAL / "couette_conformal")])
+    by = {c["name"]: c for c in result["checks"]}
+    assert result["taylor"] == pytest.approx(64.0, rel=0.01)
+    assert by["inner torque per length [N m/m]"]["value"] == pytest.approx(1.211542e-3, rel=1e-5)
+    assert by["inner torque error [%]"]["value"] == pytest.approx(0.4286, abs=1e-3)
+    assert by["inner torque error [%]"]["verdict"] == "PASS"
+    # The finding the case exists for: the weights held and the torques did not.
+    assert by["inner/outer imbalance [% of inner]"]["value"] == pytest.approx(-0.91057, abs=1e-4)
+    assert by["inner/outer imbalance [% of inner]"]["verdict"] == "FAIL"
+    assert result["ami_weights"] == {"min": 1.0, "max": pytest.approx(1.0000428),
+                                     "lines": 8152, "last_time_in_log": "20"}
+    assert result["control"]["imbalance_ratio"] == pytest.approx(84.73, abs=0.01)
+    assert status == 1
+
+
+def test_the_real_viv_runs_grade_as_they_did_by_hand():
+    status, result = _graded(["viv", str(REAL / "viv_fixed"),
+                              str(REAL / "viv_loose"), str(REAL / "viv_tight")])
+    assert result["fixed"]["cycles"] == 7
+    assert result["fixed"]["strouhal"] == pytest.approx(0.1661407, rel=1e-5)
+    assert result["fixed"]["mean_cd"] == pytest.approx(1.355514, rel=1e-5)
+    loose, tight = result["released"]
+    assert loose["cycles"] == tight["cycles"] == 8
+    assert loose["amplitude_over_D"] == pytest.approx(0.6401929, rel=1e-5)
+    assert tight["amplitude_over_D"] == pytest.approx(0.5670282, rel=1e-5)
+    assert tight["frequency"] == pytest.approx(0.1939371, rel=1e-5)
+    # The 13% amplitude drop the energy audit explains: the loose run is held at its
+    # amplitude by its coupling, taking 10% of the body's energy out of it per cycle.
+    assert [c["work_pct"] for c in loose["energy_audit"]] == pytest.approx(
+        [-10.3708, -10.0933, -10.3723, -10.0974, -10.3734, -10.1011], abs=0.002)
+    assert max(abs(c["work_pct"]) for c in tight["energy_audit"]) < 0.2
+    by = {c["name"]: c["verdict"] for c in result["checks"]}
+    assert by["Strouhal number, fixed (7 cycles)"] == "PASS"
+    assert by["[viv_loose] net fluid work per cycle [% of energy], last 6"] == "FAIL"
+    assert by["[viv_tight] net fluid work per cycle [% of energy], last 6"] == "PASS"
+    assert status == 1

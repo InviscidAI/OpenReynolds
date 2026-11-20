@@ -128,9 +128,9 @@ The session does not wait for the instance to be up. `hosted.reserve` settles wh
 | `job_kill` | `(job_id)` | |
 | `fetch` | `(paths[])` | pull files to the local mirror `./studies/<id>/`, print local paths, register as platform artifacts |
 | `cad` | `(request, case?, geometry?, inputs[]?)` | a shape in words -- or a `.step`/`.iges` already on the workspace, plus any files to work from -- handed to the CAD desk (`cad/`), a second agent that builds, meshes and checks it on the same workspace, one python cell a step in a kernel there; the call holds until the desk is finished; offered when the desk is configured |
-| `checkpoint` | `(stage, summary, next)` | **structured mode only**: puts the summary and what comes next in front of the person and waits for their answer (§1) |
+| `checkpoint` | `(stage, summary, next)` | **structured mode's**: puts the summary and what comes next in front of the person and waits for their answer (§1); in the list in every mode, and outside structured mode it answers that it is structured mode's and puts nothing to anyone |
 
-That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool — asking is just talking; this is a chat. Meshing, checking, rendering, post-processing are all `bash` or `cad`. `checkpoint` is not an exception to that: it exists only when the person chose to approve a study in stages, and it is their gate, not the harness's. In full auto it is not in the list.
+That is the entire surface. No `run_gate`, no `amend_spec`, no `ask_user` tool — asking is just talking; this is a chat. Meshing, checking, rendering, post-processing are all `bash` or `cad`. `checkpoint` is not an exception to that: it does something only when the person chose to approve a study in stages, and then it is their gate, not the harness's. It is in the list in every mode, because the list may not change mid-conversation.
 
 ---
 

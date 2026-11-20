@@ -36,6 +36,8 @@ OPEN = "open"
 HELP = "help"
 EXIT = "exit"
 MODE = "mode"
+PROJECT = "project"
+TAG = "tag"
 MODEL = "model"
 EFFORT = "effort"
 YES = "yes"
@@ -99,6 +101,19 @@ COMMANDS: tuple[Spec, ...] = (
          "Opens the study's local folder (the mirror of the workspace) in your "
          "platform's file browser.",
          where="terminal"),
+    Spec("/project", (), PROJECT, "[name]",
+         "group this study under a project, or say which one it is in",
+         "A project is how you file your own work: /project duct-redesign puts this "
+         "study in that project, and openreynolds studies --project duct-redesign "
+         "lists everything in it. With nothing after it, says which project this study "
+         "is in. Answered here; the agent is not told, and it costs no model call."),
+    Spec("/tag", ("/tags",), TAG, "[tag ...]",
+         "tag this study so you can find it again, or drop a tag with -tag",
+         "/tag mesh-study validated adds both tags; /tag -validated drops that one; "
+         "/tag on its own lists them. Tags are lower-cased and spaces become hyphens, "
+         "so Mesh Study and mesh-study are one tag. openreynolds studies --tag "
+         "mesh-study lists every study carrying it. Answered here; the agent is not "
+         "told."),
     Spec("/mode", (), MODE, "[name]",
          "how much the agent does before asking you: auto, partial or structured",
          "With no name, says which mode the session is in. With one, switches from the "
@@ -543,6 +558,55 @@ def as_json(where: str = "web") -> dict[str, Any]:
 
 
 # -- status --------------------------------------------------------------------
+
+
+def project_lines(store: Any, name: str = "") -> list[str]:
+    """`/project`: which project this study is in, or put it in one."""
+    session = store.session
+    asked = name.strip()
+    if not asked:
+        return [f"project: {session.project}" if session.project
+                else "this study is in no project; /project <name> puts it in one"]
+    session.project = asked
+    store.save()
+    return [f"project: {session.project}"]
+
+
+def tag_lines(store: Any, words: str | Iterable[str] = "") -> list[str]:
+    """`/tag`: this study's tags, or add and drop some.
+
+    A word prefixed with `-` drops that tag, anything else adds one. Said back in
+    full, because the useful answer to "did that work" is the list as it now stands.
+
+    A string is a typed line, where whitespace separates the tags. A list is one tag
+    per item, which is what `openreynolds label --tag` has: a repeated option can
+    carry a tag with a space in it, and splitting that on whitespace made `--tag
+    "Mesh Study"` into two tags.
+    """
+    from .store import tag_name
+
+    session = store.session
+    asked = words.split() if isinstance(words, str) else [str(word) for word in words]
+    if not asked:
+        return [("tags: " + ", ".join(session.tags)) if session.tags
+                else "this study has no tags; /tag <tag> adds one"]
+    unknown: list[str] = []
+    for word in asked:
+        if word.startswith("-"):
+            tag = tag_name(word[1:])
+            if tag in session.tags:
+                session.tags.remove(tag)
+            elif tag:
+                unknown.append(tag)
+            continue
+        tag = tag_name(word)
+        if tag and tag not in session.tags:
+            session.tags.append(tag)
+    store.save()
+    lines = [("tags: " + ", ".join(session.tags)) if session.tags else "no tags now"]
+    if unknown:
+        lines.append(f"not on this study, so nothing to drop: {', '.join(unknown)}")
+    return lines
 
 
 def status_lines(

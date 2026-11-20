@@ -274,7 +274,9 @@ lives, and `tail -30` of a log often skips it.
 pascals is a factor of 1.204, which hides inside any tolerance band wide enough to be
 useful. For water it is 998 and any band catches it. A tolerance band is not the mechanism
 that saves you here; checking dimensions is. The field header states the dimensions, so
-there is no need to assume them.
+there is no need to assume them. A compressible case is the other side of the same coin —
+its `p` really is in pascals, `[1 -1 -2 0 0 0 0]`, and the same factor of ρ is waiting in
+the opposite direction; "Dressing a mesh for a compressible run" below has the rest of it.
 
 **Definitional mismatch.** Two instruments can have identical dimensions, agree with each
 other to a fraction of a percent, and measure a different physical quantity than the
@@ -358,14 +360,31 @@ produced by different code, and nothing ever put the two numbers side by side.
 
 **The backward-facing step.** The reattachment length was computed twice, by two
 scripts written in the same session. One walked the wall shear, found sign changes at
-0.21, 6.32, 7.86 and 9.97, and read x_r/h = 6.32 — right; 0.21 is the corner eddy,
-6.32 closes the primary bubble, and it is 4% above Gartling's 6.1. The other, the one
-that drew the delivered figure, read 7.5667 — 24% above the benchmark. The written
+0.21, 6.32, 7.86 and 9.97, and read x_r/h = 6.32 -- the right crossing; 0.21 is the
+corner eddy and 6.32 closes the primary bubble. The other, the one that drew the
+delivered figure, took the next crossing up and read 7.5667, 16% away. The written
 answer quoted 6.4, pointed the reader at the figure, and the figure was annotated
 "reattachment x/h=7.57" with a green line drawn there. Nothing reconciled the three
 numbers. A reader who trusts the picture — which is what a picture is for — came away
 with the wrong one, and both numbers had been printed minutes apart in the same
 session's tool output.
+
+There is a second thing in that study worth knowing, found later: it reported 6.32 as
+4% above Gartling's 6.1, and that comparison did not exist. **Gartling's 6.1 is in
+units of the downstream channel height**, which on an expansion ratio of 2 is 12.2
+step heights, and both of the study's numbers are in step heights. The same mistake
+set the case up at Re 1600 on the channel height where the benchmark's 800 is on that
+same length, because it took Gartling's unit length to be the step height throughout.
+One wrong unit length, two factors of two, and a printed agreement that was neither.
+
+A reattachment length, a Reynolds number and a drag coefficient all carry a length
+whose choice is somebody else's convention, and the cheap habit is to write down which
+length is in each of them before comparing with anything. Here the two conventions are
+unusually easy to confuse, because the step height and the *inlet* channel height are
+the same 0.5 and only the *downstream* channel height differs, so "Re on the channel
+height" and "Re on the step height" differ by exactly the factor nobody notices.
+`benchmarks/README.md` has this case written out, including that Gartling (1990) itself
+is paywalled and unread and what the normalisation rests on instead.
 
 **The ONERA M6 round-1 notes** said the upper-surface contour "shows the classic
 lambda-shock herringbone pattern clearly". It does not. The structure in that image is
@@ -814,6 +833,95 @@ otherwise arrives when someone looks at the result and asks for "the transient o
 transient run (pimpleFoam) costs more but is the honest instrument for a shedding flow;
 a steady run is right for an attached, genuinely steady one.
 
+## Resolving the eddies instead of modelling them
+
+The note above is about a steady solver damping a shedding flow. An LES is the same
+failure one level down, and it is harder to see, because what does the damping there is
+not the solver but the convection scheme.
+
+LES is not a different solver in OpenFOAM. `pimpleFoam` runs it, the same binary that
+runs URANS, and the only file that says which is `constant/turbulenceProperties`:
+`simulationType LES` with an `LES` block instead of `simulationType RAS` with a `RAS`
+one. Everything else about the switch is in the files around it, and that asymmetry is
+why an LES case is so easy to write wrongly: the dictionary that names the subgrid
+model is the one part that is obviously LES, and it is the part that matters least.
+
+**The subgrid model is the smaller half of the dissipation, and sometimes a rounding
+error on it.** A subgrid model exists to remove energy at the grid scale. An
+upwind-biased convection scheme removes energy at the grid scale as well, and it
+removes more. On `Gauss linearUpwind grad(U)` the numerical dissipation dominates
+whatever `WALE` or `kEqn` contributes, so the eddies the run was paid for are smoothed
+by the scheme and what comes out is a URANS answer at an LES price. There is no symptom:
+residuals fall, the run writes fields, the wake looks plausible and smooth. Comparing
+the same mesh on `Gauss linear` and on `linearUpwind` is the measurement -- if the
+resolved spectrum changes, the scheme was the model.
+
+So convection on the momentum equation is central or near-central for a resolved run.
+`Gauss LUST grad(U)` is ESI's own compromise, 75% `linear` and 25% `linearUpwind`:
+central enough that the subgrid model is the dissipation, with a quarter of an upwind to
+keep a real mesh from ringing. Pure `Gauss linear` is the right scheme on a mesh good
+enough for it, and oscillates on one that is not. Which this mesh is, is readable rather
+than arguable: `checkMesh`'s maximum non-orthogonality and skewness, and `locate.py`
+on an oscillation that turned into a divergence.
+
+**Time is second order and the choice between two second-order schemes is not
+cosmetic.** `backward` and `CrankNicolson` are both second order; `CrankNicolson 0.9`
+is the off-centred form (1 is pure Crank-Nicolson and rings, 0 is Euler and damps), and
+it is what the LES tutorials in the installation run. The Courant number is the other
+half: LES wants it below about 1 on the resolved scales, because above 1 those scales
+are advected more than a cell in a step, and they are precisely the scales the subgrid
+model is not modelling. `adjustTimeStep yes` with `maxCo` is how that is held rather
+than hoped for, and the step a mesh implies is arithmetic: `maxCo * h / U` on the
+smallest cell, which `case_gen.py` prints before the run.
+
+**Mesh adequacy is a claim about the mesh and cannot be read off the case files.** A
+wall-resolved LES wants the first cell centre at y+ of order 1 and a cell in the outer
+layer that is roughly isotropic, since an eddy that is resolved in one direction and
+filtered in another is neither resolved nor modelled. A wall-modelled LES wants
+something different -- the first cell in the log region and the streamwise and spanwise
+spacings stated in wall units. A generator can state the implication and not the
+verdict: `layer_report.py` measures the first-cell height off `constant/polyMesh` with
+no solver run at all, the flat-plate correlation turns that into an a priori y+, and
+`wall.py` reads the real y+ off the velocity field once there is one. The gap between
+those two has been large: on a generated aerofoil O-grid the a priori estimate was
+y+ ~ 1200 and the measured range came back 40-1713.
+
+**An LES answer is a mean, and the mean has a start.** The instantaneous field at the
+end time is one realisation of a chaotic flow; quoting a Cd off it is quoting noise to
+three figures. `fieldAverage` with `mean` and `prime2Mean` is the answer, `prime2Mean`
+because the fluctuation is usually what the run was for and cannot be recovered from a
+mean field afterwards. `timeStart` is where the honesty lives: a window that opens
+inside the start-up transient gives the transient diluted, not a mean, and the number
+looks exactly as converged either way. `spectra.py` is the instrument for that -- its
+stationary window is the earliest sample from which the halves' means agree inside the
+halves' own scatter, and its effective sample size is why 20,000 correlated rows are
+not 20,000 measurements.
+
+**Which fields are on disk is per model and not per class.** `WALE`, `Smagorinsky` and
+`sigma` compute k algebraically from grad(U) and read no k file; `kEqn` and
+`dynamicKEqn` solve for k and stop at start-up without `0/k`. The DES hybrids are RAS
+models with an LES length scale inside them, so `SpalartAllmarasDDES` carries `nuTilda`
+and `kOmegaSSTDDES` carries both k and omega. `nut` is a field on disk for every one of
+them. `foamToC -table LESincompressibleMomentumTransportModel` lists what the
+installation has, which is a shorter conversation than a dictionary that parses and a
+solver that exits.
+
+**`delta` is physics and not bookkeeping.** `cubeRootVol` is the cell's own cube root
+and stays that right down to the wall, where the eddies being modelled have stopped
+existing, so the model keeps making nu_t through the viscous sublayer. `vanDriest` is
+the same geometric delta with van Driest damping on it off the local u_tau, which takes
+the subgrid viscosity to zero at the wall; its coefficients sit in a `vanDriestCoeffs`
+block that OpenFOAM reads with `subDict` rather than `optionalSubDict`, so omitting the
+block is a start-up error and not a default. `IDDESDelta` is a third thing, blending the
+cell spacings with the wall distance, and the IDDES models require it by name:
+`SpalartAllmarasIDDES` tests `isA<IDDESDelta>` and exits with "The delta function must
+be set to a IDDESDelta -based model".
+
+A DNS is this same case with the subgrid model removed, which OpenFOAM spells
+`simulationType laminar` -- identical in that one file to a Re 100 duct, and different
+in every other file in the case. The claim a DNS makes is about the mesh, eta = L
+Re^(-3/4), and no dictionary records whether anybody checked it.
+
 ## When the mesh moves
 
 A moving mesh is a second solver underneath the flow solver, with its own dictionary and
@@ -900,6 +1008,62 @@ PATH. One `which` settles it in a second, and it is worth the second: on this im
 `which MRFSimpleFoam simpleFoam` came back with only `simpleFoam`, because MRF in v2512
 is an `MRFProperties`/`fvOptions` feature of the ordinary solvers and not a binary of its
 own.
+
+**`omega` in `MRFProperties` is rad/s, and the factor to rpm is 9.5493.** The member is
+declared `//- Angular velocity (rad/sec)` in
+`src/finiteVolume/cfdTools/general/MRF/MRFZone.H`, typed `autoPtr<Function1<scalar>>`, and
+there is no `rpm` keyword anywhere in that class to catch a nameplate figure written
+straight in. The shipped
+`$FOAM_TUTORIALS/incompressible/simpleFoam/mixerVessel2D/constant/MRFProperties` is the
+evidence rather than the recollection: it carries `omega 104.72`, and 104.72 rad/s is
+1000.0 rpm to five figures, a round nameplate number, where read as rpm it would be
+nobody's round number. A value meant as rpm therefore runs the rotor 9.5493 times too
+fast, and the torque out by roughly the square of that. The whole zone entry, as shipped,
+is a named block carrying `cellZone`, `active`, `nonRotatingPatches ()`, `origin`, `axis`
+and `omega` -- a bare number, since `Function1` reads a scalar as a constant.
+
+**An MRF rotor's own walls are `noSlip`, and `nonRotatingPatches` is the defect to look
+for.** mixerVessel2D puts plain `noSlip` on its `rotor` patch, not
+`rotatingWallVelocity`, because `MRFZone` declares
+`void correctBoundaryVelocity(volVectorField& U) const;` -- "Correct the boundary velocity
+for the rotation of the MRF region" -- and sets the zone's patch velocities from
+`Omega x r` itself on a mesh that never moves. A `rotatingWallVelocity` there applies the
+rotation twice. The other half: any patch whose faces lie inside the rotating cellZone but
+which is physically stationary (a baffle, a shaft seal, a fixed shroud) has to be listed in
+`nonRotatingPatches` or it is spun with the zone and silently stirs the fluid. The class
+calls that member `excludedPatchNames_`, commented "Non-rotating patches".
+
+**`porousSimpleFoam` was not removed when porosity became an fvOption, and
+`DarcyForchheimer`'s `f` carries a factor of a half.** Both are easy to get backwards.
+`$FOAM_TUTORIALS/incompressible/porousSimpleFoam/straightDuctImplicit` ships with
+`application porousSimpleFoam;` and a `constant/porosityProperties` holding
+`type DarcyForchheimer; cellZone porosity; d (5e7 -1000 -1000); f (0 0 0);` plus a
+`coordinateSystem` -- so the zone is declared in `porosityProperties`, not in `fvOptions`,
+on that route. The `explicitPorositySource`/`constant/fvOptions` route is the other one and
+is what `compressible/rhoSimpleFoam/angledDuctExplicitFixedCoeff` uses; writing both at
+once would double the resistance. `DarcyForchheimer.H` gives the sink as
+`S = -(mu*d + (rho*|U|/2)*f)*U` with `d` in [1/m2] and `f` in [1/m], and
+`DarcyForchheimer.C` builds it with `forchCoeff.xx() = 0.5*fXYZ_.value().x();` under the
+comment "the leading 0.5 is from 1/2*rho", while the Darcy tensor takes no factor. Hence
+the reduction that turns a measurable pressure drop into coefficients: across a slab of
+thickness L at face velocity U, `dp = (mu*d*U + 0.5*rho*f*U^2)*L`, so `dp/(L*U)` is a
+straight line in U whose intercept is `mu*d` and whose slope is `0.5*rho*f`.
+`templates/porous.py` is that fit, and matching Ergun term by term gives
+`d = 150*(1-e)^2/(e^3*Dp^2)` and `f = 3.5*(1-e)/(e^3*Dp)` -- the 3.5 being twice Ergun's
+1.75, the same half running the other way.
+
+**A negative component of `d` or `f` is a multiplier, not a negative resistance.**
+`porosityModel.C`'s `adjustNegativeResistance` multiplies a negative component by the
+magnitude of the largest one, and is fatal only if every component is negative. So the
+tutorial's `d (5e7 -1000 -1000)` means the two cross-flow directions resist a thousand
+times harder than the through-flow one, which is what stops the flow turning and sneaking
+sideways through the face of a slab. A slab given equal resistance in all three directions
+solves and reports a plausible wrong drop.
+
+One caveat on all of the above: these were read off the ESI repository's master branch,
+whose headers now say v2606, and this image is v2512. The keys are old and have not moved
+between those two, and `foamInfo MRFZone` or `foamInfo DarcyForchheimer` beside an `ls` of
+the tutorial directory settles it on the image in one command.
 
 Two more moving-mesh cases have been paid for since the hull, and they cost different
 things: a 2D circular-Couette annulus cut in half by a `cyclicAMI` sliding interface, and
@@ -1114,6 +1278,99 @@ ratio is not an effective Reynolds number for the case -- momentum was nominally
 order, and the bound applies locally, at the extrema where the limiter clipped and at the
 pressure flux that stayed upwind. It is the right size to explain a smeared shock and the
 wrong thing to quote as a global statement about the solve.
+
+## Dressing a mesh for a compressible run
+
+`case_gen.py` writes an incompressible case and says so in its own comments: `0/p` is
+`[0 2 -2 0 0 0 0]`, `constant/transportProperties` carries one kinematic `nu`, and the
+solvers it knows are `simpleFoam` and `pimpleFoam`. `compressible.py` is the sibling
+that writes the other kind, and the two differ in nearly every file. What follows is
+what the three ONERA M6 rounds and the Cp tables that came out of them paid for.
+
+**The pressure is absolute, in pascals.** `dimensions [1 -1 -2 0 0 0 0]`, and
+`internalField` is the real static pressure — 80459 Pa at the M6 altitude, not zero.
+The kinematic-versus-dynamic trap above is the same trap wearing the other face: there
+the risk is reading an m²/s² field as pascals, here it is writing a pascal field with
+the habits of a gauge-pressure case, where the outlet is 0 and the inlet is
+`zeroGradient`. Zero pascals absolute is a vacuum, and `perfectGas` divides by it.
+
+**`thermophysicalProperties` replaces `transportProperties`, and nu stops being a
+number anywhere.** `hePsiThermo` (psiThermo carries compressibility ψ = 1/RT, which the
+compressible pressure equation and `waveTransmissive`'s `thermo:psi` entry both read),
+`pureMixture`, `perfectGas`, `sutherland` transport, `hConst` thermo below about 1000 K
+— above that the vibrational modes come in and `janaf` is the honest choice. The
+viscosity is μ(T) = A_s√T/(1 + T_s/T) and the density is p/RT, so ν = μ/ρ is an output
+of the case and the Reynolds number is a thing the case reports rather than a thing it
+is set to. Air's standard Sutherland pair, A_s = 1.458e−6 and T_s = 110.4 K, gives
+μ = 1.6279e−5 Pa·s at 255.6 K against the 1.6266e−5 the M6 condition set names: 0.08%,
+far under anything a shock position resolves, and a published condition set is still
+allowed to disagree with a correlation, which is why `--mu` refits A_s instead of
+writing a second μ somewhere the solver never reads.
+
+**The energy variable belongs to the solver.** `sensibleEnthalpy` for `rhoSimpleFoam`,
+whose energy equation is in h; `sensibleInternalEnergy` for `rhoCentralFoam`, which
+transports ρE, and for HiSA, whose own example is written in e. Handing a solver the
+variable it does not solve stops it at construction, before any iteration — which is at
+least a cheap failure.
+
+**`transonic yes;` is the switch with no log line.** In `rhoSimpleFoam`'s `SIMPLE`
+block it is what makes the solver form the compressible pressure equation that carries
+`div(phid,p)`. Left at `no`, a transonic case converges cleanly onto the subsonic
+equation and nothing anywhere says which equation was solved. It is the cheapest thing
+in this section to get wrong and the hardest to notice afterwards.
+
+**What lost round 2, precisely.** 1,793,894 cells, farfield at 16 chords, layers
+6.82/8, `checkMesh` max non-orthogonality 64.5°, 3228 iterations, Cd flat to six
+figures — and no shock at any of seven span stations, CL 22% below the AGARD AR-138
+band and CD 50% above it. The mesh was never the problem. The `fvSchemes` had both
+compressible pressure-flux terms first order (`div(phid,p) Gauss upwind`,
+`div((phi|interpolate(rho)),p) bounded Gauss upwind`) and `grad(U) cellLimited Gauss
+linear 1`, fully limited and therefore first order at every extremum — and a shock is
+an extremum. At 269 m/s through a 4.7 mm shock cell the first-order numerical
+diffusivity u·h/2 is 0.63 m²/s against a physical ν of 1.48e−5. That ratio is local, at
+the extrema where the limiter clipped and at the pressure flux that stayed upwind; it is
+the right size to explain a smeared shock and the wrong thing to quote as a global
+statement about the solve. One more thing that run shows: CDv came out within 7.7% and
+that agreement was never evidence of anything, because the wall function imposes skin
+friction largely independently of the outer solution.
+
+**The outlet decides whether a shock stays in the domain.** A `fixedValue` p at a
+subsonic outlet is a perfectly reflecting wall for pressure waves, and an arriving shock
+comes back in as an expansion; `waveTransmissive` solves an advection equation for p on
+the patch with `fieldInf` and a relaxation length `lInf`, so the wave leaves. Above M 1
+the question dissolves: every characteristic points out, so every field is
+`zeroGradient` and imposing anything there is information travelling upstream through a
+supersonic flow. The inlet is the mirror image — `fixedValue` on U and T with
+`zeroGradient` on p while one characteristic still runs back upstream, and the whole
+state fixed once none does. HiSA has its own vocabulary for all of this, the
+`characteristicFarfield*` family, and a far-field patch is none of inlet, outlet or
+wall: flow crosses it both ways over one run, and a name like `farfield` reads as saying
+nothing to a role resolver built for ducts, which makes it a no-slip wall 16 chords out.
+
+**The Courant number is acoustic.** The step is Co·h/(|U| + a), not Co·h/|U|. At M 0.84
+that is a factor of 2.2 and at M 0.1 a factor of 11, so an incompressible step handed to
+a density-based solver diverges in the first few steps and reads like a bad mesh. The
+deeper version of the same arithmetic is why implicit or explicit is a cost question:
+`rhoCentralFoam`'s step comes from the *smallest* cell in the domain, which on a layered
+mesh is the prism layer and not the shock cell — 165 µm against 4.7 mm on the M6, about
+92,000 explicit steps against 6,000 implicit pseudo-steps for the same answer.
+
+**`forceCoeffs` flips branch.** An incompressible case has no density field, so the
+object is handed `rho rhoInf; rhoInf 1.225;`. A compressible case has one, so `rho rho;`
+and the forces come out in newtons. Carrying the incompressible pair across scales every
+coefficient by 1/rhoInf — a clean 1.2 in sea-level air, and ρ itself at altitude.
+`preflight.py`'s `force_units_diagnosis` reads `0/p`'s dimensions and judges the two
+cases in opposite directions, which is the one place in the toolbox where the
+compressible/incompressible distinction is already enforced rather than documented.
+`Aref` is the other half of that trap and is not derivable on a 3D wing: newtons need no
+reference area, and a coefficient divided by a guessed planform is off by exactly that
+ratio.
+
+**A field that only exists here.** `alphat`, the turbulent thermal diffusivity, with
+`compressible::alphatWallFunction` on the walls. The compressible RAS models read it and
+refuse to start without it; the incompressible case has no energy equation for it to
+diffuse anything in, so nothing in `case_gen.py` has ever written one.
+
 
 ## Keeping a study 2D
 

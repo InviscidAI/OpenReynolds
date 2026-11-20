@@ -8,6 +8,250 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
+  in the repository was either a unit test against a fixture or a tool run against a
+  study somebody had already finished, so a seam between two stages was invisible to all
+  of them. `tests/test_journey_duct.py` walks the chain from an empty directory: the
+  `duct2d.py` template builds a 0.10 x 0.02 m plane duct with gmsh and `gmshToFoam`,
+  `case_gen.py` reads that mesh and writes `0/`, `system/` and `constant/` for a steady
+  laminar solve at Re 10, `simpleFoam` solves it, and then `probe.py`, `balance.py`,
+  `wall.py`, `log_digest.py`, `results.py` and `report.py` read it back. It runs in a
+  new `journey` job inside the workspace image -- 1 min 40 s of runner time, of which
+  the walk itself is 7.3 s -- and unlike the advisory `image` job it gates.
+  - The reference is exact rather than published, which is what makes the assertions
+    physics and not exit codes: developed plane Poiseuille flow is three lines of algebra
+    off the steady Navier-Stokes equations, and `u_mean` is 1 m/s because the inlet is a
+    uniform 1 m/s `fixedValue` and mass is conserved. Measured against it: `u_max` 1.4863
+    against 1.5 exactly, `u_max/u_mean` 1.532 against 1.5, the developed `(dp/dx)_kin`
+    -123.5 against -120 m/s^2, the wall shear the measured y+ implies 1.08 and 1.10
+    against 6 nu u_mean / H = 1.2 m^2/s^2, and the throughflow 3.93e-5 against
+    U x H x thickness = 4e-5 m^3/s.
+  - Asserted at the seams rather than at the end: the mesh is one cell thick with its z
+    faces `empty`; `nu` on disk is `U L / Re`; `p`'s dimensions are `m^2 s^-2` and not
+    pascals; the solver's own continuity closes to -9e-08 of a 4e-05 throughflow and
+    `balance.py`'s boundary integral to 0.84%; `wall.py`'s `nu` came out of the case's
+    own dictionary rather than a default; and `report.py`'s key numbers are the residuals
+    `log_digest` reads out of the solver's own log, number for number.
+  - Two of this test's own reference numbers were wrong on its first CI run and are now
+    measured instead of assumed. `CELL_SIZE_M` in the template is a background size
+    handed to gmsh, not a division count, and the quad recombination does not honour it
+    as one: the run came out with 1000 cells whose first wall row is 1.491 mm on a 2 mm
+    request, so the first-cell height is read off `constant/polyMesh` with
+    `layer_report.py`. And the solver's continuity error and `balance.py`'s closure are
+    two different quantities, asserted separately -- conflating them is how a reading
+    error gets called a continuity failure.
+- **An index of every validated case, three tutorial cases, and two reference values that
+  turned out to be wrong.** `benchmarks/README.md` lists each case in the repository whose
+  answer is known from outside a solver, with its source, the agreement the real run
+  achieved, and where the remaining difference comes from.
+  `benchmarks/tutorials/` adds three cheap cases as runnable prompts: a heated pipe
+  against the exact Graetz value, a buoyant cavity against de Vahl Davis, and a
+  backward-facing step. Every number was recomputed from the run's own final field and
+  mesh rather than copied from its summary, and `tests/test_benchmarks_index.py` holds the
+  prose to the graders' own constants so the two cannot drift.
+  - **de Vahl Davis's 4.519 is his cavity average, not his hot-wall Nusselt number.** The
+    hot-wall value in his Table V is 4.509. The misattribution is near-universal in
+    secondary sources and worth 0.22%, against a paper whose own stated accuracy at
+    Ra 1e5 is 0.3%, and it flatters the result, which is why it survives. The cavity run
+    recomputes to 4.5335, so +0.54% on 4.509 rather than +0.32% on 4.519.
+  - **Gartling's reattachment length of 6.1 is in channel heights, not step heights**, so
+    12.2 step heights. The step case here was built with the step height as the unit
+    length where Gartling uses the channel height: one mistake, two consequences. It ran
+    at Re 1600 where the benchmark is 800, and its 6.42 step heights were compared with
+    6.1 as though the units matched. In one unit it is about 47% short, not 5% long.
+    `openreynolds/toolbox/reattach.py` and `claims.py` still carry the older reading in
+    their docstrings. The case is documented as a units failure rather than as a passing
+    validation, and Gartling (1990) is paywalled and was not read, which is said rather
+    than smoothed over.
+  - **On four of the eleven cases the reference's own uncertainty is larger than the
+    agreement being claimed**, and the index now prints it beside the number. Ghia's
+    Re 1000 centreline extrema sit 1.46% to 2.20% from Botella & Peyret's spectral
+    solution, so agreeing with him to 0.45% is agreeing to inside his error. The 0.164
+    Strouhal reference is the value at Re 100 of Williamson's parallel-shedding fit
+    (Williamson 1989, *JFM* **206**, eq. 6, reproduced as Fig. 7(a) of the 1996 review,
+    where the number itself is never printed), and it is 0.1643, while Roshko (1954) and
+    Williamson & Brown (1998) both give 0.1671 at the same Reynolds number: the
+    correlations disagree by 1.7% against a result reported as 1.31% high. The SUBOFF
+    resistance is located to Liu & Huang (1998) Table 14 p. 23, configuration 1, where
+    the bare hull is 87.4 N and the appended hull at the same speed is 102.3 N, and its
+    total resistance coefficient is marked as derived because that table publishes none.
+
+- **`advise.py`: which solver, and how many ranks, both read out of the case.** The
+  toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
+  that family with what each one is, the condition that makes it the one, and whether it
+  is on `$PATH` on the machine asking. The compressible three and the pick at a given
+  `--mach` come from `compressible.py`, so the comparison and the dictionary writer
+  cannot come to disagree; with no Mach number given, nothing is picked, because a Mach
+  number is not in a case's files. For the rank count it reports cells -- measured off
+  the mesh, or predicted by `cells_estimate.py` before the build -- cells per rank at
+  each count up to the cores there are, and what this case's own solver logs measured,
+  split per run because a restarted case leaves two or three runs in one log file.
+  - No scaling curve is asserted, because there is not one to assert. Across the 103
+    case directories in the local studies, exactly one case had been run at more than
+    one rank count, and in that one (study `20260830-164816-eee0`) the mesh and the
+    schemes changed between the rank counts as well. So a case run at one rank count is
+    told it was run at one rank count and gets no speedup figure.
+  - The one measured claim it does make is the one that datum supports: in that study a
+    1,793,894-cell case was re-decomposed 12 ways on a container whose `nproc` had
+    answered `4`, `mpirun` did not refuse, and the 12-rank run's median 1.45 s/iteration
+    landed at the bottom of the 1.45-1.77 s band its four 4-rank stages had already
+    measured.
+- **Real-site data, and an atmospheric boundary layer inlet built from it.** The
+  workspace has no outbound network, so the fetching happens on your machine and the
+  workspace reads a file.
+  - `openreynolds site --lat <deg> --lon <deg>` writes one self-describing
+    `site.json`: hourly wind at 10 m and 100 m from Open-Meteo's ERA5 archive as a
+    12-sector rose with per-sector statistics, a prevailing sector and a two-height
+    shear fit; OpenStreetMap building footprints from Overpass with each height and
+    where that height came from; and a Copernicus DEM GLO-90 elevation grid. No API
+    key for any of the three. Every block names the URL, the query, the retrieval
+    time, its units and its licence, and the wind block records the reanalysis grid
+    cell it actually answered for and how far that is from the coordinates asked for.
+    A source that fails leaves its sentence in place of its block rather than taking
+    the other two down. No request carries a name, an address or an account id.
+  - `toolbox/site_abl.py` turns the wind into an inlet, by writing the dictionary
+    OpenFOAM's own `atmBoundaryLayerInlet*` conditions read rather than
+    re-implementing the profiles: `0/include/ABLConditions`, the inlet entry in
+    whichever of `0/U`, `0/k`, `0/epsilon` and `0/omega` are there, the roughness
+    wall functions on a named ground patch, and the profile as a table, a figure and
+    a `--json` sidecar. `z0` has no default and it refuses without one, printing the
+    Davenport classes. Measured against a real solver: one `simpleFoam` iteration,
+    the written inlet values read back, agreeing with the script's own arithmetic to
+    4.4e-12 at worst across U, k, epsilon and omega.
+  - `toolbox/site_stl.py` turns the footprints and the terrain into STL in the site
+    file's own frame, ear-clipping the roofs so a concave footprint comes out as its
+    own shape, and counting what it leaves out instead of extruding it to a default.
+
+- **A study record you can ask about: projects, tags, accounting, and running one
+  again.** The record on disk carries a `project`, `tags`, the wall-clock time its
+  sessions took, the tokens they sent by class, when it last ended, and the study it
+  was cloned from. A record written before any of this loads with the defaults, as it
+  always did for a key it did not know.
+  - `openreynolds studies` takes `--project`, `--tag` (repeatable, and every tag given
+    has to be on the study), `--text` over the title and the project, and
+    `--state new|finished|unknown`. Its `--json` keeps every key it answered and adds
+    the new ones.
+  - `openreynolds dashboard` puts every study on one screen, newest first, with its
+    state, its jobs, its time and its tokens. It reads `./studies` and starts nothing:
+    a study whose job rows were last written `running` is reported `unknown`, because
+    settling it means asking the workspace service, and a listing does not start a
+    billed machine to draw a table.
+  - `openreynolds label` files a study under a project and tags it; `/project` and
+    `/tag` do the same from inside a session, answered by the harness with no model
+    call.
+  - `openreynolds clone` copies a past study's setup and local files into a new study
+    without its conversation. `openreynolds rerun` is a clone plus the first thing you
+    said in the old study, written in word for word and left unanswered, so an
+    ordinary resume answers it. A study whose transcript holds nothing you said is
+    refused by name rather than reconstructed.
+  - Cost is reported as wall-clock time and tokens for every study, and as a dollar
+    figure only where your own key paid your own vendor and that model's rate is
+    known. A study on Reynolds' model is never priced in money here, as the service's
+    own spending cap is not.
+
+### Fixed
+
+- **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
+  said it was in four places.** `reattach.py`, `claims.py`,
+  `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told
+  the story of the study that measured one reattachment length twice and believed the
+  wrong script, and all four corroborated the surviving number as "4% above Gartling's
+  6.1". That comparison was not available to it. **Gartling's 6.1 is in units of the
+  downstream channel height**, which at an expansion ratio of 2 is 12.2 step heights,
+  while the study's 6.32 and 7.5667 are both in step heights. In one unit they are about
+  48% and 38% short.
+  - The same wrong unit length set the case up at **Re 1600** on the channel height
+    where Gartling's 800 is on that same length, so the run was never solving the
+    benchmark's flow either. One mistake, two independent consequences, and both of them
+    flattered the result.
+  - The incident the docstrings exist for is unchanged and is now sharper: the study's
+    two scripts disagreed with each other by **16%**, in the same unit, and *neither*
+    could have been checked against the benchmark. What makes 6.32 the right answer is
+    which crossing of its own list it is, not that a benchmark appeared to bless it. The
+    `DEFAULT_TOL` percentages for figure against answer (15%) and figure against the
+    other script (16%) are unaffected, being comparisons between two of the study's own
+    numbers in one unit, which is the only kind `claims.py` makes.
+  - Specimen strings that exercise the number parser are deliberately untouched, including
+    the study's delivered text in `tests/test_toolbox_claims.py` and the sentence
+    `LOOK_AHEAD` was measured off. Those are evidence of how people write, and the
+    physics claim inside them is not the parser's business.
+  - The normalisation is settled from MFIX-Exa's reproduction, which states `H = 1`,
+    "where H is the expanded channel height", and matches its own extrapolated 6.097 to
+    Gartling's 6.10 with no conversion, plus a published table listing him at 12.20 and
+    11.26 step heights (2 x 6.10 and 2 x 5.63, the latter being the upper-wall bubble
+    length 10.48 - 4.85). **Gartling (1990) itself is paywalled and was not read**, which
+    the docstrings now say rather than imply away. Issue #205 tracks closing that and
+    re-running the case at the benchmark's actual Reynolds number.
+
+## [0.4.2] - 2026-11-18
+
+### Changed
+
+- **Signing in with no model key of its own uses Reynolds' model.** A machine with no
+  provider, model, endpoint or model key chosen (any vendor's key variable counts), is set to
+  the `reynolds` preset at `openreynolds login`, metered to the account, and is told
+  how to switch to its own key. A machine that has a key or chose a provider keeps it,
+  and is now told `openreynolds config --provider reynolds` is the other way.
+
+### Fixed
+
+- **`openreynolds login --browser` waits through a brief outage.** A 5xx, a 429 or a
+  dropped connection while the code waited for approval ended the sign-in, so the
+  page then said no terminal was waiting for the code. It now keeps asking until the
+  code is approved, refused or expired, and says when the service stopped answering. A
+  429 doubles the wait between polls. A key the service handed over on a reply that was
+  lost is named as that, with where to revoke it.
+
+## [0.4.1] - 2026-11-17
+
+### Added
+
+- **`openreynolds logout`.** Revokes this machine's service key on the service, then
+  removes it from the config and deletes any traces queued to share, unsent. If the
+  service cannot be reached nothing changes, unless `--here-only` says to remove the
+  key from this machine anyway. A key set in `FOAMD_API_KEY` is left alone, and the
+  command says the machine is still signed in through it.
+
+### Fixed
+
+- The release workflow now creates the GitHub release for a tag. It read the tag from
+  a job it did not wait on, got nothing, and took the latest release for this one.
+  An empty tag now fails the job.
+
+## [0.4.0] - 2026-11-17
+
+### Added
+
+- **A workspace on your own machine: `--local`.** The hosted workspace's image
+  (`ghcr.io/inviscidai/reynolds-workspace:2512`: OpenFOAM ESI v2512, HiSA, gmsh,
+  build123d, pyvista) runs in Docker here, with `~/.openreynolds/work` mounted as
+  `/work`, as your user and with no network. No account is needed, only a model key;
+  `--study <id> --local` resumes a local study, and jobs outlive the session.
+  `OPENREYNOLDS_LOCAL=native` uses an OpenFOAM installed on the machine instead, with
+  no sandbox, and now says so at the start when it finds none. Felix stays cloud-only.
+- **`openreynolds mcp`: Reynolds as an MCP server.** Claude Code or any MCP client can
+  start studies, watch them, answer their questions and fetch their results through
+  the same nine tools the hosted Reynolds MCP server offers (`openreynolds/mcp/core.py`
+  defines them for both). Studies run in this process, on a Reynolds workspace or with
+  `--local` on this machine's Docker. `claude mcp add reynolds -- openreynolds mcp`. The
+  `mcp` package is now a standard dependency, so it works from pip, uvx, pipx and npm
+  installs alike; the `[mcp]` extra is kept, empty, for older instructions.
+- **A signed-in machine shares a trace of each study.** While OpenReynolds is signed in
+  (`openreynolds login`), it sends the service a trace of each study after it ends --
+  usage (tools and whether they worked, models, tokens, timings, workspace kind and
+  solver, OS and versions) and study content (messages, reasoning, tool inputs and
+  outputs, each cut at 20,000 characters) -- whether the workspace is the service's or
+  this machine's. Credentials it knows, environment variables named like secrets and
+  the shapes of common keys are removed before a trace is queued (`redact.py`), and
+  again by the service. It says so in one line at sign-in (password or `--browser`),
+  or at the next study on a machine signed in before. `openreynolds sharing
+  off|on|status` and `OPENREYNOLDS_SHARING=off` switch it per machine, and `off`
+  discards the queue; nothing is recorded or sent without a service key. Traces can be
+  deleted from the web app's Account page. `doctor` shows whether sharing is on. What
+  is kept and for how long: https://tryreynolds.com/privacy.
+- **A new hosted study gets its own workspace (#92).** Studies no longer share one
+  instance's `/work`; a resumed study goes back to its own.
+
 - **A study's spending ceiling is the person's question.** When the hosted service
   pauses a study at 80% of its ceiling (`409 study_paused`), on a workspace call or on
   a model call, the person is asked in any mode: yes doubles the ceiling (`POST
@@ -15,6 +259,16 @@ All notable changes to this project are recorded here. The format follows
   final message and asks the model nothing more. Before the first solve the person is
   told how far the study may go before it asks; in ask-before-compute mode that is
   part of the job's question. See docs/modes.md.
+
+- **Felix mode: a second solver.** `--solver auto|openfoam|felix` (or
+  `OPENREYNOLDS_SOLVER`). With `auto`, the default, the solver is chosen from the
+  person's first message by a request of its own, before the agent's first turn (see
+  *Changed*), and the workspace -- of that solver's kind -- is reserved and started,
+  and the platform's study opened with that solver, only once it has been chosen. A Felix study gets its own system prompt (pointing at `/opt/felix/docs`), no
+  `cad`, `mesh_review` or OpenFOAM toolbox, and a `job_start` that runs `felix run`
+  without the OpenFOAM restart guard and trapFpe check. The solver is fixed for the
+  whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
+  is unchanged byte for byte.
 
 ### Changed
 
@@ -89,19 +343,30 @@ All notable changes to this project are recorded here. The format follows
 - **A failed model request is in the transcript.** A turn a provider error ended leaves
   an `event` row saying the request failed and why, not only a live notice.
 
-### Added
-
-- **Felix mode: a second solver.** `--solver auto|openfoam|felix` (or
-  `OPENREYNOLDS_SOLVER`). With `auto`, the default, the agent's first decision is the
-  solver (`choose_solver`), and the workspace -- of that solver's kind -- is reserved
-  and started, and the platform's study opened with that solver, only once it has
-  chosen. A Felix study gets its own system prompt (pointing at `/opt/felix/docs`), no
-  `cad`, `mesh_review` or OpenFOAM toolbox, and a `job_start` that runs `felix run`
-  without the OpenFOAM restart guard and trapFpe check. The solver is fixed for the
-  whole study and recorded in `session.json`; a resume keeps it. The OpenFOAM prompt
-  is unchanged byte for byte.
-
 ### Fixed
+
+- **End stops the workspace before bundling the case (#93),** and the bundle stops at
+  its budget; a bundle over budget keeps the record in part instead of dropping it
+  (#95).
+- **A SOCKS proxy can start the model client (#90).** `httpx2[socks]` is a dependency.
+- **A live study's times reach the viewer within a cycle (#98),** the newest first,
+  before the backfill of earlier ones (#102).
+- **Every model client a session builds names the study (#105),** so the service can
+  count its usage against that study.
+- **A cut stream is retried, and a transient model failure no longer ends the turn
+  (#87, #74).**
+- **Ending a session keeps a job's real ending (#85),** and a workspace start that fails
+  says so (#83).
+- **The solver-could-not-be-chosen line is printed once,** not twice, in a plain session.
+- **The `--no-capture` help said it sends nothing to the platform.** It keeps the
+  study's transcript on this machine; traces have their own switch. The help, README
+  and `doctor` now say so.
+- **The trial text in `login` and the README said a company address needs no card.**
+  Both trials take a card and renew unless cancelled.
+- **The end-of-session hint offered `openreynolds pull --all`,** a flag that does not
+  exist; it is `openreynolds pull`, and a local study is not offered it at all. A
+  session on a native local workspace no longer says it joined a running workspace.
+- **The MCP server reported an empty version;** it reports the package's.
 
 - **A piped command fails when any stage of it does (#48).** `blockMesh | tail -40`
   reported exit_code 0 from a FOAM FATAL ERROR because `tail` succeeded. `bash` and
@@ -1152,7 +1417,10 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.2.0...v0.3.0

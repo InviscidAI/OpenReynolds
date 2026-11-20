@@ -205,6 +205,9 @@ class ToolContext:
     call goes again. Set while the workspace's own start is what met the pause
     (`cli._bring_up`): the start is sent again, so the call goes to a workspace that
     is coming rather than to the start's stored refusal."""
+    local: bool = False
+    """Whether the workspace is a container on the person's own machine
+    (`backend/docker.py`), which changes what the system prompt says about it."""
     solver: str = solvers.OPENFOAM
     """This study's solver (`solvers.py`): `openfoam` or `felix`. It decides the tool
     list (`tools_for`), how `job_start` reads a launch, and the system prompt the loop
@@ -1083,9 +1086,17 @@ def _written_run_shape(args: dict[str, Any]) -> str:
     if end is None or not every:
         return ""
     span = end - (control.get("startTime") or 0.0)
-    parts = [f"endTime {end:g} / writeInterval {every:g} = {int(span / every)} write times"]
+    adjusts = bool(_ADJUST_DT.search(args.get("content") or ""))
+    unit, count = _write_count(control, adjusts)
+    if count is None:
+        parts = [f"a write every {unit}"]
+    elif control.get("writeControl") in _SIM_TIME_WRITES:
+        parts = [f"endTime {end:g} / writeInterval {unit} = {count} write times"]
+    else:
+        parts = [f"endTime {end:g} / writeInterval {unit} of deltaT {control['deltaT']:g} "
+                 f"= {count} write times"]
     step = control.get("deltaT")
-    if step and not _ADJUST_DT.search(args.get("content") or ""):
+    if step and not adjusts:
         # The number that actually sets what this run costs, and the one nobody
         # writes down. A live case chose endTime 300 at deltaT 0.005 -- sixty
         # thousand steps, two hours -- with its Courant number already at 0.69, so
@@ -1413,6 +1424,32 @@ starts and a step count derived from it is a number about nothing -- a live case
 wrote deltaT 0.001 under `maxCo 0.8`, and the 200,000 steps that implies was never
 going to happen."""
 
+_SIM_TIME_WRITES = frozenset({"runTime", "adjustableRunTime", "adjustable"})
+_WALL_CLOCK_WRITES = frozenset({"clockTime", "cpuTime"})
+
+
+def _write_count(control: dict[str, Any], adjusts_dt: bool) -> tuple[str, int | None]:
+    """What `writeInterval` counts, in words, and how many writes it implies over the
+    run -- None when that is not arithmetic on the dictionary.
+
+    `writeInterval` is in the unit `writeControl` names, and OpenFOAM's default is
+    `timeStep`. Divided into `endTime` as if it were always seconds, the cavity
+    tutorial (deltaT 0.005, a write every 20 steps, 5 writes) was announced as "0 write
+    times". Steps are only countable at a fixed timestep, and `clockTime` / `cpuTime`
+    count the machine's seconds, not the flow's: neither gets a number."""
+    every = control["writeInterval"]
+    mode = control.get("writeControl") or "timeStep"
+    span = control["endTime"] - (control.get("startTime") or 0.0)
+    if mode == "timeStep":
+        step = control.get("deltaT")
+        count = None if adjusts_dt or not step else int(span / step / every + 1e-6)
+        return f"{every:g} time steps", count
+    if mode in _SIM_TIME_WRITES:
+        return f"{every:g}", int(span / every + 1e-6)
+    if mode in _WALL_CLOCK_WRITES:
+        return f"{every:g} s of {mode}", None
+    return f"{every:g} ({mode})", None
+
 
 def _is_two_dimensional(ctx: ToolContext, case: str) -> bool:
     """Whether the case's mesh has an `empty` patch, i.e. is one cell thick.
@@ -1492,8 +1529,8 @@ def _solve_shape(ctx: ToolContext, args: dict[str, Any]) -> str:
     if end is not None:
         parts.append(f"endTime {end:g}")
         if every:
-            span = end - (control.get("startTime") or 0.0)
-            parts.append(f"writeInterval {every:g} ({int(span / every)} write times)")
+            unit, count = _write_count(control, bool(_ADJUST_DT.search(text)))
+            parts.append(f"writeInterval {unit}" + (f" ({count} write times)" if count is not None else ""))
         step = control.get("deltaT")
         if step and not _ADJUST_DT.search(text):
             # Said here as well as at the `write_file` that chose it, because a
@@ -1579,13 +1616,25 @@ def _machine_line(ctx: ToolContext, ranks: int) -> str:
     re-decomposed for 4. So both numbers are said, and what MPI will accept without
     being told otherwise; the extra ranks a thread would add are named for what they
     are, because a CFD solve is bound by memory bandwidth and two ranks on one core
-    share it."""
+    share it.
+
+    The refusal is not universal, and the sentence says `usually` for that reason.
+    Open MPI's slot count comes from the topology it detects, and a cgroup CPU quota
+    is not part of that topology: inside a container `nproc` reports the quota while
+    Open MPI still sees the host's cores. Measured twice on this corpus, `mpirun -np
+    12` ran unrefused on a container whose `nproc` answered 4 (study
+    20260830-164816-eee0's own 12-way run, and twelve foreign ranks sharing the
+    container in 20260830-032052-6fe9). Both observations hold; which one applies
+    depends on whether the cores reported here are the machine's or a quota's. The
+    bandwidth point survives either way, and is the reason the number is worth
+    saying at all."""
     threads = ctx.cores or 0
     physical = ctx.physical_cores or 0
     if physical and physical < threads:
         line = (f"{threads} hardware threads = {physical} physical cores on this machine; "
-                f"mpirun accepts up to {physical} ranks as it is (more needs "
-                "--use-hwthread-cpus, and ranks that share a core gain little in CFD)")
+                f"mpirun usually accepts up to {physical} ranks as it is (more has needed "
+                "--use-hwthread-cpus on a bare machine, though a container's quota is not "
+                "what Open MPI counts; ranks that share a core gain little in CFD)")
         if ranks > physical:
             line += f" -- {ranks} ranks is more than the {physical} cores"
         return line

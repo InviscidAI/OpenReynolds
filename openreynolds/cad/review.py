@@ -465,8 +465,13 @@ class Reviewer:
     """
 
     def __init__(self, cfg: Any, backend: Any,
-                 on_step: Callable[[Any], None] | None = None):
+                 on_step: Callable[[Any], None] | None = None,
+                 headers: dict[str, str] | None = None):
         self.cfg = cfg
+        self.headers = dict(headers or {})
+        """Sent on every model request: the session's `X-Study-Id`, so the service bills
+        the reviewer's calls to the study and judges them against its ceiling. A trial
+        account's call without it is refused (foamd `trial_needs_study`)."""
         self.backend = backend
         self.on_step = on_step
         """Told one synthetic `Step` per review, so the progress line that renders the
@@ -476,7 +481,7 @@ class Reviewer:
         interesting arm of the experiment; the same model in a fresh thread is the
         cheaper one, and still not the same eyes that built it."""
         self.effort = cfg.mesher_effort or "high"
-        self.provider = make_provider(cfg, model=self.model)
+        self.provider = make_provider(cfg, model=self.model, default_headers=self.headers)
         self._built_for = (self.model, endpoint_key(cfg, self.model))
         """The configured model and the endpoint `provider` was built for; see `_follow`."""
         self.enabled = True
@@ -489,7 +494,7 @@ class Reviewer:
             return
         self.model = model
         if built[1] != self._built_for[1]:
-            self.provider = make_provider(self.cfg, model=model)
+            self.provider = make_provider(self.cfg, model=model, default_headers=self.headers)
         self._built_for = built
 
     # -- the look ----------------------------------------------------------------

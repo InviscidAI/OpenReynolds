@@ -16,6 +16,7 @@ turn from the neutral blocks and simply loses the parts only the original could 
 
 from __future__ import annotations
 
+import importlib
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -249,6 +250,88 @@ class Listener:
     def on_text(self, delta: str) -> None:
         if self.text and delta:
             self.text(delta)
+
+
+def _transport_errors() -> tuple[type[BaseException], ...]:
+    """The transport's own error base, from whichever httpx is installed.
+
+    A request that fails before its stream opens comes back as the SDK's connection
+    error, which the SDK has already retried itself. One that dies *during* iteration
+    does not: it raises from inside the SDK's `with` block, below the layer that wraps
+    and retries, so the raw transport exception escapes -- `httpx2.RemoteProtocolError:
+    peer closed connection without sending complete message body` in #197, which
+    nothing caught and which ended the session. The package is `httpx2` in some
+    environments and plain `httpx` in others, so both are probed."""
+    found: list[type[BaseException]] = []
+    for name in ("httpx2", "httpx"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        base = getattr(module, "TransportError", None)
+        if isinstance(base, type) and issubclass(base, BaseException):
+            found.append(base)
+    return tuple(found)
+
+
+DROPPED: tuple[type[BaseException], ...] = _transport_errors()
+"""What a stream that loses its connection partway raises (`_transport_errors`).
+The SDKs' own connection errors are left out on purpose: they are raised before the
+stream opens, after the SDK's own retries, and keep their own message."""
+
+
+STREAM_TRIES = 3
+"""Times one streamed request is sent when the connection drops under it. The thread
+is untouched until a turn returns, so sending it again is safe; after the last try the
+drop is a `ProviderError` with no status, which `transient` reads as worth waiting
+out, so the session's own waits (`TRANSIENT_WAITS`) take over from there."""
+
+REPEAT_NOTICE = "\n[connection dropped mid-reply; the reply above may repeat]\n"
+
+
+def stream_with_retries(
+    once: Callable[[Listener], Turn],
+    listener: Listener,
+    also: tuple[type[BaseException], ...] = (),
+    pause: Callable[[float], None] | None = None,
+) -> Turn:
+    """`once(listener)`, sent again when the stream drops partway (`DROPPED`, and
+    `also` -- an adapter's own name for a stream that ended short).
+
+    A reply that had begun to show -- its text or its thinking -- says so whenever it
+    is cut off, on the last try too: the session's own waits send the turn again
+    after that, and the reply would otherwise print twice in silence."""
+    errors = (*DROPPED, *also)
+    for attempt in range(1, STREAM_TRIES + 1):
+        shown = False
+
+        def seen() -> None:
+            nonlocal shown
+            shown = True
+
+        def begin() -> None:
+            seen()
+            listener.on_thinking_begin()
+
+        def thinking(delta: str) -> None:
+            seen()
+            listener.on_thinking(delta)
+
+        def text(delta: str) -> None:
+            seen()
+            listener.on_text(delta)
+
+        heard = Listener(thinking_begin=begin, thinking=thinking, text=text,
+                         extra=listener.extra)
+        try:
+            return once(heard)
+        except errors as exc:
+            if shown:
+                listener.on_text(REPEAT_NOTICE)
+            if attempt == STREAM_TRIES:
+                raise ProviderError(f"connection lost mid-stream: {exc}") from exc
+            (pause or time.sleep)(2 ** attempt)
+    raise AssertionError("unreachable")
 
 
 class Provider:

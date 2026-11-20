@@ -48,6 +48,14 @@ roles
     python3 case_gen.py /work/study/duct --inlet inlet --outlet outlet,outlet2 --length 0.05
     python3 case_gen.py /work/study/car --external --body car --belt road --spin wheel:0.15:z
     python3 case_gen.py /work/study/mesh --study transient --end-time 2 --dry-run
+    python3 case_gen.py /work/study/channel --study transient --end-time 5 \
+        --turbulence WALE --les-delta vanDriest --average-from 2
+
+LES is not another solver here: `pimpleFoam` runs it and `constant/turbulenceProperties`
+is the only file that says so. What the switch costs is everything around it -- the
+schemes (central convection, second-order ddt), the Courant bound, the time average,
+and a resolution requirement nothing here can verify and this does print. `--turbulence`
+takes a subgrid model by name; `--study steady` with one is refused rather than written.
 """
 
 from __future__ import annotations
@@ -624,9 +632,25 @@ and `--turbulence` overrides it."""
 
 
 def turbulence_model(opts, flow: Flow) -> tuple[str, str]:
-    """The model and the sentence saying why it is that one."""
+    """The model and the sentence saying why it is that one.
+
+    `auto` never chooses an LES: which eddies a mesh resolves is not something a
+    Reynolds number knows, and a subgrid model on a RAS mesh is a slower RAS with a
+    worse answer. LES is asked for by name, and the name is checked here as well as by
+    argparse so a direct call gets the same refusal -- a subgrid model that OpenFOAM
+    does not have is a dictionary that parses and a solver that stops.
+    """
     asked = (opts.get("turbulence") or "auto").strip()
     if asked != "auto":
+        if asked not in MODELS:
+            raise SystemExit(
+                f"no turbulence model called {asked!r}. RAS: "
+                + ", ".join(sorted(TURBULENCE_FIELDS))
+                + "; LES subgrid: " + ", ".join(sorted(LES_FIELDS))
+                + "; also laminar, DNS and auto. These are the names ESI v2512 "
+                "registers; `foamToC -table LESincompressibleMomentumTransportModel` "
+                "on the instance lists every one it has"
+            )
         return asked, f"--turbulence {asked}"
     if flow.reynolds < LAMINAR_BELOW:
         return "laminar", f"Re = {flow.reynolds:.0f} is below {LAMINAR_BELOW:g}"
@@ -669,10 +693,130 @@ saying it cannot find a file, and the same list has to drive 0/, the divSchemes 
 the linear solvers or one of the three is left describing a different case."""
 
 
+LES_FIELDS = {
+    "WALE": (),
+    "Smagorinsky": (),
+    "sigma": (),
+    "kEqn": ("k",),
+    "dynamicKEqn": ("k",),
+    "SpalartAllmarasDES": ("nuTilda",),
+    "SpalartAllmarasDDES": ("nuTilda",),
+    "SpalartAllmarasIDDES": ("nuTilda",),
+    "kOmegaSSTDES": ("k", "omega"),
+    "kOmegaSSTDDES": ("k", "omega"),
+    "kOmegaSSTIDDES": ("k", "omega"),
+}
+"""The subgrid models, and what each one actually transports.
+
+LES in OpenFOAM is not another solver: `pimpleFoam` runs it, and the only thing that
+says so is `constant/turbulenceProperties`. So the whole of the switch is this table
+plus the dictionary, and the table is the part that is easy to get wrong.
+
+The names are the ones ESI v2512 registers, read off `Foam::LESModels` in that
+version's own API index rather than remembered -- `dynamicLagrangian`,
+`DeardorffDiffStress` and the two-phase `NicenoKEqn` family are there too and are left
+out of what is offered here, not out of what exists. `foamToC -table
+LESincompressibleMomentumTransportModel` on the instance is the live list.
+
+The transported fields are per model and are not a convention: an LES model's `nut` is
+always a field on disk (every `eddyViscosity` reads it MUST_READ), but `k` is a field
+only where the model solves for it. `WALE`, `Smagorinsky` and `sigma` compute k
+algebraically from grad(U) and never open a file called k, so writing one is harmless
+and leaving one out is also harmless. `kEqn` and `dynamicKEqn` own a `k_` they read from
+disk and stop before the first step without it. The Spalart-Allmaras hybrids own
+`nuTilda`, and the kOmegaSST hybrids own both k and omega -- a DES run is a RAS model
+with an LES length scale in it, so it carries the RAS fields.
+"""
+
+LES_DELTAS = ("cubeRootVol", "vanDriest", "IDDESDelta")
+"""The filter width, which is not cosmetic.
+
+`cubeRootVol` is the cell's own cube root and goes on being that right down to the
+wall, where the eddies the subgrid model is modelling have stopped existing -- so the
+model keeps producing nu_t through the viscous sublayer and the skin friction comes out
+high. `vanDriest` is `cubeRootVol` with van Driest's damping on it, computed off the
+local u_tau, which is what takes the subgrid viscosity to zero at the wall; it is the
+one a wall-resolved channel or aerofoil wants, and it costs a near-wall solve every
+`calcInterval` steps. `IDDESDelta` is a different animal -- it blends the cell's own
+spacings and the wall distance, and the IDDES models *require* it: ESI's
+`SpalartAllmarasIDDES::setDelta()` checks `isA<IDDESDelta>` and exits with "The delta
+function must be set to a IDDESDelta -based model" rather than running on something
+else, which is why that pairing is refused here instead of written.
+
+`maxDeltaxyz`, `smooth`, `Prandtl`, `SLA` and `DeltaOmegaTilde` also exist in v2512 and
+are not offered; the dictionary this writes is a text file and adding one is an edit.
+"""
+
+
+MODELS = ("auto", "laminar", "DNS", *sorted(TURBULENCE_FIELDS), *sorted(LES_FIELDS))
+"""Everything `--turbulence` takes, built from the tables rather than typed beside
+them: a name in the flag's list and not in the table writes a dictionary that parses
+and a case that stops on the first step."""
+
+
+def is_les(model: str) -> bool:
+    """Whether this model resolves eddies rather than modelling all of them.
+
+    `DNS` is in here because it belongs to the same half of the numerics: there is no
+    subgrid model at all (OpenFOAM spells that `simulationType laminar`), but a
+    direct simulation wants the same central convection, the same second-order ddt,
+    the same Courant bound and the same time averaging as an LES, and gets none of
+    them from the laminar path -- which is written for a Re 100 duct that has a steady
+    answer. The difference between `--turbulence laminar` and `--turbulence DNS` is
+    therefore not the turbulence dictionary (both say laminar); it is every other file
+    in the case.
+    """
+    return model == "DNS" or model in LES_FIELDS
+
+
 def turbulence_fields(model: str) -> tuple[str, ...]:
-    if model == "laminar":
+    if model in ("laminar", "DNS"):
         return ()
+    if model in LES_FIELDS:
+        return LES_FIELDS[model]
     return TURBULENCE_FIELDS.get(model, ("k", "omega"))
+
+
+def needs_nut(model: str) -> bool:
+    """Whether `0/nut` has to be on disk.
+
+    Every RAS and LES eddy-viscosity model reads `nut` MUST_READ whatever else it
+    transports, so an algebraic subgrid model like `WALE` -- which has no transported
+    field at all -- still needs the file. Writing `0/nut` only where there was a
+    transported field to write beside it is what made that the one combination the
+    generator could not produce.
+    """
+    return model not in ("laminar", "DNS")
+
+
+def les_delta(model: str, opts) -> str:
+    """The delta model: what was asked for, else the one the subgrid model can use.
+
+    An IDDES model with any other delta is refused rather than written, because the
+    solver refuses it too and does so after the mesh is decomposed and the job is
+    queued. Everything else defaults to `cubeRootVol`, which is the cheap geometric
+    one; `--les-delta vanDriest` is the near-wall answer and the summary says which
+    was used either way.
+    """
+    asked = (opts.get("les_delta") if opts else None) or ""
+    asked = str(asked).strip()
+    needs_iddes = model.endswith("IDDES")
+    if not asked:
+        return "IDDESDelta" if needs_iddes else "cubeRootVol"
+    if asked not in LES_DELTAS:
+        raise SystemExit(
+            f"no LES delta called {asked!r}: this writes {', '.join(LES_DELTAS)}. "
+            "OpenFOAM v2512 also has maxDeltaxyz, smooth, Prandtl, SLA and "
+            "DeltaOmegaTilde -- turbulenceProperties is a text file and adding one "
+            "there is an edit, not a patch to this script"
+        )
+    if needs_iddes and asked != "IDDESDelta":
+        raise SystemExit(
+            f"{model} cannot run on delta {asked}: it casts its delta to IDDESDelta and "
+            "exits with 'The delta function must be set to a IDDESDelta -based model'. "
+            "Either --les-delta IDDESDelta, or a subgrid model that is not IDDES"
+        )
+    return asked
 
 
 def nut_wall_function(model: str) -> str:
@@ -689,6 +833,14 @@ def nut_wall_function(model: str) -> str:
     the generator cannot guarantee. It also needs no k, which is why Spalart-Allmaras
     already had it. Nothing is lost by using it everywhere: on a mesh that *is* in the
     log layer the two agree.
+
+    The argument covers LES too, and there it is the one form that covers both kinds:
+    a wall-resolved LES puts the first cell at y+ ~ 1, where Spalding's blend is the
+    viscous sublayer and nu_t comes out near zero by itself, and a wall-modelled LES
+    puts it in the log layer, where the same blend is the log law. A plain high-Re form
+    would be right for the second and wrong for the first, and which of the two mesh
+    this was handed is not something it can tell -- so the same function goes on every
+    wall and `wall.py` settles it off the solution.
     """
     return "nutUSpaldingWallFunction"
 
@@ -1012,9 +1164,14 @@ def field_nut(plan: Plan, model: str) -> str:
 SOLVERS = {"steady": "simpleFoam", "transient": "pimpleFoam", "mesh": ""}
 
 
-def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
-    """`forceCoeffs` and a residual log, written into the case that is meant to answer
-    for them.
+def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") -> str:
+    """`forceCoeffs`, a residual log, and -- for an LES -- the time average.
+
+    Three objects and three reasons, which is why they are assembled rather than
+    written as one block: a case with no body takes no forces, and a case that is not
+    resolving eddies has no mean to take. A block with nothing in it is left out
+    entirely, because an empty `functions {}` reads as something that was meant to be
+    filled in.
 
     controlDict had no `functions` block at all, while `preflight.py` warns when a
     forceCoeffs object is missing and `results.py` reads `forceCoeffs.dat` -- both ends
@@ -1026,13 +1183,65 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
     coefficients mean what their names say without anybody re-deriving them. Only the
     external templates get forces -- a duct has no body to take them on.
     """
+    entries: list[str] = []
+    entries += force_coeffs(plan, flow, opts)
+    entries += field_average(opts, model)
+    if not entries:
+        return ""
+    return "\n" + "\n".join(["functions", "{", *entries, "}"])
+
+
+def average_from(opts) -> float:
+    """When the mean starts, as a number and never as a default nobody saw.
+
+    An LES answer is a time average: the instantaneous field is one realisation of a
+    chaotic flow and reporting it as the answer is reporting noise with three
+    significant figures. So the averaging window has a start, and the start is the
+    thing that is wrong when a mean is wrong -- a mean that includes the start-up
+    transient is not a mean of anything, it is the transient diluted.
+
+    Half the end time, unless told otherwise. That is a guess and is printed as one:
+    `spectra.py` is what decides when the flow actually settled, off the force history
+    the run writes, and its stationary window is the honest answer to this. The number
+    here only has to be a start that somebody can see and move.
+    """
+    stated = opts.get("average_from") if opts else None
+    if stated is not None:
+        return float(stated)
+    return float(opts.get("end_time") or 1.0) / 2.0
+
+
+def field_average(opts, model: str) -> list[str]:
+    """`fieldAverage` with a stated start time, for a run whose answer is a mean."""
+    if not is_les(model):
+        return []
+    start = average_from(opts)
+    fields = ["U", "p"]
+    lines = ["    fieldAverage", "    {",
+             "        type            fieldAverage;",
+             "        libs            (fieldFunctionObjects);",
+             "        writeControl    writeTime;",
+             f"        timeStart       {start:.6g};   // spectra.py decides whether the "
+             "flow had settled by then",
+             "        fields", "        ("]
+    for field in fields:
+        # prime2Mean as well as mean: the fluctuation is the quantity an LES was run
+        # for, and it cannot be recovered afterwards from a mean field alone.
+        lines += [f"            {field}", "            {",
+                  "                mean            on;",
+                  "                prime2Mean      on;",
+                  "                base            time;", "            }"]
+    lines += ["        );", "    }"]
+    return lines
+
+
+def force_coeffs(plan: Plan, flow: Flow, opts) -> list[str]:
     body = str(opts.get("body_patch") or "body")
     if body not in plan.mesh.patch_face_counts():
-        return ""
+        return []
     area = plan.length * plan.mesh.thickness
     magnitude = flow.speed
     entries = [
-        "functions", "{",
         "    forceCoeffs", "    {",
         "        type            forceCoeffs;",
         "        libs            (forces);",
@@ -1058,9 +1267,8 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str) -> str:
         "        writeControl    timeStep;",
         "        writeInterval   1;",
         "    }",
-        "}",
     ]
-    return "\n" + "\n".join(entries)
+    return entries
 
 
 def purge_write(study: str, opts) -> int:
@@ -1080,6 +1288,90 @@ def purge_write(study: str, opts) -> int:
     return 0 if study == "transient" else 3
 
 
+def times_on_disk(case: Path | str | None) -> list[str]:
+    """Time directory names already in a case, above 0, lowest first.
+
+    `study_state.latest_time` answers the same question with one name and counts `0`;
+    this one is for the question `startFrom` asks, which is whether a field from an
+    EARLIER run is sitting there.
+    """
+    if not case:
+        return []
+    found: list[tuple[float, str]] = []
+    try:
+        children = list(Path(case).iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if not child.is_dir() or child.name.startswith("processor"):
+            continue
+        if child.name in ("constant", "system"):
+            continue
+        try:
+            value = float(child.name)
+        except ValueError:
+            continue  # `0.orig` is not a time either
+        if value > 0.0:
+            found.append((value, child.name))
+    return [name for _, name in sorted(found)]
+
+
+def start_entries(case: Path | str | None, end: float) -> tuple[list[str], list[str]]:
+    """The `startFrom`/`startTime` pair for a case that may already hold an old run's
+    time directories, and what has to be said about it.
+
+    `startFrom latestTime` is deliberate and stays the default: the hosted container's
+    lifetime is 24 h, so an interrupted solve resumes from its last write with one
+    relaunch rather than starting over (`prompt.py`, and the same comment in the
+    templates). On a case being generated there is nothing but `0/`, and `latestTime`
+    IS `0`.
+
+    #181 is the case where it is not. Written over a finished run -- `--force` on a
+    case holding `0 0.orig 100 200 300 400 500` -- `latestTime` resolved to 500, past
+    the `--end-time 20` the user had just given, and `pimpleFoam` exited without
+    computing a single timestep while the summary reported a complete set-up and told
+    the user to run it. Neither generator looked at a time directory other than `0/`.
+
+    The worse half was `compressible.py`: the generator writes a correct absolute
+    `0/p` in Pa, and `latestTime` made the solver read a `500/p` left behind by an
+    earlier incompressible run, dimensions `[0 2 -2 0 0 0 0]` -- kinematic m2/s2,
+    silently, in the field the whole case is about.
+
+    So when an older run's times are there, the fields just written are the ones meant
+    to be read and `startFrom startTime` says so, in the dictionary and out loud. It is
+    not a refusal: continuing from 500 is a thing a person may want, and the note says
+    which line to change to get it.
+    """
+    times = times_on_disk(case)
+    if not times:
+        return ["startFrom       latestTime;", "startTime       0;"], []
+    latest = times[-1]
+    entries = [
+        "startFrom       startTime;",
+        "startTime       0;",
+        f"// NOT latestTime: {len(times)} time director{'y' if len(times) == 1 else 'ies'} "
+        f"from an earlier run ({', '.join(times[:6])}"
+        f"{', ...' if len(times) > 6 else ''}) are in this case, and the fields this "
+        f"generator just wrote are in 0/. `startFrom latestTime` would start at "
+        f"{latest}"
+        + (f", past endTime {end:g}, and the solver would exit having computed nothing"
+           if float(latest) >= end else "")
+        + ".",
+    ]
+    notes = [
+        f"start time  0 (startFrom startTime), NOT latestTime: {len(times)} time "
+        f"director{'y' if len(times) == 1 else 'ies'} from an earlier run are already "
+        f"here, the latest being {latest}"
+        + (f" -- past the endTime {end:g} given, so `latestTime` would have run zero "
+           "timesteps" if float(latest) >= end else ""),
+        f"            the fields this wrote are in 0/; the ones in {latest}/ are the "
+        "older run's and may not even be in the same units. To continue from them "
+        "instead, set `startFrom latestTime` in system/controlDict and raise endTime "
+        "above " + f"{latest}.",
+    ]
+    return entries, notes
+
+
 def io_optimisation() -> str:
     """The collated file handler, set on the case so decomposePar, the solver and
     reconstructPar all agree without a `-fileHandler` flag on each command.
@@ -1094,7 +1386,7 @@ def io_optimisation() -> str:
     return "\nOptimisationSwitches\n{\n    fileHandler     collated;\n}\n"
 
 
-def control_dict(plan: Plan, flow: Flow, opts, study: str) -> str:
+def control_dict(plan: Plan, flow: Flow, opts, study: str, model: str = "") -> str:
     """The run's clock.
 
     A steady run counts iterations; a transient one counts seconds, and its deltaT
@@ -1114,14 +1406,15 @@ def control_dict(plan: Plan, flow: Flow, opts, study: str) -> str:
         fixed = opts.get("delta_t") is not None
         delta = float(opts["delta_t"]) if fixed else float(opts["courant"]) * cell / flow.speed
         interval = end / max(1, int(opts["writes"]))
-        entries = [f"application     {solver};", "startFrom       latestTime;", "startTime       0;",
-                   "stopAt          endTime;", f"endTime         {end:g};",
+        entries = ([f"application     {solver};"]
+                   + start_entries(opts.get("case"), end)[0]
+                   + ["stopAt          endTime;", f"endTime         {end:g};",
                    f"deltaT          {delta:.6g};",
                    f"writeControl    {'runTime' if fixed else 'adjustableRunTime'};",
                    f"writeInterval   {interval:.6g};", f"purgeWrite      {purge_write(study, opts)};",
                    "writeFormat     binary;",
                    "writePrecision  6;", "writeCompression off;", "timeFormat      general;",
-                   "timePrecision   6;", "runTimeModifiable true;"]
+                   "timePrecision   6;", "runTimeModifiable true;"])
         which = "the average cell" if plan.mesh.cell_is_estimate else "the shortest cell"
         if fixed:
             entries += ["adjustTimeStep  no;",
@@ -1137,28 +1430,63 @@ def control_dict(plan: Plan, flow: Flow, opts, study: str) -> str:
                         f"// deltaT = maxCo * {cell:.4g} m ({which}) / {flow.speed:g} m/s"]
     else:
         end = float(opts["iterations"])
-        entries = [f"application     {solver or 'simpleFoam'};", "startFrom       latestTime;",
-                   "startTime       0;", "stopAt          endTime;", f"endTime         {end:g};",
+        entries = ([f"application     {solver or 'simpleFoam'};"]
+                   + start_entries(opts.get("case"), end)[0]
+                   + ["stopAt          endTime;", f"endTime         {end:g};",
                    "deltaT          1;", "writeControl    timeStep;",
                    f"writeInterval   {max(1, int(end / max(1, int(opts['writes'])))):d};",
                    f"purgeWrite      {purge_write(study, opts)};", "writeFormat     binary;",
                    "writePrecision  6;",
                    "writeCompression off;", "timeFormat      general;", "timePrecision   6;",
-                   "runTimeModifiable true;"]
-    body = "\n".join(entries) + function_objects(plan, flow, opts, study) + io_optimisation()
+                   "runTimeModifiable true;"])
+    body = ("\n".join(entries) + function_objects(plan, flow, opts, study, model)
+            + io_optimisation())
     return foam_file("dictionary", "controlDict", body, "system")
 
 
+LES_DDT = "CrankNicolson 0.9"
+LES_DIV_U = "Gauss LUST grad(U)"
+"""The two schemes that decide whether an LES is an LES.
+
+This is the part that is usually got wrong, and it is got wrong silently. A subgrid
+model's whole job is to remove energy at the grid scale; an upwind-biased convection
+scheme removes energy at the grid scale as well, and it removes more. Run `WALE` on
+`linearUpwind` and the numerical dissipation swamps the model: what comes out is a RAS
+answer at an LES price, and nothing in the log says so -- it converges, it writes
+fields, the wake looks smooth. So convection has to be central, or near enough.
+
+`LUST` is 75% `linear` and 25% `linearUpwind`, which is ESI's own LES compromise:
+central enough that the subgrid model is the dissipation, with a quarter of an upwind
+to stop a real mesh ringing. Pure `Gauss linear` is the right scheme on a mesh good
+enough for it and oscillates on one that is not, which is a measurement rather than a
+warning -- `checkMesh`'s maximum non-orthogonality and skewness are where to read it,
+and `locate.py` says where an oscillation that did start turned into a divergence.
+
+`CrankNicolson 0.9` rather than `backward`, which the RAS transient case already gets:
+both are second order, so "second order in time" on its own would have changed nothing.
+The 0.9 is the off-centering -- 1 is pure Crank-Nicolson and rings, 0 is Euler and
+damps, and 0.9 is what ESI's own LES tutorials run.
+"""
+
+
 def fv_schemes(study: str, model: str) -> str:
-    time_scheme = "steadyState" if study != "transient" else "backward"
+    les = is_les(model)
+    if les:
+        # LES is transient by construction and `case_files` refuses a steady one, so
+        # `study` cannot be steady here -- but the scheme is written off the model
+        # rather than off the study so that the two can never disagree in the file.
+        time_scheme = LES_DDT
+    else:
+        time_scheme = "steadyState" if study != "transient" else "backward"
     # Steady runs keep linearUpwind: bounded and stable is what gets a SIMPLE run to a
     # converged answer. A transient one gets `Gauss linear`, because upwind dissipation
     # damps exactly the instability a transient study is usually run to observe -- a
     # Re=100 shedding case can be smoothed into a steady-looking wake by the scheme
     # rather than by the physics, which is the one error that looks like a result.
-    divergence = ("bounded Gauss linearUpwind grad(U)" if study != "transient"
+    divergence = (LES_DIV_U if les
+                  else "bounded Gauss linearUpwind grad(U)" if study != "transient"
                   else "Gauss linear")
-    prefix = "bounded " if study != "transient" else ""
+    prefix = "bounded " if study != "transient" and not les else ""
     lines = ["ddtSchemes", "{", f"    default         {time_scheme};", "}", "",
              "gradSchemes", "{", "    default         Gauss linear;", "}", "",
              "divSchemes", "{", "    default         none;", f"    {'div(phi,U)':<16}{divergence};"]
@@ -1278,8 +1606,48 @@ def transport_properties(flow: Flow) -> str:
     return foam_file("dictionary", "transportProperties", body, "constant")
 
 
-def turbulence_properties(model: str) -> str:
-    if model == "laminar":
+DELTA_COEFFS = {
+    "cubeRootVol": ["cubeRootVolCoeffs", "{", "    deltaCoeff      1;", "}"],
+    # The geometric delta vanDriest damps is itself run-time selected out of this
+    # sub-dictionary, and it is read with `subDict` rather than `optionalSubDict`, so
+    # `delta vanDriest;` with no `vanDriestCoeffs` beside it is not a default -- it is
+    # a missing-dictionary error at start-up. Aplus and Cdelta are ESI's own defaults,
+    # written out because a coefficient nobody can see is a coefficient nobody checks.
+    "vanDriest": ["vanDriestCoeffs", "{", "    delta           cubeRootVol;",
+                  "    cubeRootVolCoeffs", "    {", "        deltaCoeff      1;", "    }",
+                  "    Aplus           26;", "    Cdelta          0.158;", "}"],
+    # hmax is left out: IDDESDelta defaults it to maxDeltaxyz and says so in the log.
+    "IDDESDelta": ["IDDESDeltaCoeffs", "{", "    Cw              0.15;", "}"],
+}
+"""Each delta's coefficients, with the nesting OpenFOAM actually asks for."""
+
+
+def les_block(model: str, delta: str) -> list[str]:
+    """The `LES` sub-dictionary: the subgrid model, the filter width, the coefficients."""
+    lines = ["simulationType  LES;", "", "LES", "{",
+             f"    LESModel        {model};",
+             "    turbulence      on;",
+             "    printCoeffs     on;",
+             f"    delta           {delta};",
+             ""]
+    lines += [f"    {line}" for line in DELTA_COEFFS[delta]]
+    lines.append("}")
+    return lines
+
+
+def turbulence_properties(model: str, delta: str = "cubeRootVol") -> str:
+    if model == "DNS":
+        # OpenFOAM has no `simulationType DNS`: a direct simulation is the momentum
+        # equation with nothing added to it, which is what `laminar` means here. The
+        # comment is the only thing in the case that says the omission was deliberate
+        # and not a laminar duct run on the wrong mesh.
+        body = ("simulationType  laminar;\n\n"
+                "// DNS: no subgrid model, by intention. Every scale is the mesh's to\n"
+                "// resolve, which is a claim about the mesh and not about this file --\n"
+                "// the Kolmogorov scale is eta = L Re^(-3/4) and nothing here measured it.")
+    elif model in LES_FIELDS:
+        body = "\n".join(les_block(model, delta))
+    elif model == "laminar":
         body = "simulationType  laminar;"
     else:
         body = ("simulationType  RAS;\n\nRAS\n{\n"
@@ -1299,16 +1667,33 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
     a dry run that lists different files from the ones a real run writes is worse
     than no dry run.
     """
+    if is_les(model) and study == "steady":
+        raise SystemExit(
+            f"--study steady with --turbulence {model} is a contradiction, and it is one "
+            "that runs: `simpleFoam` would drop the ddt term, so the solver itself "
+            "would average away every eddy this case exists to resolve, and what came "
+            "out would be a converged steady field with a resolved-turbulence "
+            "dictionary beside it. There is no steady LES and no steady DNS. --study "
+            "transient, with --end-time long enough for the mean to start where "
+            "--average-from says it does"
+        )
+    delta = les_delta(model, opts) if model in LES_FIELDS else ""
     files = {
-        "system/controlDict": control_dict(plan, flow, opts, study),
+        "system/controlDict": control_dict(plan, flow, opts, study, model),
         "system/fvSchemes": fv_schemes(study, model),
         "system/fvSolution": fv_solution(study, model),
         "constant/transportProperties": transport_properties(flow),
-        "constant/turbulenceProperties": turbulence_properties(model),
+        "constant/turbulenceProperties": turbulence_properties(model, delta),
     }
     files["0/U"] = field_U(plan, flow)
     files["0/p"] = field_p(plan)
     fields = turbulence_fields(model)
+    if needs_nut(model):
+        # Not inside the `if fields:` below, which is where it used to be: `WALE` and
+        # the other algebraic subgrid models transport nothing at all and still read
+        # `nut` off disk, so a model with no transported field was the one combination
+        # that came out unrunnable.
+        files["0/nut"] = field_nut(plan, model)
     if fields:
         intensity = free_stream_intensity(plan, opts)
         mixing = float(opts.get("mixing_length") or 0.07 * plan.length)
@@ -1325,7 +1710,6 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
         }
         for field in fields:
             files[f"0/{field}"] = writers[field]()
-        files["0/nut"] = field_nut(plan, model)
     return files
 
 
@@ -1375,6 +1759,119 @@ def turbulence_notes(plan: Plan, flow: Flow, model: str, opts) -> list[str]:
     return [line for line in notes if line]
 
 
+def measured_first_cells(case: Path, plan: Plan) -> dict[str, tuple[float, float]]:
+    """(min, max) first-cell height per wall patch, off `constant/polyMesh` itself.
+
+    `layer_report.py` already does this -- `h = 2 |C_face - C_owner|` per face, from
+    `points`, `faces` and `owner`, with no solver run and nothing written -- so this
+    asks it rather than measuring a wall a second way. It is per patch and not one
+    number for the mesh, because `smallest_cell` is the smallest cell anywhere and on a
+    case with a refined wake that is not the wall at all.
+
+    Empty where the mesh could not be read that way (a binary polyMesh, most often),
+    and the caller says so rather than printing a y+ off a height nobody measured.
+    """
+    try:
+        import layer_report
+
+        mesh = layer_report.load(case)
+        walls = [name for name, role in plan.roles.items() if role.get("kind") == "wall"]
+        out = {}
+        for name in walls or layer_report.wall_patches(mesh):
+            heights, _ = layer_report.first_cell_heights(mesh, name)
+            if heights.size:
+                out[name] = (float(heights.min()), float(heights.max()))
+        return out
+    except Exception:
+        # Reporting, not solving: a mesh this cannot read costs a line of output and
+        # nothing else, and the a priori estimate below still has the smallest cell.
+        return {}
+
+
+def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
+              opts) -> list[str]:
+    """What an LES case was given, and what the mesh it was given implies.
+
+    Four things, each a number rather than an instruction, because every one of them is
+    a way an LES comes out looking like a result and being a RAS, a noise sample or an
+    average of a transient:
+
+    the numerics, which were changed and are said to have been changed -- an upwinded
+    LES is an expensive RAS and the log never mentions it;
+
+    the resolution, which this cannot verify and can state: a wall-resolved LES wants
+    the first cell centre at y+ of order 1 and a roughly isotropic cell outside the
+    layer, a wall-modelled one wants its first cell in the log region and its
+    streamwise and spanwise spacing in wall units instead. What is printed is the
+    first-cell height this mesh actually has, per wall, and the y+ that implies under a
+    flat-plate correlation -- an a priori number off a correlation, not a measurement.
+    `wall.py` is the measurement, after there is a solution to measure;
+
+    the time step, from the mesh's own smallest cell and the speed, so the Courant
+    number in `controlDict` is a number somebody can check rather than one that was
+    typed;
+
+    and when the mean starts, since the answer is the mean.
+    """
+    if not is_les(model):
+        return []
+    notes = [
+        "DNS        no subgrid model, simulationType laminar" if model == "DNS"
+        else f"LES        {model}, delta {delta}",
+        f"           schemes changed for LES: ddt {LES_DDT} and div(phi,U) "
+        f"{LES_DIV_U}, where a RAS transient run gets backward and Gauss linear",
+        "           (near-central on purpose: upwind dissipation acts at the grid "
+        "scale, which is exactly where the subgrid model acts, and it is larger -- an "
+        "upwinded LES is a slower RAS. The cost is that a central scheme oscillates on "
+        "a poor mesh: checkMesh's max non-orthogonality and skewness are where to read "
+        "whether this one is, and locate.py says where an oscillation became a "
+        "divergence)",
+    ]
+    cell = plan.mesh.smallest_cell
+    if cell and flow.speed > 0:
+        courant = float(opts.get("courant") or 0.9) if opts else 0.9
+        which = "the average cell" if plan.mesh.cell_is_estimate else "the smallest cell"
+        step = courant * cell / flow.speed
+        notes.append(
+            f"           Co {courant:g} on {which} ({cell:.3g} m) at {flow.speed:g} m/s "
+            f"implies deltaT {step:.3g} s; adjustTimeStep holds it there"
+        )
+        if courant > 1:
+            notes.append(
+                f"           maxCo {courant:g} is above 1: the resolved scales are then "
+                "advected more than a cell a step, which is the scales the subgrid "
+                "model is not modelling"
+            )
+    measured = measured_first_cells(case, plan)
+    if measured:
+        for name, (low, high) in sorted(measured.items()):
+            y_low, y_high = estimate_y_plus(low, flow), estimate_y_plus(high, flow)
+            notes.append(
+                f"           {name}: first cell {low:.3g}-{high:.3g} m -> y+ ~ "
+                f"{y_low:.2g}-{y_high:.2g} a priori (flat plate, Re_x = Re/2)"
+            )
+        notes.append(
+            "           (wall-resolved LES wants that y+ of order 1 and a near-isotropic "
+            "cell outside the layer; wall-modelled LES wants the first cell in the log "
+            "region instead and its own streamwise and spanwise spacing in wall units. "
+            "Which of the two this mesh is, this cannot tell you -- it is a correlation "
+            "on a measured height, and wall.py reads the real y+ off the solution once "
+            "there is one)"
+        )
+    else:
+        notes.append(
+            "           first-cell heights could not be read off constant/polyMesh "
+            "(binary, most likely), so there is no per-wall y+ implication here; "
+            "layer_report.py measures them and wall.py measures the real y+ after a run"
+        )
+    notes.append(
+        f"           mean from t = {average_from(opts):g} s (fieldAverage timeStart). A "
+        "mean that starts before the flow settled is the start-up transient diluted, "
+        "not a mean; spectra.py is what decides where settled is, off the force history"
+    )
+    return notes
+
+
 def estimate_y_plus(first_cell: float, flow: Flow) -> float:
     """y+ at the centre of the first cell, from a flat-plate skin-friction correlation.
 
@@ -1409,6 +1906,16 @@ def summary(case: Path, plan: Plan, flow: Flow, study: str, model: str, why: str
     ]
     if opts is not None:
         lines += turbulence_notes(plan, flow, model, opts)
+        delta = les_delta(model, opts) if model in LES_FIELDS else ""
+        lines += les_notes(case, plan, flow, model, delta, opts)
+        # The summary said "next: pimpleFoam -case ..." over a case whose `latestTime`
+        # was past the end time given, so the run it promised computed nothing (#181).
+        # `start_entries` is pure and reads the directory, so asking it twice is a stat.
+        # The same end as `control_dict` uses, by the same branch on `study`: both
+        # `--end-time` and `--iterations` have defaults, so keying off which one is set
+        # would have claimed `endTime 1` on a steady run that ends at iteration 1000.
+        end = float(opts["end_time"] if study == "transient" else opts["iterations"])
+        lines += [f"{note}" for note in start_entries(case, end)[1]]
     lines += [f"           {note}" for note in plan.notes]
     return lines
 
@@ -1432,14 +1939,32 @@ def main(argv: list[str] | None = None) -> int:
     flow.add_argument("--direction", default="",
                       help="Which way the inlet flows: x, y, z, -x, -y, -z. Default: the "
                            "inlet patch's own normal, pointed into the domain.")
-    flow.add_argument("--turbulence", default="auto",
-                      choices=["auto", "laminar", "kOmegaSST", "kOmegaSSTLM",
-                               "kEpsilon", "SpalartAllmaras"],
+    flow.add_argument("--turbulence", default="auto", metavar="MODEL",
+                      # No `choices`: the refusal in `turbulence_model` names the model
+                      # that was asked for, lists the RAS and the LES sets separately,
+                      # and says which command on the instance lists every model the
+                      # installation actually has. argparse's own would fire first and
+                      # say less, and a second copy of the model list beside the tables
+                      # is the thing that goes stale.
                       help="auto: laminar below Re 2300, kOmegaSST above. "
                            "kOmegaSSTLM adds the Langtry-Menter transition "
                            "equations, which is what a blade or an aerofoil below "
                            "Re ~ 5e5 needs -- assume it turbulent from the leading "
-                           "edge and the lift comes out low however fine the mesh.")
+                           "edge and the lift comes out low however fine the mesh. "
+                           "The LES subgrid models (" + ", ".join(sorted(LES_FIELDS))
+                           + ") and DNS switch the case to resolved numerics and need "
+                             "--study transient; auto never picks one, because which "
+                             "eddies a mesh resolves is not something a Reynolds "
+                             "number knows.")
+    flow.add_argument("--les-delta", default=None, dest="les_delta", metavar="DELTA",
+                      help="LES filter width. Default cubeRootVol (IDDESDelta for an "
+                           "IDDES model, which refuses anything else). vanDriest damps "
+                           "it to zero at the wall, which is what a wall-resolved run "
+                           "wants and cubeRootVol does not do.")
+    flow.add_argument("--average-from", type=float, default=None, dest="average_from",
+                      help="LES/DNS: when fieldAverage starts, in seconds. Default half "
+                           "of --end-time, which is a guess -- spectra.py decides when "
+                           "the flow actually settled.")
     flow.add_argument("--turbulent-intensity", type=float, default=None,
                       dest="turbulent_intensity",
                       help="Free-stream turbulence intensity. Default 0.001 for a body in "

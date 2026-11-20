@@ -29,11 +29,23 @@ each could be produced again:
 | tier | share | rebuildable? |
 |---|---|---|
 | `definition` -- `system/`, `constant/` (not polyMesh, not geometry), `0/`, `0.orig/`, `Allrun`, `Allmesh`, `build.py` | 6.7% | **no** |
-| `record` -- `log.*`, `postProcessing/` | 6.4% | **no** |
 | `notes` -- `*.md`, `.reynolds/` | small | **no** |
+| `record` -- `log.*`, and the tables in `postProcessing/` (forces, probes, residuals) | 6.4% | **no** |
 | `geometry` -- `*.stl`, `*.obj`, `*.step`, wherever they sit | in `other` | only if the source is kept |
 | `mesh` -- `constant/polyMesh` | 47.3% | yes, from `Allmesh` + geometry, at minutes of cost |
 | `fields` -- the latest time directory | 16.8% | only by re-solving |
+| `samples` -- the rest of `postProcessing/`: surfaces, planes and sets, one per write time | | only by re-solving |
+
+`record` and `samples` may travel in part (#94). A study's record used to go in or out
+whole, and one 190 MB solver log was enough to leave out every log while the mesh,
+which `Allmesh` rebuilds, went in. Now, when `record` does not fit whole, a long file
+keeps its first `CUT_HEAD` and last `CUT_TAIL` bytes -- the setup, and the final
+residuals and forces -- with a line in the middle saying what was cut; tables go
+before logs, the answer before the diagnosis. `notes` is ahead of `record` because a
+cut record fills the room it is given, and notes are irreplaceable too. `samples` are
+per-write-time snapshots, gigabytes of them on a long transient run, so they go last
+and newest first, for as many as the room left allows. The manifest lists every cut
+file and the report says how many samples were left out.
 
 `definition` + `record` is 835 MB across all 215 studies -- **about 4 MB a study** -- so
 the part that genuinely cannot be reproduced always fits. Everything above `mesh` is a
@@ -53,6 +65,7 @@ thing worse than an incomplete backup is an incomplete backup that claims to be 
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import re
@@ -99,9 +112,40 @@ and refuses to finish a run whose rebuild script is not captured by it, so an
 unlisted name fails the run loudly instead of losing the artifact quietly."""
 DEFINITION_DIRS = {"system", "0", "0.orig"}
 
-TIERS = ("definition", "record", "notes", "geometry", "mesh", "fields")
-"""Priority order. Everything before `mesh` is irreplaceable; `mesh` and `fields` are
-convenience -- a resume can rebuild the first and re-solve the second."""
+TIERS = ("definition", "notes", "record", "geometry", "mesh", "fields", "samples")
+"""Priority order. Everything before `mesh` is irreplaceable; `mesh`, `fields` and
+`samples` are convenience -- a resume can rebuild the first and re-solve the others."""
+
+PARTIAL = ("record", "samples")
+"""The tiers that may travel in part. The others are whole or useless: half a mesh
+or half a time directory restores nothing."""
+
+SAMPLE_SUFFIXES = {".vtp", ".vtk", ".vtu", ".vtm", ".vtkhdf", ".ply", ".obj", ".stl",
+                   ".x3d", ".case", ".geo", ".nas", ".png", ".jpg"}
+"""Surface and image formats a function object writes into `postProcessing/`, also when
+gzipped (`clip.vtp.gz`). Everything else there is a table -- forces, probes, residuals,
+one row per time step -- unless it is written once per write time (`PER_TIME`).
+
+A suffix list rather than a table list, because a probe's file is named after its
+field: `p`, `U`, and on a multiphase case `alpha.water`, whose suffix is `.water`."""
+
+PER_TIME = 20
+"""A function object with more time directories than this writes once per write time
+(sets, raw surfaces), so its files are samples. Tables are written into the start time's
+directory, one more per restart: the 3.4 GB study in #94 has five under `forces/`, and
+they hold its whole force history. A short run's sets written fewer times than this
+travel as record, which costs room, not the answer."""
+
+UNCUT_SUFFIXES = {".csv", ".json"}
+"""Formats with no comment syntax, which a cut would leave unparseable. They travel
+whole or not at all."""
+
+CUT_HEAD = 64 * 1024
+CUT_TAIL = 1024 * 1024
+"""What a long log or table keeps when the record does not fit whole: its start (the
+header, the case setup, the first iterations) and its end (the final residuals, the
+converged forces, `End` or the error that stopped it). On the 3.4 GB study in #94 the
+record came to 409 MB of logs, two of them 190 MB each."""
 
 
 @dataclass
@@ -109,6 +153,10 @@ class Report:
     """What went in, what did not, and why -- said plainly enough to act on."""
     included: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
+    partial: dict[str, str] = field(default_factory=dict)
+    """Tiers that went in part, and what was left out of each."""
+    cut: dict[str, int] = field(default_factory=dict)
+    """Files that travel as their head and tail, by name, with their full size."""
     files: int = 0
     bytes: int = 0
     oversized: bool = False
@@ -128,6 +176,8 @@ class Report:
         if self.oversized:
             lines.append("  this case is larger than an artifact may be; the upload "
                          "may be refused, and nothing else would have fitted either")
+        for tier, what in self.partial.items():
+            lines.append(f"  {tier} in part: {what}")
         for tier, why in self.skipped.items():
             lines.append(f"  {tier} left out: {why}")
         return lines
@@ -161,7 +211,25 @@ def _latest_time_dirs(root: Path) -> set[Path]:
     return out
 
 
-def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
+def _per_time(path: Path, counts: dict[Path, int]) -> bool:
+    """Whether `path` sits in one of many time directories of a function object."""
+    for parent in path.parents:
+        if parent.name == "postProcessing":
+            return False
+        if _TIME.match(parent.name):
+            holder = parent.parent
+            if holder not in counts:
+                try:
+                    counts[holder] = sum(1 for c in holder.iterdir()
+                                         if c.is_dir() and _TIME.match(c.name))
+                except OSError:
+                    counts[holder] = 0
+            return counts[holder] > PER_TIME
+    return False
+
+
+def classify(path: Path, root: Path, latest: set[Path],
+             counts: dict[Path, int] | None = None) -> str | None:
     """Which tier `path` belongs to, or None if it does not travel.
 
     Nothing regenerable-and-large goes: `processor*` is a decomposed copy of fields
@@ -181,8 +249,13 @@ def classify(path: Path, root: Path, latest: set[Path]) -> str | None:
         return None
     if "polyMesh" in parts:
         return "mesh"
-    if name.startswith("log.") or "postProcessing" in parts:
+    if name.startswith("log."):
         return "record"
+    if "postProcessing" in parts:
+        base = name[:-3] if name.lower().endswith(".gz") else name
+        if Path(base).suffix.lower() in SAMPLE_SUFFIXES:
+            return "samples"
+        return "samples" if _per_time(path, {} if counts is None else counts) else "record"
     if suffix == ".md" or ".reynolds" in parts:
         return "notes"
     if name in DEFINITION_NAMES or any(p in DEFINITION_DIRS for p in parts[:-1]):
@@ -240,7 +313,120 @@ class _CappedBuffer(io.BytesIO):
         return n
 
 
-def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None,
+@dataclass(frozen=True)
+class _Cut:
+    """A file that travels as its first `CUT_HEAD` and last `CUT_TAIL` bytes."""
+    path: Path
+    size: int
+
+    @functools.cached_property
+    def body(self) -> bytes:
+        """Read once: it is packed in the fit and again in the bundle, and both have to
+        be the same bytes."""
+        with open(self.path, "rb") as f:
+            head = f.read(CUT_HEAD)
+            f.seek(max(self.size - CUT_TAIL, 0))
+            tail = f.read(CUT_TAIL)
+        # Whole lines either side of the cut, so a table still parses row by row.
+        end = head.rfind(b"\n")
+        head = head[:end + 1] if end >= 0 else head
+        start = tail.find(b"\n")
+        tail = tail[start + 1:] if start >= 0 else tail
+        left_out = self.size - len(head) - len(tail)
+        # `#` opens a comment in OpenFOAM's own tables, so the note does not become a row.
+        note = (f"# [case bundle] {left_out} bytes of this file were left out here; "
+                "the whole file is in the study's own copy\n").encode()
+        return head + note + tail
+
+
+def _cuttable(path: Path) -> _Cut | None:
+    if path.suffix.lower() in UNCUT_SUFFIXES and not path.name.startswith("log."):
+        return None
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    return _Cut(path, size) if size > CUT_HEAD + CUT_TAIL + CUT_HEAD else None
+
+
+Member = tuple["Path | _Cut", str]
+
+
+def _add(tar: tarfile.TarFile, source: "Path | _Cut", arcname: str) -> None:
+    try:
+        if isinstance(source, _Cut):
+            body = source.body
+            info = tarfile.TarInfo(arcname)
+            info.size = len(body)
+            info.mtime = int(source.path.stat().st_mtime)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(body))
+        else:
+            tar.add(source, arcname=arcname, recursive=False)
+    except OSError:
+        pass  # vanished under us; a backup is not worth failing a session
+
+
+def _fit(members: list[Member], room: int) -> tuple[int, int]:
+    """How many of `members`, in order, fit in `room` compressed bytes, and about how
+    many bytes those take.
+
+    One streaming pass that stops at the first member taking the compressed size past
+    `room` less a margin: the margin is what gzip may still hold unwritten, so the
+    size returned is the bytes written plus that margin, an overestimate."""
+    margin = min(1024 * 1024, room // 8)
+    buf = _CappedBuffer(room)
+    tar = tarfile.open(fileobj=buf, mode="w:gz", compresslevel=COMPRESSLEVEL)
+    count, size = 0, 0
+    try:
+        for source, arcname in members:
+            _add(tar, source, arcname)
+            if buf.tell() > room - margin:
+                break
+            count, size = count + 1, buf.tell() + margin
+    except _TooBig:
+        pass
+    finally:
+        buf.limit = None
+        tar.close()
+    return count, size
+
+
+def _write_time(arcname: str) -> float:
+    """The simulation time a sample was written at: its last time-named directory
+    (`postProcessing/planes/2.36/mid.vtp`), or -1 for none.
+
+    Not the file's mtime, which on the local mirror is when the file was pulled, not
+    when the solver wrote it, so one end-of-session sync gives every sample the same
+    age in whatever order they arrived."""
+    for part in reversed(arcname.split("/")[:-1]):
+        if _TIME.match(part):
+            try:
+                return float(part)
+            except ValueError:
+                break
+    return -1.0
+
+
+def _size(member: Member) -> int:
+    source = member[0]
+    if isinstance(source, _Cut):
+        return source.size
+    try:
+        return source.stat().st_size
+    except OSError:
+        return 0
+
+
+def _mtime(member: Member) -> float:
+    source = member[0]
+    try:
+        return (source.path if isinstance(source, _Cut) else source).stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _pack(members: list[Member], manifest_bytes: bytes | None = None,
           limit: int | None = None) -> bytes:
     """Pack `members` into a tar.gz; raise `_TooBig` as soon as it passes `limit`."""
     buf = _CappedBuffer(limit)
@@ -256,11 +442,8 @@ def _pack(members: list[tuple[Path, str]], manifest_bytes: bytes | None = None,
             info.size = len(manifest_bytes)
             info.mtime = 0
             tar.addfile(info, io.BytesIO(manifest_bytes))
-        for path, arcname in members:
-            try:
-                tar.add(path, arcname=arcname, recursive=False)
-            except OSError:
-                continue  # vanished under us; a backup is not worth failing a session
+        for source, arcname in members:
+            _add(tar, source, arcname)
     finally:
         # Closed on every way out, with the limit lifted first: closing only flushes
         # what gzip already holds and writes the trailer, and a stream left open --
@@ -291,37 +474,50 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
             return None, report
 
         latest = _latest_time_dirs(root)
-        by_tier: dict[str, list[tuple[Path, str]]] = {t: [] for t in TIERS}
+        counts: dict[Path, int] = {}
+        by_tier: dict[str, list[Member]] = {t: [] for t in TIERS}
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.is_symlink():
                 continue
-            tier = classify(path, root, latest)
+            tier = classify(path, root, latest, counts)
             if tier is None:
                 continue
             by_tier[tier].append((path, str(path.relative_to(root)).replace("\\", "/")))
 
         budget = budget_mb * 1024 * 1024
         ceiling = max(CEILING_MB, budget_mb) * 1024 * 1024
-        taken: list[tuple[Path, str]] = []
-        blob = b""
+        taken: list[Member] = []
+        used = 0
+        # Each tier is packed on its own against the room the earlier ones left, and
+        # the bundle is packed once at the end. Packing `taken + tier` for every tier
+        # re-compressed everything taken so far once per tier: with the record in, that
+        # was 40 MB again for each of six tiers. gzip's window is 32 KB, so an archive
+        # of the whole compresses to the sum of its parts, give or take that much.
         for tier in TIERS:
             members = by_tier[tier]
             if not members:
                 continue
-            try:
-                # The first tier travels past the budget (below), but not past the
-                # ceiling: beyond that the service refuses it anyway.
-                candidate = _pack(taken + members,
-                                  limit=budget if taken else ceiling)
-            except _TooBig:
-                report.skipped[tier] = (
-                    f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
-                    if taken else
-                    f"{len(members)} file(s) come to more than {CEILING_MB} MB on their "
-                    "own, more than an upload may be"
-                )
-                continue
-            if len(candidate) > budget and not taken:
+            room = budget - used
+            # Only a first tier that cannot be cut may go past the budget (below), and
+            # not past the ceiling: beyond that the service refuses it anyway.
+            first = not taken and tier not in PARTIAL
+            size: int | None = None
+            if tier != "samples" and (first or room > 0):  # samples: newest first, always
+                try:
+                    size = len(_pack(members, limit=ceiling if first else room))
+                except _TooBig:
+                    pass
+            if size is None:
+                part = _in_part(tier, members, room, report)
+                if part is None:
+                    report.skipped[tier] = (
+                        f"{len(members)} file(s) come to more than {CEILING_MB} MB on "
+                        "their own, more than an upload may be" if first else
+                        f"{len(members)} file(s) would take the bundle past {budget_mb} MB"
+                    )
+                    continue
+                members, size = part
+            if size > budget and first:
                 # The first tier is the irreplaceable one and it does not fit. It goes
                 # anyway, and the report says the upload may be refused.
                 #
@@ -333,12 +529,8 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
                 # something. `definition` + `record` measured about 4 MB a study across
                 # 215 production studies, so this is the rare case by construction.
                 report.oversized = True
-                taken += members
-                blob = candidate
-                report.included.append(tier)
-                continue
             taken += members
-            blob = candidate
+            used += size
             report.included.append(tier)
 
         if not taken:
@@ -355,6 +547,42 @@ def build(root: Path, budget_mb: int = BUDGET_MB,
         return None, report
 
 
+def _in_part(tier: str, members: list[Member], room: int,
+             report: Report) -> tuple[list[Member], int] | None:
+    """As much of a tier that does not fit whole as fits in `room`, with about how
+    many compressed bytes it takes, or None for nothing.
+
+    `record` first cuts every long file to its head and tail, tables before logs;
+    `samples` go newest first. Then as many as fit are taken, in that order."""
+    if tier not in PARTIAL or room <= 0:
+        return None
+    if tier == "record":
+        ordered = [(_cuttable(p) or p, a) for p, a in members]
+        # Tables first: the forces and residuals are the answer, and small. Then logs,
+        # largest first, which puts the solver's ahead of blockMesh's. Not by mtime,
+        # which on the mirror is when a file was pulled.
+        ordered.sort(key=lambda m: (m[1].rsplit("/", 1)[-1].startswith("log."),
+                                    -_size(m)))
+    else:
+        ordered = sorted(members, key=lambda m: (-_write_time(m[1]), -_mtime(m)))
+    count, size = _fit(ordered, room)
+    if count == 0:
+        return None
+    part = ordered[:count]
+    cut = {a: s.size for s, a in part if isinstance(s, _Cut)}
+    report.cut.update(cut)
+    said = []
+    if cut:
+        said.append(f"{len(cut)} long file(s) kept as their first {CUT_HEAD // 1024} KB "
+                    f"and last {CUT_TAIL // 1024 // 1024} MB")
+    if count < len(ordered):
+        older = " (the oldest)" if tier == "samples" else ""
+        said.append(f"{len(ordered) - count} of {len(ordered)} file(s) left out{older}")
+    if said:
+        report.partial[tier] = "; ".join(said)
+    return part, size
+
+
 def manifest(report: Report, study_id: str) -> str:
     """What the artifact's `meta` carries, so the bundle describes itself.
 
@@ -368,7 +596,9 @@ def manifest(report: Report, study_id: str) -> str:
         "study_id": study_id,
         "tiers": report.included,
         "skipped": report.skipped,
+        "partial": report.partial,
+        "cut": report.cut,
         "files": report.files,
-        "complete": not report.skipped,
+        "complete": not report.skipped and not report.partial,
         "over_budget": report.oversized,
     })

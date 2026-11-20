@@ -153,6 +153,7 @@ _DICT_ENTRY = re.compile(
 )
 _STOP_AT = re.compile(r"^\s*stopAt\s+(\w+)\s*;", re.M)
 _START_FROM = re.compile(r"^\s*startFrom\s+(\w+)\s*;", re.M)
+_WRITE_CONTROL = re.compile(r"^\s*writeControl\s+(\w+)\s*;", re.M)
 _COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
 
 
@@ -187,7 +188,9 @@ def parse_control_dict(text: str) -> dict[str, Any]:
     run ends whenever somebody says, and a percentage against endTime would then be a
     number about nothing. `startFrom` (a word: startTime, firstTime, latestTime) and
     `purgeWrite` (an integer; 0 keeps every write) are read for the launch note that
-    guards a transient run's data (`tools._restart_guard`)."""
+    guards a transient run's data (`tools._restart_guard`). `writeControl` says what
+    unit `writeInterval` is in -- time steps, simulated seconds or wall-clock seconds --
+    and is read for the write count the launch note gives (`tools._write_count`)."""
     body = _top_level(_COMMENTS.sub("", text))
     found: dict[str, Any] = {}
     for key, value in _DICT_ENTRY.findall(body):
@@ -201,6 +204,9 @@ def parse_control_dict(text: str) -> dict[str, Any]:
     start_from = _START_FROM.findall(body)
     if start_from:
         found["startFrom"] = start_from[-1]
+    write_control = _WRITE_CONTROL.findall(body)
+    if write_control:
+        found["writeControl"] = write_control[-1]
     return found
 
 
@@ -753,11 +759,12 @@ class Tracker:
     def _read_local(self, path: str) -> str | None:
         if self.local_dir is None:
             return None
-        from .mirror import local_for  # local import: mirror is a peer, not a dependency
+        from .mirror import OutsideMirror, local_for  # local import: mirror is a peer, not a dependency
 
         try:
             return local_for(self.local_dir, path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except (OSError, OutsideMirror):
+            # Not here, or not ours to read: either way there is no local copy.
             return None
 
     def _poll_tool_log(self) -> None:

@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Physics",
     "Operating System :: OS Independent",
 ]
@@ -31,6 +32,9 @@ dependencies = [
     "rich>=13.0.0",
     "click>=8.1.0",
     "textual>=8.0",
+    # `openreynolds mcp`: a standard part of the install, so it works however
+    # OpenReynolds was installed (pip, uvx, pipx or the npm launcher).
+    "mcp>=2.2,<3",
 ]
 
 [project.urls]
@@ -52,8 +56,14 @@ dev = [
     "ipykernel>=6.29",
     "jupyter_client>=8.6",
 ]
+# Kept so `pip install 'openreynolds[mcp]'` from older instructions still works: the
+# MCP server is now part of the standard install.
+mcp = []
 # `openreynolds video` prefers a real ffmpeg on PATH; imageio is the fallback encoder.
-video = ["imageio>=2.31"]
+# The ffmpeg extra is part of it: `imageio` alone writes a GIF and raises on an mp4,
+# which is the container `video.py` and `toolbox/encode.py` reach for first. The image
+# installs `imageio[ffmpeg]` for that reason (docker/workspace/Dockerfile).
+video = ["imageio[ffmpeg]>=2.31"]
 # The cell channel the CAD desk works in. These belong to the *workspace image*, not to
 # this package: `backend/kernel.py` writes a driver into the workspace and the driver
 # imports `jupyter_client` and starts an `ipykernel` there, on the far side of the
@@ -64,12 +74,37 @@ kernel = [
     "jupyter_client>=8.6",
 ]
 # The toolbox scripts run on the instance, where these are already installed. This
-# extra is for running them on the user's own machine.
+# extra is for running them on the user's own machine, and it used to declare four of
+# the eight third-party modules the toolbox imports, so four scripts raised ImportError
+# off the documented install (#204). The split is by download size, because the point of
+# running the toolbox locally is post-processing on a laptop:
+#
+#   toolbox  numpy, matplotlib, pandas, pyvista, imageio -- tens of MB, and between
+#            them they run 30 of the 32 scripts that import anything third-party.
+#   cad      gmsh, build123d, OCP -- hundreds of MB for two scripts, `cad_convert.py`
+#            and `cad_export.py`.
+#
+# Every third-party import in the toolbox is in one of the two, which is what
+# tests/test_toolbox_extras.py checks: nothing is left to a comment.
 toolbox = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     "pandas>=2.0",
     "pyvista>=0.47",  # extract_surface(algorithm=...) is new in 0.47
+    "imageio[ffmpeg]>=2.31",  # encode.py; the ffmpeg plugin is what writes the mp4
+]
+# `cad_convert.py` (gmsh) and `cad_export.py` (build123d, and OCP for the triangulation
+# build123d does not expose). Pinned exactly, and to the same versions as
+# docker/workspace/Dockerfile, for the reason #132 pinned them there: `build123d>=0.9`
+# resolved to 0.9.x when that floor was written and later to 0.11, and the OCP that came
+# with it broke production for four days. A floor is not reproducible, and a user
+# post-processing locally against `b123d_api.md` -- which documents 0.11.1's API -- wants
+# the software the hosted run had, not whatever resolves today. The pins are asserted
+# equal to the Dockerfile's ARGs by a test, so the two cannot drift silently.
+cad = [
+    "gmsh==4.15.2",
+    "build123d==0.11.1",
+    "cadquery-ocp-novtk==7.9.3.1.1",
 ]
 [project.scripts]
 openreynolds = "openreynolds.cli:main"

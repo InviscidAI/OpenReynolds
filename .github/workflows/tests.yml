@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # So the suite can be run off the laptop on demand, on any branch:
+  #     gh workflow run tests.yml --ref <branch>
+  workflow_dispatch:
 
 jobs:
   test:
@@ -12,11 +15,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -47,3 +50,217 @@ jobs:
           assert not missing, f"missing from the wheel: {sorted(missing)}"
           print(f"toolbox ships: {len(expected)} files present")
           PY
+
+  # Every grader under `benchmarks/` that reads only files a solver already wrote, run
+  # against real finished cases: the trimmed Felix runs in `tests/data/felix/` and the
+  # 2026-09-12 OpenFOAM moving-mesh runs in `tests/data/moving_mesh/`. The suite above
+  # already asserts the numbers these produce; this job is the per-benchmark verdict,
+  # and it runs each grader through its own command line the way a person does -- the
+  # multi-case `viv` invocation, `--control`, and the exit status.
+  #
+  # `benchmarks/deliverables/run.py` is deliberately absent: it spends a model turn and
+  # a judge call per sample on whoever is configured. The last step holds it to that.
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Cavity Re 1000 against Ghia, Ghia and Shin (1982)
+        run: python benchmarks/felix/grade.py cavity tests/data/felix/cavity_re1000
+
+      - name: Cylinder Re 20 against Schafer and Turek 2D-1 (Cd 5.5795)
+        run: python benchmarks/felix/grade.py cylinder tests/data/felix/cylinder_2d1
+
+      # These two exit 1 on purpose. Each case was kept because of what it failed, so
+      # the recorded verdict is the regression test: the exit status, the check that
+      # fails, and a check that must still pass beside it.
+      - name: Couette AMI -- expected FAIL, the sliding interface's torque imbalance
+        run: |
+          status=0
+          out=$(python benchmarks/moving_mesh/grade.py couette tests/data/moving_mesh/couette --control tests/data/moving_mesh/couette_conformal) || status=$?
+          echo "$out"
+          test "$status" -eq 1
+          echo "$out" | grep -qE "inner/outer imbalance.*FAIL"
+          echo "$out" | grep -qE "inner torque error.*PASS"
+          echo "$out" | grep -qE "AMI sum\(weights\).*PASS"
+
+      - name: VIV -- expected FAIL, the loosely coupled run's energy audit
+        run: |
+          status=0
+          out=$(python benchmarks/moving_mesh/grade.py viv tests/data/moving_mesh/viv_fixed tests/data/moving_mesh/viv_loose tests/data/moving_mesh/viv_tight) || status=$?
+          echo "$out"
+          test "$status" -eq 1
+          echo "$out" | grep -qE "Strouhal number, fixed.*PASS"
+          echo "$out" | grep -qE "\[viv_loose\] net fluid work.*FAIL"
+          echo "$out" | grep -qE "\[viv_tight\] net fluid work.*PASS"
+
+      # The two solvers in `openreynolds/toolbox/` that are not OpenFOAM applications.
+      # These graders solve rather than reading a finished run, which the four above
+      # cannot do: an OpenFOAM case costs a cluster an hour, so its output is trimmed
+      # into tests/data/ and read back. These are numpy and finish here, so the number
+      # is re-derived on every pull request instead of being quoted from a commit.
+      - name: LBM -- plane Poiseuille against the closed form, at three viscosities
+        run: python benchmarks/lbm/grade.py poiseuille
+
+      - name: LBM -- cavity Re 1000 against Ghia, Ghia and Shin (1982)
+        run: python benchmarks/lbm/grade.py cavity
+
+      - name: SPH -- hydrostatic pressure against rho g h
+        run: python benchmarks/sph/grade.py hydrostatic
+
+      - name: SPH -- sloshing period against the linear dispersion relation
+        run: python benchmarks/sph/grade.py sloshing
+
+      # Graded on whether the scheme stayed valid, not on the surge front: the front is
+      # printed and deliberately carries no verdict, because Martin & Moyce (1952) could
+      # not be read. benchmarks/sph/README.md is the whole argument.
+      - name: SPH -- dam break, contained and weakly compressible
+        run: python benchmarks/sph/grade.py dambreak
+
+      - name: The eval that costs money refuses to run
+        run: |
+          status=0
+          python benchmarks/deliverables/run.py -n 1 || status=$?
+          test "$status" -eq 2
+
+  # The same suite inside the workspace image, which is the only place the tests gated
+  # on a real OpenFOAM, blockMesh, gmsh, a kernel and an off-screen renderer run at
+  # all. It stays advisory -- `continue-on-error` keeps it out of the merge gate --
+  # because it builds a whole image and its failures are still being triaged.
+  image:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      IMAGE: reynolds-workspace:ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built from docker/workspace in THIS checkout, not pulled from the published
+      # `:2512`. That tag moves, so pulling it tested whatever the last publish had
+      # resolved and a change to the Dockerfile could not be tested before it shipped
+      # -- which is how an unpinned `build123d>=0.9` reached the image unnoticed. The
+      # build also runs check.sh, so this job covers the image's own gates too; the gha
+      # cache is the one workspace-image.yml writes, so HiSA is not recompiled.
+      - name: Build the workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/workspace
+          load: true
+          tags: ${{ env.IMAGE }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test in the image
+        # The script goes in on stdin rather than as an argument: a login shell reads
+        # it the same way, and nothing in it has to survive two levels of quoting.
+        run: |
+          docker run --rm -i -v "$PWD:/src" -w /src \
+            -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
+            "$IMAGE" bash -l <<'SH'
+          set -e
+          # A login shell is how the image puts OpenFOAM on PATH, and its profile
+          # leaves the shell in HOME rather than where -w pointed it.
+          cd /src
+          # The checkout belongs to the runner and this container is root, so git
+          # refuses to read it; a test that asks what commit it is on would get ""
+          # and fail for a reason that has nothing to do with the image.
+          git config --global --add safe.directory /src
+          # `pip install` is refused in this image on purpose
+          # (docker/workspace/install-guard.sh shadows the console script); the pip
+          # module is not, and is what the image installs itself with. Only pytest
+          # is asked for beside the package: the rest of [dev] is already here, and
+          # naming pyvista would make the resolver put plain vtk over vtk-osmesa and
+          # take off-screen rendering with it.
+          python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
+          # The journey tests are left out here and not because they would fail:
+          # they solve cases, and they have their own job below that gates on the
+          # answers. Running them twice per push would pay for the same solves twice.
+          python3 -m pytest -q --ignore=tests/test_journey_duct.py --ignore=tests/test_journey_thermal_stress.py
+          SH
+
+      - name: The Docker backend against the real image
+        # Whatever the suite in the container made of itself: these are other tests.
+        if: ${{ !cancelled() }}
+        # On the runner, not in the container: these drive `docker` themselves, and
+        # the image now being built is the whole of what they were gated on.
+        env:
+          OPENREYNOLDS_TEST_IMAGE: ${{ env.IMAGE }}
+        run: |
+          pip install -e . pytest pytest-asyncio
+          python -m pytest -q tests/test_docker_backend.py
+
+  # The path a real user takes, walked end to end, and the only job anywhere that
+  # actually solves a case. `tests/test_journey_duct.py` starts from an empty
+  # directory, builds a 2D duct with the `duct2d.py` template, dresses it with
+  # `case_gen.py`, runs simpleFoam, then reads it back with probe.py, balance.py,
+  # wall.py, log_digest.py, results.py and report.py and checks the answer against
+  # the exact plane-Poiseuille solution at every seam. Until this existed, every test
+  # in the repository was either a unit test against a fixture or a tool run against
+  # a study somebody had already finished, so a seam between two stages -- a factor
+  # of ten, a unit mismatch, a field written under a name the next stage does not look
+  # for -- was invisible to all of them.
+  #
+  # `tests/test_journey_thermal_stress.py` is the same shape for the solid-mechanics
+  # side: the `thermal_stress.py` template, `solidDisplacementFoam`, the two
+  # `postProcess` samplers, and `benchmarks/thermal_stress/grade.py` on the result,
+  # in both plane states, against a closed form that is exact. It is the only place
+  # anything checks that the stress-analysis solver the image has always shipped
+  # actually produces the right number, and the only test of that capability that
+  # cannot pass on a machine with no OpenFOAM on it. Two solves of 800 cells.
+  #
+  # The image build is the `image` job's, deliberately: same context, same gha cache
+  # (read-only here, so the two do not fight over writing it), so nothing is
+  # recompiled and a change to the Dockerfile is tested by the journey before it
+  # ships. Only that one file is run; the rest of the suite is covered above.
+  #
+  # This one is NOT advisory. A case that stops solving, or stops producing the right
+  # answer, is the failure the job exists to catch.
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      IMAGE: reynolds-workspace:journey
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/workspace
+          load: true
+          tags: ${{ env.IMAGE }}
+          provenance: false
+          cache-from: type=gha
+
+      - name: Mesh it, solve it, read it, and check the physics
+        # `-s` rather than captured output: every stage prints its own wall-clock time
+        # and the numbers it measured, and on a green run that log is the evidence --
+        # the thermal-stress file prints the agreement `benchmarks/README.md` records.
+        run: |
+          docker run --rm -i -v "$PWD:/src" -w /src \
+            -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
+            "$IMAGE" bash -l <<'SH'
+          set -e
+          cd /src
+          git config --global --add safe.directory /src
+          python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
+          python3 -m pytest -v -s tests/test_journey_duct.py tests/test_journey_thermal_stress.py
+          SH
