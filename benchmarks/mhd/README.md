@@ -127,18 +127,86 @@ Ha 20 -- inferring L from the samples would be a 2% error exactly where the chec
 tightest. `heat.py` and `balance.py` refuse a missing constant by the flag that would
 supply it for the same reason.
 
-## The mesh, and the one thing it has to get right
+## The mesh, the time step, and what Ha costs
 
 `blockMesh`, not gmsh, which is what every other template in this repository uses: the
 domain is a box, so gmsh would contribute a recombination and a non-orthogonality to
 argue about and nothing else.
 
-The Hartmann layer is `L/Ha` thick -- 0.05 m at Ha 20 against a 2 m channel -- so a
-uniform 80-cell mesh straddles it with **one cell**. The template multi-grades in y,
-two segments of 40 cells with reciprocal expansion ratios of 10, which makes the
-wall cell 0.00633 m and puts **seven cells inside the layer**. That is the one mesh fact
-that decides whether the case can be graded at all, and the template prints the count
-and warns below four.
+The Hartmann layer is `L/Ha` thick and the profile's entire departure from a parabola
+lives in it, so resolving it is the one mesh fact that decides whether the case can be
+graded. **The obvious way to do that does not work, and this is the most useful thing
+this case has produced.**
+
+### The graded mesh that diverged
+
+The ESI tutorial runs Ha 20 on a uniform 40-cell mesh, which puts **one** cell inside
+its `L/Ha = 0.05` layer. One cell cannot resolve the only interesting part of the
+profile, so the first version of this template graded toward the walls: `simpleGrading`
+multi-graded, reciprocal expansion ratios of 10, 80 cells, a 0.00633 m wall cell and
+seven cells inside the layer. That is the right instinct for a boundary layer, and
+`mhdFoam` died on it inside eighty time steps with a SIGFPE in
+`symGaussSeidelSmoother` on the vector equation. From the `journey` job's log:
+
+```
+Time = 0.07
+Courant Number mean: 0.4238678571 max: 23.59931818
+```
+
+**A Courant number of 23.6 cannot come from the flow.** The advective one on that mesh
+is `u*dt/dx = 1.05*0.005/0.2 = 0.026` everywhere, and 23.6 needs a transverse velocity
+of about 30 m/s. 30 m/s is the **Alfven speed**, `c_A = B0/sqrt(mu*rho) = 20 m/s`, which
+names what was growing. The `pB` projection in the same log was converging cleanly to
+1e-08, so nothing was wrong with the mesh or the properties as such.
+
+The solver documents the mechanism without being asked. From `mhdFoam.C`'s own
+`Description` block:
+
+> However, in this formulation discretisation error prevents the normal stresses in UB
+> from cancelling with those from BU, but it is unknown whether this is a serious error.
+
+Both of those stresses are `fvc::` and not `fvm::` -- `fvc::div(phiB, 2.0*DBU*B)` and
+`fvc::grad(DBU*magSqr(B))`. Each is of order `B0^2/(mu*rho*dy)` alone and they are meant
+to cancel; what survives is a spurious **explicit** force that grows as the cell shrinks.
+Grading puts the smallest cells exactly where the field gradient is largest, which is the
+worst place to put them for this scheme. So the fix is not to grade and then fight it: it
+is to keep the mesh uniform and pick Ha so that the uniform cell resolves `L/Ha`.
+
+### The stability bracket, measured and not derived
+
+With `c_A*dt/dy` as the magnetic Courant number:
+
+| mesh | `c_A*dt/dy` | outcome |
+|---|---|---|
+| ESI tutorial, uniform `dy` 0.05 | **2.0** | runs |
+| graded, `dy` 0.00633 at the wall | **15.8** | diverges, SIGFPE at `t` 0.07 |
+
+The limit is somewhere between 2 and 15.8 and nothing here knows where. The template's
+`delta_t_s()` asks for **0.5**, inside the one stable datum by a factor of four, and
+prints what it got, so a future divergence can be compared against this bracket rather
+than guessed at. `tests/test_journey_mhd.py` asserts both that ratio and that the
+reported Courant number stayed below one -- the two checks that would have caught this
+on the run that produced it instead of leaving a stack trace to be read backwards.
+
+### And the cost: Ha cubed
+
+Holding cells-per-layer fixed makes `dy` fall as `1/Ha` while `c_A` rises as `Ha`, so the
+step falls as `1/Ha^2` and the cell count rises as `Ha`. **The total work goes as `Ha^3`.**
+
+| Ha | `dy` for 8 cells in the layer | cells | steps to 2 s | work |
+|---|---|---|---|---|
+| 5 | 0.025 | 8,000 | 800 | 1x |
+| 20 | 0.00625 | 32,000 | 12,800 | **64x** |
+
+Sixty-four times is more than the whole `journey` job's budget, which is why the graded
+points are **Ha 5 and Ha 0** and not the tutorial's 20. At Ha 5 the layer is 0.2 m, a
+uniform 80-cell mesh puts eight cells in it, and the profile has structure across the
+whole channel rather than a flat core with two thin layers -- so an RMS over a uniformly
+sampled line measures something everywhere. That is a property of this solver's explicit
+magnetic coupling, not of Hartmann flow, and it is the kind of thing that is cheap to
+learn once and expensive to rediscover.
+
+### The transport numbers
 
 `rho = nu = mu = sigma = 1`, which is the ESI tutorial's choice at
 `$FOAM_TUTORIALS/electromagnetics/mhdFoam/hartmann` and is deliberate rather than lazy.
@@ -174,16 +242,17 @@ also why a channel twenty half-heights long, sampled at fifteen, is far past dev
 ## The recorded run
 
 Measured in the `journey` job of `.github/workflows/tests.yml`, which builds the
-workspace image, runs the template at Ha 20, Ha 5 and Ha 0, solves all three, grades all
-three and cross-grades the extremes.
+workspace image, runs the template at Ha 5 and Ha 0, solves both, grades both and
+cross-grades them.
 
-Three rather than one, and the middle one earns its place: at Ha 20 the profile is a flat
-core with two layers 0.05 L thick, so an RMS over a uniformly sampled line is dominated
-by the core where every scheme is right, and `shape_max` rather than `shape_rms` is the
-layer's number. At Ha 5 the layer is 0.2 L and the **whole** profile has structure in it,
-so the RMS measures something everywhere. The three closed forms are 42.5%, 17.8% and 0%
-away from the parabola in `u_c/u_mean` and 0.366, 0.176 and 0 away from it in RMS
-profile shape, so the set spans the flattening rather than sampling one point of it.
+**No agreement number is recorded here yet.** The first run of this case diverged, for
+the reason set out above, and the uniform-mesh version has not completed a `journey` job
+at the time of writing. What the section above records is a measurement -- of a failure,
+with the Courant number, the stack frame and the solver's own documentation of the
+mechanism -- and it is kept because the next person to reach for a graded mesh here
+should not have to pay for it again. The agreement columns in
+[`benchmarks/README.md`](../README.md) stay empty until something has solved it, which is
+the same rule that file applies to the flat plate.
 The numbers are printed by `tests/test_journey_mhd.py` on every run of that job
 (`-s` is deliberate: on a green run that log is the evidence), and the agreement it
 measured is recorded in the `mhd` rows of [`benchmarks/README.md`](../README.md).

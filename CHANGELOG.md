@@ -429,16 +429,28 @@ All notable changes to this project are recorded here. The format follows
   - The shape carries Ha and nothing else, so a solved profile divided by its own
     centreline value is checkable with no constant fitted; the centreline speed is
     absolute, because the inlet is a plug and a 2D case has nowhere else for the mass to
-    go. `tests/test_journey_mhd.py` runs the template at Ha 20 and at Ha 0 in the
+    go. `tests/test_journey_mhd.py` runs the template at Ha 5 and at Ha 0 in the
     workspace image, solves both, grades both and cross-grades them, so the agreement is
-    two runs 29% apart against two formulae rather than one run against a cosh.
-  - `blockMesh` rather than gmsh, because the domain is a box and multi-grading toward
-    both walls puts seven cells inside the `L/Ha` Hartmann layer that a uniform mesh
-    straddles with one. The three quiet factors are in the case and in its comments:
-    `mu` in `constant/transportProperties` is the magnetic **permeability** in H/m and a
-    dynamic viscosity written there is accepted in silence, `0/pB` is a fictitious flux
-    pressure the case does not start without, and `fvSolution` needs a `BPISO`
-    sub-dictionary as well as a `PISO`.
+    two runs 18% apart against two formulae rather than one run against a cosh.
+  - `blockMesh` rather than gmsh, because the domain is a box. The mesh is **uniform**,
+    and that is measured rather than preferred: the first version graded toward the walls
+    to put seven cells inside the Ha 20 Hartmann layer and `mhdFoam` diverged on it
+    inside eighty steps, with a max Courant number of 23.6 against an advective 0.026 and
+    a SIGFPE in `symGaussSeidelSmoother`. 23.6 needs a 30 m/s transverse velocity and the
+    Alfven speed was 20 m/s, which names the cause; `mhdFoam.C`'s own `Description` block
+    says its magnetic normal stresses do not cancel discretely, both of them are `fvc::`
+    rather than `fvm::`, and the surviving spurious force grows as the cell shrinks.
+    Grading puts the finest cells where the field gradient is largest, so the template no
+    longer grades: the step is now computed from `c_A*dt/dy` with a bracket measured from
+    the two runs (2.0 runs, 15.8 diverges), and Ha is chosen so a uniform cell resolves
+    `L/Ha`. The cost of that resolution goes as **Ha^3**, which is why the graded points
+    are Ha 5 and Ha 0 and not the ESI tutorial's 20.
+  - The three quiet factors are in the case and in its comments: `mu` in
+    `constant/transportProperties` is the magnetic **permeability** in H/m and a dynamic
+    viscosity written there is accepted in silence, `0/pB` is a fictitious flux pressure
+    the case does not start without, and `fvSolution` needs a `BPISO` sub-dictionary as
+    well as a `PISO`. Its tolerances are the ESI tutorial's: an earlier version tightened
+    them by two to three orders and bought only 165 Gauss-Seidel sweeps per solve.
 
 - **Combustion: a `chemFoam` reactor whose end temperature is computed independently.**
   `reactingFoam` and every other combustion solver were referenced nowhere in this
@@ -473,7 +485,15 @@ All notable changes to this project are recorded here. The format follows
     one-step mechanism has no ignition chemistry and `exp(-14906/300)` is 3e-22.
   - The control is what makes the agreement evidence: the journey test writes a second
     case with `chemistry off` and nothing else changed, and requires it to come back at
-    its initial temperature and to be failed.
+    its initial temperature and to be failed. Measured: **999.9985 K from 1000 K**, a
+    0.0015 K drift from the energy equation still being integrated, against a 1877.6 K
+    rise in the reacting case.
+  - **Measured in the `journey` job**, one cell and 5,468 steps in 0.4 s: the reactor
+    reached **2877.6383 K** against an enthalpy-conserving **2877.7712 K**, **+0.0046%**.
+    Graded a second time against the composition the solver itself ended on, the same
+    balance closes to **+1.1e-06%**, so the whole 0.0046% is the 1.598e-05 mass fraction
+    of fuel still unconsumed at 0.5 s and not an energy error. Splitting the grade in two
+    is what makes that readable.
 
 - **Learn mode and beginner mode, as a depth the person chooses.** `study_style.py` gains
   `learn` and `beginner` beside `quick` and `full`, and `openreynolds --depth` makes all

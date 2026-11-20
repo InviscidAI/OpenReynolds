@@ -23,25 +23,35 @@ own two equations:
     u_c/u_mean = ( cosh(Ha) - 1 ) / ( cosh(Ha) - sinh(Ha)/Ha )
     Ha         = B0*L*sqrt(sigma/(rho*nu))
 
-1.05263157 at Ha 20 and 1.5 at Ha 0. No published value, no reference uncertainty,
+1.23312791 at Ha 5 and 1.5 at Ha 0. No published value, no reference uncertainty,
 nothing to misquote: `Ha` is the case's own and the algebra is beside the grader.
 
-Three Hartmann numbers are run -- 20, 5 and 0 -- and the second and third are the point.
-At Ha 0 the field is switched off and the answer has to be the parabola. At Ha 20 the
-same mesh, the same schemes and the same solver have to produce a profile 0.366 RMS away
-from that parabola with a centreline 29.8% closer to the mean. Ha 5 is in between on both
-counts, 0.176 and 17.8%, and it is there because at Ha 20 the profile is a flat core and
-two layers 0.05 L thick, so an RMS over a uniformly sampled line is dominated by the core
-where every scheme is right -- the mid-Hartmann case is the one whose whole profile has
-structure in it. A single run at Ha 20 agreeing with a cosh is a weaker statement than
-three runs spanning 42% agreeing with three different formulae; `benchmarks/lbm/` makes
-the same argument about its one-relaxation-time contrast.
+Two Hartmann numbers are run, 5 and 0, and the second one is the point. At Ha 0 the field
+is switched off and the answer has to be the parabola; at Ha 5 the same mesh, the same
+schemes and the same solver have to produce a profile 0.176 RMS away from that parabola
+with a centreline 17.8% closer to the mean. A single run agreeing with a cosh is a weaker
+statement than two runs 18% apart agreeing with two different formulae, and
+`benchmarks/lbm/` makes the same argument about its one-relaxation-time contrast.
+
+**Ha 20 is not run, and that is measured rather than chosen.** It is the ESI tutorial's
+value and this test did run it, on a mesh graded to resolve its 0.05 L layer. `mhdFoam`
+diverged: a max Courant number of 23.6 inside eighty steps and a SIGFPE in
+`symGaussSeidelSmoother` on the vector equation, because the solver differences its
+magnetic stresses explicitly and the spurious part of them grows as the cell shrinks --
+the solver's own `Description` block says those stresses do not cancel discretely.
+Resolving `L/Ha` forces `dy` down as `1/Ha` while `c_A` rises as `Ha`, so the step falls
+as `1/Ha^2` and the work goes as `Ha^3`: Ha 20 is sixty-four times Ha 5, which is more
+than this whole job's budget. `mhd_hartmann.py`'s docstring and
+`benchmarks/mhd/README.md` carry the evidence and the stability bracket.
 
 what is asserted at each seam, and not at the end
 
-* `blockMesh` built the mesh the template describes, with the cell count its grading
-  implies and the two z faces `empty` -- a "2D" case that is really a thin 3D one has
-  a different answer rather than a failure;
+* `blockMesh` built the mesh the template describes, with its cell count and the two z
+  faces `empty` -- a "2D" case that is really a thin 3D one has a different answer
+  rather than a failure;
+* the **Courant number stayed below one**, and `c_A*dt/dy` inside the measured bracket.
+  These are the two checks that would have caught the divergence above on the run that
+  produced it, rather than leaving a SIGFPE to be read backwards from a stack trace;
 * `checkMesh` says the mesh is OK, which on a graded box it has every right to;
 * the solver reached `End`, and its own `magnetic flux divergence error` line did not
   grow across the run. That line is `magneticFieldErr.H` reporting
@@ -52,7 +62,7 @@ what is asserted at each seam, and not at the end
   single output, which is the failure this separates out;
 * the centreline speed is `u_mean*(3)` **absolutely**, asserted here against a formula
   written out in this file rather than imported from the template or the grader;
-* the shape is the closed form, and at Ha 20 it is very much further from the parabola
+* the shape is the closed form, and at Ha 5 it is very much further from the parabola
   than from the cosh;
 * and `benchmarks/mhd/grade.py` agrees, through its own command line, with the exit
   status a person would read.
@@ -64,6 +74,7 @@ Skipped where there is no OpenFOAM. The place this runs is the `journey` job in
 from __future__ import annotations
 
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -100,9 +111,23 @@ CELLS_ALONG = 100            # mhd_hartmann.py  CELLS_ALONG
 CELLS_ACROSS = 80            # mhd_hartmann.py  CELLS_ACROSS
 END_TIME_S = 2.0             # mhd_hartmann.py  END_TIME_S
 WRITE_INTERVAL_S = 0.5       # mhd_hartmann.py  WRITE_INTERVAL_S
-DELTA_T_S = 0.005            # mhd_hartmann.py  DELTA_T_S
 
-HARTMANN_NUMBERS = (20.0, 5.0, 0.0)
+# c_A*dt/dy, the ratio the graded mesh got wrong: it ran at 15.8 and diverged, while the
+# ESI tutorial runs at 2.0. `mhd_hartmann.py`'s MAGNETIC_CFL asks for 0.5.
+MAGNETIC_COURANT_LIMIT = 0.75
+
+
+def delta_t(case: Path) -> float:
+    """The step out of the case the template wrote.
+
+    The template computes it from the mesh and the field rather than carrying a
+    constant, so this test reads it back instead of duplicating the formula -- which
+    also means a change to `delta_t_s()` cannot silently desynchronise the two.
+    """
+    text = (case / "system" / "controlDict").read_text(encoding="utf-8")
+    return float(re.search(r"^deltaT\s+([\d.eE+-]+);", text, re.M).group(1))
+
+HARTMANN_NUMBERS = (5.0, 0.0)
 
 
 def centreline_over_mean(hartmann: float) -> float:
@@ -152,8 +177,8 @@ def edited_copy(root: Path, hartmann: float) -> Path:
     shutil.copy(ROOT / "openreynolds" / "toolbox" / "mesh_look.py",
                 toolbox / "mesh_look.py")
     text = TEMPLATE.read_text(encoding="utf-8")
-    assert "HARTMANN_NUMBER = 20.0" in text, "the template's knob has been renamed"
-    text = text.replace("HARTMANN_NUMBER = 20.0",
+    assert "HARTMANN_NUMBER = 5.0" in text, "the template's knob has been renamed"
+    text = text.replace("HARTMANN_NUMBER = 5.0",
                         f"HARTMANN_NUMBER = {hartmann!r}", 1)
     script = toolbox / "templates" / "mhd_hartmann.py"
     script.write_text(text, encoding="utf-8")
@@ -191,7 +216,7 @@ def build_and_solve(case: Path, hartmann: float) -> dict:
     run(["postProcess", "-func", "sample", "-noZero"], case, "sample")
 
     cells = CELLS_ALONG * CELLS_ACROSS
-    steps = int(round(END_TIME_S / DELTA_T_S))
+    steps = int(round(END_TIME_S / delta_t(case)))
     print(f"  cost: {cells:,} cells, {steps:,} steps, {seconds:.1f} s "
           f"({1e6 * seconds / (cells * steps):.2f} us per cell-step)")
     return {"template": template_log, "solve": solve_log, "seconds": seconds,
@@ -217,7 +242,7 @@ def test_block_mesh_built_the_two_dimensional_case_the_template_describes(runs):
     """`empty` on the z faces is what makes this 2D. A pair of plain `patch` faces
     there is a thin 3D case with two free-slip walls a cell apart, which has a
     different answer rather than a failure."""
-    case = runs[20.0]["case"]
+    case = runs[5.0]["case"]
     boundary = (case / "constant" / "polyMesh" / "boundary").read_text()
     index = boundary.index("frontAndBack")
     assert "empty" in boundary[index:index + 200], "the case is a thin 3D one, not 2D"
@@ -225,24 +250,64 @@ def test_block_mesh_built_the_two_dimensional_case_the_template_describes(runs):
         index = boundary.index(patch)
         assert "wall" in boundary[index:index + 200], f"{patch} is not a wall patch"
 
-    log = runs[20.0]["template"]
-    assert f"cells:  {CELLS_ALONG * CELLS_ACROSS}" in log.replace("\t", " ") or \
-        str(CELLS_ALONG * CELLS_ACROSS) in log, \
-        "blockMesh did not report the cell count the grading implies"
-    assert "Mesh OK" in log, "checkMesh did not pass on a graded box"
+    log = runs[5.0]["template"]
+    assert str(CELLS_ALONG * CELLS_ACROSS) in log, (
+        "neither blockMesh nor checkMesh reported the cell count the mesh implies")
+    assert "Mesh OK" in log, "checkMesh did not pass on a uniform box"
 
 
 def test_the_template_resolved_the_hartmann_layer_rather_than_straddling_it(runs):
     """The one mesh fact that decides whether the case can be graded at all: the layer
-    is `L/Ha` thick, 0.05 m at Ha 20, and the template's grading has to put several
-    cells inside it. A uniform 80-cell mesh across 2 m has one."""
-    log = runs[20.0]["template"]
+    is `L/Ha` thick, 0.2 m at Ha 5, and the uniform cell has to fit several times inside
+    it. The ESI tutorial's own 40-cell mesh at Ha 20 fits **one**, which is what made
+    the first version of this template reach for grading and diverge."""
+    log = runs[5.0]["template"]
     assert "cells in it" in log
     line = next(line for line in log.splitlines() if "cells in it" in line)
-    count = int(line.split()[3])
+    count = float(line.split()[3])
     print(f"  {line.strip()}")
-    assert count >= 5, f"only {count} cells inside the Hartmann layer"
+    assert count >= 4.0, f"only {count} cells inside the Hartmann layer"
     assert "WARNING" not in log
+
+
+def test_the_courant_number_stayed_below_one(runs):
+    """The check that would have caught the graded mesh's divergence on the run that
+    produced it. `CourantNo.H` prints a line per step, and the advective Courant number
+    on this mesh is about 0.015, so anything approaching 1 is not the flow: it is the
+    explicitly differenced magnetic stresses growing. The graded run reached 23.6 before
+    `symGaussSeidelSmoother` took a SIGFPE."""
+    for hartmann, result in runs.items():
+        peaks = [float(line.rsplit("max:", 1)[1])
+                 for line in result["solve"].splitlines()
+                 if line.startswith("Courant Number")]
+        assert peaks, f"Ha {hartmann:g}: the solver printed no Courant number"
+        print(f"  Ha {hartmann:g}: Courant max over {len(peaks)} reported steps is "
+              f"{max(peaks):.4f}")
+        assert max(peaks) < 1.0
+
+
+def test_the_magnetic_courant_number_is_inside_the_measured_bracket(runs):
+    """`c_A*dt/dy`, out of the case's own dictionaries rather than the template's
+    constants. 15.8 diverged and the ESI tutorial runs at 2.0, so this is the number to
+    look at first if a run of this ever blows up again."""
+    for hartmann, result in runs.items():
+        case = result["case"]
+        field = (case / "0" / "B").read_text(encoding="utf-8")
+        applied = float(re.search(
+            r"internalField\s+uniform\s+\(\S+\s+(\S+)\s+\S+\)", field).group(1))
+        # rho and mu are 1 in this case, so c_A is B0 numerically. Read them anyway:
+        # they are what the ratio is made of, and a template that changed them would
+        # otherwise be graded against the wrong wave speed.
+        properties = (case / "constant" / "transportProperties").read_text(
+            encoding="utf-8")
+        rho = float(re.search(r"^rho\s+(\S+);", properties, re.M).group(1))
+        permeability = float(re.search(r"^mu\s+(\S+);", properties, re.M).group(1))
+        speed = applied / math.sqrt(permeability * rho)
+        cell = 2.0 * HALF_HEIGHT_M / CELLS_ACROSS
+        ratio = speed * delta_t(case) / cell
+        print(f"  Ha {hartmann:g}: B0 {applied:g}, c_A {speed:g} m/s, dt "
+              f"{delta_t(case):g} s, c_A*dt/dy {ratio:.4f}")
+        assert ratio < MAGNETIC_COURANT_LIMIT
 
 
 def test_the_magnetic_flux_error_did_not_grow(runs):
@@ -290,8 +355,8 @@ def test_the_profile_stopped_moving(runs):
 def test_the_centreline_speed_is_the_closed_form_absolutely(hartmann, runs):
     """The strongest single number here, because nothing is fitted: the inlet is a plug
     at u_mean, the case is 2D so continuity fixes the mean at every station, and (3)
-    then gives the centreline speed outright. 1.05263157 m/s at Ha 20 against
-    1.5 m/s at Ha 0, which is the 29% flattening the field is responsible for."""
+    then gives the centreline speed outright. 1.23312791 m/s at Ha 5 against
+    1.5 m/s at Ha 0, which is the 17.8% flattening the field is responsible for."""
     case = runs[hartmann]["case"]
     y, ux = read_profile(case, f"{END_TIME_S:g}")
     centre = float(np.interp(0.0, y, ux))
@@ -305,7 +370,7 @@ def test_the_centreline_speed_is_the_closed_form_absolutely(hartmann, runs):
 def test_the_shape_is_the_closed_form_and_not_the_other_one(hartmann, runs):
     """Both profiles against both formulae, which is what makes either one evidence.
 
-    At Ha 20 the run has to be close to the cosh and far from the parabola; at Ha 0,
+    At Ha 5 the run has to be close to the cosh and far from the parabola; at Ha 0,
     where the two coincide, the parabola IS the closed form and the contrast does not
     exist, so only the first half is asserted.
     """
@@ -340,10 +405,10 @@ def test_the_benchmark_grader_agrees_through_its_own_command_line(hartmann, runs
 
 
 def test_the_grader_rejects_each_run_graded_as_the_other(runs):
-    """The two runs cross-graded. A grader that passed a Ha 0 run against Ha 20 would
+    """The two runs cross-graded. A grader that passed a Ha 0 run against Ha 5 would
     be measuring nothing, and this is the cheapest way to show it does not -- the two
     cases differ only in one number at the top of the template."""
-    for solved, graded_as in ((0.0, 20.0), (20.0, 0.0)):
+    for solved, graded_as in ((0.0, 5.0), (5.0, 0.0)):
         proc = subprocess.run(
             [sys.executable, str(GRADER), "hartmann", str(runs[solved]["case"]),
              "--hartmann", f"{graded_as:g}", "--mean-velocity", f"{MEAN_VELOCITY:g}",

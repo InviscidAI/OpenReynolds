@@ -7,8 +7,8 @@ Copy this file into an empty case directory and run it there:
     python3 mhd_hartmann.py
 
 It builds a 2D channel 2*HALF_HEIGHT_M across and twenty times that long, one cell thick
-in z (the two z faces typed `empty`), graded toward both walls so the Hartmann layer is
-resolved rather than straddled by one cell, writes the whole `mhdFoam` case -- `0/U`,
+in z (the two z faces typed `empty`), with a uniform mesh whose cell height is chosen
+against the Hartmann layer rather than graded into it, writes the whole `mhdFoam` case -- `0/U`,
 `0/p`, `0/B`, `0/pB`, `constant/transportProperties`, `system/controlDict`,
 `system/fvSchemes`, `system/fvSolution`, `system/sample` -- runs `blockMesh`, runs
 `checkMesh`, and finishes with `mesh_look.py` so the mesh is looked at and not just
@@ -23,8 +23,8 @@ a solve costs and whether it is wanted is not a template's call; the command it 
 is printed at the end.
 
 **edit these two** and re-run: HARTMANN_NUMBER and HALF_HEIGHT_M. The applied field, the
-channel length, the grading, the Hartmann layer thickness and the profile printed at the
-end all follow from them.
+channel length, the Hartmann layer thickness, **the time step** and the profile printed
+at the end all follow from them.
 
 
 WHY HARTMANN FLOW AND NOT A PRETTIER MHD CASE
@@ -152,9 +152,64 @@ long and the profile is sampled at fifteen: the development length of a Re 2 cha
 a couple of half-heights, and a transverse field shortens it further.
 
 
+WHAT A HARTMANN NUMBER COSTS, WHICH IS WHY THE DEFAULT IS 5 AND NOT 20
+----------------------------------------------------------------------
+This is the part that was learned by breaking it, so it is written down rather than left
+as a tuned constant.
+
+The ESI tutorial runs at Ha 20 on a **uniform** 40-cell mesh, which puts **one** cell
+inside its `L/Ha = 0.05` layer. One cell cannot resolve the only part of the profile
+that is not a parabola, so the first version of this template graded the mesh toward the
+walls -- `simpleGrading` multi-graded, reciprocal expansion ratios of 10, 80 cells, a
+0.00633 m wall cell and seven cells inside the layer. That is the right instinct for a
+boundary layer and `mhdFoam` diverged on it, inside eighty time steps, with a SIGFPE in
+`symGaussSeidelSmoother` on the vector equation. The measurement, from the `journey` job
+on that run:
+
+    Time = 0.07
+    Courant Number mean: 0.4238678571 max: 23.59931818
+
+A Courant number of 23.6 is impossible from the flow: the advective one on this mesh is
+`u*dt/dx = 1.05*0.005/0.2 = 0.026` everywhere, and 23.6 needs a transverse velocity of
+about 30 m/s. 30 m/s is the **Alfven speed**, `c_A = B0/sqrt(mu*rho) = 20 m/s`, which
+says what was growing. The solver's own `Description` block names the mechanism without
+being asked:
+
+    However, in this formulation discretisation error prevents the normal stresses in UB
+    from cancelling with those from BU, but it is unknown whether this is a serious
+    error.
+
+Both of those stresses are `fvc::` and not `fvm::` -- `fvc::div(phiB, 2.0*DBU*B)` and
+`fvc::grad(DBU*magSqr(B))` in `mhdFoam.C`. Each is of order `B0^2/(mu*rho*dy)` on its
+own and they are supposed to cancel; what survives is a spurious explicit force that
+grows as the cell shrinks. Grading concentrates the smallest cells exactly where the
+field gradient is largest, which is the worst place to put them for this scheme. So the
+answer is not to grade and then fight it, but to keep the mesh uniform and choose Ha so
+that the uniform cell resolves `L/Ha`.
+
+**The stability bracket, measured rather than derived.** With `c_A*dt/dy` as the
+magnetic Courant number, the two data points are:
+
+    dy 0.05 (ESI tutorial, uniform)     c_A*dt/dy = 2.0    runs
+    dy 0.00633 (graded, this template)  c_A*dt/dy = 15.8   diverges
+
+so the limit is somewhere between 2 and 15.8 and nothing here knows where. `delta_t_s()`
+asks for 0.5, which is inside the one stable datum by a factor of four, and prints what
+it got so a future divergence can be compared against this bracket instead of guessed
+at.
+
+**And the cost.** Holding the cells-per-layer fixed means `dy` falls as `1/Ha`, while
+`c_A` rises as `Ha`, so the step falls as `1/Ha^2` and the cell count rises as `Ha`:
+**the total work goes as Ha^3**. Ha 5 with eight cells in the layer is 800 steps on
+8,000 cells. Ha 20 at the same resolution is 12,800 steps on 32,000 cells, sixty-four
+times as much, which is more than the whole `journey` job's budget. That is the reason
+the graded points are Ha 5 and Ha 0 and not Ha 20, and it is a property of this
+solver's explicit magnetic coupling rather than of Hartmann flow.
+
+
 GRADED BY
 ---------
-    python3 benchmarks/mhd/grade.py hartmann <case> --hartmann 20 --mean-velocity 1
+    python3 benchmarks/mhd/grade.py hartmann <case>         --hartmann 5 --mean-velocity 1 --half-height 1
 
 which reads the `postProcessing/` profile this case's `system/sample` writes and nothing
 else. `benchmarks/mhd/README.md` carries the same derivation and what a real run
@@ -171,13 +226,14 @@ from pathlib import Path
 
 # -- edit these two ------------------------------------------------------------
 #
-# HARTMANN_NUMBER is the whole physics. 0 is plane Poiseuille (and is worth running, as
-# the control that says the field is doing something); 20 is the shipped value and the
-# one the ESI tutorial at $FOAM_TUTORIALS/electromagnetics/mhdFoam/hartmann uses.
-# Above about 40 the layers are thinner than this grading resolves and CELLS_ACROSS has
-# to go up with it -- the printed summary says how many cells landed inside the layer.
+# HARTMANN_NUMBER is the whole physics. 0 is plane Poiseuille, worth running as the
+# control that says the field is doing something at all. 5 is the shipped value, and the
+# reason it is not the ESI tutorial's 20 is measured rather than preferred -- see
+# WHAT A HARTMANN NUMBER COSTS in the docstring above. CELLS_ACROSS and the time step
+# follow from it, and the printed summary says how many cells landed inside the layer
+# and what the magnetic Courant number came out at.
 
-HARTMANN_NUMBER = 20.0
+HARTMANN_NUMBER = 5.0
 HALF_HEIGHT_M = 1.0
 
 # -- everything below follows ---------------------------------------------------
@@ -193,16 +249,25 @@ LENGTH_RATIO = 20.0      # channel length in half-heights
 SAMPLE_AT_RATIO = 15.0   # where the profile is sampled, in half-heights
 
 CELLS_ALONG = 100        # cells along the channel
-CELLS_ACROSS = 80        # cells across it, half in each graded half
-WALL_EXPANSION = 10.0    # last cell / first cell within each half: fine at the walls
+CELLS_ACROSS = 80        # cells across it, uniform: see the docstring for why not graded
+
+CELLS_PER_LAYER = 4      # below this many cells inside L/Ha the summary warns
 
 SAMPLE_POINTS = 401      # points in the sampled profile
 END_TIME_S = 2.0         # two viscous times across the half-height, at nu = 1
-DELTA_T_S = 0.005
 WRITE_INTERVAL_S = 0.5   # four written times, so steadiness is checkable from the files
 
+# The two Courant numbers the time step is taken from. Both are explicit limits on
+# EXPLICIT terms, which is the whole reason this template computes its step instead of
+# carrying one: mhdFoam differences the magnetic stresses explicitly.
+MAGNETIC_CFL = 0.5       # c_A*dt/dy; the measured bracket is in the docstring
+ADVECTIVE_CFL = 0.5      # u*dt/dx, the ordinary one
+MAX_DELTA_T_S = 0.005    # the ESI tutorial's step, which is the largest ever used here
+
 LENGTH_M = LENGTH_RATIO * HALF_HEIGHT_M
-THICK_M = 2.0 * HALF_HEIGHT_M / CELLS_ACROSS   # z depth = one cell, about a cell wide
+CELL_HEIGHT_M = 2.0 * HALF_HEIGHT_M / CELLS_ACROSS
+CELL_LENGTH_M = LENGTH_M / CELLS_ALONG
+THICK_M = CELL_HEIGHT_M        # z depth = one cell, about a cell wide
 
 
 def applied_field_t() -> float:
@@ -244,32 +309,53 @@ def layer_thickness_m() -> float:
     return HALF_HEIGHT_M / HARTMANN_NUMBER
 
 
-def wall_cell_sizes() -> list[float]:
-    """The graded half's cell widths, wall outward, so the summary can count them.
+def alfven_speed_m_s() -> float:
+    """c_A = B0/sqrt(mu*rho), the speed the explicit magnetic terms carry a wave at.
 
-    `simpleGrading` with an expansion ratio R over n cells is geometric with
-    `r = R**(1/(n-1))`, and the widths sum to the segment length, so the first cell is
-    `(r-1)/(r**n - 1)` of it. Written out here rather than trusted, because how many
-    cells land inside `L/Ha` is the one thing that decides whether this case can be
-    graded at all.
+    This is the number that sets the time step, and it is worth naming rather than
+    leaving inside an expression: the Lorentz terms in `mhdFoam`'s momentum equation and
+    the stretching term in its induction equation are both `fvc::` and not `fvm::`, so
+    the Alfven wave is advanced explicitly and has an explicit wave's stability limit.
     """
-    n = CELLS_ACROSS // 2
-    ratio = WALL_EXPANSION ** (1.0 / (n - 1))
-    first = HALF_HEIGHT_M * (ratio - 1.0) / (ratio**n - 1.0)
-    return [first * ratio**k for k in range(n)]
+    return applied_field_t() / math.sqrt(MU_H_M * RHO_KG_M3)
 
 
-def cells_in_layer() -> int:
-    """How many of those cells fit inside one Hartmann layer."""
+def cells_in_layer() -> float:
+    """How many cells land inside one Hartmann layer, on a uniform mesh.
+
+    The one mesh fact that decides whether this case can be graded at all: the layer is
+    `L/Ha` thick and the profile's whole departure from a parabola lives in it.
+    """
     if HARTMANN_NUMBER == 0.0:
-        return CELLS_ACROSS // 2
-    total, count = 0.0, 0
-    for width in wall_cell_sizes():
-        if total >= layer_thickness_m():
-            break
-        total += width
-        count += 1
-    return count
+        return float(CELLS_ACROSS) / 2.0
+    return layer_thickness_m() / CELL_HEIGHT_M
+
+
+def delta_t_s() -> float:
+    """The time step, from the mesh rather than from a constant.
+
+    Three limits, and the binding one is reported by `summary()`:
+
+    * the magnetic one, `c_A*dt/dy <= MAGNETIC_CFL`. See the docstring's measured
+      bracket: this case diverged at `c_A*dt/dy = 15.8` and the ESI tutorial runs at
+      2.0, so the limit is somewhere between and 0.5 is inside the stable datum by four.
+    * the advective one, `u*dt/dx <= ADVECTIVE_CFL`, on the peak velocity the closed
+      form predicts rather than on the mean, since the core runs faster than the mean.
+    * `MAX_DELTA_T_S`, the ESI tutorial's own step, as a ceiling. At Ha 0 there is no
+      Alfven wave at all and this is the only thing left holding the step down.
+    """
+    limits = [MAX_DELTA_T_S,
+              ADVECTIVE_CFL * CELL_LENGTH_M
+              / (MEAN_VELOCITY_M_S * centreline_over_mean())]
+    if alfven_speed_m_s() > 0.0:
+        limits.append(MAGNETIC_CFL * CELL_HEIGHT_M / alfven_speed_m_s())
+    return min(limits)
+
+
+def magnetic_courant() -> float:
+    """`c_A*dt/dy` as actually written, which is the number to compare against the
+    bracket in the docstring if a run of this ever diverges again."""
+    return alfven_speed_m_s() * delta_t_s() / CELL_HEIGHT_M
 
 
 # -- the case files ------------------------------------------------------------
@@ -292,13 +378,18 @@ def block_mesh_dict() -> str:
 
     `blockMesh` rather than gmsh, which is what every other template here uses: the
     domain is a box, so gmsh would contribute a recombination and a non-orthogonality to
-    argue about and nothing else, while `simpleGrading` resolves the Hartmann layer in
-    one line. `checkMesh` on what this writes is exactly orthogonal.
+    argue about and nothing else. `checkMesh` on what this writes is exactly orthogonal.
 
-    The y direction is **multi-graded** -- two entries inside `simpleGrading`, each
-    `(length fraction, cell fraction, expansion ratio)` -- because the two Hartmann
-    layers are at both walls and a single expansion ratio can only refine one end. The
-    second entry's ratio is the reciprocal of the first for that reason.
+    **Uniform, and not graded, which is a measured decision and not the obvious one.**
+    Grading toward the walls is the natural way to resolve a boundary layer, and the
+    first version of this template did exactly that -- `simpleGrading` multi-graded with
+    reciprocal expansion ratios of 10, which put seven cells inside the Ha 20 layer and
+    a 0.00633 m cell against the wall. `mhdFoam` diverged on it. The docstring's
+    WHAT A HARTMANN NUMBER COSTS section has the evidence; the short version is that the
+    magnetic stresses are differenced explicitly, their spurious residual grows as the
+    cell shrinks, and a graded mesh concentrates the finest cells exactly where the
+    field gradient is largest. A uniform mesh makes the worst cell the only cell, and
+    the Hartmann number is then chosen so that `L/Ha` is resolved by it.
 
     The walls are typed `wall` and not `patch`. `mhdFoam` is laminar and has no wall
     functions to care, but `checkMesh` reports wall patches separately and `noSlip`
@@ -322,15 +413,7 @@ def block_mesh_dict() -> str:
         "blocks\n"
         "(\n"
         f"    hex (0 1 2 3 4 5 6 7) ({CELLS_ALONG} {CELLS_ACROSS} 1)\n"
-        "    simpleGrading\n"
-        "    (\n"
-        "        1\n"
-        "        (\n"
-        f"            (0.5 0.5 {WALL_EXPANSION:g})\n"
-        f"            (0.5 0.5 {1.0 / WALL_EXPANSION:g})\n"
-        "        )\n"
-        "        1\n"
-        "    )\n"
+        "    simpleGrading (1 1 1)\n"
         ");\n\n"
         "boundary\n"
         "(\n"
@@ -538,14 +621,15 @@ def transport_properties() -> str:
 def control_dict() -> str:
     """Two viscous times, written four times over so steadiness is a file comparison.
 
-    `L^2/nu` is 1 s here, and the Hartmann damping time `rho/(sigma*B0^2)` is 1/400 s at
-    Ha 20, so the magnetic part settles long before the viscous part does and the end
+    `L^2/nu` is 1 s here, and the Hartmann damping time `rho/(sigma*B0^2)` is 1/25 s at
+    Ha 5, so the magnetic part settles long before the viscous part does and the end
     time is set by the latter. Writing every 0.5 s rather than only at the end is what
     lets the last two profiles be sampled and differenced: a transient that has not
     finished looks exactly like a converged answer in a single output.
 
     `writeControl runTime` rather than `timeStep`, so the written times stay at 0.5
-    intervals when `deltaT` is edited.
+    intervals whatever `delta_t_s()` comes out at -- and it is computed rather than
+    carried, because it has to follow the mesh and the field. See `delta_t_s()`.
     """
     return (header("dictionary", "controlDict") + "\n"
             "application     mhdFoam;\n\n"
@@ -553,7 +637,7 @@ def control_dict() -> str:
             "startTime       0;\n\n"
             "stopAt          endTime;\n\n"
             f"endTime         {END_TIME_S:g};\n\n"
-            f"deltaT          {DELTA_T_S:g};\n\n"
+            f"deltaT          {delta_t_s():.6g};\n\n"
             "writeControl    runTime;\n\n"
             f"writeInterval   {WRITE_INTERVAL_S:g};\n\n"
             "purgeWrite      0;\n\n"
@@ -618,6 +702,14 @@ def fv_solution() -> str:
     two separate sub-dictionaries, `PISO` and `BPISO`. A case with only `PISO` in it
     fails on the missing `BPISO`, and `nCorrectors` in the wrong one is read as a
     default. There is no `pRefCell` here because the outlet pins `p`.
+
+    Every tolerance here is the ESI tutorial's at
+    `$FOAM_TUTORIALS/electromagnetics/mhdFoam/hartmann/system/fvSolution`, including
+    `smoothSolver`/`symGaussSeidel` for `"(U|B)"`. An earlier version of this file
+    tightened all three by two to three orders on the reasoning that tighter is safer.
+    It is not: on a diverging run the only thing it bought was 165 Gauss-Seidel sweeps
+    per solve instead of a few dozen, and the solver's own tutorial is the reference for
+    what it expects.
     """
     return (header("dictionary", "fvSolution") + "\n"
             "solvers\n"
@@ -626,8 +718,8 @@ def fv_solution() -> str:
             "    {\n"
             "        solver          PCG;\n"
             "        preconditioner  DIC;\n"
-            "        tolerance       1e-08;\n"
-            "        relTol          0.01;\n"
+            "        tolerance       1e-06;\n"
+            "        relTol          0.05;\n"
             "    }\n\n"
             "    pFinal\n"
             "    {\n"
@@ -637,7 +729,7 @@ def fv_solution() -> str:
             "    pB\n"
             "    {\n"
             "        $p;\n"
-            "        tolerance       1e-07;\n"
+            "        tolerance       1e-05;\n"
             "        relTol          0;\n"
             "    }\n\n"
             "    pBFinal\n"
@@ -649,7 +741,7 @@ def fv_solution() -> str:
             "    {\n"
             "        solver          smoothSolver;\n"
             "        smoother        symGaussSeidel;\n"
-            "        tolerance       1e-08;\n"
+            "        tolerance       1e-05;\n"
             "        relTol          0;\n"
             "    }\n"
             "}\n\n"
@@ -765,7 +857,6 @@ def summary() -> str:
     centreline speed against a formula is not necessarily the person who read the
     docstring that derived it.
     """
-    widths = wall_cell_sizes()
     lines = [
         "Hartmann flow, and what the solved case has to reproduce:",
         f"    Ha             {HARTMANN_NUMBER:g}"
@@ -788,13 +879,19 @@ def summary() -> str:
         f"                                  the core "
         f"{100.0 * (1.0 - centreline_over_mean() / 1.5):.1f}% closer to the mean",
         "",
-        "the mesh against the layer it has to resolve:",
+        "the mesh against the layer it has to resolve, and the step against the wave:",
         f"    L/Ha           {layer_thickness_m():.6g} m   Hartmann layer thickness",
-        f"    first cell     {widths[0]:.6g} m",
-        f"    last cell      {widths[-1]:.6g} m   at the centreline",
-        f"    cells in it    {cells_in_layer()} of {CELLS_ACROSS // 2} across the half"
-        f"-channel",
+        f"    cell height    {CELL_HEIGHT_M:.6g} m   uniform; the docstring says why",
+        f"    cells in it    {cells_in_layer():.1f} of {CELLS_ACROSS // 2} across the "
+        f"half-channel",
         f"    cells          {CELLS_ALONG * CELLS_ACROSS:,} in the 2D mesh",
+        f"    c_A            {alfven_speed_m_s():.6g} m/s   = B0/sqrt(mu*rho), the "
+        f"Alfven speed",
+        f"    deltaT         {delta_t_s():.6g} s   computed, not carried",
+        f"    c_A*dt/dy      {magnetic_courant():.4f}      "
+        f"(this case diverged at 15.8; the ESI tutorial runs at 2.0)",
+        f"    steps          {int(round(END_TIME_S / delta_t_s())):,} to "
+        f"{END_TIME_S:g} s",
         "",
         "the profile, at eleven points (the case samples "
         f"{SAMPLE_POINTS}):",
@@ -803,12 +900,16 @@ def summary() -> str:
     for index in range(11):
         eta = -1.0 + index * 0.2
         lines.append(f"    {eta:+.2f}      {profile(eta):.6f}")
-    if cells_in_layer() < 4:
+    if cells_in_layer() < CELLS_PER_LAYER:
         lines += [
             "",
-            f"WARNING: {cells_in_layer()} cells inside the Hartmann layer. The layer is",
-            "L/Ha thick, so raising Ha thins it; CELLS_ACROSS has to go up with it or",
-            "the profile is being resolved by the grading and not by the solver.",
+            f"WARNING: {cells_in_layer():.1f} cells inside the Hartmann layer, below the",
+            f"{CELLS_PER_LAYER} this asks for. The layer is L/Ha thick, so raising Ha "
+            "thins it and",
+            "CELLS_ACROSS has to go up with it. Note what that costs: the step is capped",
+            "by c_A*dt/dy, c_A rises with Ha and dy falls with it, so the step goes as",
+            "1/Ha^2 and the total work as Ha^3. Ha 20 at this resolution is sixty-four",
+            "times Ha 5.",
         ]
     return "\n".join(lines)
 

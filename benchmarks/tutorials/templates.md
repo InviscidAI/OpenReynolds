@@ -31,7 +31,7 @@ saying so is the point rather than the omission.
 | `rotating.py` | `VESSEL_RADIUS_M`, `ROTOR_RPM` | a solvable `simpleFoam` + MRF case | two exact conservation statements | the mesh only |
 | `porous.py` | `SLAB_THICKNESS_M`, `PRESSURE_DROP_CURVE` | a solvable `porousSimpleFoam` case | **exact by construction** | the coefficients, not the solve |
 | `thermal_stress.py` | `BAR_HEIGHT_M`, `DELTA_T_K` | a solvable `solidDisplacementFoam` case | **exact**, closed form | **yes, in CI** |
-| `mhd_hartmann.py` | `HARTMANN_NUMBER`, `HALF_HEIGHT_M` | a solvable `mhdFoam` case | **exact**, closed form | the grader in CI, the solve in the `journey` job |
+| `mhd_hartmann.py` | `HARTMANN_NUMBER`, `HALF_HEIGHT_M` | a solvable `mhdFoam` case | **exact**, closed form | the grader in CI; the solve's first `journey` run diverged and is recorded |
 
 The stub/solvable split matters and is the first thing to know. `duct2d.py` and
 `body_in_box.py` write a `controlDict`, `fvSchemes` and `fvSolution` that are just enough
@@ -393,8 +393,8 @@ here reads a number it also writes.
 ## mhd_hartmann.py -- a conducting liquid across a magnetic field, against a formula
 
 A 2D channel of half-height `L`, twenty times that long, one cell thick in `z`, with a
-uniform field `B0` applied across the flow and the two walls graded so the Hartmann
-layer is resolved rather than straddled by a single cell. It writes the whole `mhdFoam`
+uniform field `B0` applied across the flow and a uniform mesh whose cell height is chosen
+against the Hartmann layer rather than graded into it. It writes the whole `mhdFoam`
 case -- `0/U`, `0/p`, `0/B`, `0/pB`, `constant/transportProperties` and the four
 `system/` dictionaries -- runs `blockMesh` and `checkMesh`, finishes with
 `mesh_look.py`, and prints the profile the solved case has to reproduce. Like
@@ -420,12 +420,20 @@ and the centreline-to-mean ratio closes it:
 
     u_c/u_mean = ( cosh(Ha) - 1 ) / ( cosh(Ha) - sinh(Ha)/Ha )
 
-Both are exact. At the shipped `Ha = 20` the second gives **1.052632**, against
-Poiseuille's 1.5 -- the field flattens the core until it moves barely faster than the
-mean, which is the whole physical content of the case and is visible in one number. The
-two Hartmann layers are `L/Ha` thick, so at `Ha = 20` they are 5% of the half-height
-each, and a mesh that does not resolve them will get the core right and the wall
-gradient wrong.
+Both are exact. At the shipped `Ha = 5` the second gives **1.233128**, against
+Poiseuille's 1.5 -- the field flattens the core until it moves closer to the mean, which
+is the whole physical content of the case and is visible in one number. The two Hartmann
+layers are `L/Ha` thick, so at `Ha = 5` they are 20% of the half-height each and a
+uniform 80-cell mesh puts eight cells in each.
+
+**Why 5 and not the ESI tutorial's 20.** Resolving `L/Ha` forces the cell height down as
+`1/Ha` while the Alfven speed `c_A = B0/sqrt(mu*rho)` rises as `Ha`, and `mhdFoam`
+differences its magnetic stresses explicitly, so the time step is capped by `c_A*dt/dy`
+and falls as `1/Ha^2`. Total work goes as `Ha^3`: Ha 20 is sixty-four times Ha 5. The
+first version of this template graded toward the walls to reach Ha 20 and the solver
+diverged, with a max Courant number of 23.6 and a SIGFPE in `symGaussSeidelSmoother`.
+[`../mhd/README.md`](../mhd/) has the log, the stability bracket and the solver's own
+`Description` block saying those stresses do not cancel discretely.
 
 The first form is the better check of the two: dividing a solved profile by **its own**
 centreline value tests the shape without the solver's pressure gradient, its mean
@@ -435,6 +443,9 @@ flow rate the case actually carries is the one the profile implies.
 **No reference is quoted and none is needed.** Both expressions come from the equations
 `mhdFoam` solves, so this case has no error bar to hide inside, and nothing in this
 repository has solved it yet -- the agreement column stays empty until something has.
+What *is* recorded is the failure: a wall-graded mesh at Ha 20 diverged, and the Courant
+number, the stack frame and the `Ha^3` cost law are written down so the next person does
+not pay for them again.
 
 ## body_in_box.py -- a body-fitted mesh, and a reference it does not claim
 

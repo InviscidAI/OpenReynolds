@@ -269,7 +269,16 @@ def test_chemistry_off_does_not_heat_and_is_failed(frozen):
     run_record = module.read_chem_foam_out(frozen["case"])
     print(f"  chemistry off reached {run_record['temperature_k']:.4f} K from "
           f"{T0_K:g} K")
-    assert run_record["temperature_k"] == pytest.approx(T0_K, rel=1e-6)
+    # 1 K, which is not a tolerance chosen to clear today's drift. With chemistry off
+    # the solver still integrates the energy equation, and it measured 999.9985 K --
+    # a drift of 0.0015 K, 1.5 ppm of 1000 K. The claim this test's name makes is that
+    # no heat was RELEASED, and the reacting case next door releases 1877.6 K, so a 1 K
+    # bound sits 660x above the drift and 1800x below the thing it has to catch. The
+    # first version asserted 1 ppm, which is a statement about the discretisation rather
+    # than about combustion and failed on the first real run.
+    assert run_record["temperature_k"] == pytest.approx(T0_K, abs=1.0)
+    assert abs(run_record["temperature_k"] - T0_K) < 0.01 * (2877.0 - T0_K), (
+        "the frozen run moved by a noticeable fraction of the reacting run's rise")
 
     proc = subprocess.run([sys.executable, str(SCRIPT), "grade",
                            "--case", str(frozen["case"])],

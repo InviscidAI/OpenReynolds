@@ -205,6 +205,46 @@ the prediction" is a claim about a number rather than about combustion --
 
 ## The recorded run
 
-Measured in the `journey` job of `.github/workflows/tests.yml`. The numbers are printed
-by `tests/test_journey_chem0d.py` on every run of that job, and the agreement it
-measured is recorded in the `combustion` rows of [`benchmarks/README.md`](../README.md).
+Measured in the `journey` job of `.github/workflows/tests.yml`, inside the workspace
+image, on 2026-11-20. One cell, **5,468 steps, 0.4 s** of wall clock.
+
+| quantity | the answer | measured |
+|---|---|---|
+| end temperature, against complete combustion of the case's own mixture | 2877.7712 K | **2877.6383 K, +0.0046%** |
+| the same, against the mass fractions the solver itself ended on | 2877.6383 K | **+1.1e-06%** |
+| limiting reactant left at 0.5 s | 0 | **1.598e-05** mass fraction |
+| temperature rise | 1877.77 K | **1877.64 K** |
+| pressure, under `constantProperty pressure` | held | **101325 Pa exactly** |
+
+The second row is the one worth reading, and it is why the first row's 0.0046% needs no
+further explanation: **the whole of it is the unburnt tail.** At the composition the
+solver actually reached, the enthalpy balance closes to one part in 10^8, which is the
+`seulex` tolerance and the `Yi` solver's tolerance and nothing else. The 0.0046% is the
+1.598e-05 of fuel still there at 0.5 s, exactly as the power-law tail predicts, and the
+case's own final mass fractions were CH4 4.007e-06, O2 1.598e-05, CO2 0.151382, H2O
+0.123935, N2 0.724664.
+
+Splitting the grade in two is what makes that readable. Against complete combustion the
+check is thermodynamics **and** burn-out together; against the solver's own composition
+it is thermodynamics alone. One number without the other would have left 0.0046% looking
+like an energy error.
+
+The thermo data against NIST, from the same run:
+
+| species | image's JANAF fit at 298.15 K | NIST | difference |
+|---|---|---|---|
+| CH4 | -74.5992 | -74.6000 | **+0.0008 kJ/mol** |
+| CO2 | -393.5487 | -393.5100 | **-0.0387 kJ/mol** |
+| H2O | -241.8465 | -241.8260 | **-0.0205 kJ/mol** |
+| O2 | -0.0008 | 0 | -0.0008, seven-figure rounding |
+| N2 | +0.0014 | 0 | +0.0014, the same |
+| heat of reaction | -802.641 kJ/mol | -802.562 | **+0.010%** |
+| lower heating value of CH4 | 50.0312 MJ/kg | 50.0260 | **+0.010%** |
+
+And the control: `chemistry off`, one word changed and nothing else, **5,009 steps,
+0.5 s, 999.9985 K from 1000 K** -- a drift of 0.0015 K, which is the energy equation
+still being integrated, and the grader fails it. The reacting run rises 1877.6 K, so the
+control and the case are three orders of magnitude apart. The first version of that test
+asserted 1 ppm and failed on this 1.5 ppm drift, which was a claim about discretisation
+wearing the name of a claim about combustion; it now asserts 1 K, 660x the drift and
+1800x below the release it has to catch.
