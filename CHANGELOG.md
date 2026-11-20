@@ -151,6 +151,28 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A study on a local workspace uploaded nothing at all.** Capture is on by default and
+  `--no-capture` is how it is turned off, but `cli.session` leaves the workspace
+  service's client `None` for a workspace it does not reserve, and the capture block
+  read that client -- so `--local` and `OPENREYNOLDS_LOCAL=native` turned capture off as
+  a side effect, without saying so, at the switch that is not about capture. The
+  transcript, the renders delivery surfaces, the end-of-study results payload and the
+  case bundle (definition, notes, solver logs, `postProcessing/` tables) of every local
+  study stayed on the one laptop. A signed-in local study now opens its row and uploads
+  all four exactly as a hosted study does; a machine with no service key uploads
+  nothing, as before.
+  - The row is opened on a thread rather than in line, because a local study is the one
+    that may have no network at all and `FoamdClient` spends up to about a minute (five
+    attempts, 1+2+4+8 s apart) finding that out. `Capture.deferred` already holds what is
+    said in the meantime and posts it in order once the row exists.
+  - A session that ends while that attempt is still in flight waits
+    `capture._OPENING_WAIT_S` (2 s) for it and then says that its transcript stays on
+    this machine. Before, the close abandoned a row that was one POST away from
+    existing: nothing posted and nothing said.
+  - The service's own listing of a workspace copy is not offered for these studies --
+    their files are on this machine, and `backend.study_id` stays unset -- and the row
+    carries no `instance_id`, which foamd's `create_study` already allows.
+
 - **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
   said it was in four places.** `reattach.py`, `claims.py`,
   `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told

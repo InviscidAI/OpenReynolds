@@ -5,7 +5,14 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
+from openreynolds import capture as capture_mod
+from openreynolds.backend.base import BackendError
 from openreynolds.capture import _CONTENT_CAP, Capture, _cap_content
+
+from conftest import message, text_block
+from test_refused_start import _Platform, _rows, _session
 
 
 class FakeClient:
@@ -237,3 +244,104 @@ def test_one_recorded_message_reaches_the_service_exactly_once():
         f"one recorded message, {len(posted)} posts — each one appends another row "
         "under the same seq, and nothing downstream can tell them apart"
     )
+
+
+# -- a study on this machine's workspace ----------------------------------------------
+#
+# `--local` and a native run used to upload nothing at all. `cli.session` leaves the
+# service's client None for a workspace it does not reserve, and the capture block
+# below it read that client, so the transcript, the renders, the results payload and
+# the case bundle of every local study stayed on one laptop -- while `--no-capture`,
+# the switch that is supposed to ask for exactly that, was never touched.
+
+
+class Unreachable(_Platform):
+    """A service a machine with no network cannot open a study on."""
+
+    def create_study(self, title, instance_id, **extra):
+        self.created.append((title, instance_id, extra))
+        raise BackendError("cannot reach the service: getaddrinfo failed",
+                           code="unreachable")
+
+
+@pytest.mark.parametrize("kind", ["native", "docker"])
+def test_a_study_on_this_machines_workspace_opens_a_row_and_posts_its_transcript(
+        monkeypatch, tmp_path, kind):
+    run = _session(monkeypatch, tmp_path, [message([text_block("meshed and solved")])],
+                   one_shot="cavity at Re 100", capture=True, local=kind)
+
+    assert len(run.platform.created) == 1, "one row, opened once"
+    title, instance, extra = run.platform.created[0]
+    assert title == run.store.session.title
+    assert not instance, "there is no instance to bind a local study to"
+    assert extra["study_id"] == run.store.session.study_id
+    assert extra["home"] == run.store.session.home
+    assert run.store.session.remote_study_id == "remote-1", (
+        "recorded, so the next session of this study posts to the row it already has"
+    )
+    said = [str(m["content"]) for m in run.platform.posted]
+    assert any("cavity at Re 100" in s for s in said), said
+    assert any("meshed and solved" in s for s in said), said
+
+
+def test_no_capture_keeps_a_local_study_off_the_service(monkeypatch, tmp_path):
+    run = _session(monkeypatch, tmp_path, [message([text_block("done")])],
+                   one_shot="cavity", capture=False, local="native")
+
+    assert run.platform.created == []
+    assert run.platform.posted == []
+
+
+def test_a_local_study_with_no_network_says_so_and_finishes_anyway(monkeypatch, tmp_path):
+    """The machine most likely to be running locally is the one that may be offline."""
+    run = _session(monkeypatch, tmp_path, [message([text_block("solved")])],
+                   one_shot="cavity", capture=True, local="native",
+                   platform=Unreachable())
+
+    assert run.outcome == "ok"
+    assert "capture off" in run.said, run.said
+    assert run.store.session.remote_study_id == ""
+    assert any("solved" in str(r["content"]) for r in _rows(run.store)), (
+        "the local record is complete whatever the service did"
+    )
+
+
+def test_a_row_that_opens_late_still_gets_what_was_held():
+    """The close used to abandon a row that was one POST away from existing.
+
+    A local row is opened on a thread (`cli._capture_locally`) so an offline machine
+    does not wait a minute to be told what it knew. A `-p` run answered in a second
+    then ends with that thread still in flight, and abandoning it there posts
+    nothing and says nothing -- for a local study, its whole transcript.
+    """
+    client = FakeClient()
+    capture = Capture.deferred()
+    capture.message(0, "user", "validate the solver")
+
+    def open_row() -> None:
+        time.sleep(0.05)
+        capture.open(client, "t", "")
+
+    capture.opening = threading.Thread(target=open_row, daemon=True)
+    capture.opening.start()
+    capture.close(timeout=5)
+
+    assert client.messages == [{"seq": 0, "role": "user", "content": "validate the solver"}]
+
+
+def test_a_row_that_never_opens_is_said_rather_than_waited_for(monkeypatch):
+    warnings: list[str] = []
+    monkeypatch.setattr(capture_mod, "_OPENING_WAIT_S", 0.05)
+    hold = threading.Event()
+    capture = Capture.deferred(warn=warnings.append)
+    capture.message(0, "user", "x")
+    capture.opening = threading.Thread(target=lambda: hold.wait(5), daemon=True)
+    capture.opening.start()
+
+    start = time.monotonic()
+    capture.close(timeout=1)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, "an exit is not held for a service that is not answering"
+    assert any("stays on this machine" in w for w in warnings), warnings
+    hold.set()

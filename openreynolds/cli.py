@@ -2469,6 +2469,10 @@ def session(
             if capture:
                 store.session.remote_study_id = capture.study_id
                 store.save()
+    elif cfg.capture and local and cfg.foamd_url and cfg.foamd_api_key:
+        # A study on this machine's workspace is still this account's study, and the
+        # capture plane is what keeps it anywhere other than this laptop.
+        capture = _capture_locally(cfg, store)
     elif cfg.capture and settled == solvers.AUTO and not local:
         # The platform's study is opened with its solver, so not before the choice;
         # what is said meanwhile is held and posted once it is (`Capture.deferred`).
@@ -3828,6 +3832,63 @@ def _close_sharing(cfg: Config, recorder: Any, *, web: bool) -> None:
         sharing_mod.send(cfg)
     except (Exception, KeyboardInterrupt):  # noqa: BLE001 - sharing never fails a close-down
         pass
+
+
+def _capture_locally(cfg: Config, store: Store) -> Capture:
+    """The capture plane for a study running on this machine's workspace.
+
+    A local study used to upload nothing at all. `client` in `session` is the
+    workspace service's client, and a `--local` or native run reserves no workspace,
+    so it was left None and the capture block read `client is not None` -- which meant
+    the transcript, the renders delivery surfaces, the results payload and the case
+    bundle of every local study stayed on one laptop. That is the single point of loss
+    `casebundle.py`'s docstring is about, and `--no-capture` is supposed to be the way
+    to ask for it, not the kind of workspace.
+
+    Nothing below `Capture` needs the service's workspace: the messages come from the
+    loop, the results from `backend.get_file` (every backend has one) and the bundle
+    from the local mirror (`_capture_the_case`). Only the row was missing, and the
+    service takes a study row with no instance behind it -- foamd `create_study`
+    writes `instance_id` as it is given, null included -- so the row is opened without
+    one. The study's files are on this machine, so the service's own listing of a
+    workspace copy (`Backend.list_stored`) is not offered for it and
+    `backend.study_id` stays unset.
+
+    The row is opened on a thread, which the hosted path has no need of: a local study
+    is the one that may have no network at all, and `FoamdClient.request` gives a
+    connection it cannot make five attempts with 1+2+4+8 s of waiting between them
+    (`hosted._MAX_ATTEMPTS`, `hosted._retry_delay`), so opening it in line would hold
+    the start of an offline study for up to about a minute to find out what it already
+    knew. `Capture.deferred` is exactly the machinery for a row that is not there yet:
+    what is said meanwhile is held in order and posted once the row exists, and let go
+    with the warning `_open` prints when it never does. A session that ends while the
+    attempt is still in flight waits `_OPENING_WAIT_S` for it and then says that it
+    could not capture, so an offline study is never quietly unsent.
+    """
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    if store.session.remote_study_id:
+        # Resumed: the row is already there, so there is nothing to open and nothing
+        # to wait for. A post that cannot be made is dropped and counted by
+        # `Capture.close`, as it is for a hosted study whose service went away.
+        return Capture(client, store.session.remote_study_id, warn=_warn)
+    capture = Capture.deferred(warn=_warn)
+
+    def open_row() -> None:
+        opened = capture.open(
+            client, store.session.title or store.session.study_id, "",
+            study_id=store.session.study_id, home=store.session.home,
+        )
+        if opened:
+            store.session.remote_study_id = capture.study_id
+            # Each writer owns the fields it changed (`Store.save`), so this records
+            # the row without reverting whatever the session has written meanwhile.
+            store.save()
+        else:
+            client.close()
+
+    capture.opening = threading.Thread(target=open_row, name="capture-open", daemon=True)
+    capture.opening.start()
+    return capture
 
 
 def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
