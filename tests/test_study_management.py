@@ -264,6 +264,16 @@ def byok_study(root, study_id="20261115-090000-ffff", **fields):
     return store
 
 
+def test_a_clone_of_a_study_with_no_files_here_does_not_point_at_an_empty_folder(studies_dir, monkeypatch):
+    monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)   # the hosted path, which offers push
+    byok_study(studies_dir)
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    assert said.exit_code == 0, said.output
+    assert "had no files on this machine" in said.output
+    assert "local files are copied" not in said.output
+    assert "openreynolds push" not in said.output
+
+
 def test_a_token_class_with_no_rate_is_no_figure_rather_than_a_free_one(studies_dir):
     """#191: `spend` prices a class its rates do not list at zero, so 50M tokens of one
     came out as $0.03. A figure that leaves part of the run out is not shown."""
@@ -279,6 +289,18 @@ def test_a_token_class_with_no_rate_is_no_figure_rather_than_a_free_one(studies_
     # A listed class counted as zero still prices: nothing of the run is left out.
     assert catalog.cost_usd(byok_study(studies_dir, tokens={"input": 1_000, "reasoning": 0}).session) \
         == pytest.approx(1_000 * 5.00 / 1e6)
+
+
+def test_a_list_of_hosted_and_own_key_studies_explains_both_dashes(studies_dir):
+    """A hosted study's cost is never money; an own-key study's is, unless something
+    it counted has no rate. With both in one list, each "-" is said for."""
+    byok_study(studies_dir, tokens={"input": 1_000, "reasoning": 5_000})
+    byok_study(studies_dir, study_id="20261115-100000-aaaa", provider="reynolds")
+
+    text = CliRunner().invoke(cli.main, ["dashboard"])
+
+    assert "time and tokens, not money" in text.output, text.output
+    assert "has no rate here" in text.output, text.output
 
 
 def test_a_job_row_still_reading_running_is_unknown_and_nothing_is_started(
@@ -665,16 +687,19 @@ def test_clone_carries_nothing_of_the_run_that_happened(studies_dir):
     assert fresh.remote_study_id == ""
 
 
-def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir):
+def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir, monkeypatch):
     """#170: a clone left without a home was read on resume as a study from before
     homes, and opened in `/work` among every other study's files. It is resumed the
     way the study it came from is: in a directory named after it."""
+    monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
     with_a_transcript(studies_dir)
     said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
     fresh, = [item for item in list_studies(studies_dir)
               if item.cloned_from == "20261115-090000-ffff"]
     assert fresh.home == f"/work/{fresh.study_id}"
     assert "its workspace starts empty" in said.output
+    assert "and its local files are copied" in said.output
+    assert str(Store(studies_dir, fresh.study_id).files_dir) in said.output.replace("\n", "")
     # A push before the clone runs would land on another study's workspace.
     assert "once it is running" in said.output
     assert cli._home_path(Store(studies_dir, fresh.study_id), resuming=True) == f"/work/{fresh.study_id}"
