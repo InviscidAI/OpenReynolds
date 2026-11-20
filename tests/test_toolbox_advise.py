@@ -182,6 +182,25 @@ def test_a_given_mach_number_agrees_with_compressible(tmp_path, advise):
         assert marked == [expected], f"M {mach}"
 
 
+def test_a_mach_number_that_decides_nothing_says_so(tmp_path, advise):
+    """A VOF case does not branch on a Mach number, and a report that printed the
+    regime and went quiet would read as the number having been used. It said "both the
+    incompressible and the compressible candidates are below" on a case that listed
+    neither, which is the bug this pins."""
+    case = with_mesh(case_with(tmp_path, {}, application="interFoam"), 400_000)
+    (case / "constant").mkdir(exist_ok=True)
+    (case / "0").mkdir(exist_ok=True)
+    (case / "0" / "alpha.water").write_text("dimensions [0 0 0 0 0 0 0];\n")
+
+    data = advise.inspect(case, mach=0.5, cores=4)
+    assert data["class"] == "free-surface-marine"
+    families = {row["family"] for row in data["solvers"]}
+    assert families == {"free-surface"}
+    report = advise.render(data)
+    assert "decides nothing here" in report
+    assert "undivided" not in report
+
+
 # -- cells, and where they came from -----------------------------------------------
 
 

@@ -403,10 +403,19 @@ def render(data: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("# solvers in this image for that")
+    families = sorted({row["family"] for row in data["solvers"]})
     if data["mach"] is None:
         lines.append(f"  Mach number: not established -- {data['mach_source']}")
-        lines.append("  so both the incompressible and the compressible candidates are "
-                     "below, undivided")
+        if {"incompressible", "compressible"} <= set(families):
+            lines.append("  so the incompressible and the compressible candidates are "
+                         "both below, undivided")
+    elif "compressible" not in families:
+        # Said rather than left out: a Mach number was given and this class does not
+        # branch on it, and silence there reads as the number having been used.
+        label, _meaning = compressible.regime(data["mach"])
+        lines.append(f"  Mach number: {data['mach']:.3f} ({data['mach_source']}) -- "
+                     f"{label}, and it decides nothing here: the candidates for a "
+                     f"{data['class_name']} case do not divide on it")
     else:
         label, meaning = compressible.regime(data["mach"])
         lines.append(f"  Mach number: {data['mach']:.3f} ({data['mach_source']}) -- "
