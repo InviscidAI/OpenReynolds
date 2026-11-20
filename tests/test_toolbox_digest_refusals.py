@@ -138,3 +138,34 @@ def test_a_log_on_stdin_is_still_read_without_a_path(a_case):
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "638" in done.stdout
+
+
+# -- one script, one row ------------------------------------------------------
+
+
+def test_the_toolbox_index_gives_each_script_exactly_one_row():
+    """The contract everybody states, which nothing held.
+
+    `test_the_toolbox_index_names_every_script_in_it` asserts a script's name appears
+    in the index and `test_the_toolbox_index_names_nothing_that_is_not_there` asserts
+    nothing extra appears. Neither asserts ONCE, so two rows for one script passed
+    both.
+
+    That is not hypothetical. Resolving a merge conflict in the index by keeping both
+    sides -- which is the right resolution for a list that only ever grows -- put two
+    rows each for `advise.py` and `grid.py` on three branches at once (#229, #232,
+    #233). Main had rewritten those rows after the branches forked, so the two copies
+    differed in text and neither looked wrong on its own. A reader following the index
+    would have found the older description first on two of them.
+    """
+    import re
+
+    index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
+    rows = re.findall(r"^\| `([a-z0-9_]+\.py)` \|", index, re.M)
+    twice = sorted({name for name in rows if rows.count(name) > 1})
+
+    assert not twice, (
+        f"{', '.join(twice)} each have more than one row in the toolbox index. A "
+        "merge that kept both sides of a rewritten row is the way this happens; keep "
+        "the newer text and drop the stale copy."
+    )
