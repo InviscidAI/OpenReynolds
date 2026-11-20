@@ -8,27 +8,23 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
-- **A parametric study's two scripts: one candidate per call, and one writer of its
-  score.** `toolbox/parametric.py` builds, meshes, dresses, solves and scores one point:
-  the caller writes `CANDIDATE_DIR/design_constants.py`, the round's `build.py` begins
-  with `from design_constants import *` and is refused if it does not (a build that
-  ignores the constants would score every candidate on the same geometry), and
-  `hooks.py` may define only `case_args()` and may not repeat a flag the lock already
-  sets. `toolbox/score.py` is the sole writer of `metrics.json` and its keys are a
-  contract: a `label` in severity order, coefficients as the mean over the last
-  `fidelity.window` fraction of the rows rather than a point read, convergence,
-  divergence, y+, cells, the build hash and the versions. A lock may carry `trim` (a
-  secant over one design constant, so a candidate is solved at fixed lift rather than
-  fixed incidence) or `cases` with `derived` (several solves off one copied mesh, so a
-  valve's diodicity cannot differ by a grid, scored into one namespaced `metrics.json`
-  whose label is the worst of its cases'). `toolbox/templates/evaluate_steady.py` is a
-  round as the `build.py` it is, and `--write-round DIR` lays out a sample of every file
-  the two scripts agree on. `log_digest.bounding_depth` is new with them: a count of
-  bounding lines alone cannot tell a `k` that dips in a few cells of a converged run
-  from an `omega` held at zero across the domain, so the median clip depth decides.
-  `.jsonl` joins `mirror.KEEP_SUFFIXES`, because a study's ledger is appended a record
-  per line and a leaderboard that never reached the mirror is a study nobody can audit.
-  The `case_gen.py` flags these read (`--yplus`, `--dp`, `--periodic`) are in #234.
+- **Three `case_gen.py` flags a design study needs and a hand-written case does not.**
+  `--yplus` writes the `yPlus` function object at `writeTime`, so the wall spacing a
+  turbulence model assumed can be read off the case rather than asserted; `--dp` writes
+  two `surfaceFieldValue` objects -- `areaAverage` of `p` on the first inlet and the
+  first outlet, every time step, into `postProcessing/pInlet/` and
+  `postProcessing/pOutlet/` -- because a pressure drop is the number an internal flow is
+  judged by and it is not a force on a body, so `forceCoeffs` does not carry it and no
+  amount of reading the log recovers it; and `--periodic A,B` couples two patches as a
+  cyclic pair in `constant/polyMesh/boundary` itself and drives the cell at a fixed bulk
+  velocity with a `meanVelocityForce` source in `constant/fvOptions`, writing the pitch
+  it measured off the two patches' centres to `periodic.json`, so one stage of a
+  many-stage device is measured without paying for the other stages and the end
+  fittings. `cyclic` when the two patches have the same face count, else `cyclicAMI`;
+  `--periodic-kind` overrides. The three function objects are assembled as lines beside
+  the ones already there (`case_gen.force_coeffs`), so a case with no body, no drop and
+  no y+ still gets no empty `functions {}`. Split out of #54 at review; the consumers of
+  `periodic.json` and the two pressure records arrive with `score.py` in that PR.
 
 - **Every case this repository can run is in the tutorial index, with the scale each
   reference is normalised on.** The index listed three of them. `benchmarks/tutorials/`

@@ -1004,3 +1004,23 @@ def test_a_stage_ratio_is_the_derived_reverse_over_forward_per_period(score, tmp
     out = score.score_cases(cell, lock)
     assert out["metrics"]["stage_ratio"] == pytest.approx(2.5)
     assert out["metrics"]["forward.dp"] == pytest.approx(2.0 * 0.004)
+
+
+def test_the_names_score_reads_are_the_names_case_gen_writes(score):
+    """The one thing neither file can check alone.
+
+    `case_gen.py --dp` writes two `surfaceFieldValue` objects, and the object's name is
+    also the `postProcessing/` directory it writes into, which is where `score.py` looks
+    for it. So a rename on either side leaves the other silently reporting no pressure
+    drop: nothing raises, `dp` is simply absent from `metrics.json`, and a leaderboard
+    reads as a design space in which pressure never mattered.
+
+    The pin could not sit in `case_gen.py`'s tests or in `score.py`'s while the other
+    side's name was on a branch rather than on main (`case_gen.PRESSURE_FUNCTIONS`'s own
+    docstring says so), which is why it arrives with whichever of the two lands second
+    rather than with either alone."""
+    spec = importlib.util.spec_from_file_location("toolbox_case_gen", TOOLBOX / "case_gen.py")
+    case_gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(case_gen)
+
+    assert tuple(name for _role, name in case_gen.PRESSURE_FUNCTIONS) == score.DP_FUNCTIONS
