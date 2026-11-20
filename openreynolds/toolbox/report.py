@@ -347,9 +347,15 @@ def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[s
     "this is the mesh and the settings of `cylinder`" is a document, "these are some
     settings from somewhere in the study" is not.
     """
-    found = study_state.discover_cases(study)
-    cases = [case for case in found if not _PROCESSOR.match(case.name)]
-    dropped = len(found) - len(cases)
+    # `study_state.discover_cases` drops `processor*` itself, for every caller. The
+    # ranks are counted here anyway, because the note below is worth saying and the
+    # count is no longer recoverable from what it returns.
+    cases = [case for case in study_state.discover_cases(study)
+             if not _PROCESSOR.match(case.name)]
+    seen = {case.name for case in cases}
+    dropped = sum(1 for child in study.iterdir()
+                  if child.is_dir() and _PROCESSOR.match(child.name)
+                  and child.name not in seen)
     # Said on the page rather than silently dropped: four processor directories are
     # evidence the run was decomposed, which is worth a reader's attention, and
     # `--case processor2` describing one rank's slice as the study's methods is not.

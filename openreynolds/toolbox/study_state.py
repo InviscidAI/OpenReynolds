@@ -443,6 +443,11 @@ def phase_status(name: str, root: Path | str = ".") -> str:
 _NCELLS = re.compile(rb"nCells:\s*(\d+)")
 
 
+PROCESSOR_DIR = re.compile(r"^processor\d+$", re.IGNORECASE)
+"""One rank's share of a decomposed case. It looks exactly like a case to
+`is_case_dir` -- it has the mesh and the fields -- and is not one."""
+
+
 def is_case_dir(path: Path) -> bool:
     """Whether a directory looks like an OpenFOAM case, by cheap stat checks only:
     a `system/controlDict`, a built `constant/polyMesh`, or a `*.foam` handle."""
@@ -518,6 +523,11 @@ def discover_cases(root: Path | str = ".") -> list[Path]:
     One level is enough: a study keeps its cases as `<home>/<case>` (or is itself the
     case, the legacy `/work` layout), and walking deeper would wander into a case's own
     time and processor directories.
+
+    A decomposed run's `processor0` .. `processorN` sit at that one level and each
+    carries a `constant/polyMesh`, so `is_case_dir` says yes to all of them: a single
+    case solved on four cores came back as five cases and was reported as "the first
+    of 6 cases". They are one case -- the one above them -- and are not listed.
     """
     study = find_root(root)
     found: list[Path] = []
@@ -528,7 +538,8 @@ def discover_cases(root: Path | str = ".") -> list[Path]:
     except OSError:
         children = []
     for child in children:
-        if child.is_dir() and child.name != STATE_DIR and is_case_dir(child) and child != study:
+        if (child.is_dir() and child.name != STATE_DIR and child != study
+                and not PROCESSOR_DIR.match(child.name) and is_case_dir(child)):
             found.append(child)
     return found
 

@@ -32,7 +32,7 @@ from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers
-from .compare import compare as compare_studies
+from .compare import TOL as COMPARE_TOL, compare as compare_studies
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
 from .config import (
@@ -590,6 +590,25 @@ def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:
         console.print(f"[bold]{escape(line)}[/]" if number == 0 else escape(line))
 
 
+def _case_cell(side: dict[str, Any] | None) -> str:
+    """Which case a force number was read from, in the table.
+
+    A column with no case beside it is how #143's table read as one body of numbers
+    while `Cd` came from `case` and `total_z` from `case_axisX`.
+    """
+    return f"{side['case']}/{side['series']}" if side else "missing"
+
+
+def _mean_cell(side: dict[str, Any] | None) -> str:
+    """A tail mean, or a single row said to be a single row (#143): a one-row
+    `force.dat` printed under "a mean" is a number claiming to be an average of
+    something."""
+    if not side:
+        return "missing"
+    text = _number(side["tail_mean"])
+    return f"{text} (1 row)" if side["rows"] == 1 else text
+
+
 def _number(value: Any, missing: str = "missing") -> str:
     """A cell: five significant figures, or why there is nothing to print."""
     if value is None:
@@ -612,9 +631,17 @@ def _number(value: Any, missing: str = "missing") -> str:
     default=None,
     help="Where the studies are. Defaults to ./studies, as a session uses.",
 )
+@click.option(
+    "--tol",
+    "tol",
+    type=float,
+    default=None,
+    help=(f"What counts as a difference, as a fraction. Default {COMPARE_TOL:g} "
+          f"({COMPARE_TOL * 100:g}% on a tail mean), and it is printed with the answer."),
+)
 @click.pass_context
 def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
-                as_json: bool, studies_dir: Path | None) -> None:
+                as_json: bool, studies_dir: Path | None, tol: float | None) -> None:
     """Put two local studies side by side.
 
     A second run is the point of the first: a mesh refined, a model swapped, a
@@ -626,7 +653,9 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
     No session, no workspace, no model: it reads `./studies` and spends nothing.
     Given no ids it takes the two newest and says which it chose. A quantity only one
     study has is reported as missing rather than left out -- the comparison it could
-    not make is the thing worth knowing.
+    not make is the thing worth knowing. Every force number names the case and series
+    it was read from, and the tolerance a verdict was measured against is printed with
+    it; `--tol` moves it.
     """
     as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
@@ -652,7 +681,7 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
             chose = f"one id named, so: a = {left}, b = {right} (the newest other study)"
 
     try:
-        report = compare_studies(root, left, right)
+        report = compare_studies(root, left, right, tol)
     except FileNotFoundError as exc:
         console.print(
             f"[red]No study at[/] {exc} -- `openreynolds studies` lists the ids "
@@ -682,22 +711,25 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
 
     console.print("\n[bold]headline numbers[/] (difference is b - a, relative to the larger)")
     rows: list[tuple[Any, ...]] = [
-        ("series", "a last", "a mean", "b last", "b mean", "b - a (mean)", "relative")
+        ("series", "a case", "a last", "a mean", "b case", "b last", "b mean",
+         "b - a (mean)", "relative")
     ]
     for row in report["forces"]["series"]:
         side_a, side_b = row["a"], row["b"]
         relative = row["tail_mean"]["relative"]
         rows.append((
             row["name"],
+            _case_cell(side_a),
             _number(side_a and side_a["last"]),
-            _number(side_a and side_a["tail_mean"]),
+            _mean_cell(side_a),
+            _case_cell(side_b),
             _number(side_b and side_b["last"]),
-            _number(side_b and side_b["tail_mean"]),
+            _mean_cell(side_b),
             _number(row["tail_mean"]["absolute"], "-"),
             "-" if relative is None else f"{relative * 100:.1f}%",
         ))
     if len(rows) == 1:
-        rows.append(("none logged", "", "", "", "", "", ""))
+        rows.append(("none logged",) + ("",) * 8)
     _aligned(rows)
     for side in ("a", "b"):
         for why in [report["forces"]["unavailable"][side]] + report["forces"]["notes"][side]:
@@ -760,11 +792,15 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
 
     short = report["summary"]
     console.print("\n[bold]what this adds up to[/]")
-    console.print(f"  {short['compared']} quantities compared")
+    console.print(f"  {short['compared']} quantities compared, a difference being more "
+                  f"than {short['tol'] * 100:g}% ([bold]--tol[/] moves it)")
     if not (short["differ"] or short["one_sided"] or short["not_comparable"]):
-        console.print("  [green]no differences[/]: every quantity compared matched")
+        console.print(f"  [green]no differences[/]: every quantity compared matched "
+                      f"to within {short['tol'] * 100:g}%")
     for line in short["differ"]:
         console.print(f"  [yellow]differs[/] {escape(line)}")
+    for line in short["negligible"]:
+        console.print(f"  [green]zero on both sides[/] {escape(line)}")
     for line in short["one_sided"]:
         console.print(f"  [yellow]not compared[/] {escape(line)}")
     for line in short["not_comparable"]:
