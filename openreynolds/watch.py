@@ -18,7 +18,7 @@ from typing import Any
 
 from .backend.base import Backend, BackendError, JobStatus
 from .browse import human
-from .progress import felix_job_facts, felix_job_summary
+from .progress import _READ_FELIX_FACTS, felix_job_facts, felix_job_summary
 from .store import Store
 from .tools import describe_job
 from .view import View
@@ -356,11 +356,15 @@ def _job_report(
     status: JobStatus,
     record: Any = None,
     *,
-    facts: Any = None,
+    facts: Any = _READ_FELIX_FACTS,
 ) -> str:
     """Facts about one finished job, with the tail of its log -- and for a Felix
     solve, its reading (`progress.felix_job_summary`): how it ended, the step it
-    reached, the errors with the out-of-memory figures, the final status."""
+    reached, the errors with the out-of-memory figures, the final status.
+
+    `facts` defaults to `felix_job_summary`'s own sentinel, not None: None is a Felix
+    log already read and found to say nothing, so a caller passing a record and no
+    facts would silently lose the summary."""
     lines = [describe_job(status)]
     if record is not None:
         felix = felix_job_summary(backend, record.cmd, record.cwd or "", status.job_id,

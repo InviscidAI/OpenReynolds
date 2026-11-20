@@ -624,7 +624,12 @@ def test_the_question_uses_the_live_row_not_amounts_parsed_from_the_message(
     assert store.session.jobs[job_id].ceiling_pause_handled is True
 
 
-def test_an_unavailable_ledger_stays_eligible_until_it_can_be_read(tmp_path, backend):
+def test_a_ledger_that_would_not_read_does_not_keep_the_job_in_the_queue(
+    tmp_path, backend
+):
+    """The job is looked at once whatever came of it. A pause the row would not
+    confirm is not lost by that: it belongs to the study, so the next call that meets
+    it asks (`tools._handled`)."""
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
@@ -633,12 +638,6 @@ def test_an_unavailable_ledger_stays_eligible_until_it_can_be_read(tmp_path, bac
     dispatch(ctx, "job_check", {"job_id": job_id})
 
     assert view.questions == []
-    assert store.session.jobs[job_id].ceiling_pause_handled is False
-
-    foamd.spent_cents = 803
-    dispatch(ctx, "job_check", {"job_id": job_id})
-
-    assert [question[1] for question in view.questions] == ["ceiling"]
     assert store.session.jobs[job_id].ceiling_pause_handled is True
 
 
@@ -699,20 +698,14 @@ def test_a_finished_felix_pause_is_put_to_the_person_before_watch_wakes_the_mode
     assert ctx.stopped in str(loop.messages[-1]["content"])
 
 
-def test_an_unhandled_finished_refusal_is_retried_before_the_next_turn(
+def test_a_refusal_that_ended_unwatched_is_put_to_the_person_before_the_next_turn(
     tmp_path, backend
 ):
+    """#79's other path: the solve ends while the session is away, so `watch` never
+    reports it and the persisted record is all there is to find it by."""
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     loop, ctx, view, store = _session(tmp_path, foamd, "/yes", backend=backend)
     job_id = _finished_paused_felix_job(ctx, backend, store, foamd)
-    foamd.spent_cents = None
-    finished = []
-    report = _collect_finished(backend, store, view, finished)
-
-    assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
-    assert store.session.jobs[job_id].ceiling_pause_handled is False
-
-    foamd.spent_cents = 800
     install_model(loop, [message([text_block("continuing")])])
     loop.say("continue")
 
@@ -720,6 +713,8 @@ def test_an_unhandled_finished_refusal_is_retried_before_the_next_turn(
     assert [question[1] for question in view.questions] == ["ceiling"]
     assert store.session.jobs[job_id].ceiling_pause_handled is True
     assert foamd.caps_posted == [2000]
+
+    assert cli._pending_finished_felix_jobs(loop, view) == "", "asked once, not every turn"
 
 
 def test_a_raised_ceiling_is_in_the_watch_report_the_model_receives(tmp_path, backend):
@@ -792,14 +787,16 @@ def test_unrelated_failed_output_cannot_trigger_the_ceiling_question(tmp_path, b
     assert view.questions == []
 
 
-def test_felix_prose_without_a_rejected_final_status_cannot_ask(tmp_path, backend):
+def test_felix_prose_without_a_refusal_object_cannot_ask_and_is_not_read_again(
+    tmp_path, backend
+):
     foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
     loop, ctx, view, store = _session(tmp_path, foamd, backend=backend)
     ctx.solver = solvers.FELIX
     cmd = "felix run cavity --gpu H100"
     job_id = backend.job_start(cmd, cwd="/work", name="cavity")
     store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work")
-    log = b"ERROR: notes mention 409 study_paused, but this is not a final status\n"
+    log = b"ERROR: notes mention 409 study_paused, but there is no refusal object\n"
     backend.logs[job_id] = log
     backend.jobs[job_id] = JobStatus(
         job_id=job_id, status="exited", name="cavity", exit_code=1,
@@ -810,7 +807,157 @@ def test_felix_prose_without_a_rejected_final_status_cannot_ask(tmp_path, backen
 
     assert cli._finished_job_wake(loop, view, report, tuple(finished)) == report
     assert view.questions == []
-    assert store.session.jobs[job_id].ceiling_pause_handled is False
+    assert store.session.jobs[job_id].ceiling_pause_handled is True
+
+
+def _refusal_json(foamd, indent=None) -> str:
+    """The object `felix` prints when foamd refuses the solve (`felix_cli.py main()`)."""
+    return json.dumps(
+        {"state": "refused", "status": 409, "error": "study_paused",
+         "message": foamd.paused_body()["message"]},
+        indent=indent,
+    )
+
+
+def _felix_job_printing(ctx, backend, store, log: bytes, exit_code: int = 1) -> str:
+    ctx.solver = solvers.FELIX
+    cmd = "felix run cavity --gpu H100"
+    job_id = backend.job_start(cmd, cwd="/work/study", name="cavity")
+    store.record_job(job_id, cmd=cmd, name="cavity", cwd="/work/study")
+    backend.logs[job_id] = log
+    backend.jobs[job_id] = JobStatus(
+        job_id=job_id, status="exited", name="cavity", end_reason="failed",
+        exit_code=exit_code, log_size=len(log),
+    )
+    return job_id
+
+
+def test_a_refusal_with_a_line_printed_after_it_is_still_found(tmp_path, backend):
+    """`felix run cavity; echo done` leaves the refusal in the middle of the log, and
+    the object itself is pretty-printed over several lines."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    log = (_refusal_json(foamd, indent=2) + "\ndone\n").encode()
+    job_id = _felix_job_printing(ctx, backend, store, log)
+
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert [question[1] for question in view.questions] == ["ceiling"]
+
+
+def test_a_refusal_that_a_pipeline_exited_zero_on_is_still_found(tmp_path, backend):
+    """`felix run cavity 2>&1 | tee run.log` without pipefail exits 0, so the exit
+    code is not what decides whether the output is looked at."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    log = (_refusal_json(foamd) + "\n").encode()
+    job_id = _felix_job_printing(ctx, backend, store, log, exit_code=0)
+
+    dispatch(ctx, "job_check", {"job_id": job_id})
+
+    assert [question[1] for question in view.questions] == ["ceiling"]
+
+
+def test_a_refusal_inside_a_synchronous_bash_solve_is_put_to_the_person(
+    tmp_path, backend
+):
+    """A refusal answers in seconds, so `bash felix run <case>` usually finishes
+    inside the synchronous window and never becomes a job to look at."""
+    from openreynolds.backend.base import ExecResult
+
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, _store = _session(tmp_path, foamd, "/no", backend=backend)
+    backend.exec_result = ExecResult(
+        1, f"ERROR: refused (409 study_paused)\n{_refusal_json(foamd, indent=2)}\n",
+        False, None,
+    )
+
+    answer, is_error = dispatch(ctx, "bash", {"cmd": "felix run cavity --gpu H100"})
+
+    assert not is_error
+    assert [question[1] for question in view.questions] == ["ceiling"]
+    assert "ceiling was not raised" in answer.lower()
+    assert ctx.stopped and "$" not in ctx.stopped
+
+
+def test_a_bash_command_that_is_not_a_solve_cannot_ask(tmp_path, backend):
+    """A `grep` or a `cat` of an old log prints the same words."""
+    from openreynolds.backend.base import ExecResult
+
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    _loop, ctx, view, _store = _session(tmp_path, foamd, "/no", backend=backend)
+    backend.exec_result = ExecResult(0, _refusal_json(foamd), False, None)
+
+    dispatch(ctx, "bash", {"cmd": "cat run.log"})
+
+    assert view.questions == [] and ctx.stopped is None
+
+
+def test_a_job_recorded_before_this_field_existed_loads_as_looked_at(tmp_path):
+    """Records written before `ceiling_pause_handled` would otherwise all come back
+    False, and the first turn of a resumed study would re-examine every failed solve
+    in it -- and could ask about a refusal dealt with days ago."""
+    from openreynolds.store import Store
+
+    store = Store(tmp_path / "studies", STUDY)
+    store.record_job("job-old", cmd="felix run cavity", name="cavity")
+    raw = json.loads((store.dir / "session.json").read_text(encoding="utf-8"))
+    del raw["jobs"]["job-old"]["ceiling_pause_handled"]
+    (store.dir / "session.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    reloaded = Store(tmp_path / "studies", STUDY)
+
+    assert reloaded.session.jobs["job-old"].ceiling_pause_handled is True
+    assert ceiling.pause_check_pending(reloaded.session.jobs["job-old"]) is False
+    assert ceiling.pause_check_pending(store.session.jobs["job-old"]) is True
+
+
+def test_a_declined_model_call_pause_is_not_appended_after_the_settled_thread(tmp_path):
+    """`Loop.event` on that path, not `Loop.tell`: the turn it stopped is settled, and
+    a message after it would change the cached prefix and the next request."""
+    foamd = FakeFoamd()
+    loop, ctx, view, _ = _session(tmp_path, foamd, "/no")
+    fake = PausedThenFine(foamd, message([text_block("never")]))
+    loop.client = SimpleNamespace(messages=fake)
+    loop.say("carry on")
+    before = len(loop.messages)
+
+    assert cli._run_turn(loop, view) is False
+    assert len(loop.messages) == before
+    assert loop.blocked_reason == ctx.stopped
+    assert any(ctx.stopped in notice for notice in view.notices)
+
+
+def test_no_spending_question_is_asked_for_a_turn_whose_start_was_refused(
+    tmp_path, backend
+):
+    """`Loop.run` asks `start_refused` before the model, so a question put ahead of it
+    would be asked for a turn that was never going to run."""
+    from openreynolds.backend.pending import PendingBackend
+
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    pending = PendingBackend("inst-1")
+    pending.fail(BackendError("no capacity", code="no_capacity", status=503))
+    ctx.backend = pending
+
+    assert cli._pending_finished_felix_jobs(loop, view) == ""
+    assert view.questions == []
+
+
+def test_no_spending_question_is_asked_while_the_solver_is_still_open(
+    tmp_path, backend
+):
+    """Nothing has been routed, so there is no workspace and `Loop.run` has still to
+    choose one."""
+    foamd = FakeFoamd(spent_cents=800, cap_cents=1000)
+    loop, ctx, view, store = _session(tmp_path, foamd, "/no", backend=backend)
+    _finished_paused_felix_job(ctx, backend, store, foamd)
+    ctx.solver = solvers.AUTO
+
+    assert cli._pending_finished_felix_jobs(loop, view) == ""
+    assert view.questions == []
 
 
 def test_a_felixd_rejection_is_not_foamd_refusing_the_study(tmp_path, backend):
@@ -890,10 +1037,8 @@ def test_a_later_declined_pause_keeps_notes_from_earlier_finished_jobs(
     first = SimpleNamespace(job_id="first")
     second = SimpleNamespace(job_id="second")
     results = iter([
-        ceiling.JobPauseResolution(handled=True, note="the first note"),
-        ceiling.JobPauseResolution(
-            decision=False, handled=True, note="the second note"
-        ),
+        ceiling.JobPauseResolution(note="the first note"),
+        ceiling.JobPauseResolution(decision=False, note="the second note"),
     ])
 
     def handle(*_args, **_kwargs):

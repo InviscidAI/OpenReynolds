@@ -130,14 +130,12 @@ def paused(exc: BaseException) -> Paused | None:
 
 @dataclass(frozen=True)
 class JobPauseResolution:
-    """What handling one finished Felix job changed."""
+    """What putting one Felix ceiling refusal to the person changed."""
 
     decision: bool | None = None
     """True when raised, False when stopped, None when no question was needed."""
-    handled: bool = False
-    """Whether this job's refusal is conclusively accounted for."""
     note: str = ""
-    """A fact to append to the job report sent back to the model."""
+    """A fact to append to the output the model reads."""
 
 
 _RAISED_JOB_NOTE = (
@@ -154,81 +152,68 @@ _STOPPED_JOB_NOTE = (
 )
 
 
-def job_pause(ctx: Any, facts: Any) -> tuple[Paused | None, bool, str]:
-    """A foamd refusal from Felix against the service's current study row.
+def refusal_pause(ctx: Any, status: dict[str, Any] | None) -> JobPauseResolution:
+    """Put one foamd ceiling refusal from Felix output to the person.
 
-    `felix run` is itself a workspace job. A GPU solve refused by foamd therefore
-    exits 1 and prints a final JSON status instead of raising the `BackendError` that
-    `tools._handled` sees. The raw `refused` status proves foamd returned the 409,
-    rather than a felixd solve rejection or arbitrary output mentioning the error.
-    The current study row is authoritative after that: a live pause is the person's
-    question, and a cleared pause is a fact for the model.
-
-    The bool says the job is conclusively accounted for. False leaves it eligible for
-    a later read because the final status or study row was incomplete.
+    `felix run` is itself a workspace job, so a GPU solve refused by foamd prints the
+    409 instead of raising the `BackendError` that `tools._handled` sees
+    (`felix_progress.refusal_status` finds it). The refusal proves foamd returned the
+    409; the study's current row then decides what to do about it, because a refusal
+    from an hour ago may have been dealt with since. Paused now is the person's
+    question, a cleared pause is a fact for the model, and a row that cannot be read
+    says nothing -- the next refused call meets the pause again and asks then.
     """
-    status = getattr(facts, "status", None)
-    if not isinstance(status, dict):
-        return None, False, ""
-    if (status.get("state") != "refused"
-            or status.get("status") != 409
-            or status.get("error") != STUDY_PAUSED):
-        # A final status was read and it is not foamd's ceiling refusal. There is
-        # nothing a later read can discover about this finished job, so account for
-        # it now instead of polling it before every later model turn.
-        return None, True, ""
+    if status is None:
+        return JobPauseResolution()
     service = getattr(ctx, "ceiling", None)
     row = service.study() if service is not None else None
     if not isinstance(row, dict):
-        return None, False, ""
-    paused_now = row.get("paused")
-    if paused_now is False:
-        return None, True, _CLEARED_JOB_NOTE
-    spent = row.get("spent_cents")
-    cap = row.get("cap_cents")
-    if (paused_now is not True
-            or isinstance(spent, bool) or not isinstance(spent, (int, float))
-            or isinstance(cap, bool) or not isinstance(cap, (int, float))):
-        return None, False, ""
-    info = Paused(
+        return JobPauseResolution()
+    if row.get("paused") is not True:
+        return JobPauseResolution(note=_CLEARED_JOB_NOTE if row.get("paused") is False else "")
+    spent, cap = _number(row.get("spent_cents")), _number(row.get("cap_cents"))
+    if spent is None or cap is None:
+        return JobPauseResolution()
+    info = described(Paused(
         str(row.get("id") or row.get("study_id") or service.study_id),
-        float(spent),
-        float(cap),
+        spent,
+        cap,
         str(status.get("message") or ""),
         times_normal=_number(row.get("times_normal")),
         style=str(row.get("style") or ""),
-    )
-    return described(info), True, ""
-
-
-def resolve_job_pause(ctx: Any, facts: Any) -> JobPauseResolution:
-    """Resolve a pause carried in Felix job output.
-
-    A current pause is put to the person. A stale, externally cleared refusal is
-    returned as a note for the model. Incomplete evidence remains unhandled so a
-    later read can try again.
-    """
-    info, handled, note = job_pause(ctx, facts)
-    if info is None:
-        return JobPauseResolution(handled=handled, note=note)
+    ))
     decision = resolve(ctx, info)
     return JobPauseResolution(
         decision=decision,
-        handled=handled,
         note=_RAISED_JOB_NOTE if decision else _STOPPED_JOB_NOTE,
     )
 
 
-def finished_felix_job_needs_pause_check(record: Any, status: Any) -> bool:
-    """Whether one persisted Felix solve can still carry a ceiling refusal."""
+def output_pause(ctx: Any, cmd: str, text: str) -> JobPauseResolution:
+    """A ceiling refusal printed straight into a synchronous command's output.
+
+    A refusal comes back within seconds, so `bash felix run <case>` usually finishes
+    inside the synchronous window and is never promoted to a job: there is no
+    `JobRecord` for `handle_finished_felix_job` to look at, and nothing else would see
+    the question (p-i-g, #81 review 2026-11-17). Gated on the command being a solve,
+    as the job path is, so a `grep study_paused` of an old log cannot ask.
+    """
+    from .felix_progress import is_felix_cmd, refusal_status
+
+    if not is_felix_cmd(cmd):
+        return JobPauseResolution()
+    return refusal_pause(ctx, refusal_status(text))
+
+
+def pause_check_pending(record: Any) -> bool:
+    """Whether one persisted Felix solve has still to be looked at for a refusal.
+
+    Over the record alone: whether the job has ended is the live status's answer, and
+    a job that ended while the session was away still reads `running` in the store."""
     from .felix_progress import is_felix_cmd
 
-    state = getattr(status, "status", "")
-    running = getattr(status, "running", state == "running")
     return bool(
         record is not None
-        and not running
-        and getattr(status, "exit_code", None) not in (None, 0)
         and not getattr(record, "ceiling_pause_handled", False)
         and is_felix_cmd(getattr(record, "cmd", ""))
     )
@@ -237,12 +222,21 @@ def finished_felix_job_needs_pause_check(record: Any, status: Any) -> bool:
 def handle_finished_felix_job(
     ctx: Any, record: Any, status: Any, facts: Any
 ) -> JobPauseResolution:
-    """Account for a failed Felix solve once, for both tool and watch paths."""
-    if not finished_felix_job_needs_pause_check(record, status):
+    """Look at one finished Felix solve for a ceiling refusal, once and for all.
+
+    The job is marked as looked at whatever was found. A failure that is not a refusal
+    -- an out-of-memory, a kill, a crash before the final status is printed, a log
+    that rotated, a study row that would not read -- has nothing a later read can
+    discover about it, and leaving it eligible cost a `job_status`, a 256 KB
+    `job_tail` and a study GET before every model turn, once per crashed solve in the
+    study (`cli._pending_finished_felix_jobs`; p-i-g, #81 review 2026-11-17). The
+    pause itself is not lost by that: it is the study's, so the next call that meets
+    it asks (`tools._handled`, `refusal_pause`).
+    """
+    if not pause_check_pending(record) or getattr(status, "running", False):
         return JobPauseResolution()
-    result = resolve_job_pause(ctx, facts)
-    if result.handled:
-        ctx.store.update_job(record.job_id, ceiling_pause_handled=True)
+    result = refusal_pause(ctx, getattr(facts, "refusal", None))
+    ctx.store.update_job(record.job_id, ceiling_pause_handled=True)
     return result
 
 

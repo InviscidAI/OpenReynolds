@@ -885,6 +885,12 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     sigpipe = _sigpipe_note(result.exit_code, args["cmd"])
     if sigpipe:
         notes.append(sigpipe)
+    pause = ceiling.output_pause(ctx, args["cmd"], result.output or "")
+    if pause.note:
+        # A `felix run` refused at the study's ceiling answers in seconds, so it
+        # usually finishes inside this window and never becomes a job: the question
+        # has to be put to the person from the command's own output, or not at all.
+        notes.append(pause.note)
     if getattr(result, "stderr", "").strip():
         # The workspace itself, not the command: a working directory that is gone, a
         # capture-sync that failed. Surfaced so a platform failure is legible as one

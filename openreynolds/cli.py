@@ -4186,10 +4186,23 @@ def _run_one_shot(
     return "ok"
 
 
-def _stopped_at_ceiling(loop: Any, view: View) -> None:
-    """Record one spending-ceiling stop in every place a session exposes it."""
+def _stopped_at_ceiling(loop: Any, view: View, *, thread: bool = False) -> None:
+    """Record one spending-ceiling stop in every place a session exposes it.
+
+    `thread` puts the stop in the thread as well (`Loop.tell`), which the watch path
+    wants: `Loop._turns` tells a stop after the turn's results, so a resumed study
+    reads why the turn ended. The model-call path keeps `Loop.event`, which is
+    documented as adding nothing to the thread: the turn it stopped is settled, and a
+    message appended after it would change the cached prefix and what the next request
+    carries.
+    """
     stopped = loop.ctx.stopped
-    loop.tell(stopped)
+    if thread:
+        loop.tell(stopped)
+    else:
+        event = getattr(loop, "event", None)
+        if event is not None:
+            event(stopped)
     console.print(f"\n[yellow]{stopped}[/]")
     view.notice(stopped)
     loop.blocked_reason = stopped
@@ -4209,47 +4222,59 @@ def _finished_job_wake(
     accounted for once in the persisted record. A raised ceiling is appended to the
     same facts the model receives, so it does not read an old 409 as still current.
     """
-    updated = report
+    notes = []
     for observation in finished:
         record = observation.record
         pause = ceiling.handle_finished_felix_job(
             loop.ctx, record, observation.status, observation.facts
         )
         if pause.note:
-            updated += f"\njob {record.job_id}: {pause.note}"
+            notes.append(f"job {record.job_id}: {pause.note}")
         if pause.decision is False:
             # Match an in-turn stop: first preserve all job results and notes, then
             # put the final stop in the thread. This also keeps notes from earlier
             # observations when a later job is the one the person declines.
-            facts = updated[1:] if not report and updated.startswith("\n") else updated
+            facts = "\n".join(filter(None, [report, *notes]))
             if facts:
                 loop.inform(facts)
-            _stopped_at_ceiling(loop, view)
+            _stopped_at_ceiling(loop, view, thread=True)
             return None
-    return updated[1:] if not report and updated.startswith("\n") else updated
+    return "\n".join(filter(None, [report, *notes]))
 
 
 def _pending_finished_felix_jobs(loop: Any, view: View) -> str | None:
-    """Retry unhandled Felix refusals before every model turn.
+    """Look at Felix solves that ended unwatched, before the next model turn.
 
-    A refusal may finish while the session is away, while another refusal blocks
-    model calls, or while the study row cannot be read. Finished jobs are no longer
-    watched, so their persisted `ceiling_pause_handled` flag is the retry queue.
+    A refusal can end while the session is away, or while another refusal blocks model
+    calls. Finished jobs leave `watch`'s poll, so the persisted `ceiling_pause_handled`
+    flag is what is left to find them by; each is looked at once
+    (`ceiling.handle_finished_felix_job`).
+
+    Only when the turn is known to be able to run. `Loop.run` routes an open solver and
+    then asks `start_refused` before the model (openreynolds/loop.py:395), and a
+    spending question put ahead of that would be asked for a turn that was never going
+    to run -- and in one-shot mode a declined answer would report `failed` where the
+    run was `refused`. A study with no workspace of its own yet has routed nothing, so
+    it has no Felix job either; and a `PendingBackend` whose start has been refused
+    never becomes ready (openreynolds/backend/pending.py:162), so neither reaches the
+    question.
     """
     store = getattr(loop, "store", None)
     ctx = getattr(loop, "ctx", None)
     backend = getattr(ctx, "backend", None)
-    if store is None or ctx is None or backend is None:
+    if store is None or ctx is None or backend is None or _no_workspace_yet(loop):
         return ""
-    if isinstance(backend, PendingBackend) and not backend.ready():
+    if isinstance(backend, PendingBackend) and (not backend.ready() or backend.failed):
         return ""
     observations = []
     for record in store.session.jobs.values():
-        if not ceiling.finished_felix_job_needs_pause_check(record, record):
+        if not ceiling.pause_check_pending(record):
             continue
         try:
             status = backend.job_status(record.job_id)
         except BackendError:
+            continue
+        if status.running:
             continue
         facts = felix_job_facts(backend, record.cmd, record.job_id, status.log_size)
         observations.append(FinishedJob(record, status, facts))
