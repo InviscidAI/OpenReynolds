@@ -317,6 +317,17 @@ make a hundred-kilobyte picture is the wrong way round. Frames come home and
 `openreynolds video` assembles them here, where a real encoder lives. The instance
 image has no encoder on purpose.
 
+Once they are home, `openreynolds view` puts them on one page and opens it:
+
+    openreynolds view                      # the newest study, in your browser
+
+The page links the pictures where they lie rather than embedding them, so it is a few
+kilobytes whatever the study weighs, and it carries no script, no stylesheet and no
+font -- nothing in it reaches the network. It shows what was rendered; it does not
+rotate the mesh in the browser. For a page that can be attached to a message and
+opened on a machine that has never seen the study, the `gallery.py` toolbox script
+embeds every image instead.
+
 ## Running it on your own machine
 
 `--local` puts the workspace on your computer instead of in the cloud. It runs in
@@ -450,6 +461,7 @@ down to **0.567**.
 | `openreynolds pull` | Bring this study's files down to this machine. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
 | `openreynolds renders` | Every picture and assembled animation. |
+| `openreynolds view` | Look at a pulled study's results in a browser: one local page of every picture it rendered, grouped by the folder that wrote them, with its reports linked under them. No ParaView, no server, no script and no network in the page, so it works offline. `--study`, `--out`, `--no-open`. |
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` also kills solver processes that outlived their job. |
 | `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
