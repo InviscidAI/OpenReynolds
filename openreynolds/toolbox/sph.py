@@ -29,10 +29,21 @@ The scheme, stated so the choices can be argued with
     there is no fluid above it to sum -- which is exactly where these cases live.
 
     Tait's equation of state, p = (c0^2 rho0 / 7) ((rho/rho0)^7 - 1), with c0 an
-    artificial sound speed about ten times the fastest flow. That is what "weakly
-    compressible" means and it is the scheme's cost: the time step is acoustic, dt ~
-    0.2 h / c0, so a second of a dam break is tens of thousands of steps no matter how
-    few particles there are.
+    artificial sound speed ten to twenty times the fastest flow, **floored at zero**.
+    That is what "weakly compressible" means and it is the scheme's cost: the time step
+    is acoustic, dt ~ 0.2 h / c0, so a second of a dam break is tens of thousands of
+    steps no matter how few particles there are. The floor is not a detail -- without it
+    this blows up, and `pressure` carries the measurement.
+
+    Density diffusion, `--delta`, defaulting to 0.3. Tait is stiff, so dp/drho is about
+    c0^2 and an ordinary SPH density field is a badly wrong pressure field: the
+    hydrostatic pressure error went 67% -> 2.1% of rho g h when this was added.
+    `accelerations` carries the arithmetic and why the term does not eat the hydrostatic
+    gradient it sits on.
+
+    The initial density is hydrostatic, from Tait inverted, not a uniform rho0. A column
+    at uniform rho0 is a column at zero pressure, which is not a column at rest;
+    `hydrostatic_density` carries what starting it that way measured instead.
 
     Monaghan's artificial viscosity, which damps approach and does nothing to separation.
     `--alpha` is it, and it is a numerical parameter and not a physical viscosity: these
@@ -48,6 +59,10 @@ The scheme, stated so the choices can be argued with
     Symplectic (velocity-then-position) Euler. One line each way, and it does not pump
     energy into an oscillation the way the other Euler does, which matters because one of
     the graded cases *is* an oscillation.
+
+    What is deliberately absent: any turbulence model, any surface tension, any
+    multi-phase treatment, and the third dimension. `--alpha` is a numerical parameter
+    and not a physical viscosity, so nothing here claims a Reynolds number.
 
 The neighbour search is the part that decides whether this runs at all. Particles are
 bucketed into a uniform grid of cells one support radius across, and the buckets of the
@@ -608,7 +623,7 @@ def figure(result: dict[str, Any], path: Path) -> None:
     elif result["case"] == "sloshing":
         t = [row["t"] for row in result["history"]]
         signal = np.array([row["centroid_x"] for row in result["history"]])
-        right.plot(t, (signal - signal.mean()) * 1000.0)
+        right.plot(t, (signal - signal.mean()) * 1000.0, label="fluid centroid")
         right.set_xlabel("t (s)")
         right.set_ylabel("fluid centroid, x - mean (mm)")
         right.set_title(f"period {result['period_measured']:.4f} s against "

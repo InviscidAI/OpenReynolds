@@ -97,12 +97,12 @@ floor rather than a flattering number:
 
 | run | agreement | cost |
 |---|---|---|
-| Poiseuille, TRT, nu = 0.02 (tau_plus 0.56) | max error **5.17e-11** of u_max | 478,600 steps, 81.9 s |
-| Poiseuille, TRT, nu = 0.1 (tau_plus 0.80) | **1.22e-11** | 102,600 steps, 17.5 s |
-| Poiseuille, TRT, nu = 0.4 (tau_plus 1.70) | **3.30e-12** | 27,200 steps, 4.7 s |
+| Poiseuille, TRT, nu = 0.02 (tau_plus 0.56) | max error **5.17e-11** of u_max | 478,600 steps, 100.4 s |
+| Poiseuille, TRT, nu = 0.1 (tau_plus 0.80) | **1.22e-11** | 102,600 steps, 21.4 s |
+| Poiseuille, TRT, nu = 0.4 (tau_plus 1.70) | **3.30e-12** | 27,200 steps, 5.7 s |
 | Poiseuille, BGK, nu = sqrt(3)/12 | **9.04e-12** | -- |
 | Poiseuille, BGK, nu = 4 sqrt(3)/12 | **3.66e-03**, and that is the point | -- |
-| Cavity Re 1000, n = 128 | u RMS **0.742%**, v RMS **0.761%** of the lid speed | 81,500 steps, 83.1 s, 16.07 MLUPS |
+| Cavity Re 1000, n = 128 | u RMS **0.736%**, v RMS **0.749%** of the lid speed | 123,500 steps, 103.1 s, 19.63 MLUPS |
 
 The channel is exact to between 3e-12 and 5e-11 of u_max across a factor of twenty in
 viscosity, and the residual it stopped at was 5e-14 -- so what is being measured there is
@@ -113,7 +113,7 @@ change in how the collision is split.
 
 The cavity is worth comparing with the Felix row in `../README.md`, because the two were
 graded against the same 34 numbers with the same 2% bound: Felix gives u RMS 0.448% and v
-RMS 1.063%, this gives 0.742% and 0.761%. Neither is better than the other in any sense
+RMS 1.063%, this gives 0.736% and 0.749%. Neither is better than the other in any sense
 that survives the next paragraph, which is the honest summary -- both are inside Ghia's
 own uncertainty.
 
@@ -121,8 +121,8 @@ own uncertainty.
 nothing else: the scheme has no discretisation error on this flow. For the cavity, in the
 order they matter: Ghia's own error against a later spectral solution is 1.46% to 2.20%
 on the centreline extrema, which is larger than the 0.74% being reported; 128 cells
-against his 129x129 grid, so neither side is converged; and the residual stop at 9.6e-7,
-which leaves a few parts in ten thousand of the lid speed still to travel. The first of
+against his 129x129 grid, so neither side is converged; and the residual stop at 9.3e-8,
+which is now small enough to be the least of the three. The first of
 those three dominates, and it means the right reading of this row is "agrees with Ghia to
 inside Ghia's uncertainty", not "0.74% accurate".
 

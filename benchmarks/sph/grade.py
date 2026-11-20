@@ -48,11 +48,17 @@ THRESHOLDS = {
     # compressible SPH with dynamic boundary particles at dx = h/20 is a percents-level
     # scheme, and a tighter threshold would be a threshold tuned to one run on one
     # machine rather than a property of the solver.
-    "hydrostatic_rms": 0.05,     # RMS pressure error as a fraction of rho g h
-    "hydrostatic_max": 0.12,     # and the worst single particle
-    "period_rel": 0.08,          # sloshing period against the linear dispersion relation
-    "containment": 1.0,          # fluid may not pass a wall by more than one dx
-    "density": 0.05,             # max rho/rho0 - 1 while the run is weakly compressible
+    # Each bound is roughly twice what the shipping configuration measured on a GitHub
+    # runner, with the measurement in brackets, so that a regression is caught and an
+    # ordinary run is not flaky. They are looser than the lattice Boltzmann grades next
+    # door, and that is the honest statement about the method rather than a concession:
+    # 2D weakly compressible SPH with dynamic boundary particles at dx = h/20 is a
+    # percents-level scheme, and the dominant error of each check is named in its note.
+    "hydrostatic_rms": 0.05,     # RMS pressure error / rho g h            (measured 2.50%)
+    "hydrostatic_max": 0.12,     # the worst single particle, at the surface (measured 8.61%)
+    "period_rel": 0.08,          # sloshing period against linear theory   (measured -4.75%)
+    "containment": 1.0,          # fluid may not pass a wall by one dx  (measured -0.19 to -0.33)
+    "density": 0.05,             # max rho/rho0 - 1, weak compressibility (measured 0.25-1.03%)
 }
 
 
@@ -164,12 +170,17 @@ def grade_sloshing(dx: float | None = None, periods: float = 3.0) -> dict[str, A
     sph = solver()
     run = sph.sloshing(dx=dx, periods=periods, progress=False)
     measured, exact = run["period_measured"], run["period_exact"]
-    relative = abs(measured / exact - 1.0) if math.isfinite(measured) else math.inf
+    # Signed for the note, absolute for the grade. The sign is the diagnostic half: a
+    # period that comes out SHORT means the effective tank is shorter than the one the
+    # case asked for, which is the wall-offset error dynamic boundary particles have.
+    # Printing `abs` with a `+` in front of it, as this did first, hides exactly that.
+    signed = (measured / exact - 1.0) if math.isfinite(measured) else math.inf
+    relative = abs(signed)
 
     checks = [
         _check("period against sqrt(g k tanh(k h))", measured, exact,
                relative <= THRESHOLDS["period_rel"],
-               f"{relative * 100:+.2f}% over {run['cycles']:.2f} cycles in the window"
+               f"{signed * 100:+.2f}% over {run['cycles']:.2f} cycles in the window"
                if math.isfinite(measured) else "no oscillation was measured"),
         _density_check(sph, run),
         _containment_check(sph, run),
@@ -229,6 +240,10 @@ def grade_dambreak(dx: float | None = None) -> dict[str, Any]:
             "so there is no primary source here to check a number against",
             "the run stops before the front reaches the far wall, so no reflection is "
             "in the reported curve",
+            "Z starts at 1 - dx/(2a) rather than 1, because the front is the outermost "
+            "particle's centre and that sits half a spacing inside the column's edge: "
+            "0.025 of Z at the default spacing. It is a sub-particle offset and not a "
+            "slow start, and it is worth knowing before it is read as one",
         ],
     }
 

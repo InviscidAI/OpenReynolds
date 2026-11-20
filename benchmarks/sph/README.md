@@ -107,6 +107,44 @@ fail silently otherwise:
   not fail to match a reference -- it stopped being a simulation of water, and no
   agreement it reports afterwards means anything.
 
+## What it measured
+
+On a GitHub Actions `ubuntu-latest` runner, at the configuration the graders ship with:
+
+| run | what is graded | agreement | cost |
+|---|---|---|---|
+| hydrostatic, depth 0.1 m, dx = h/20 | RMS pressure error / rho g h | **2.50%** | 800 fluid + 318 wall, 15,238 steps, 285 s |
+| " | worst single particle | **8.61%**, at the free surface | " |
+| sloshing, 1.0 x 0.5 m, dx = h/20 | period against `2 pi / sqrt(g k tanh(k h))` | **-4.75%** (1.1257 s against 1.1818 s) | 800 fluid + 330 wall, 12,081 steps, 225 s |
+| dam break, a = 0.1 m, n = 2 | **nothing**; surge front reported only | Z = 0.975 at T = 0, 3.943 at T = 3.00 | 800 fluid + 606 wall, 4,616 steps, 105 s |
+| all three | weak compressibility, `max rho/rho0 - 1` | **0.25%, 1.03%, 0.25%** | -- |
+| all three | wall penetration, in particle spacings | **none**: -0.30, -0.19, -0.33 | -- |
+
+**Where the difference comes from, hydrostatic.** The density noise, multiplied by
+`c0^2`. Tait is stiff -- `dp/drho` is about `c0^2` -- so at `c0 = 20 sqrt(g h)` a density
+error of `drho/rho` is a pressure error of `400 drho/rho` as a fraction of the `rho g h`
+being measured. Before the density diffusion was added this read 67%, with operators that
+balance gravity to 3% and a density rate identically zero on a static field: nothing was
+wrong with the discretisation, the noise was simply being amplified. The worst particle
+is always at the free surface, where the kernel support is truncated and there is no
+fluid above to sum, which is a property of SPH and not of this implementation -- hence a
+separate, looser bound on it rather than averaging it into the RMS.
+
+**Where the difference comes from, sloshing: the sign is the diagnosis.** The period
+comes out **short**, and short means the effective tank is shorter than the one the case
+asked for -- `omega^2 = g k tanh(k h)` with `k = pi/L`, so a wall that holds the fluid a
+fraction of a particle spacing inside where the tank says it is raises `k` and raises the
+frequency. That is exactly the error dynamic boundary particles have, and -4.75% at
+`dx/L = 0.025` is the right order for it. Two smaller terms sit underneath: the amplitude
+is 5% of the depth, whose first nonlinear correction to the frequency is `O((k a)^2)`,
+about 0.6%, and 20 particles across the depth is a coarse resolution of a dispersion
+relation. The resolution trend is the obvious next measurement and is not in this table.
+
+**A measurement artefact, in the dam break, that is not physics.** Z starts at 0.975 and
+not at 1, because the front is the outermost particle's *centre* and that sits half a
+spacing inside the column's edge: `1 - dx/(2a)`, exactly 0.025 at the shipping spacing.
+It is worth knowing before it is read as a slow start.
+
 ## Cost
 
 Every run prints its particle count, step count, wall-clock time and steps per second.
