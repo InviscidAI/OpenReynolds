@@ -30,14 +30,25 @@ RUN apt-get update && apt-get install -y \
 
 # pyvista renders off-screen through VTK built against OSMesa, which is not on PyPI:
 # install the stack, drop the vtk pyvista pulled in, install vtk-osmesa in its place.
-# Empty means "whatever PyPI serves at build time", which is what this line did for its
-# whole life and is the same shape as the `build123d>=0.9` floor that took the CAD
-# desk down. `check.sh` prints what it resolved either way and asserts each one that
-# is given, so the pins are a measurement rather than a guess.
-ARG NUMPY_VERSION=
-ARG MATPLOTLIB_VERSION=
-ARG PANDAS_VERSION=
-ARG PYVISTA_VERSION=
+# Pinned to what this image resolved on 2026-11-21, read out of an unpinned build's own
+# `check.sh` output (PR #231, run 44802168123): the args were empty, the gate printed
+# what pip had chosen, and these are those five numbers. A measurement, not a guess --
+# and the measurement mattered. Unpinned, this line had already carried the image to
+# **pandas 3.1.1**, so pinning to a 2.x anyone would have assumed was here would have
+# CHANGED the image rather than frozen it. That is the `build123d>=0.9` failure in
+# miniature: a range nobody was watching, moved by PyPI, noticed only when something
+# broke.
+#
+# These are the versions the suite passes against: the CI `image` job builds from the
+# checkout, so its ~5,000 passing tests ran on exactly this set. What the published
+# `:2512` tag currently holds is a separate question and is not read here.
+#
+# `check.sh` asserts each one, because a pin nothing asserts is a comment. An empty arg
+# is still accepted and means "do not pin", which is how these were measured.
+ARG NUMPY_VERSION=2.5.5
+ARG MATPLOTLIB_VERSION=3.11.2
+ARG PANDAS_VERSION=3.1.1
+ARG PYVISTA_VERSION=0.49.2
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
         "numpy${NUMPY_VERSION:+==$NUMPY_VERSION}" \
         "matplotlib${MATPLOTLIB_VERSION:+==$MATPLOTLIB_VERSION}" \

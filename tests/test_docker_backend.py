@@ -137,10 +137,16 @@ def test_the_images_python_stack_is_asked_for_by_version_and_checked():
     `lbm.py` and `sph.py` ARE numpy -- they are the solvers a machine with no
     OpenFOAM has.
 
-    What is pinned here is a measurement, not a guess, so an empty arg is allowed and
-    means "this build did not pin it": `check.sh` prints the resolved version either
-    way and asserts only the ones it was given. What this test holds is the
-    mechanism, because a pin that nothing threads through to the gate is a comment.
+    What is pinned here was measured, not guessed: the args went in empty, an unpinned
+    build printed what pip had chosen, and those are the numbers (PR #231, run
+    44802168123). The measurement mattered -- unpinned, this line had already carried
+    the image to pandas **3.1.1**, so pinning to a 2.x anyone would have assumed was
+    here would have changed the image rather than frozen it.
+
+    So this test now demands an exact version for all four, and the mechanism beside
+    it: a pin nothing threads through to the gate is a comment. `check.sh` still
+    accepts an empty arg, which is how these were measured and how the next one would
+    be, but the Dockerfile may not ship one.
     """
     dockerfile = (REPO / "docker/workspace/Dockerfile").read_text(encoding="utf-8")
     check = (REPO / "docker/workspace/check.sh").read_text(encoding="utf-8")
@@ -148,8 +154,11 @@ def test_the_images_python_stack_is_asked_for_by_version_and_checked():
 
     for name in names:
         declared = re.findall(rf"^ARG {name}_VERSION=(\S*)$", dockerfile, re.MULTILINE)
-        assert declared == [""] or re.fullmatch(r"[\d.]+", declared[0]), (
-            f"{name}_VERSION is neither empty nor an exact version: {declared}")
+        assert len(declared) == 1, f"{name}_VERSION is declared {len(declared)} times"
+        assert re.fullmatch(r"[\d.]+", declared[0]), (
+            f"{name}_VERSION is not an exact version: {declared[0]!r}. An empty arg is "
+            "how a version is measured, not how one ships -- run an unpinned build, "
+            "read check.sh's output, put the number here.")
         assert f'"{name.lower()}${{{name}_VERSION:+==${name}_VERSION}}"' in dockerfile, (
             f"{name} is installed without consulting its arg")
         assert f'"${{{name}_VERSION}}"' in dockerfile, f"{name} never reaches check.sh"
