@@ -401,9 +401,29 @@ is known from outside a solver, the published or closed-form value it is measure
 how close the real run got, and where the remaining difference comes from. Re-checking
 those reference values against their sources changed two of them, so it also carries what
 a wrong reference looks like from the inside.
-[`benchmarks/tutorials/`](benchmarks/tutorials/) holds three cheap cases to start from: a
-heated pipe against the exact Graetz answer, a buoyant cavity against de Vahl Davis, and a
-backward-facing step that is kept for its units rather than its agreement.
+[`benchmarks/tutorials/README.md`](benchmarks/tutorials/README.md) is the **tutorial
+index**: every case this repository can run whose answer comes from somewhere other than a
+solver, sorted by what it costs to run one, with the length and velocity scales each
+reference is normalised on in every row. Three tiers:
+
+- **numpy only**, nothing installed beyond this package and nothing billed -- the lattice
+  Boltzmann channel against an exact parabola, the cavity at Re 1000 against Ghia,
+  hydrostatic pressure and a sloshing period against closed forms, a dam break with no
+  verdict because its paper could not be read, and an aerofoil and a wing against
+  d'Alembert, thin-aerofoil theory and the elliptic induced drag. Each of these is a
+  single command; the five graders run as commands in the `benchmarks` job on every pull
+  request and the panel method's exact checks are asserted in the `test` job.
+- **a case built from a template**, where there is an OpenFOAM:
+  [`benchmarks/tutorials/templates.md`](benchmarks/tutorials/templates.md) covers the
+  seven recipes in `openreynolds/toolbox/templates/`, what each builds and what is known
+  about the answer before the solver starts. Two end in an exact comparison the `journey`
+  job runs; the other five are honest about having no reference, which is a different
+  thing from having no value.
+- **a prompt answered by an agent in a workspace**, which costs money and so is run by
+  nothing automatically: the three cases whose prompts live in that directory -- a heated
+  pipe against the exact Graetz answer, a buoyant cavity against de Vahl Davis, and a
+  backward-facing step kept for its units rather than its agreement -- plus the four in
+  `benchmarks/felix/` and `benchmarks/moving_mesh/`.
 
 [`benchmarks/moving_mesh/`](benchmarks/moving_mesh/) holds the two cases the moving-mesh
 field note rests on, as the verbatim prompts they were run from and a grader: a
