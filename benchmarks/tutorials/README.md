@@ -198,11 +198,27 @@ paraphrase:
   II)", and it matches its own Richardson-extrapolated **6.097** to "Gartling's reported
   value of **6.10**" to within 0.05%, **with no conversion**. That only works if
   Gartling's 6.10 is in those same channel-height units.
+- **Abaqus/CFD's sample-problem manual says the convention outright** for the same case:
+  "this example simulates the laminar flow over a backward facing step at a Reynolds
+  number of 800 **based on channel height**", with the domain `0 < x < 30`,
+  `-0.5 < y < 0.5`, density 1 and "viscosity = 0.00125 units (the viscosity is chosen so
+  as to set the flow Reynolds number to 800)". Its comparison table then lists the
+  Gartling (1990) row as **6.1, 4.85, 10.48**.
+- **An independent solver lands on the same number under the same stated convention.**
+  Bourantas et al. (arXiv:1906.05387), a meshless point-collocation scheme, define
+  `Re = u_avg H / nu` with `H = 1` "ranging from (0, -0.5) to (0, 0.5)" and the step at
+  `H/2`, and compute the lower-wall reattachment at **6.1**.
 - A published MHD benchmarking table corroborates by doubling, listing the Gartling row
   as `x_r/h = 12.20` and `11.26` with `h` the step height: exactly 2 x 6.10 and
-  2 x 5.63.
+  2 x 5.63. The same table lists Gresho et al. (1993), which Gartling co-authored, with
+  identical values.
 - The 5.63 is the **upper-wall bubble length**, 10.48 - 4.85, not a rival value for the
   lower-wall reattachment, which is what made the pair of numbers confusing.
+- **And the conventions never cross.** Across the accessible literature, every source
+  that normalises on the channel height reports 6.10 and every source that normalises on
+  the step height reports 12.2. There is no source anywhere reporting 6.10 in step
+  heights or 12.2 in channel heights, so there is no genuine dispute about the value,
+  only two self-consistent conventions and a factor of two between them.
 - Armaly's experiment sits where this reading predicts: at the same flow rate it measures
   about 14 step heights, and a 2D steady computation is expected to underpredict a flow
   Armaly states is three-dimensional above Re about 400. That puts 12.2 in the right
@@ -210,7 +226,16 @@ paraphrase:
 
 **So Gartling's 6.1 is in channel heights and his Re 800 is on the channel height with
 the mean inlet velocity.** The paper is still unread, and that is said here rather than
-implied away. That gap is issue #205, which also records
+implied away.
+
+Two traps for anyone checking this against those sources. Abaqus heads its third column
+"length of the upper separation bubble" and puts 10.48 in it, but 10.48 is the upper
+reattachment *position*; the bubble length is 5.63. And Teruel & Fogliatto (2013),
+*Mecanica Computacional* **XXXII**, 3265-3278, quote Gartling as 11.9 / 9.5 / 20.6 step
+heights, which is 5.95 / 4.75 / 10.3 channel heights: they agree on the unit and sit 2%
+to 2.5% below everyone else on the value, which looks like numbers read off a figure.
+Neither affects the normalisation, and both are the sort of thing that turns into a
+third circulating number if nobody writes it down. That gap is issue #205, which also records
 what would close it: reading Gartling, and then re-running this case at Re 800 on the
 channel height so it becomes a validation instead of a worked units failure. He reports
 an upper-wall bubble from 4.85 to 10.48 channel heights as well, which nothing here has
