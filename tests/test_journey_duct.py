@@ -536,10 +536,15 @@ def test_y_plus_is_measured_off_the_case_and_not_defaulted(journey):
               f"(min {1000 * float(h.min()):.4g}, max {1000 * float(h.max()):.4g}), "
               f"{h.size} faces")
 
-    # Sources with no wall row at all are skipped rather than failed: the
-    # wallShearStress path cannot produce one on a real OpenFOAM case (issue #199 --
-    # `wallShearStress` is a vector field and `from_wall_shear` compares 3N numbers
-    # against N faces). Both y+ sources must be there, and they must agree.
+    # Whichever sources carried a wall row, and there must be at least two: the yPlus
+    # function object's .dat, the written yPlus field, and -- since #196 taught
+    # `boundary_values` to take the magnitude of a vector field -- the one derived from
+    # wallShearStress. On the first run of this test against the base this branch was
+    # cut from, that third one dropped both walls with "150 shear values against 50
+    # faces", because `wallShearStress` is a volVectorField; #196 fixed it blind,
+    # against the studies, and this is the first thing that exercises the path. Sources
+    # with no wall row are skipped rather than failed so that a future source that
+    # cannot measure a duct does not fail the whole journey.
     usable = [source for source in found["sources"]
               if any(row["patch"] in heights for row in source["patches"])]
     assert len(usable) >= 2, (

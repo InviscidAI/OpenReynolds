@@ -8,6 +8,38 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
+  in the repository was either a unit test against a fixture or a tool run against a
+  study somebody had already finished, so a seam between two stages was invisible to all
+  of them. `tests/test_journey_duct.py` walks the chain from an empty directory: the
+  `duct2d.py` template builds a 0.10 x 0.02 m plane duct with gmsh and `gmshToFoam`,
+  `case_gen.py` reads that mesh and writes `0/`, `system/` and `constant/` for a steady
+  laminar solve at Re 10, `simpleFoam` solves it, and then `probe.py`, `balance.py`,
+  `wall.py`, `log_digest.py`, `results.py` and `report.py` read it back. It runs in a
+  new `journey` job inside the workspace image -- 1 min 40 s of runner time, of which
+  the walk itself is 7.3 s -- and unlike the advisory `image` job it gates.
+  - The reference is exact rather than published, which is what makes the assertions
+    physics and not exit codes: developed plane Poiseuille flow is three lines of algebra
+    off the steady Navier-Stokes equations, and `u_mean` is 1 m/s because the inlet is a
+    uniform 1 m/s `fixedValue` and mass is conserved. Measured against it: `u_max` 1.4863
+    against 1.5 exactly, `u_max/u_mean` 1.532 against 1.5, the developed `(dp/dx)_kin`
+    -123.5 against -120 m/s^2, the wall shear the measured y+ implies 1.08 and 1.10
+    against 6 nu u_mean / H = 1.2 m^2/s^2, and the throughflow 3.93e-5 against
+    U x H x thickness = 4e-5 m^3/s.
+  - Asserted at the seams rather than at the end: the mesh is one cell thick with its z
+    faces `empty`; `nu` on disk is `U L / Re`; `p`'s dimensions are `m^2 s^-2` and not
+    pascals; the solver's own continuity closes to -9e-08 of a 4e-05 throughflow and
+    `balance.py`'s boundary integral to 0.84%; `wall.py`'s `nu` came out of the case's
+    own dictionary rather than a default; and `report.py`'s key numbers are the residuals
+    `log_digest` reads out of the solver's own log, number for number.
+  - Two of this test's own reference numbers were wrong on its first CI run and are now
+    measured instead of assumed. `CELL_SIZE_M` in the template is a background size
+    handed to gmsh, not a division count, and the quad recombination does not honour it
+    as one: the run came out with 1000 cells whose first wall row is 1.491 mm on a 2 mm
+    request, so the first-cell height is read off `constant/polyMesh` with
+    `layer_report.py`. And the solver's continuity error and `balance.py`'s closure are
+    two different quantities, asserted separately -- conflating them is how a reading
+    error gets called a continuity failure.
 - **`advise.py`: which solver, and how many ranks, both read out of the case.** The
   toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
   that family with what each one is, the condition that makes it the one, and whether it
