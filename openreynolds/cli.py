@@ -3070,7 +3070,7 @@ def session(
                 # Still bundled if the close-down failed: the files are home either way.
                 if capture:
                     with _timed("close.capture_case"):
-                        _capture_the_case(capture, store, ConsoleView(console), backend)
+                        _capture_the_case(capture, store, ConsoleView(console))
                     with _timed("close.capture_close"):
                         capture.close()
             finally:
@@ -4000,30 +4000,7 @@ def _capture_locally(cfg: Config, store: Store) -> Capture:
     return capture
 
 
-def _case_root(store: Store, backend: Any = None) -> Path:
-    """Where this study's case files actually are.
-
-    The mirror for a study that ran on an instance, because that is where the
-    close-down sync put them. The workspace's own study directory for a local one,
-    because nothing pulled anything anywhere and the mirror is empty.
-
-    Told apart by asking the backend for a local root rather than by a flag:
-    `LocalBackend` and `DockerBackend` both report a real directory on this machine
-    through `workspace_root`, a hosted one reports `/work`, which is the instance's
-    path and not a directory here. A root that does not exist, or a backend that is
-    gone by now, falls back to the mirror -- an empty bundle is what the old behaviour
-    was, so the fallback cannot be worse than it.
-    """
-    mirror = store.fetch_dir()
-    root = getattr(backend, "workspace_root", None)
-    if not root or str(root) == WORKSPACE_ROOT:
-        return mirror
-    here = Path(str(root)) / store.session.study_id
-    return here if here.is_dir() else mirror
-
-
-def _capture_the_case(capture: Capture, store: Store, view: View,
-                      backend: Any = None) -> None:
+def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     """Upload the case itself, once, at the end of a session.
 
     The capture plane has always carried the conversation and never the work. Measured
@@ -4042,20 +4019,22 @@ def _capture_the_case(capture: Capture, store: Store, view: View,
     the queue -- and the drain is bounded, so a bundle queued after it
     would be dropped without ever being attempted.
 
-    Which directory holds the case depends on the workspace, and getting that wrong
-    cost every local study its case tier. The mirror is filled by the close-down sync
-    pulling files DOWN from an instance; a local workspace has no instance and nothing
-    to pull, so its mirror stays empty while the files sit in the workspace itself.
-    Measured on study 20261121-033555-a8ea: `studies/<id>/files/` held 0 files and this
-    function said "nothing to bundle: no case files reached this machine", with six
-    real ones -- three figures, three run reports -- in the workspace on the same disk.
-    `_case_root` picks between them, and the no-network property holds either way.
+    It reads the mirror for every workspace, local one included, and that uniformity
+    is deliberate. A local study used to bundle nothing at all -- measured on study
+    20261121-033555-a8ea, `studies/<id>/files/` held 0 files and this function said
+    "nothing to bundle: no case files reached this machine", with six real ones in the
+    workspace on the same disk -- but the cause was the mirror pulling nothing from a
+    local workspace, which #238 fixes at the mirror. Reading the workspace directly
+    here instead would have bundled whatever is in it, and the mirror has caps and a
+    skip list (`MAX_FILE_BYTES`, `MAX_TOTAL_BYTES`, `mirror.SKIP_SUFFIXES`) that a
+    hosted study's bundle has always been behind. A local study carrying MORE than a
+    hosted one from the same case is an inconsistency, not a feature.
 
     Never raises. `build` returns a report rather than throwing, the upload goes
     through `Capture`, which is fire-and-forget by contract, and a study that could not
     be bundled captures exactly what it captured before.
     """
-    root = _case_root(store, backend)
+    root = store.fetch_dir()
     blob, report = casebundle.build(root, study_id=store.session.study_id)
     for line in report.brief():
         view.info(line) if not report.error else view.warn(line)
