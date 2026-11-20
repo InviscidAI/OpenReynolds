@@ -269,6 +269,7 @@ def test_a_clone_of_a_study_with_no_files_here_does_not_point_at_an_empty_folder
     said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
     assert said.exit_code == 0, said.output
     assert "had no files on this machine" in said.output
+    assert "local files are copied" not in said.output
     assert "openreynolds push" not in said.output
 
 
