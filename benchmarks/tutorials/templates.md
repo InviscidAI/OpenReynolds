@@ -4,7 +4,10 @@ Tier 2 of [`README.md`](README.md): the seven recipes in
 [`../../openreynolds/toolbox/templates/`](../../openreynolds/toolbox/templates/). Each one
 is a single Python file you copy into an empty directory and run. It builds a mesh with
 gmsh, converts it with `gmshToFoam`, retypes the patches, runs `checkMesh` and finishes by
-calling `mesh_look.py`, so the result is looked at rather than only built.
+calling `mesh_look.py`, so the result is looked at rather than only built. Six of them take
+two numbers edited at the top. `evaluate_steady.py` is the exception and takes its six from
+a design_constants.py the caller writes beside it, with no default for any of them, which
+is the round convention `parametric.py` enforces rather than a lapse.
 
 ```sh
 mkdir slab && cd slab
@@ -31,14 +34,17 @@ saying so is the point rather than the omission.
 | `rotating.py` | `VESSEL_RADIUS_M`, `ROTOR_RPM` | a solvable `simpleFoam` + MRF case | two exact conservation statements | the mesh only |
 | `porous.py` | `SLAB_THICKNESS_M`, `PRESSURE_DROP_CURVE` | a solvable `porousSimpleFoam` case | **exact by construction** | the coefficients, not the solve |
 | `thermal_stress.py` | `BAR_HEIGHT_M`, `DELTA_T_K` | a solvable `solidDisplacementFoam` case | **exact**, closed form | **yes, in CI** |
+| `evaluate_steady.py` | nothing at the top: six constants, from design_constants.py | a mesh and **stub** dictionaries | none shipped, and the trim target is not one | the mesh only |
 
-The stub/solvable split matters and is the first thing to know. `duct2d.py` and
-`body_in_box.py` write a `controlDict`, `fvSchemes` and `fvSolution` that are just enough
-for `gmshToFoam` and `checkMesh` to build a `Foam::Time` and an `fvMesh`, and they expect
-to be overwritten by whatever dresses the case -- `case_gen.py`, usually. The other four
-write the real dictionaries and are meant to be solved as they stand. All six stop short
-of launching the solver, because what a solve costs and whether it is wanted is not a
-template's call; each prints the command it would be.
+The stub/solvable split matters and is the first thing to know. `duct2d.py`,
+`body_in_box.py` and `evaluate_steady.py` write a `controlDict`, `fvSchemes` and
+`fvSolution` that are just enough for `gmshToFoam` and `checkMesh` to build a `Foam::Time`
+and an `fvMesh`, and they expect to be overwritten by whatever dresses the case --
+`case_gen.py`, usually. The other four write the real dictionaries and are meant to be
+solved as they stand. All seven stop short of launching the solver, because what a solve
+costs and whether it is wanted is not a template's call; the six copy-edit-run ones print
+the command it would be, and `evaluate_steady.py` leaves it to `parametric.py`, which is
+the caller that owns the solve.
 
 ## duct2d.py -- a plane duct, against an exact answer
 
@@ -317,6 +323,54 @@ not sized or dressed for Re below about 1, and no run of it at that Reynolds num
 here, so the honest state is: **listed as a gap**. Shipping `24/Re` with no measurement
 beside it is what [`../README.md`](../README.md) does not do with Blasius either, and for
 the same reason.
+
+## evaluate_steady.py -- a round of a parametric study, and a reference it does not have
+
+A cambered 2D section at incidence, sitting a ride height above a ground plane, in a box:
+quads, one cell extruded, `gmshToFoam`, the patches `inlet`, `outlet`, `ground`, `top`,
+`body` and `frontAndBack` retyped, `checkMesh`, `mesh_look.py`. What makes it the odd one
+of the seven is not the mesh but who owns the numbers: this file is the build.py of a
+*round*, and the section comes entirely from a design_constants.py written beside it, with
+no default for any of the six. `--write-round DIR` lays the round out -- this file, a
+hooks.py adding `--slip top`, a `goal.lock.json` carrying every key `parametric.py` and
+`score.py` read, and a starter design_constants.py -- and `parametric.py` is what drives
+build, mesh, dress, solve and score per candidate.
+
+**The geometry has a name, and a name is not a reference.** The construction is the
+standard NACA four-digit one: the thickness distribution with the closed trailing-edge
+coefficient (-0.1036) so the two surfaces meet in one point, laid perpendicular to a
+parabolic camber line, then rotated about the quarter chord. So the shipped `CAMBER_1`
+0.04 at `CAMBER_POS` 0.4 with `THICKNESS` 0.12 is a NACA 4412. **No published coefficient
+is quoted against it here and none should be.** The shipped case is in ground effect --
+0.2 chords above a ground that moves with the stream (`--belt ground`), Re 1e6 on the
+chord, 2D steady with kOmegaSST -- and free-air section data is a different problem, on
+top of which no primary source for it was read here. The honest state is the one
+`body_in_box.py` is in: **listed as having no reference.**
+
+**What is exact regardless, and the first of the three is a trap:**
+
+- **A trimmed candidate's lift is an identity, not a result.** When the lock carries
+  `trim`, the secant varies a design constant until `Cl` is within `tol` of `target`, so a
+  leaderboard row reading Cl 0.800 says the secant converged and says nothing whatever
+  about the aerodynamics. That is why `score.py` records `trim: {variable, target,
+  achieved, value, solves}` rather than the target alone: a miss is then visible as a
+  miss. Reading the target back as the answer is the mistake this row exists to prevent.
+- **Mass is conserved exactly.** `top` is a slip wall and `ground` and `body` are walls,
+  so the only fluxes into the box are the inlet and the outlet, and in a converged steady
+  incompressible solve they are equal -- to the solver's own continuity error, and to
+  nothing else. `balance.py` measures it here as it does on the duct.
+- **The force in newtons means nothing; the coefficient does.** The extrude depth is
+  `THICK_FRACTION` of the chord and the file says what that is: arbitrary, the case being
+  2D. A force read off this case therefore scales with a number nobody chose, and only the
+  coefficient -- which divides it out, on the chord and the free-stream speed -- is
+  comparable between two candidates or against anything outside.
+
+**What is measured here: the mesh, and that the constants reach the geometry.** Nothing in
+this repository has solved this case and quoted a coefficient, so **no agreement is
+quoted.** The one property a parametric round must have is the second of those, and it is
+why `parametric.py` refuses to start on a build.py that does not import the constants: a
+build that ignored them would mesh one shape for every candidate and report the flat
+result as a landscape, which looks exactly like a design space with nothing in it.
 
 ## What every one of them has baked in
 

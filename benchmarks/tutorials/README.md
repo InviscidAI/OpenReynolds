@@ -40,8 +40,10 @@ this work", because the answers are exact and the whole chain is in this reposit
 ## Tier 2: a case built from a template, solved where there is an OpenFOAM
 
 [`templates.md`](templates.md) is the page for these: the seven recipes in
-`openreynolds/toolbox/templates/`, each one copied into an empty directory and run, what
-each builds, and **what is known about the answer before the solver starts**. Two of the
+`openreynolds/toolbox/templates/`, each one copied into an empty directory and run (the
+parametric round takes its numbers from a design_constants.py written beside it rather
+than from two edited at the top), what each builds, and **what is known about the answer
+before the solver starts**. Two of the
 seven end in an exact comparison that CI runs on every pull request; the other five are
 honest about having no reference, which is a different thing from having no value.
 
@@ -53,6 +55,7 @@ honest about having no reference, which is a different thing from having no valu
 | a sphere in a flow box, `body_in_box.py` | `python3 body_in_box.py` | no reference is shipped and **none is claimed**. The template's job is the body-fitted mesh, and `checkMesh` is the only verdict it offers | the mesh, by `checkMesh` and `mesh_look.py`. Stokes drag `Cd = 24/Re` is exact below Re about 1 and would make this a graded case; the shipped box is not sized or dressed for that regime, so it is listed as a gap rather than quoted as a check |
 | a two-phase dam break, `free_surface.py` -> `interFoam` | `python3 free_surface.py`, then `interFoam` | the same Martin & Moyce (1952) the SPH row above declines to quote, for the same reason. What **is** exact and free before release: the hydrostatic pressure at the base of the undisturbed column, `p_rgh = rho g h`, and total water volume conserved to the VOF solver's own `alpha` bounds | `setFields` writing a real interface, and `checkMesh`. **No solved result exists in this repository**, so no agreement is quoted |
 | a frozen-rotor bladed mixer, `rotating.py` -> `simpleFoam` + MRF | `python3 rotating.py`, then `simpleFoam` | no closed form for a six-bladed vessel, and a frozen rotor is one blade angle rather than an average. Two statements are still exact: in a steady state with no through-flow the **torque on the impeller and the torque on the vessel wall are equal and opposite exactly**, by conservation of angular momentum, and **power = torque x omega**. `omega` is 104.719755 rad/s for the shipped 1000 rpm, a factor 9.5493 from the nameplate units | the mesh and its two cell zones. The torque balance is the check [`../moving_mesh/`](../moving_mesh/) found teeth in: a `cyclicAMI` interface held its *area* to 43 ppm while the two wall torques disagreed by **0.911%**, so the check every rotating case runs passed one whose torque was a per cent wrong. Nothing has run it on this template yet |
+| a round of a parametric study, `evaluate_steady.py` -> `parametric.py` -> `score.py` | `python3 evaluate_steady.py --write-round rounds/000`, then `parametric.py <candidate> --round rounds/000 --lock goal.lock.json --mode solve` | **no reference is shipped and none is claimed**: the section is a NACA 4412 by construction, but the shipped case is in ground effect 0.2 chords above a moving ground at Re 1e6 on the **chord**, which published free-air section data is not, and no primary source for that data was read here. Three things are exact anyway -- a trimmed candidate's `Cl` equals the lock's `target` by construction, so it is an identity and not a result; inlet and outlet volume flow are equal, the other patches carrying no flux; and only the coefficient is comparable, the 2D extrude depth being arbitrary so the force in newtons scales with a number nobody chose | the mesh only, plus that the design constants reach the geometry, which is what `parametric.py` refuses a round for lacking. Nothing here has solved this case and quoted a coefficient |
 
 ## Tier 3: a prompt, answered by an agent in a workspace
 
