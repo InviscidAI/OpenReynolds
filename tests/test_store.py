@@ -199,12 +199,25 @@ def test_a_live_store_does_not_revert_what_another_writer_filed(tmp_path):
     on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
     assert (on_disk["project"], on_disk["tags"]) == ("Important", ["keepme"])
 
+    # A field edited in place is still a changed field. `commands.tag_lines` appends
+    # to and removes from `session.tags`, and a baseline sharing that list with the
+    # record would change when it does -- so dropping a tag would look like no
+    # change and never be written, which is what `label --untag` did.
+    filing = Store(root, "s1")
+    filing.session.tags.remove("keepme")
+    filing.save()
+    on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
+    assert on_disk["tags"] == []
+    filing.session.tags.append("again")
+    filing.save()
+    assert json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))["tags"]         == ["again"]
+
     # and it still owns its own fields, over more than one save
     live.record_job("job-1", cmd="simpleFoam", name="solve")
     for _ in range(3):
         live.append_message("assistant", "again")
     on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
-    assert (on_disk["project"], on_disk["tags"]) == ("Important", ["keepme"])
+    assert (on_disk["project"], on_disk["tags"]) == ("Important", ["again"])
     assert (on_disk["model"], on_disk["capture_seq"], list(on_disk["jobs"])) == (
         "claude-opus-5", 4, ["job-1"])
 

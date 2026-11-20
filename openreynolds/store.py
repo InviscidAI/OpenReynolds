@@ -176,7 +176,6 @@ class Store:
         raw = self._read()
         if not raw:
             return
-        self._on_disk = dict(raw)
         jobs = {jid: JobRecord(**rec) for jid, rec in (raw.pop("jobs", {}) or {}).items()}
         self._solver_on_record = "solver" in raw
         known = {f.name for f in Session.__dataclass_fields__.values()}
@@ -186,6 +185,18 @@ class Store:
         # and the filters, where a None from a hand-edited record would raise.
         self.session = Session(
             **{k: v for k, v in raw.items() if k in known and v is not None}, jobs=jobs)
+        self._mark()
+
+    def _mark(self) -> None:
+        """Record the state `save()` will diff against, as a copy of its own.
+
+        `asdict` and not the loaded dict: `tags` is edited in place (`commands.tag_lines`
+        appends and removes) and `tokens` is added to in place, so a baseline sharing
+        those objects with `self.session` changes when they do -- and a field that
+        changed would look unchanged and never be written. `openreynolds label --untag`
+        dropped nothing at all.
+        """
+        self._on_disk = asdict(self.session)
 
     @property
     def recorded_solver(self) -> str | None:
@@ -240,23 +251,28 @@ class Store:
         mine = asdict(self.session)
         was = self._on_disk
         try:
-            payload = dict(self._read())
+            disk = self._read()
         except TornRecord:
             # Nothing to merge with, so this Store's own record is written whole. That
             # is a repair and not the loss #167 is about: `_load` refuses, so a Store
             # that exists either read a real record or found no file, and either way
             # what is in memory here is complete. A session whose file somebody tore
             # while it ran mends it on its next message rather than dying on one.
-            payload = {}
-        if payload:
-            payload.update({k: v for k, v in mine.items() if k not in was or was[k] != v})
-        else:
-            payload = mine
+            disk = {}
+        # Every field of the record, this Store's own unless it has not touched it
+        # since it loaded -- in which case whatever is on disk now, which is the other
+        # writer's. Starting from `mine` and not from `disk` keeps the record complete:
+        # a study recorded before `tags` and `tokens` existed gets them written with
+        # their defaults, as it always did.
+        payload = dict(mine)
+        for key, value in disk.items():
+            if key not in mine or was.get(key, value) == mine[key]:
+                payload[key] = value
         tmp = self._session_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         _replace(tmp, self._session_path)
-        self._on_disk = dict(payload)
         self._adopt(payload, mine)
+        self._mark()
 
     def _adopt(self, payload: dict[str, Any], mine: dict[str, Any]) -> None:
         """Take on the fields somebody else changed, in the record just written.
