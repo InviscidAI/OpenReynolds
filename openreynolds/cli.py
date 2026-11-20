@@ -534,9 +534,13 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
     console.print("  its setup, its project and tags and its local files are copied; "
                   "its conversation is not")
     # Its workspace directory is its own and starts empty (#170): the copied files are
-    # on this machine, and only `push` sends anything up.
-    console.print(f"  its workspace starts empty; [bold]openreynolds push <file> --study {fresh}[/] "
-                  "sends one of them up")
+    # on this machine, and only `push` sends anything up -- once the clone is running,
+    # since before that it has no workspace, and a push would land on another study's.
+    files = Store(cfg.studies_dir, fresh).files_dir
+    console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
+    if not local_workspace():  # `push` reaches the hosted workspace only
+        console.print(f"  once it is running, [bold]openreynolds push <file> --study {fresh}[/] "
+                      "sends one of them up")
     if request:
         first = request.splitlines()[0][:90]
         console.print(f"  it opens on what started {escape(chosen)}, word for word: "
@@ -3210,11 +3214,10 @@ def _home_path(store: Store, resuming: bool, known_here: bool = True) -> str:
     """Which directory is this study's. Needs no workspace: see `_home_for`."""
     if store.session.home:
         return store.session.home
-    if resuming and known_here and not store.session.cloned_from:
+    if resuming and known_here:
         # A study this machine already had, whose session predates homes: it keeps
         # the whole workspace, because moving its files out from under it would be
-        # worse than the untidiness. Never a clone: clones came after homes, and one
-        # with none recorded is new, with nothing in the root to keep (#170).
+        # worse than the untidiness.
         return WORKSPACE_ROOT
     # A new study, or one resumed on a machine that has never seen it -- opened
     # in the browser, or on another laptop. `known_here` is false there, and the

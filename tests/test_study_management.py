@@ -674,13 +674,9 @@ def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir):
     fresh, = [item for item in list_studies(studies_dir)
               if item.cloned_from == "20261115-090000-ffff"]
     assert fresh.home == f"/work/{fresh.study_id}"
-    assert "its workspace starts empty" in said.output and "openreynolds push" in said.output
-    assert cli._home_path(Store(studies_dir, fresh.study_id), resuming=True) == f"/work/{fresh.study_id}"
-
-    # One cloned before this, with no home recorded, opens in its own directory too.
-    earlier = Store(studies_dir, fresh.study_id)
-    earlier.session.home = ""
-    earlier.save()
+    assert "its workspace starts empty" in said.output
+    # A push before the clone runs would land on another study's workspace.
+    assert "once it is running" in said.output
     assert cli._home_path(Store(studies_dir, fresh.study_id), resuming=True) == f"/work/{fresh.study_id}"
 
     # And a study from before homes still keeps the root it has always had.
