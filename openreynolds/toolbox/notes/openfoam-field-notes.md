@@ -992,6 +992,62 @@ PATH. One `which` settles it in a second, and it is worth the second: on this im
 is an `MRFProperties`/`fvOptions` feature of the ordinary solvers and not a binary of its
 own.
 
+**`omega` in `MRFProperties` is rad/s, and the factor to rpm is 9.5493.** The member is
+declared `//- Angular velocity (rad/sec)` in
+`src/finiteVolume/cfdTools/general/MRF/MRFZone.H`, typed `autoPtr<Function1<scalar>>`, and
+there is no `rpm` keyword anywhere in that class to catch a nameplate figure written
+straight in. The shipped
+`$FOAM_TUTORIALS/incompressible/simpleFoam/mixerVessel2D/constant/MRFProperties` is the
+evidence rather than the recollection: it carries `omega 104.72`, and 104.72 rad/s is
+1000.0 rpm to five figures, a round nameplate number, where read as rpm it would be
+nobody's round number. A value meant as rpm therefore runs the rotor 9.5493 times too
+fast, and the torque out by roughly the square of that. The whole zone entry, as shipped,
+is a named block carrying `cellZone`, `active`, `nonRotatingPatches ()`, `origin`, `axis`
+and `omega` -- a bare number, since `Function1` reads a scalar as a constant.
+
+**An MRF rotor's own walls are `noSlip`, and `nonRotatingPatches` is the defect to look
+for.** mixerVessel2D puts plain `noSlip` on its `rotor` patch, not
+`rotatingWallVelocity`, because `MRFZone` declares
+`void correctBoundaryVelocity(volVectorField& U) const;` -- "Correct the boundary velocity
+for the rotation of the MRF region" -- and sets the zone's patch velocities from
+`Omega x r` itself on a mesh that never moves. A `rotatingWallVelocity` there applies the
+rotation twice. The other half: any patch whose faces lie inside the rotating cellZone but
+which is physically stationary (a baffle, a shaft seal, a fixed shroud) has to be listed in
+`nonRotatingPatches` or it is spun with the zone and silently stirs the fluid. The class
+calls that member `excludedPatchNames_`, commented "Non-rotating patches".
+
+**`porousSimpleFoam` was not removed when porosity became an fvOption, and
+`DarcyForchheimer`'s `f` carries a factor of a half.** Both are easy to get backwards.
+`$FOAM_TUTORIALS/incompressible/porousSimpleFoam/straightDuctImplicit` ships with
+`application porousSimpleFoam;` and a `constant/porosityProperties` holding
+`type DarcyForchheimer; cellZone porosity; d (5e7 -1000 -1000); f (0 0 0);` plus a
+`coordinateSystem` -- so the zone is declared in `porosityProperties`, not in `fvOptions`,
+on that route. The `explicitPorositySource`/`constant/fvOptions` route is the other one and
+is what `compressible/rhoSimpleFoam/angledDuctExplicitFixedCoeff` uses; writing both at
+once would double the resistance. `DarcyForchheimer.H` gives the sink as
+`S = -(mu*d + (rho*|U|/2)*f)*U` with `d` in [1/m2] and `f` in [1/m], and
+`DarcyForchheimer.C` builds it with `forchCoeff.xx() = 0.5*fXYZ_.value().x();` under the
+comment "the leading 0.5 is from 1/2*rho", while the Darcy tensor takes no factor. Hence
+the reduction that turns a measurable pressure drop into coefficients: across a slab of
+thickness L at face velocity U, `dp = (mu*d*U + 0.5*rho*f*U^2)*L`, so `dp/(L*U)` is a
+straight line in U whose intercept is `mu*d` and whose slope is `0.5*rho*f`.
+`templates/porous.py` is that fit, and matching Ergun term by term gives
+`d = 150*(1-e)^2/(e^3*Dp^2)` and `f = 3.5*(1-e)/(e^3*Dp)` -- the 3.5 being twice Ergun's
+1.75, the same half running the other way.
+
+**A negative component of `d` or `f` is a multiplier, not a negative resistance.**
+`porosityModel.C`'s `adjustNegativeResistance` multiplies a negative component by the
+magnitude of the largest one, and is fatal only if every component is negative. So the
+tutorial's `d (5e7 -1000 -1000)` means the two cross-flow directions resist a thousand
+times harder than the through-flow one, which is what stops the flow turning and sneaking
+sideways through the face of a slab. A slab given equal resistance in all three directions
+solves and reports a plausible wrong drop.
+
+One caveat on all of the above: these were read off the ESI repository's master branch,
+whose headers now say v2606, and this image is v2512. The keys are old and have not moved
+between those two, and `foamInfo MRFZone` or `foamInfo DarcyForchheimer` beside an `ls` of
+the tutorial directory settles it on the image in one command.
+
 Two more moving-mesh cases have been paid for since the hull, and they cost different
 things: a 2D circular-Couette annulus cut in half by a `cyclicAMI` sliding interface, and
 a cylinder on a spring free to move across the stream at Re = 100 on a morphing mesh.
