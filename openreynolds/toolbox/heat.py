@@ -121,7 +121,9 @@ def _need(value: Any, what: str, where: str, flag: str) -> Any:
     return value
 
 
-_NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+# There was a `_NUMBER` regex here, this file's own copy of the one #138 was filed
+# about, and it is gone: every `boundaryField` value heat.py reads now comes back from
+# `wall.boundary_scalars`, which knows whether the file is ascii or binary.
 
 
 # ------------------------------------------------------------------- regions --
@@ -367,7 +369,7 @@ def from_field(region: Region, mesh: dict[str, Any] | str,
             f"{path.parent.name}/wallHeatFlux is written and the mesh is not readable "
             f"({mesh}), so there are no face areas to integrate it over"
         )
-    values = wall.boundary_values(preflight.read_text(path))
+    values = patch_values(path)
     rows: list[dict[str, Any]] = []
     problems: list[str] = []
     for name, array in sorted(values.items()):
@@ -466,38 +468,40 @@ def from_dat(region: Region, mesh: dict[str, Any] | str,
 # ------------------------------------------------------------ temperature --
 
 
-def boundary_vectors(text: str) -> dict[str, np.ndarray | None]:
+def patch_values(path: Path) -> dict[str, np.ndarray | None]:
+    """A scalar field's `boundaryField`, per patch, ascii or binary.
+
+    `wall.read_field` decodes a binary payload or refuses the file by name; handing
+    `preflight.read_text` straight to a value parser is #138, and doing it here is
+    #163 -- the same defect, in the file that feeds every Nusselt number, for two
+    months after `wall.py` was fixed. There is one decoder and both tools call it.
+    """
+    return wall.boundary_values(*wall.read_field(path))
+
+
+def boundary_vectors(path_or_text: Path | str) -> dict[str, np.ndarray | None]:
     """`{patch: (n, 3) values}` out of a vector field's `boundaryField`.
 
-    The scalars here go through `wall.boundary_values`, which reads the same block
-    with the same brace matching, but it returns a magnitude and the sign of `U . A`
-    is what makes a flux a flux: a magnitude cannot tell an inlet from an outlet. So
-    the vector case is read here, and only the vector case.
+    `wall.boundary_vectors` is the reader -- the same `boundaryField` walk the scalars
+    go through, with the components kept, because the sign of `U . A` is what makes a
+    flux a flux and a magnitude cannot tell an inlet from an outlet. A `Path` is read
+    through `wall.read_field`, so a binary `U` is decoded rather than scraped; a `str`
+    is text already read, which is what the tests hand it.
     """
-    found: dict[str, np.ndarray | None] = {}
-    for name, inner in preflight.block_entries(preflight.block_body(text, "boundaryField")):
-        if not name:
-            continue
-        patch = name.strip('"')
-        match = re.search(r"\bvalue\b", inner)
-        if not match:
-            found[patch] = None
-            continue
-        tail = inner[match.end():].split(";", 1)[0]
-        # The count in `nonuniform List<vector> 8(...)` is not a datum; everything
-        # from the opening parenthesis on is.
-        if "(" in tail:
-            tail = tail[tail.index("("):]
-        numbers = [float(token) for token in _NUMBER.findall(tail)]
-        if not numbers or len(numbers) % 3:
-            found[patch] = None
-            continue
-        found[patch] = np.asarray(numbers, dtype=float).reshape(-1, 3)
-    return found
+    if isinstance(path_or_text, str):
+        return wall.boundary_vectors(path_or_text)
+    return wall.boundary_vectors(*wall.read_field(path_or_text))
 
 
 def patch_mean(values: np.ndarray, weights: np.ndarray) -> float:
-    """A weighted mean, with a `uniform` entry broadcast over the patch."""
+    """A weighted mean, with a `uniform` entry broadcast over the patch.
+
+    One value is a `uniform` entry and is broadcast. That is only safe because
+    `wall.boundary_scalars` refuses a `nonuniform List<...> N(` whose body does not
+    hold N items: the way a wrong answer got through this exemption silently was a
+    binary payload from which a number regex scraped exactly one number (#163), and
+    that read no longer reaches here at all.
+    """
     values = np.asarray(values, dtype=float)
     if values.size == 1:
         return float(values[0])
@@ -572,7 +576,7 @@ def reference_temperature(region: Region, mesh: dict[str, Any] | str,
             "--t-ref-from inlet for the area-weighted mean over the patch, or --t-ref"
         )
     path, _ = found
-    velocities = boundary_vectors(preflight.read_text(path)).get(patch)
+    velocities = boundary_vectors(path).get(patch)
     if velocities is None or velocities.size == 0:
         raise HeatError(
             f"U has no value on patch '{patch}', so there is no flux to weight by; "
@@ -1006,7 +1010,7 @@ def measure_region(region: Region, *, time: str | None, length: float | None,
     temperatures: dict[str, np.ndarray | None] | None = None
     found = field_file(region, "T", time)
     if found is not None:
-        temperatures = wall.boundary_values(preflight.read_text(found[0]))
+        temperatures = patch_values(found[0])
 
     try:
         out["hot"] = hot_spots(region, mesh, time, threshold=threshold, fraction=fraction)

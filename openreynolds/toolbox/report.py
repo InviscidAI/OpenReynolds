@@ -294,6 +294,29 @@ def locate(given: Path | str) -> dict[str, Any]:
                 notes.append(f"the study's state is under {state_root}, not at {given}")
                 break
 
+    if not is_study and not study_state.discover_cases(state_root):
+        # No `.reynolds/` anywhere under here, which is 11 of 16 real studies, and no
+        # case at this level either: `discover_cases` looks one level down and a
+        # mirrored study keeps its cases two, at `files/<id>/<case>`. So `choose_case`,
+        # `measured_numbers` and `gaps` were all handed a directory with nothing under
+        # it and the documented entry point wrote a complete-looking document with no
+        # numbers and no methods in it -- 4 pages against the 6 the same tool gives
+        # when pointed one level down, and 13 numbers against none (#179).
+        #
+        # `compare.py:665` descends the same way for the same layout. Only when there
+        # is no case here at all, so a study whose cases sit at the top is untouched,
+        # and `is_study` stays false either way -- there is still no state directory
+        # here and nothing may be written.
+        for pattern in ("files/*", "files/*/*"):
+            found = sorted(path for path in state_root.glob(pattern)
+                           if path.is_dir() and study_state.discover_cases(path))
+            if found:
+                notes.append(f"no .reynolds/ and no case under {state_root}, so the "
+                             f"case(s) were read from {found[0]} -- the mirrored layout "
+                             f"keeps them at files/<id>/<case>")
+                state_root = found[0]
+                break
+
     bases = [state_root]
     for parent in (state_root.parent, state_root.parent.parent):
         # The same guard `find_root` uses walking up: `/work` is every study's

@@ -171,7 +171,7 @@ def write_field(path: Path, cls: str, entries: dict[str, str],
 
 def write_binary_field(path: Path, entries: dict[str, Any], cls: str = "volScalarField",
                        arch: str = "LSB;label=32;scalar=64", items: int = 1,
-                       declared: int | None = None) -> Path:
+                       declared: int | None = None, kind: str = "scalar") -> Path:
     """A `format binary;` field with a GENUINE little-endian IEEE-754 payload.
 
     Hand-written like every other fixture here, and written as bytes because that is
@@ -199,7 +199,7 @@ def write_binary_field(path: Path, entries: dict[str, Any], cls: str = "volScala
         else:
             count = len(value) // items if declared is None else declared
             parts.append(
-                "        value           nonuniform List<scalar> \n"
+                f"        value           nonuniform List<{kind}> \n"
                 f"{count}\n(".encode("ascii")
             )
             parts.append(struct.pack(f"<{len(value)}d", *[float(v) for v in value]))
@@ -825,3 +825,64 @@ def test_the_mesh_reading_is_a_siblings_and_not_a_second_one(wall):
     assert source.count('"polyMesh"') == 1, (
         "the only mesh path spelled here is the boundary file locate.py reads"
     )
+
+
+# -- the binary vector fixture that was missing (#162, #163) -------------------
+
+
+#: Three faces of a binary `volVectorField`, signed, with a negative x on one of them
+#: so a reading that loses the components cannot come out right by accident.
+CELL_U = [(1.5, 0.0, 0.0), (-0.5, 0.25, 0.0), (0.0, 0.0, 2.0)]
+CELL_MAGS = [1.5, 0.5590169943749475, 2.0]
+
+
+def test_a_binary_vector_field_reads_as_vectors_and_as_magnitudes(wall, tmp_path):
+    """The fixture `tests/test_toolbox_wall.py` never had: every binary test here
+    wrote `yPlus` as a `volScalarField`, and every `volVectorField` test used the
+    ascii writer, which is why #162 sat under #138's headline number.
+
+    Both readings come off the one decoder, so a binary vector cannot be right in one
+    tool and wrong in the other -- which is exactly what #163 was.
+    """
+    flat = [c for face in CELL_U for c in face]
+    path = write_binary_field(tmp_path / "1500" / "U", {"outlet": flat},
+                              cls="volVectorField", items=3, kind="vector")
+    text, payloads = wall.read_field(path)
+    assert wall.field_components(text) == 3, "the FoamFile header comes back with the body"
+
+    mags = wall.boundary_values(text, payloads)["outlet"]
+    assert mags.tolist() == pytest.approx(CELL_MAGS)
+
+    vectors = wall.boundary_vectors(text, payloads)["outlet"]
+    assert vectors.shape == (3, 3)
+    assert vectors.ravel().tolist() == pytest.approx(flat)
+    assert vectors[1][0] < 0, "the sign survives: a magnitude cannot tell inflow from out"
+
+    through_the_regex = wall.boundary_values(
+        path.read_text(encoding="utf-8", errors="replace")
+    ).get("outlet")
+    assert through_the_regex is None or through_the_regex.tolist() != pytest.approx(CELL_MAGS), (
+        "the fixture has to be a file the ascii reader gets wrong, or it proves nothing"
+    )
+
+
+def test_a_scalar_field_has_no_vectors_to_give(wall, tmp_path):
+    """Three numbers a face is the shape `boundary_vectors` promises, and a
+    `volScalarField` cannot supply it -- so it says so rather than reshaping."""
+    path = write_field(tmp_path / "0.5" / "yPlus", "volScalarField",
+                       {"hull": _scalars([1.0, 2.0, 3.0])})
+    text, payloads = wall.read_field(path)
+    assert wall.boundary_vectors(text, payloads) == {"hull": None}
+
+
+def test_a_nonuniform_list_that_does_not_hold_what_it_declares_is_not_read(wall, tmp_path):
+    """The declared count is checked against what came out of the body. This is what
+    makes a size of one trustworthy downstream: `heat.patch_mean` broadcasts a single
+    value over a whole patch, and the way a wrong answer got through that silently was
+    a `nonuniform` list of hundreds from which a number regex scraped exactly one
+    (#163)."""
+    path = write_field(tmp_path / "0.5" / "T",
+                       "volScalarField",
+                       {"wall": "nonuniform List<scalar> 8(300 301 302)"})
+    text, payloads = wall.read_field(path)
+    assert wall.boundary_scalars(text, payloads) == {"wall": None}

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import threading
 
-from openreynolds.store import Store, list_studies, new_study_id
+import pytest
+
+from openreynolds.store import Store, TornRecord, list_studies, new_study_id
 
 
 def test_sequence_numbers_are_monotonic_across_a_restart(tmp_path):
@@ -107,3 +110,131 @@ def test_list_studies_of_nothing(tmp_path):
 def test_study_ids_sort_by_time():
     assert new_study_id() < new_study_id() or True  # same second is allowed
     assert len(new_study_id()) == len("20260823-191500-abcd")
+
+
+# -- the record is not destroyed by writing it (#167, #168) --------------------
+
+
+def test_a_record_that_will_not_parse_is_refused_rather_than_read_as_a_blank_study(tmp_path):
+    """It used to load as a default `Session` -- `created_at` of now, no model, no
+    home, no jobs -- which the next `save()` wrote over the real record. One
+    `openreynolds label` then destroyed a study permanently and exited 0 (#167)."""
+    root = tmp_path / "studies"
+    store = Store(root, "s1")
+    store.session.model = "claude-opus-5"
+    store.session.home = "/work/s1"
+    store.session.capture_seq = 135
+    store.record_job("job-1", cmd="simpleFoam", name="solve")
+    store.save()
+    record = root / "s1" / "session.json"
+    whole = record.read_text(encoding="utf-8")
+    record.write_text(whole[: len(whole) // 2], encoding="utf-8")
+
+    with pytest.raises(TornRecord):
+        Store(root, "s1")
+    assert record.read_text(encoding="utf-8") == whole[: len(whole) // 2], \
+        "nothing was written to it"
+
+    torn: list[str] = []
+    assert list_studies(root, torn) == [], "it is not listed with invented facts"
+    assert torn == ["s1"], "it is named instead"
+
+    record.write_text(whole, encoding="utf-8")
+    back = Store(root, "s1").session
+    assert (back.model, back.home, back.capture_seq, len(back.jobs)) == (
+        "claude-opus-5", "/work/s1", 135, 1)
+
+
+def test_a_save_never_leaves_half_a_record_on_disk(tmp_path):
+    """The write used to truncate in place, so a concurrent reader saw part of a
+    record -- and `_load` turned that into the blank study above."""
+    root = tmp_path / "studies"
+    store = Store(root, "s1")
+    store.save()
+    record = root / "s1" / "session.json"
+    torn: list[int] = []
+    stop = threading.Event()
+
+    def read() -> None:
+        while not stop.is_set():
+            try:
+                text = record.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            try:
+                json.loads(text)
+            except ValueError:
+                torn.append(len(text))
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        for n in range(40):
+            store.session.tags = ["a-tag-long-enough-to-move-the-size-around"] * (n % 3)
+            store.save()
+    finally:
+        stop.set()
+        reader.join(5)
+    assert torn == []
+
+
+def test_a_live_store_does_not_revert_what_another_writer_filed(tmp_path):
+    """A session holds one Store for its whole run and saves the whole record on every
+    message, so `openreynolds label` from a second terminal was reverted -- and the
+    project the session loaded at startup came back with it (#168). Each writer owns
+    the fields it changed."""
+    root = tmp_path / "studies"
+    live = Store(root, "s1")
+    live.session.project = "Other"
+    live.session.model = "claude-opus-5"
+    live.save()
+    live = Store(root, "s1")             # the session, now running
+
+    filing = Store(root, "s1")           # `openreynolds label`, a second terminal
+    filing.session.project = "Important"
+    filing.session.tags = ["keepme"]
+    filing.save()
+
+    live.append_message("assistant", "the session carries on and saves")
+    on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
+    assert (on_disk["project"], on_disk["tags"]) == ("Important", ["keepme"])
+
+    # A field edited in place is still a changed field. `commands.tag_lines` appends
+    # to and removes from `session.tags`, and a baseline sharing that list with the
+    # record would change when it does -- so dropping a tag would look like no
+    # change and never be written, which is what `label --untag` did.
+    filing = Store(root, "s1")
+    filing.session.tags.remove("keepme")
+    filing.save()
+    on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
+    assert on_disk["tags"] == []
+    filing.session.tags.append("again")
+    filing.save()
+    assert json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))["tags"]         == ["again"]
+
+    # and it still owns its own fields, over more than one save
+    live.record_job("job-1", cmd="simpleFoam", name="solve")
+    for _ in range(3):
+        live.append_message("assistant", "again")
+    on_disk = json.loads((root / "s1" / "session.json").read_text(encoding="utf-8"))
+    assert (on_disk["project"], on_disk["tags"]) == ("Important", ["again"])
+    assert (on_disk["model"], on_disk["capture_seq"], list(on_disk["jobs"])) == (
+        "claude-opus-5", 4, ["job-1"])
+
+
+def test_a_live_store_mends_a_record_torn_under_it_rather_than_dying_on_it(tmp_path):
+    """`save()` refusing to write over an unparseable file would kill a running
+    session on its next message. It does not have to: `_load` refuses, so a Store
+    that exists holds a complete record, and writing that over the wreckage is a
+    repair rather than #167's loss of one."""
+    root = tmp_path / "studies"
+    live = Store(root, "s1")
+    live.session.model = "claude-opus-5"
+    live.session.capture_seq = 7
+    live.save()
+    record = root / "s1" / "session.json"
+    record.write_text(record.read_text(encoding="utf-8")[:40], encoding="utf-8")
+
+    live.append_message("assistant", "the session carries on")
+    back = Store(root, "s1").session
+    assert (back.model, back.capture_seq) == ("claude-opus-5", 8)

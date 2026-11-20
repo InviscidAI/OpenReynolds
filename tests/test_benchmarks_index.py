@@ -36,6 +36,7 @@ def _load(name: str, directory: Path):
 
 felix = _load("felix_grade", BENCHMARKS / "felix")
 moving_mesh = _load("moving_mesh_grade", BENCHMARKS / "moving_mesh")
+thermal_stress = _load("thermal_stress_grade", BENCHMARKS / "thermal_stress")
 
 
 # -- the index points at things that are there -----------------------------------------
@@ -103,6 +104,41 @@ def test_the_index_cites_ghia_with_the_tables_the_grader_reads():
     assert "Ghia, Ghia & Shin (1982)" in index
     assert "48" in index and "387-411" in index
     assert "Table I" in index and "Table II" in index
+
+
+def test_the_thermal_stress_numbers_are_the_ones_its_grader_computes():
+    """The one case here whose reference is derived rather than published, so the
+    rule this file exists for applies with nothing else to fall back on: -220.0000 MPa
+    and -314.2857 MPa appear in both indexes and in the case's own README, and if
+    `exact()` ever computed something else those three documents would be the only
+    place the old answer still lived.
+
+    Both plane states, because the whole point of grading the second one is that
+    1/(1-nu) is the only place nu appears in the stress.
+    """
+    settings = {
+        "E_pa": 2.0e11, "nu": 0.3, "alpha_per_k": 1.1e-5, "delta_t_k": 100.0,
+        "plane_stress": True, "factor": 1.0,
+    }
+    plane_stress = thermal_stress.exact(settings, thermal_stress.np.array([100.0]))
+    settings = dict(settings, plane_stress=False, factor=1.0 / (1.0 - 0.3))
+    plane_strain = thermal_stress.exact(settings, thermal_stress.np.array([100.0]))
+
+    quoted = {
+        "plane stress": (plane_stress["sigma_xx"][0], "-220.0000"),
+        "plane strain": (plane_strain["sigma_xx"][0], "-314.2857"),
+    }
+    texts = [INDEX.read_text(encoding="utf-8"),
+             (BENCHMARKS / "thermal_stress" / "README.md").read_text(encoding="utf-8")]
+    for state, (computed, printed) in quoted.items():
+        assert f"{computed / 1e6:.4f}" == printed, (
+            f"{state}: the grader computes {computed / 1e6:.4f} MPa and the indexes "
+            f"quote {printed} MPa")
+        for text in texts:
+            assert printed in text, f"{state}: {printed} MPa is not in one of the indexes"
+    # and that the two differ by exactly the factor that carries nu
+    assert plane_strain["sigma_xx"][0] / plane_stress["sigma_xx"][0] == pytest.approx(
+        1.0 / (1.0 - 0.3))
 
 
 def test_the_graetz_value_is_quoted_to_the_digits_it_is_exact_to():

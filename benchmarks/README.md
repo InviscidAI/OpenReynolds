@@ -27,10 +27,23 @@ below the examination is what found the defect.
 | [sloshing, first mode](sph/) | the oscillation period | `omega^2 = g k tanh(k h)`, `k = pi/L`: linear theory, **exact** (Lamb, *Hydrodynamics*, 6th ed., art. 228) | **-4.75%**, 1.1257 s against 1.1818 s | **the sign is the diagnosis.** Short means the effective tank is shorter than the one asked for, which is the wall-offset error dynamic boundary particles have. Underneath it, 0.6% from the 5%-of-depth amplitude against a linear reference, and 20 particles across the depth |
 | [dam break](sph/) | the surge front position | Martin & Moyce (1952), *Phil. Trans. R. Soc. A* **244**, 312-324 -- **the paper could not be read**, the publisher refuses the request | **reported, not graded**: Z = 0.975 at T = 0 rising to 3.943 at T = 3.00. The run is graded only on containment and on weak compressibility holding | which non-dimensionalisation the paper defines is unverified, and `t sqrt(2g/a)` and `t sqrt(g/a)` are both in circulation and differ by 1.414 at every point. Quoting it from a secondary source is the error the rest of this file argues hardest against, so it is not quoted |
 
+| [thermal stress, constrained bar](thermal_stress/) | `sigma_xx` through the bar, plane stress | **closed form, exact**: `sigma_xx(y) = -E alpha T(y)` with `T(y) = dT (1 - y/H)`, derived in [thermal_stress/README.md](thermal_stress/README.md) from the three kinematic facts the boundaries impose and the solver's own constitutive law. -220.0000 MPa on the hot face for the template's steel | `sigma_xx` vs `-E alpha T` at the solver's own T: **RMS 0.094%, max 0.300%** of the 220.0000 MPa peak. Extrapolated to the hot face **-220.2858 MPa, +0.130%**. `max sigmaEq` **+0.261%** on the gmsh mesh and **0.00%** on the gate's uniform grid | **the mesh, and only the mesh.** The answer is mesh-independent, so the gate's `blockMesh` grid reproduces it to 0.00% and these few tenths of a percent are the gmsh quad mesh: Blossom recombination leaves it mildly non-orthogonal (`checkMesh` 27.5 deg on the comparable duct), and `grad(D)` is `leastSquares` on it. The reference itself has no error bar to hide inside, which is the point of choosing it |
+| " | the same under `planeStress no` | the same algebra down the other branch of `readMechanicalProperties.H`: `-E alpha T(y)/(1-nu)`, **exact**, -314.2857 MPa | the same: **RMS 0.162%, max 0.556%** of 314.2857 MPa, hot face **-314.6932 MPa, +0.130%**, `max sigmaEq` **+0.324%** and **0.00%**. The two states' ratio is **1.429471** against an exact 1.428571, **+0.063%** | the same mesh, and the ratio is the cleanest number here because whatever the mesh does to one state it does to the other. Graded as well as the plane-stress run because that one contains E and alpha only as their product and so cannot distinguish a wrong `nu`; these two are 43% apart |
+
 `tutorials/` holds the three cheap cases with prompts you can run as they are.
 `felix/` and `moving_mesh/` hold the four with graders, and both graders run on every
 pull request against trimmed copies of the real runs in `tests/data/`.
 
+`thermal_stress/` is the one with no fixture behind it, because a solid-mechanics case
+needs OpenFOAM to produce one and the `benchmarks` job has none. Its grader is held to
+the closed form by `tests/test_benchmark_thermal_stress.py`, which writes the exact
+profile and also writes four wrong ones it has to reject; the solver is held to it by
+`tests/test_journey_thermal_stress.py` in the `journey` job, which runs the template,
+solves both plane states in the image and runs the grader on what came out, and by the
+`solidDisplacementFoam` gate in `docker/workspace/check.sh`, which asserts the same
+number out of the solver's own log. Nothing was installed for it: `solidDisplacementFoam`
+is standard OpenFOAM and has been in the image since the first build. What was missing
+was that nothing here knew it.
 `lbm/` and `sph/` are the two whose graders **solve** rather than reading a finished run,
 and the difference is worth stating rather than hiding. The four above grade an OpenFOAM
 or Felix case that cost a cluster an hour, so the run happens once and its output is

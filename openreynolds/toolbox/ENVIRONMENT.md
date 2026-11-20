@@ -46,6 +46,7 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
+- `templates/` in the toolbox holds six working scripts, not snippets: `duct2d.py` (a
 - `lbm.py` and `sph.py` in the toolbox are solvers, and the only two here that are not
   OpenFOAM applications: a D2Q9 two-relaxation-time lattice Boltzmann and a 2D weakly
   compressible SPH, both in numpy, which is already installed. They are in the toolbox
@@ -54,25 +55,6 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   a turbulence model, both are explicit and second order, and what each was measured
   against is in `benchmarks/lbm/` and `benchmarks/sph/`. `advise.py` lists them beside
   the image's applications for the class of case it reads.
-- `templates/` in the toolbox holds five working scripts, not snippets: `duct2d.py` (a
-  closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
-  `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
-  meshed body-fitted with tetrahedra, converted and retyped), `free_surface.py` (a
-  two-phase VOF dam break: a tank, a water column set by `setFields` as geometry, an open
-  top, and a complete `interFoam` case -- `p_rgh`, `constant/g`, two phases with their own
-  `rho`/`nu` and `sigma`, `maxAlphaCo` as well as `maxCo`), `rotating.py` (a frozen-rotor
-  MRF bladed mixer: two cell zones from two physical volumes, a complete `simpleFoam` case
-  with `constant/MRFProperties`, `omega` in rad/s against an editable rpm and the 9.5493
-  between them stated in the case and in the output, and the case itself saying that blade
-  passing and the unsteady wake are absent rather than small), and `porous.py` (a
-  Darcy-Forchheimer slab across a duct: `d` and `f` derived from a measured pressure-drop
-  curve by a Forchheimer plot, or from a particle size and a void fraction by Ergun, with
-  the arithmetic and the residual written into `constant/porosityProperties`, run by
-  `porousSimpleFoam`). The last three are the ones whose dictionaries are the real ones
-  rather than stubs for the mesh tools. All five run `checkMesh` and end with a
-  `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
-  top, and run it -- the whole 2D, 3D, two-phase, rotating or porous recipe, gotchas
-  included, rather than a page to reconstruct from memory.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 

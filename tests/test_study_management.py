@@ -264,6 +264,23 @@ def byok_study(root, study_id="20261115-090000-ffff", **fields):
     return store
 
 
+def test_a_token_class_with_no_rate_is_no_figure_rather_than_a_free_one(studies_dir):
+    """#191: `spend` prices a class its rates do not list at zero, so 50M tokens of one
+    came out as $0.03. A figure that leaves part of the run out is not shown."""
+    byok_study(studies_dir, tokens={"input": 1_000, "output": 1_000, "reasoning": 50_000_000})
+
+    text = CliRunner().invoke(cli.main, ["dashboard"])
+    data = CliRunner().invoke(cli.main, ["dashboard", "--json"])
+
+    row, = json.loads(data.stdout)["studies"]
+    assert row["own_key"] is True and row["cost_usd"] is None
+    assert "$" not in text.output, text.output
+    assert "has no rate here" in text.output, text.output
+    # A listed class counted as zero still prices: nothing of the run is left out.
+    assert catalog.cost_usd(byok_study(studies_dir, tokens={"input": 1_000, "reasoning": 0}).session) \
+        == pytest.approx(1_000 * 5.00 / 1e6)
+
+
 def test_a_job_row_still_reading_running_is_unknown_and_nothing_is_started(
     studies_dir, no_workspace
 ):
@@ -645,7 +662,28 @@ def test_clone_carries_nothing_of_the_run_that_happened(studies_dir):
     assert fresh.jobs == {}
     assert fresh.runtime_s == 0.0 and fresh.tokens == {}
     assert fresh.ended_at == "" and fresh.checkpoint is None
-    assert fresh.remote_study_id == "" and fresh.home == ""
+    assert fresh.remote_study_id == ""
+
+
+def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir):
+    """#170: a clone left without a home was read on resume as a study from before
+    homes, and opened in `/work` among every other study's files. It is resumed the
+    way the study it came from is: in a directory named after it."""
+    with_a_transcript(studies_dir)
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    fresh, = [item for item in list_studies(studies_dir)
+              if item.cloned_from == "20261115-090000-ffff"]
+    assert fresh.home == f"/work/{fresh.study_id}"
+    assert "its workspace starts empty" in said.output
+    # A push before the clone runs would land on another study's workspace.
+    assert "once it is running" in said.output
+    assert cli._home_path(Store(studies_dir, fresh.study_id), resuming=True) == f"/work/{fresh.study_id}"
+
+    # And a study from before homes still keeps the root it has always had.
+    legacy = Store(studies_dir, "20261115-090000-ffff")
+    legacy.session.home = ""
+    legacy.save()
+    assert cli._home_path(Store(studies_dir, "20261115-090000-ffff"), resuming=True) == "/work"
 
 
 def test_rerun_reproduces_the_opening_request_word_for_word(studies_dir):

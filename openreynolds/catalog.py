@@ -18,10 +18,10 @@ as a multiple of a normal study (`ceiling.py`), a money clause in a service mess
 stripped out before it is shown (`backend.base.without_money`), and `/status` reports
 tokens. So `row()` reports wall-clock time and token counts for every study, and a
 dollar figure only where the person's own key paid their vendor directly -- a provider
-recorded on the study, which is not `reynolds`, and whose model has a known rate
-(`llm.presets.prices`). Everything else gets `cost_usd: None`, which is the absence of
-a figure and not a figure of zero: an unpriced run reported as $0.00 is the bug
-`prices()` returns None to prevent.
+recorded on the study, which is not `reynolds`, and whose model and every token
+class it counted have a known rate (`llm.presets.priced`, #191). Everything else gets
+`cost_usd: None`, which is the absence of a figure and not a figure of zero: an
+unpriced run reported as $0.00 is the bug `prices()` returns None to prevent.
 
 STATE IS NOT GUESSED. A job row says `running` because that is how the session that
 started it left it; whether the process is alive is a question for the workspace
@@ -37,8 +37,9 @@ import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
+from .backend.base import WORKSPACE_ROOT
 from .compare import identity
-from .llm.presets import REYNOLDS, prices, spend
+from .llm.presets import REYNOLDS, priced
 from .store import Session, Store, list_stores, new_study_id, tag_name
 from .watch import conversation_rows
 
@@ -94,14 +95,13 @@ def cost_usd(session: Session) -> float | None:
     figure rather than a figure of zero.
 
     None for a hosted study whatever it spent (the money line), for a study whose
-    provider was never recorded, for a model with no rate in `PRICE_PER_MTOK`, and for
-    a study whose sessions all predate the token record.
+    provider was never recorded, for a model with no rate in `PRICE_PER_MTOK` or a
+    token class its rates do not list (#191), and for a study whose sessions all
+    predate the token record.
     """
     if not own_key(session) or not session.tokens:
         return None
-    if prices(session.model, session.provider) is None:
-        return None
-    return spend(session.tokens, session.model, session.provider)
+    return priced(session.tokens, session.model, session.provider)
 
 
 # -- rows ----------------------------------------------------------------------
@@ -134,9 +134,12 @@ def row(studies_dir: Path, store: Store) -> dict[str, Any]:
     }
 
 
-def rows(studies_dir: Path) -> list[dict[str, Any]]:
-    """Every local study, newest first, as rows."""
-    return [row(studies_dir, store) for store in list_stores(studies_dir)]
+def rows(studies_dir: Path, torn: list[str] | None = None) -> list[dict[str, Any]]:
+    """Every local study, newest first, as rows.
+
+    `torn` collects the ids of studies whose record will not parse, which are left
+    out rather than shown with invented facts (`store.list_stores`)."""
+    return [row(studies_dir, store) for store in list_stores(studies_dir, torn)]
 
 
 # -- filters -------------------------------------------------------------------
@@ -175,9 +178,10 @@ def filtered(
     tags: Iterable[str] = (),
     text: str = "",
     want: str = "",
+    torn: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     tags = tuple(tags)
-    return [item for item in rows(studies_dir)
+    return [item for item in rows(studies_dir, torn)
             if matches(item, project, tags, text, want)]
 
 
@@ -236,7 +240,7 @@ CARRIED = ("project", "tags", "title", "solver", "model", "provider", "base_url"
 """What a clone takes from the study it came from: how the person filed it, and how
 the session was set up. Not `instance_id`, `remote_study_id`, `home`, `jobs`,
 `checkpoint` or the accounting -- those are facts about the run that happened, and a
-new study has not happened yet."""
+new study has not happened yet. A clone's `home` is its own, as a new study's is."""
 
 
 def duplicate(studies_dir: Path, study_id: str, rerun: bool = False) -> tuple[str, str]:
@@ -273,6 +277,9 @@ def duplicate(studies_dir: Path, study_id: str, rerun: bool = False) -> tuple[st
         setattr(fresh.session, name, getattr(old.session, name))
     fresh.session.tags = list(old.session.tags)
     fresh.session.cloned_from = study_id
+    # Its own directory, as any new study gets. Left empty, a resume read the clone
+    # as a study from before homes and opened it in the shared workspace root (#170).
+    fresh.session.home = f"{WORKSPACE_ROOT}/{fresh.session.study_id}"
     fresh.save()
 
     if old.files_dir.is_dir():
