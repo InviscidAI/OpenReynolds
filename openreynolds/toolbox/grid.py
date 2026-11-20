@@ -729,14 +729,9 @@ def quantity_from_case(case: Path, quantity: str, tail: int = 1) -> dict[str, An
 
     wanted, column = split_quantity(quantity)
 
-    series: dict[str, list[Path]] = {}
-    for dat in sorted(base.rglob("*.dat")):
-        if not dat.is_file():
-            continue
-        parts = dat.relative_to(base).parts
-        name, _ = results.series_name(dat)
-        function = "/".join(parts[:-2] if len(parts) >= 3 else parts[:-1])
-        series.setdefault(f"{function}/{name}" if function else name, []).append(dat)
+    # `results.find_series` is this walk: it moved there so `spectra.py` could reach
+    # the same five series this does (#189), rather than a second copy of it here.
+    series = results.find_series(case)
 
     found: list[dict[str, Any]] = []
     columns_seen: set[str] = set()
@@ -791,19 +786,16 @@ def split_quantity(quantity: str) -> tuple[str | None, str]:
     correctly, and then asked for a syntax that did not exist. This is that syntax. No
     colon means the whole string is the column, which is what every existing call is.
     """
-    series, separator, column = quantity.rpartition(":")
-    if not separator:
-        return None, quantity
-    return series, column
+    import results  # the one implementation, shared with spectra.py
+
+    return results.split_series_column(quantity)
 
 
 def _series_matches(key: str, wanted: str) -> bool:
-    """Whether a series key is the one asked for: a case-insensitive substring, so
-    `forces`, `forces/moment.dat` and `moment.dat` all name the same series and a
-    partial name that still fits two series is answered by listing both rather than by
-    picking. Backslashes are normalised because a reader copying a series out of the
-    report on Windows copies them."""
-    return wanted.lower().replace("\\", "/") in key.lower()
+    """`results.series_matches`, shared with `spectra.py` since #189."""
+    import results
+
+    return results.series_matches(key, wanted)
 
 
 def _column_index(columns: list[str], quantity: str) -> int | None:

@@ -113,6 +113,7 @@ threshold without having to rerun anything. Exit code is 0 whatever it finds.
     python3 spectra.py postProcessing/forceCoeffs/0/coefficient.dat --column Cd --png fft.png
     python3 spectra.py history.csv --column y --json spectra.json
     python3 spectra.py /work/case --list
+    python3 spectra.py /work/case --column torqueOuter/moment.dat:viscous_z
 """
 
 from __future__ import annotations
@@ -374,21 +375,89 @@ def read_file_series(path: Path) -> dict[str, Any]:
     return data
 
 
-def read_source(source: Path) -> dict[str, Any]:
+def case_histories(case: Path) -> dict[str, dict[str, Any]]:
+    """Every series the case logged, read and stitched, keyed `function/name`.
+
+    Through `results.find_series` and `results.read_history`, which is the part nobody
+    should write twice: a restart writes a second time directory holding a file of the
+    same name, and an abandoned run leaves rows past the start of the run that replaced
+    it. Reading only the newest directory loses half the history and merging all of them
+    blindly makes the record end in the run that was thrown away.
+
+    Every series and not the force ones alone. `find_force_files` keeps only the files
+    whose stem starts `force` or `coefficient`, and `choose_force_series` then picks one
+    of those by rank and then alphabetically with no tie-break reported: on
+    `20260912-190302-ae39/grid/conf_L3` that reached `forces/force.dat` out of five
+    series, and `--list` printed it as though it were the case (#189).
+    """
+    grouped = results.find_series(case)
+    if not grouped:
+        raise results.Unavailable(
+            f"no .dat series under {(case / 'postProcessing').as_posix()}")
+    return {key: results.read_history(grouped[key]) for key in sorted(grouped)}
+
+
+def holds_column(history: dict[str, Any], column: str) -> bool:
+    """Whether a series has that column, by exact then case-insensitive name.
+
+    Nothing looser, on `grid._column_index`'s rule: a substring match would take `Cd`
+    out of `Cd(f)` or `Cdf`, which are different numbers.
+    """
+    columns = list(history["columns"])
+    return column in columns or column.lower() in [name.lower() for name in columns]
+
+
+def choose_history(histories: dict[str, dict[str, Any]], column: str,
+                   where: str) -> tuple[str, dict[str, Any]]:
+    """Which series the column asked for lives in, refusing rather than picking.
+
+    `grid.py` learned this in #146 and this script had not: an ambiguous name is
+    answered by naming the candidates, and `SERIES:COLUMN` is how the answer gets used.
+    Every column of a `forces` function object appears in both `force.dat` and
+    `moment.dat`, so a bare column name is ambiguous on every case that logs forces,
+    and picking the alphabetical first is picking which number the reader is looking at.
+    """
+    wanted, name = results.split_series_column(column) if column else (None, "")
+    matched = {key: history for key, history in histories.items()
+               if wanted is None or results.series_matches(key, wanted)}
+    if not matched:
+        raise results.Unavailable(
+            f"no series under {where} matches {wanted!r}; --column takes SERIES:COLUMN "
+            "and the series here are " + ", ".join(sorted(histories)))
+    if not name:
+        if len(matched) == 1:
+            return next(iter(matched.items()))
+        raise results.Unavailable(
+            f"{len(matched)} series under {where} and no --column to say which: "
+            + ", ".join(sorted(matched))
+            + ". --list prints their columns; --column takes SERIES:COLUMN")
+    holders = [key for key, history in matched.items() if holds_column(history, name)]
+    if not holders:
+        seen = sorted({c for history in matched.values() for c in history["columns"]})
+        raise results.Unavailable(
+            f"no column {name!r} under {where}; the columns there are "
+            + (", ".join(seen) or "none that parsed"))
+    if len(holders) > 1:
+        candidates = [f"{key}:{name}" for key in holders]
+        raise results.Unavailable(
+            f"{name!r} is a column in {len(holders)} series here; name the one you mean "
+            f"as SERIES:COLUMN -- --column {candidates[0]} -- since picking for you is "
+            "picking which number this is about. The candidates are "
+            + ", ".join(candidates))
+    return holders[0], matched[holders[0]]
+
+
+def read_source(source: Path, column: str = "") -> dict[str, Any]:
     """A history from either a case directory or a single series file.
 
-    A case goes through `results.find_force_files` / `choose_force_series` /
-    `read_history`, which is the part nobody should write twice: a restart writes a
-    second time directory holding a file of the same name, and an abandoned run
-    leaves rows past the start of the run that replaced it. Reading only the newest
-    directory loses half the history and merging all of them blindly makes the
-    record end in the run that was thrown away.
+    The column is read here and not only in `pick_column`, because on a case it is what
+    says WHICH series is being read: the same name in two of them is a question and not
+    a default (#189).
     """
     source = Path(source)
     if source.is_dir():
-        grouped = results.find_force_files(source)
-        key = results.choose_force_series(grouped)
-        history = results.read_history(grouped[key])
+        where = (source / "postProcessing").as_posix()
+        key, history = choose_history(case_histories(source), column, where)
         history["series"] = key
         return history
     if not source.is_file():
@@ -407,6 +476,9 @@ def pick_column(history: dict[str, Any], name: str) -> str:
     which on a `forces.dat` is the x component of the pressure force.
     """
     columns = list(history["columns"])
+    # `read_source` has already spent the series half of a `SERIES:COLUMN` on choosing
+    # which series this is; what is left here is the column name (#189).
+    name = results.split_series_column(name)[1] if name else name
     if name:
         if name not in columns:
             raise results.Unavailable(f"no column {name!r} in {history['series']}; it has {columns}")
@@ -838,7 +910,7 @@ def analyse(source: Path, column: str = "", segments: int = 4,
     settling section finds where that transient ends; `--from` is how the number it
     found gets used, rather than being printed next to a spectrum it invalidates.
     """
-    history = read_source(source)
+    history = read_source(source, column)
     if not history["rows"]:
         raise results.Unavailable(f"{history['series']} has no data rows")
     name = pick_column(history, column)
@@ -1117,7 +1189,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="a case directory (its force/coefficient history is found) "
                              "or a single .dat/CSV series file")
     parser.add_argument("--column", default="",
-                        help="which column to analyse (default: the first worth drawing)")
+                        help="which column to analyse, or SERIES:COLUMN where the name "
+                             "is in more than one series (default: the first worth "
+                             "drawing, where the case logged only one series)")
     parser.add_argument("--list", action="store_true",
                         help="print the columns available and stop")
     parser.add_argument("--from", dest="start", type=float, default=None,
@@ -1144,9 +1218,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.list:
-            history = read_source(args.source)
-            print(f"series: {history['series']}")
-            print(f"columns: {', '.join(history['columns'])}")
+            # What is on disk, which is what a list is for. It printed one series of a
+            # real case's five before #189, and the one the study was about was not it.
+            source = Path(args.source)
+            if source.is_dir():
+                histories = case_histories(source)
+            else:
+                one = read_source(source)
+                histories = {one["series"]: one}
+            print(f"{len(histories)} series under {source.as_posix()}:")
+            for key, history in histories.items():
+                print(f"  {key}")
+                print("    columns: "
+                      + (", ".join(history["columns"]) or "none that parsed"))
+            print("--column takes a column name, or SERIES:COLUMN where a name is in "
+                  "more than one series")
             return 0
         found = analyse(args.source, column=args.column, segments=max(1, args.segments),
                         length=args.length, speed=args.speed, start=args.start,

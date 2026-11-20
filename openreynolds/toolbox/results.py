@@ -415,6 +415,57 @@ def written_order(path: Path) -> tuple[float, tuple[int, float, str]]:
     return modified, time_key(path.parent.name)
 
 
+def find_series(case: Path | str) -> dict[str, list[Path]]:
+    """EVERY `.dat` series under `postProcessing`, keyed `function/name`.
+
+    `find_force_files` is this walk restricted to files whose stem starts `force` or
+    `coefficient`, and `choose_force_series` then picks one of those with no tie-break
+    reported. That pair is the right reader for "plot this case's coefficients" and the
+    wrong one for "what is in this case": on a real grid study holding five series over
+    three function objects it reached one, and `torqueOuter/moment.dat` -- the quantity
+    the study was about -- was unreachable (#189).
+
+    `grid.py` already walked the whole of `postProcessing` for its `SERIES:COLUMN`, so
+    this is that walk moved here, in one place, rather than a third copy of it: two
+    tools disagreeing about what a case holds is the shape of #146 and #189 both.
+    """
+    base = Path(case) / "postProcessing"
+    if not base.is_dir():
+        return {}
+    grouped: dict[str, list[Path]] = {}
+    for dat in sorted(base.rglob("*.dat")):
+        if not dat.is_file():
+            continue
+        parts = dat.relative_to(base).parts
+        function = "/".join(parts[:-2] if len(parts) >= 3 else parts[:-1])
+        name, _ = series_name(dat)
+        grouped.setdefault(f"{function}/{name}" if function else name, []).append(dat)
+    for paths in grouped.values():
+        paths.sort(key=written_order)
+    return grouped
+
+
+def split_series_column(text: str) -> tuple[str | None, str]:
+    """`torqueOuter/moment.dat:viscous_z` as its series and its column.
+
+    One syntax for both tools that need it. No colon means the whole string is the
+    column, which is what every existing call is.
+    """
+    series, separator, column = text.rpartition(":")
+    if not separator:
+        return None, text
+    return series, column
+
+
+def series_matches(key: str, wanted: str) -> bool:
+    """Whether a series key is the one asked for: a case-insensitive substring, so
+    `forces`, `forces/moment.dat` and `moment.dat` all name the same series and a
+    partial name that still fits two series is answered by listing both rather than by
+    picking. Backslashes are normalised because a reader copying a series out of a
+    report on Windows copies them."""
+    return wanted.lower().replace("\\", "/") in key.lower()
+
+
 def choose_force_series(grouped: dict[str, list[Path]]) -> str:
     """Which series to plot when a case logged several.
 

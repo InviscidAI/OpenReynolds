@@ -347,6 +347,106 @@ def test_the_default_column_is_one_worth_drawing(tmp_path):
     assert spectra.analyse(tmp_path)["column"] == "Cd"
 
 
+def forces_case(root: Path) -> Path:
+    """A case logging two function objects, which is what a real one does.
+
+    `forces` and `torqueOuter` each write a `force.dat` and a `moment.dat`, so every
+    column name in the case is in four series at once. Shaped on
+    `studies/20260912-190302-ae39/files/20260912-190302-ae39/grid/conf_L3`, which holds
+    exactly this plus a `minMaxU/fieldMinMax.dat` (#189).
+    """
+    t, x = sine(1.7, span=10.0, samples=1001)
+    for function in ("forces", "torqueOuter"):
+        for name in ("force.dat", "moment.dat"):
+            write_dat(root / "postProcessing" / function / "0" / name, t,
+                      {"total_z": np.full(t.size, 1.2),
+                       "pressure_z": x if (function, name) == ("torqueOuter", "moment.dat")
+                       else np.full(t.size, 0.3)})
+    return root
+
+
+def test_the_list_prints_every_series_on_disk_and_not_one_of_them(tmp_path, capsys):
+    """#189: `--list` printed `series: forces/force.dat` on a case holding five, through
+    `choose_force_series`, which ranks and then takes the alphabetical first and reports
+    no tie-break. The series the grid study was about was not reachable at all."""
+    case = forces_case(tmp_path)
+
+    assert spectra.main([str(case), "--list"]) == 0
+    text = capsys.readouterr().out
+
+    assert "4 series" in text
+    for key in ("forces/force.dat", "forces/moment.dat",
+                "torqueOuter/force.dat", "torqueOuter/moment.dat"):
+        assert key in text, key
+    assert "pressure_z" in text and "SERIES:COLUMN" in text
+
+
+def test_an_ambiguous_column_is_refused_by_name_the_way_grid_py_refuses_it(tmp_path,
+                                                                          capsys):
+    """#189: `--column pressure_z` resolved silently to the alphabetical first series.
+    `grid.py` on the same case and column refuses and names all four candidates, so the
+    lesson of #146 was learned in one tool and not the other."""
+    case = forces_case(tmp_path)
+
+    with pytest.raises(spectra.results.Unavailable) as err:
+        spectra.analyse(case, column="pressure_z")
+    message = str(err.value)
+    assert "is a column in 4 series here" in message
+    assert "SERIES:COLUMN" in message
+    assert message.count("pressure_z") >= 5, "every candidate named, not just the pick"
+
+    assert spectra.main([str(case), "--column", "pressure_z"]) == 0, (
+        "a refusal is a reading here, as it is in reattach.py and layer_report.py"
+    )
+    assert "not measured:" in capsys.readouterr().out
+
+
+def test_series_colon_column_reaches_the_series_a_bare_name_cannot(tmp_path):
+    """#189: `torqueOuter/moment.dat` was unreachable. It is the only series here whose
+    `pressure_z` moves, so the frequency that comes back says which one was read."""
+    case = forces_case(tmp_path)
+
+    found = spectra.analyse(case, column="torqueOuter/moment.dat:pressure_z")
+    assert found["series"] == "torqueOuter/moment.dat"
+    assert found["column"] == "pressure_z"
+    assert abs(found["peak"]["frequency"] - 1.7) < found["peak"]["resolution"]
+
+    flat = spectra.analyse(case, column="forces/force.dat:pressure_z")
+    assert flat["series"] == "forces/force.dat"
+    assert flat["shedding"]["verdict"] == "no-variation", "that one does not move"
+
+
+def test_a_partial_series_name_that_still_fits_two_is_answered_by_listing_both(tmp_path):
+    """`results.series_matches` is a substring, shared with `grid.py`, so `forces` names
+    one function object and `moment.dat` names two series."""
+    case = forces_case(tmp_path)
+
+    assert spectra.analyse(case, column="forces/moment:pressure_z")["series"] == (
+        "forces/moment.dat")
+    with pytest.raises(spectra.results.Unavailable) as err:
+        spectra.analyse(case, column="moment.dat:pressure_z")
+    assert "is a column in 2 series here" in str(err.value)
+
+
+def test_several_series_and_no_column_says_which_are_there_rather_than_choosing(tmp_path):
+    """The same defect one step up: with no `--column` there is no single history to
+    default to, and `choose_force_series` defaulted to one anyway."""
+    case = forces_case(tmp_path)
+
+    with pytest.raises(spectra.results.Unavailable) as err:
+        spectra.analyse(case)
+    assert "4 series" in str(err.value) and "--list" in str(err.value)
+
+
+def test_a_case_with_one_series_still_needs_no_column_at_all(tmp_path):
+    """The common case, and the one every example in the docstring is: one function
+    object, so there is nothing to disambiguate and the default still applies."""
+    t, x = sine(1.7, span=10.0, samples=1001)
+    write_dat(tmp_path / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cd": np.full(t.size, 1.2), "Cl": x})
+    assert spectra.analyse(tmp_path)["column"] == "Cd"
+
+
 def test_a_csv_is_read_through_the_same_parser(tmp_path):
     """`results.parse_dat` already treats commas as separators and reads a
     `#`-commented header; a CSV's bare header row is the only difference, and it is
