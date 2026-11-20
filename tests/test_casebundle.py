@@ -219,3 +219,71 @@ def test_an_irreplaceable_tier_too_big_for_the_budget_is_sent_anyway(tmp_path):
     assert "definition" in report.included
     assert "may be refused" in " ".join(report.brief())
     assert _manifest(blob)["over_budget"] is True
+
+
+# -- where the case actually is -----------------------------------------------
+
+
+class _Local:
+    """A workspace on this machine, as `LocalBackend` and `DockerBackend` report it."""
+
+    def __init__(self, root):
+        self.workspace_root = str(root)
+
+
+class _Hosted:
+    """A hosted one, whose root is the instance's path and not a directory here."""
+
+    workspace_root = "/work"
+
+
+def test_a_local_study_bundles_from_its_workspace_not_from_the_empty_mirror(tmp_path):
+    """The case tier was empty for every local study, and this is why.
+
+    The mirror is filled by the close-down sync pulling files DOWN from an instance. A
+    local workspace has no instance and nothing to pull, so the mirror stays empty
+    while the files sit in the workspace. Measured on study 20261121-033555-a8ea, run
+    on a laptop with no OpenFOAM: `studies/<id>/files/` held 0 files and the session
+    printed "nothing to bundle: no case files reached this machine", with six real
+    ones -- three figures and three run reports -- in the workspace on the same disk.
+    """
+    from openreynolds.cli import _case_root
+    from openreynolds.store import Store
+
+    studies, work = tmp_path / "studies", tmp_path / "work"
+    store = Store(studies, "20261121-033555-a8ea")
+    case = work / "20261121-033555-a8ea" / "tank"
+    (case / "system").mkdir(parents=True)
+    (case / "system" / "controlDict").write_text("endTime 1;\n", encoding="utf-8")
+    (case / "log.icoFoam").write_text("Time = 1\nEnd\n", encoding="utf-8")
+
+    assert not any(store.fetch_dir().rglob("*")), "the mirror is empty, as it would be"
+    assert _case_root(store, _Local(work)) == case.parent
+
+    blob, report = casebundle.build(_case_root(store, _Local(work)),
+                                    study_id=store.session.study_id)
+    assert blob, report.brief()
+    assert report.files == 2, report.brief()
+    assert "definition" in report.included, report.brief()
+    assert "record" in report.included, report.brief()
+
+
+def test_a_hosted_study_still_bundles_from_the_mirror(tmp_path):
+    """`/work` is the instance's path, not a directory on this machine, so a hosted
+    study's files are only ever in the mirror the sync filled."""
+    from openreynolds.cli import _case_root
+    from openreynolds.store import Store
+
+    store = Store(tmp_path / "studies", "20260101-000000-aaaa")
+    assert _case_root(store, _Hosted()) == store.fetch_dir()
+
+
+def test_no_backend_or_a_workspace_that_is_gone_falls_back_to_the_mirror(tmp_path):
+    """An empty bundle is exactly what the old behaviour was, so the fallback cannot
+    be worse than it."""
+    from openreynolds.cli import _case_root
+    from openreynolds.store import Store
+
+    store = Store(tmp_path / "studies", "20260101-000000-aaaa")
+    assert _case_root(store, None) == store.fetch_dir()
+    assert _case_root(store, _Local(tmp_path / "never-made")) == store.fetch_dir()

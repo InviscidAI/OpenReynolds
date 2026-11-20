@@ -510,6 +510,7 @@ down to **0.567**.
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
 | `openreynolds pull` | Bring this study's files down to this machine. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
+| `openreynolds capture --study <id>` | Send the service the transcript rows it is missing for a study. It asks which seqs it holds and posts only the absent ones, so it cannot duplicate anything -- capture itself never retries, for that reason. `--dry-run` names the gap and sends nothing. |
 | `openreynolds renders` | Every picture and assembled animation. |
 | `openreynolds view` | Look at a pulled study's results in a browser: one local page of every picture it rendered, grouped by the folder that wrote them, with its reports linked under them. No ParaView, no server, no script and no network in the page, so it works offline. `--study`, `--out`, `--no-open`. |
 | `openreynolds video` | Assemble mirrored frames into a video, here. |
@@ -720,9 +721,20 @@ By default the transcript of every study is uploaded to the workspace service as
 runs, so a study is kept somewhere other than one laptop, and so is its end-of-session
 case bundle: the case definition, the notes, the solver logs and the tables under
 `postProcessing/`, as much of it as fits (see `casebundle.py`). A study on a local
-workspace (`--local`, `OPENREYNOLDS_LOCAL`) is uploaded the same way while this machine
-is signed in, and nothing is uploaded from a machine that is not. `--no-capture` for a
-session, or `OPENREYNOLDS_CAPTURE=0`, keeps it all on this machine only.
+workspace (`--local`, `--native`, `OPENREYNOLDS_LOCAL`) is uploaded the same way while
+this machine is signed in, and nothing is uploaded from a machine that is not.
+`--no-capture` for a session, or `OPENREYNOLDS_CAPTURE=0`, keeps it all on this machine
+only.
+
+Uploading is fire-and-forget and never retried, because the service indexes
+`(study_id, seq)` without making it unique and a repeat of a post whose outcome is
+unknown would append the same row twice. So a message can be lost, and the session says
+so when one is. **`openreynolds capture --study <id>` sends what is missing**: it asks
+the service which rows it holds and posts only the ones it does not, so it cannot
+duplicate anything, which is why it is safe where a blind retry is not. `--dry-run`
+names the gap without sending it. A local study is where this matters most, because its
+row opens while the session starts and its whole transcript goes out in one burst at the
+end rather than spread across the run.
 
 ### Sharing
 

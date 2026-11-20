@@ -33,6 +33,37 @@ _CONTENT_CAP = 20_000
 _NAME_AT_MOST = 6
 """How many dropped items are named individually before the warning counts kinds instead."""
 
+_DRAIN_PER_ITEM_S = 1.5
+"""Added to `close`'s budget for each item still queued.
+
+Each item is one POST and the worker is serial, so a flat budget is a budget for a
+queue of a known size and there is no such thing. Measured on study
+20261121-033555-a8ea: 18 messages queued and 10 posted, the eight that failed being
+seqs 0, 1, 3, 4, 5, 6, 8 and 16. A local study arrives here with its whole transcript
+queued, because its row is opened on a thread at session start and every message waits
+on that, so its posts go out in one burst at close rather than across the run.
+
+Those eight were all counted, so `_unposted` is not what happened there: it is a
+second hole, found by reading `close` rather than by watching it, where a queue still
+unfinished at the join timeout was abandoned without appearing in the number at all.
+A test holds it; no production run has been seen to hit it.
+
+1.5 s is not a measurement of one POST; it is a bound generous enough that an ordinary
+one is not cut off, since the cost of waiting is a slower exit and the cost of not
+waiting is a transcript the service does not have.
+"""
+
+_DRAIN_CEILING_S = 90.0
+"""The most `close` will ever wait, however much is queued.
+
+Bounded because the module's first promise is that nothing here can delay or fail a
+study, and an exit that hangs on an unreachable service would break it. A queue longer
+than this budget allows is reported as unposted rather than waited for.
+"""
+
+_SLOW_DRAIN_NOTICE_S = 3.0
+"""Past this, `close` says what it is waiting for rather than appearing to hang."""
+
 _OPENING_WAIT_S = 2.0
 """How long `close` waits for a row that is still being opened (`Capture.opening`).
 
@@ -73,6 +104,11 @@ class Capture:
             self._opened.set()
         self._queue: queue.Queue[tuple[str, Callable[[], None]] | None] = queue.Queue()
         self._dropped = 0
+        self._why: str | None = None
+        """The first failure's text, so a gap can be explained rather than only counted."""
+        self._unposted = 0
+        """Items still queued when `close`'s budget ran out: lost, and lost in silence
+        until this existed."""
         self._lost: list[str] = []
         """What was dropped, by name, up to `_REMEMBER_AT_MOST` of them (F-44)."""
         self._worker = threading.Thread(target=self._drain, name="capture", daemon=True)
@@ -177,9 +213,20 @@ class Capture:
         if not self._opened.is_set():
             self._abandoned = True
             self._opened.set()
+        # Budgeted by what is actually queued. `timeout` is the floor and the caller's
+        # to raise; each queued item adds to it, up to a ceiling, because one item is
+        # one POST and the worker is serial.
+        queued = self._queue.unfinished_tasks
+        budget = min(max(timeout, 0.0) + queued * _DRAIN_PER_ITEM_S, _DRAIN_CEILING_S)
         self._queue.put(None)
-        self._worker.join(timeout=timeout)
-        if self._dropped:
+        if queued and budget > _SLOW_DRAIN_NOTICE_S:
+            # Said before the wait, not after: otherwise a session with a long
+            # transcript and a slow link looks like it has hung on exit.
+            self._warn(f"capture -- sending {queued} item(s) to the service, "
+                       f"up to {budget:.0f}s")
+        self._worker.join(timeout=budget)
+        self._unposted = max(self._queue.unfinished_tasks - 1, 0) if self._worker.is_alive() else 0
+        if self._dropped or self._unposted:
             self._warn(self._dropped_line())
 
     def _dropped_line(self) -> str:
@@ -196,9 +243,20 @@ class Capture:
         Long runs are summarised rather than listed: past a handful the names stop
         being readable and the kinds are what is left to act on.
         """
-        head = f"capture dropped {self._dropped} item(s) — the local mirror is complete"
+        lost = self._dropped + self._unposted
+        head = f"capture dropped {lost} item(s) -- the local mirror is complete"
+        if self._unposted:
+            # Counted separately because they are a different fact: these were never
+            # attempted, so no failure explains them and more time would have sent
+            # them. Before this they were not counted at all.
+            head += (f" ({self._unposted} still queued when the session ended; "
+                     "openreynolds capture --study <id> sends what is missing)")
+        if self._why:
+            head += f"; first failure was {self._why}"
+        if self._dropped:
+            head += " -- openreynolds capture --study <id> sends what is missing"
         if len(self._lost) <= _NAME_AT_MOST:
-            return f"{head}: {', '.join(self._lost)}"
+            return f"{head}: {', '.join(self._lost)}" if self._lost else head
         kinds: dict[str, int] = {}
         for label in self._lost:
             kinds[label.split(" ", 1)[0]] = kinds.get(label.split(" ", 1)[0], 0) + 1
@@ -224,17 +282,82 @@ class Capture:
         while True:
             item = self._queue.get()
             if item is None:
+                self._queue.task_done()
                 return
             label, task = item
             self._opened.wait()
             if self._abandoned:
-                continue
-            try:
-                task()
-            except Exception:
                 self._dropped += 1
                 if len(self._lost) < _REMEMBER_AT_MOST:
                     self._lost.append(label)
+                self._queue.task_done()
+                continue
+            try:
+                task()
+            except Exception as exc:
+                self._dropped += 1
+                if self._why is None:
+                    # The first failure's text, once. `capture dropped 8 item(s): 8
+                    # message(s)` is unactionable on its own: it cannot tell a refusal
+                    # from a dropped connection, and that is the first thing anyone
+                    # debugging a capture gap needs.
+                    self._why = f"{type(exc).__name__}: {exc}"
+                if len(self._lost) < _REMEMBER_AT_MOST:
+                    self._lost.append(label)
+            self._queue.task_done()
+
+
+def missing_from_service(client: FoamdClient, study_id: str,
+                        local: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The local rows the service does not have, in order.
+
+    Asks rather than assumes, which is what makes sending them safe. `capture.py`
+    never retries a post, because the service's `messages` table indexes
+    `(study_id, seq)` without making it unique and a repeat of a post whose outcome
+    is unknown appends the row twice. A reconciliation does not have that problem:
+    the seqs it sends are the ones the service said it did not have.
+
+    Raises whatever the client raises. A caller that cannot reach the service has
+    nothing to reconcile against and should say so rather than guess.
+    """
+    held: set[int] = set()
+    after = -1
+    while True:
+        page = client.list_messages(study_id, after=after)
+        rows = page.get("messages", []) if isinstance(page, dict) else list(page)
+        if not rows:
+            break
+        for row in rows:
+            seq = row.get("seq")
+            if isinstance(seq, int):
+                held.add(seq)
+        if not (isinstance(page, dict) and page.get("more")):
+            break
+        after = max(held)
+    return [row for row in local
+            if isinstance(row.get("seq"), int) and row["seq"] not in held]
+
+
+def resend(client: FoamdClient, study_id: str,
+           rows: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    """Post these rows, one at a time, and say how many went and what refused.
+
+    One at a time rather than in one body, so a single bad row cannot take the rest
+    of the gap with it -- the opposite trade from the live path, where a burst is
+    what matters. Contents are capped the way the live path caps them, so a
+    reconciled transcript reads the same as a captured one.
+    """
+    sent, refused = 0, []
+    for row in rows:
+        body = [{"seq": row["seq"], "role": row.get("role"),
+                 "content": _cap_content(row.get("content")),
+                 "at": row.get("at")}]
+        try:
+            client.post_messages(study_id, body)
+            sent += 1
+        except Exception as exc:
+            refused.append(f"seq {row['seq']}: {type(exc).__name__}: {exc}")
+    return sent, refused
 
 
 def _open(

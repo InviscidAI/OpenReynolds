@@ -146,7 +146,10 @@ def _record_close(monkeypatch, order, close_down_raises=False):
         if close_down_raises:
             raise RuntimeError("the stop failed")
 
-    def capture_case(capture, store, view):
+    def capture_case(capture, store, view, backend=None):
+        # `backend` because the bundle root depends on the workspace: a local study's
+        # case files are in the workspace and never in the mirror, which nothing
+        # pulls anything into when there is no instance.
         order.append("capture_case")
 
     monkeypatch.setattr(cli, "_close_down", close_down)

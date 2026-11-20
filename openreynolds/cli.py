@@ -29,6 +29,7 @@ from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
 from .browse import Browser
+from . import capture as capture_mod
 from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
@@ -1806,6 +1807,78 @@ def serve_cmd(bind: str, port: int, token: str | None, local_here: bool) -> None
     serve_mod.serve(bind=bind, port=port, token=token)
 
 
+@main.command("capture")
+@click.option("--study", "study_id", default=None,
+              help="Which study. Defaults to the newest.")
+@click.option("--dry-run", is_flag=True,
+              help="Say what is missing and send nothing.")
+def capture_cmd(study_id: str | None, dry_run: bool) -> None:
+    """Send the service the transcript rows it is missing for a study.
+
+    Capture is fire-and-forget by design and never retries a post, for a reason worth
+    keeping: the service indexes `(study_id, seq)` without making it unique, so a
+    repeat of a post whose outcome is unknown appends the same row twice, and one job
+    reply once landed three times. A transient failure therefore leaves a permanent
+    gap, and until this command there was no way to close it.
+
+    This is not a retry. It asks the service which seqs it holds and posts only the
+    ones it does not, so it cannot duplicate anything -- which is why it is safe where
+    a blind retry is not.
+
+    Measured on study 20261121-033555-a8ea, a local run on a laptop with no OpenFOAM:
+    the mirror held 18 rows and the service held 10, the eight absent ones being 0, 1,
+    3, 4, 5, 6, 8 and 16. A local study is where this bites, because its row opens on
+    a thread at session start and every message waits on it, so the whole transcript
+    goes out in one burst at close rather than spread across the run.
+    """
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    store = Store(cfg.studies_dir, chosen)
+    remote = store.session.remote_study_id
+    console.print(f"[bold]{escape(chosen)}[/]")
+    if not (cfg.foamd_url and cfg.foamd_api_key):
+        console.print("  [yellow]not signed in, so there is nothing to send to[/]")
+        raise SystemExit(1)
+    if not remote:
+        # No row was ever opened, so there is nothing to reconcile against and
+        # nothing here can open one: the id is the service's to accept at creation.
+        console.print("  [yellow]this study has no row on the service[/] -- it ran "
+                      "with capture off, or the row was never opened. Nothing to "
+                      "send it to.")
+        raise SystemExit(1)
+
+    local = store.recent_messages(limit=1_000_000)
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        gap = capture_mod.missing_from_service(client, remote, local)
+    except Exception as exc:
+        console.print(f"  [red]could not ask the service what it has[/] ({exc})")
+        raise SystemExit(1) from None
+    finally:
+        client.close()
+
+    console.print(f"  {len(local)} row(s) here, {len(local) - len(gap)} on the service")
+    if not gap:
+        console.print("  [green]nothing missing[/]")
+        return
+    seqs = ", ".join(str(row["seq"]) for row in gap[:12])
+    more = "" if len(gap) <= 12 else f" and {len(gap) - 12} more"
+    console.print(f"  missing seq: {seqs}{more}")
+    if dry_run:
+        return
+
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        sent, refused = capture_mod.resend(client, remote, gap)
+    finally:
+        client.close()
+    console.print(f"  [green]sent {sent}[/]" if sent else "  sent nothing")
+    for line in refused:
+        console.print(f"  [yellow]refused[/] {escape(line)}")
+    if refused:
+        raise SystemExit(1)
+
+
 @main.command("sharing")
 @click.argument("switch", required=False, type=click.Choice(["on", "off", "status"]), default="status")
 def sharing_cmd(switch: str) -> None:
@@ -2997,7 +3070,7 @@ def session(
                 # Still bundled if the close-down failed: the files are home either way.
                 if capture:
                     with _timed("close.capture_case"):
-                        _capture_the_case(capture, store, ConsoleView(console))
+                        _capture_the_case(capture, store, ConsoleView(console), backend)
                     with _timed("close.capture_close"):
                         capture.close()
             finally:
@@ -3927,7 +4000,30 @@ def _capture_locally(cfg: Config, store: Store) -> Capture:
     return capture
 
 
-def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
+def _case_root(store: Store, backend: Any = None) -> Path:
+    """Where this study's case files actually are.
+
+    The mirror for a study that ran on an instance, because that is where the
+    close-down sync put them. The workspace's own study directory for a local one,
+    because nothing pulled anything anywhere and the mirror is empty.
+
+    Told apart by asking the backend for a local root rather than by a flag:
+    `LocalBackend` and `DockerBackend` both report a real directory on this machine
+    through `workspace_root`, a hosted one reports `/work`, which is the instance's
+    path and not a directory here. A root that does not exist, or a backend that is
+    gone by now, falls back to the mirror -- an empty bundle is what the old behaviour
+    was, so the fallback cannot be worse than it.
+    """
+    mirror = store.fetch_dir()
+    root = getattr(backend, "workspace_root", None)
+    if not root or str(root) == WORKSPACE_ROOT:
+        return mirror
+    here = Path(str(root)) / store.session.study_id
+    return here if here.is_dir() else mirror
+
+
+def _capture_the_case(capture: Capture, store: Store, view: View,
+                      backend: Any = None) -> None:
     """Upload the case itself, once, at the end of a session.
 
     The capture plane has always carried the conversation and never the work. Measured
@@ -3946,11 +4042,20 @@ def _capture_the_case(capture: Capture, store: Store, view: View) -> None:
     the queue -- and the drain is bounded, so a bundle queued after it
     would be dropped without ever being attempted.
 
+    Which directory holds the case depends on the workspace, and getting that wrong
+    cost every local study its case tier. The mirror is filled by the close-down sync
+    pulling files DOWN from an instance; a local workspace has no instance and nothing
+    to pull, so its mirror stays empty while the files sit in the workspace itself.
+    Measured on study 20261121-033555-a8ea: `studies/<id>/files/` held 0 files and this
+    function said "nothing to bundle: no case files reached this machine", with six
+    real ones -- three figures, three run reports -- in the workspace on the same disk.
+    `_case_root` picks between them, and the no-network property holds either way.
+
     Never raises. `build` returns a report rather than throwing, the upload goes
     through `Capture`, which is fire-and-forget by contract, and a study that could not
     be bundled captures exactly what it captured before.
     """
-    root = store.fetch_dir()
+    root = _case_root(store, backend)
     blob, report = casebundle.build(root, study_id=store.session.study_id)
     for line in report.brief():
         view.info(line) if not report.error else view.warn(line)
