@@ -105,6 +105,17 @@ def test_the_table_holds_no_index_out_of_range(sph):
     assert all(i in {int(j) for j in table[i]} for i in range(pos.shape[0]))
 
 
+def test_a_diverged_run_is_refused_rather_than_swapping_the_machine(sph):
+    """The neighbour grid is sized from the bounding box, so a divergence that stays
+    finite asks for an array of astronomically many cells and numpy obliges by taking
+    the machine into swap. The run then looks like a hang instead of an instability,
+    which is how an afternoon goes missing."""
+    with pytest.raises(ValueError, match="diverged"):
+        sph.candidates(np.array([[0.0, 0.0], [1e8, 1e8]]), 0.01)
+    with pytest.raises(ValueError, match="not finite"):
+        sph.candidates(np.array([[0.0, 0.0], [np.nan, 0.5]]), 0.01)
+
+
 def test_a_single_particle_has_a_table_and_no_neighbours(sph):
     table = sph.candidates(np.array([[0.5, 0.5]]), 0.1)
     assert table.shape[0] == 1

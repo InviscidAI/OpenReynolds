@@ -132,11 +132,28 @@ def candidates(pos: np.ndarray, radius: float) -> np.ndarray:
     Empty slots hold -1; the callers mask on the distance anyway, and -1 indexes the
     last particle rather than raising, which is harmless once masked.
     """
+    if not np.isfinite(pos).all():
+        raise ValueError("particle positions are not finite: the run has diverged, and "
+                         "a smaller time step (a smaller --dx) is the usual cause")
     low = pos.min(axis=0) - 2.0 * radius
     cell = ((pos - low) / radius).astype(np.int64)
     shape = cell.max(axis=0) + 3
+    # In Python ints, not numpy's: the whole point of the guard below is to catch a cell
+    # count of 1e20, and an int64 product of two 1e10 axes wraps round silently and can
+    # come out small enough to pass. `flat` is computed after the guard for the same
+    # reason -- the multiply in it overflows on the same input.
+    cells = int(shape[0]) * int(shape[1])
+    # A divergence that stays finite is the dangerous one. The grid is sized from the
+    # bounding box, so particles thrown to 1e8 ask for an array of 1e20 cells, and numpy
+    # does not refuse that quickly -- it takes the machine into swap and the run looks
+    # like a hang rather than an instability. A sane 2D packing is a few particles per
+    # cell, so a grid two orders of magnitude emptier than that is not geometry.
+    if cells > 256 * pos.shape[0] + 4096:
+        span = pos.max(axis=0) - pos.min(axis=0)
+        raise ValueError(
+            f"{pos.shape[0]:,} particles span {span[0]:.3g} x {span[1]:.3g} at a "
+            f"{radius:.3g} cell size, which is {cells:,} cells: the run has diverged")
     flat = cell[:, 0] + cell[:, 1] * shape[0]
-    cells = int(shape[0] * shape[1])
 
     order = np.argsort(flat, kind="stable")
     ordered = flat[order]
