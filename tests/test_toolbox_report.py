@@ -935,3 +935,121 @@ def test_a_study_whose_cases_are_at_the_top_is_not_redirected(report, study, tmp
     where = report.locate(study)
     assert where["state_root"] == study
     assert where["is_study"] is True
+
+
+# -- #185: a binary field's boundaryField is not a patch list -------------------------
+
+
+def _binary_field(path: Path, patches: int = 6) -> None:
+    """A `format binary` field whose patch values are raw doubles, as OpenFOAM writes
+    them.
+
+    The bytes are the point. A real binary payload has no reason for its braces to
+    balance, and an unmatched `}` inside one closes the patch entry the text parser
+    thinks it is inside: what follows, up to the next `{` in the bytes, is then read as
+    a further patch name. `0/thickness` of `20260830-050338-cfd5` is the real one -- 6
+    patches in `constant/polyMesh/boundary` and 8 reported, the last two named
+    `Yu?J...NQu?` and the like. The last patch here carries such a payload, which
+    is that shape: every real patch still parses and one phantom follows them.
+    """
+    import struct
+
+    clean = b"".join(struct.pack("<d", v / 7.0) for v in range(1, 6))
+    # A stray close-brace and a stray open-brace in the bytes, which is all it
+    # takes: 0x7d is a plausible byte of a double and OpenFOAM writes doubles.
+    unbalanced = (struct.pack("<d", 1.0)
+                  + bytes([0x59, 0x75, 0x3f, 0x4a, 0x7d, 0xd5, 0x4e, 0x51])
+                  + bytes([0x75, 0x3f, 0x8f, 0x38, 0x72, 0x7b, 0x00, 0x75])
+                  + bytes([0x3f, 0xd5, 0x7d]) + struct.pack("<d", 2.5))
+    head = (b"FoamFile { version 2.0; format binary; class volScalarField;"
+            b" object thickness; }\n\n"
+            b"dimensions      [0 0 0 0 0 0 0];\n"
+            b"internalField   uniform 0;\n\n"
+            b"boundaryField\n{\n")
+    body = b""
+    for i in range(patches):
+        blob = unbalanced if i == patches - 1 else clean
+        body += (f"    patch{i}\n".encode()
+                 + b"    {\n        type            fixedValue;\n"
+                 b"        value           nonuniform List<scalar> 5(" + blob
+                 + b");\n    }\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(head + body + b"}\n")
+
+
+def test_a_binary_fields_boundary_field_is_counted_as_unread_not_printed_as_patches(
+    report, study
+):
+    """#185. `field_shape` beside it was hardened for #139 and this was not: raw
+    IEEE-754 bytes reached page 5 of a real study's PDF as two further boundary
+    patches, named `Yu?J...NQu?` and the like, with 11 control characters in them and
+    matplotlib warning "Glyph 6 missing from font". A patch name is an OpenFOAM word;
+    a slice of a double is not."""
+    _binary_field(study / "cylinder" / "0" / "thickness")
+    patches, unread = report.boundary_types(study / "cylinder", "thickness")
+    for name, kind in patches:
+        assert report._WORD.match(name), name
+        assert all(ch.isprintable() for ch in name + kind), (name, kind)
+    assert [name for name, _ in patches] == [f"patch{i}" for i in range(6)], patches
+    assert unread, "whatever would not read is said, not dropped in silence"
+    assert "binary" in unread and "polyMesh/boundary" in unread, unread
+
+
+def test_no_control_character_from_a_binary_field_reaches_the_methods_page(report, study):
+    """The same thing through the documented entry point: the lines the page is drawn
+    from carry no byte matplotlib has no glyph for."""
+    _binary_field(study / "cylinder" / "0" / "thickness")
+    case, rule, others = report.choose_case(study, "")
+    lines, _ = report.methods_lines(case, rule, others, layers=False)
+    text = "\n".join(lines)
+    assert "thickness" in text
+    bad = [ch for ch in text if not ch.isprintable() and ch != "\n"]
+    assert bad == [], f"{len(bad)} unprintable characters on the methods page"
+    # The payload's own bytes, which are what reached page 5 of the real study: the
+    # undecodable ones as U+FFFD (matplotlib: "Glyph 6 missing from font") and the
+    # decodable ones as themselves.
+    assert "�" not in text and "NQu" not in text, text
+    assert "(not read)" in text
+
+
+# -- #186: a name that was typed and is wrong is refused, not written around ----------
+
+
+def test_a_case_name_that_names_nothing_is_refused_rather_than_documented(
+    report, study, tmp_path, capsys
+):
+    """#186. `--case doesnotexist` wrote a complete 4-page 41 KB document reading `key
+    numbers: none`, with the reason only on the page, and exited 0 -- while
+    `--template nothere.json` on the same study exits 2 and writes nothing. A typo in
+    a path that produces a success nobody checks is worse than a crash."""
+    out = tmp_path / "typo.pdf"
+    assert run(report, [str(study), "--case", "doesnotexist", "--out", str(out)]) == 2
+    err = capsys.readouterr().err
+    assert "refused" in err and "doesnotexist" in err
+    assert "cylinder" in err, "the refusal names the case the study does have"
+    assert not out.exists(), "a refusal must not leave a document behind"
+    # And the case that is there still works, so this is a refusal and not a block.
+    assert run(report, [str(study), "--case", "cylinder", "--out", str(out)]) == 0
+
+
+def test_one_rank_of_a_decomposed_case_is_refused_by_name(report, mirrored, tmp_path):
+    """#145 saw this would be honoured and left it as a rule printed on the page, which
+    is the #186 shape: a methods section about a quarter of a mesh, exit 0."""
+    _top, _home, case = mirrored
+    out = tmp_path / "rank.pdf"
+    assert run(report, [str(case), "--case", "processor2", "--out", str(out)]) == 2
+    assert not out.exists()
+    with pytest.raises(report.Refused, match="one rank"):
+        report.choose_case(case, "processor2")
+
+
+def test_a_directory_that_is_not_there_is_refused_by_name_not_by_traceback(
+    report, tmp_path, capsys
+):
+    """It came out of `choose_case`'s `study.iterdir()` as a FileNotFoundError and exit
+    1. A path that is not there is an argument mistake, like a missing --template."""
+    missing = tmp_path / "no-such-study"
+    assert run(report, [str(missing), "--out", str(tmp_path / "x.pdf")]) == 2
+    err = capsys.readouterr().err
+    assert "refused" in err and str(missing) in err
+    assert not (tmp_path / "x.pdf").exists()
