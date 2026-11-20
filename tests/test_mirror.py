@@ -1051,7 +1051,10 @@ def test_an_earlier_time_that_will_not_copy_does_not_hold_the_older_ones(backend
 
 
 def test_an_earlier_time_whose_file_fails_is_not_left_half_copied(backend, store, monkeypatch):
-    """#103: `2/p` times out after the search for it has brought `2/U` home."""
+    """#103: `2/p` times out after the round trip for it has brought `2/U` down.
+
+    `2/U` lands in the staging directory, never in the mirror, so there is no `2/`
+    for the viewer to list and fail to draw -- and nothing to delete afterwards."""
     whole(
         backend,
         (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
@@ -1072,13 +1075,13 @@ def test_an_earlier_time_whose_file_fails_is_not_left_half_copied(backend, store
     case = mirror.local_for(first.local_dir, f"{HOME}/case")
     assert sorted(p.name for p in case.iterdir()) == ["1", "3"], "no 2/, not even an empty one"
     assert sorted(Path(p).parent.name for p in first.pulled) == ["1", "3"]
-    assert first.bytes_pulled == 60, "what was taken back is not counted as copied"
+    assert first.bytes_pulled == 60, "what never reached the mirror is not counted as copied"
     left = {Path(s.path).name: s.reason for s in first.skipped}
-    assert left["p"] == "the copy failed"
-    assert "held back with a file of it" in left["U"]
+    assert left["U"] == left["p"], "the whole time is held back, with one reason"
+    assert left["U"].startswith(f"{mirror.EARLIER_TIME} (2/),"), "and the reason names it"
 
     second = cycle(browser, refused=refused)
-    assert second.pulled == [], "and it is not copied again to be taken back again"
+    assert second.pulled == [], "and the time is not asked for again this session"
     assert not (case / "2").exists()
 
 
@@ -1105,34 +1108,83 @@ def test_a_time_split_across_round_trips_is_not_left_half_copied(backend, store,
     assert sorted(p.name for p in case.iterdir()) == ["1", "3"]
     assert f"{HOME}/case/2/p" not in backend.fetched, "no round trip for the rest of it"
     assert sorted(Path(p).parent.name for p in report.pulled) == ["1", "3"]
-    left = {Path(s.path).name: s.reason for s in report.skipped}
-    assert left["U"] == "the copy failed"
-    assert "held back with a file of it" in left["T"]
-    assert "held back with a file of it" in left["p"]
+    assert {Path(s.path).name for s in report.skipped} == {"T", "U", "p"}
+    assert all(
+        s.reason.startswith(f"{mirror.EARLIER_TIME} (2/),") for s in report.skipped
+    )
 
 
-def test_taking_a_time_back_removes_only_what_this_cycle_wrote(backend, store, monkeypatch):
-    """A round trip that succeeds without `2/U` leaves an earlier cycle's copy of it."""
+def test_a_time_already_whole_keeps_the_copies_it_has_when_a_fresh_one_fails(backend, store):
+    """A restarted solve rewrites times that are already here. `2/` was mirrored
+    whole; this cycle's `2/U` lands and its `2/p` times out. Deleting what landed
+    would leave `2/` holding only the unchanged `T`, which is worse than the
+    half-copied state #103 is about. Nothing is deleted, so it holds all three."""
     whole(
         backend,
-        (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
+        (f"{HOME}/case/3/U", 30),
+        (f"{HOME}/case/2/T", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30),
     )
-    browser = browser_for(backend, store)
-    kept = mirror.local_for(store.fetch_dir(), f"{HOME}/case/2/U")
-    kept.parent.mkdir(parents=True, exist_ok=True)
-    kept.write_bytes(b"from an earlier cycle")
+    here = mirror.local_for(store.fetch_dir(), f"{HOME}/case/2")
+    here.mkdir(parents=True, exist_ok=True)
+    (here / "T").write_bytes(b"x" * 30)  # the size the listing gives: already here
+    (here / "U").write_bytes(b"older U")  # a different size: wanted again
+    (here / "p").write_bytes(b"older p")
     real = backend.get_tree
 
     def flaky(paths, local_dir, **kwargs):
         if any(path.endswith("/2/p") for path in paths):
             raise BackendError("timed out", code="timeout")
-        return real([path for path in paths if not path.endswith("/2/U")], local_dir, **kwargs)
+        return real(paths, local_dir, **kwargs)
 
     backend.get_tree = flaky
-    report = cycle(browser, refused={})
+    report = cycle(browser_for(backend, store), refused={})
 
-    assert kept.read_bytes() == b"from an earlier cycle"
+    assert (here / "U").read_bytes() == b"older U", "the copy that was here is still here"
+    assert (here / "p").read_bytes() == b"older p"
+    assert (here / "T").read_bytes() == b"x" * 30
     assert [Path(p).parent.name for p in report.pulled] == ["3"]
+
+
+def test_a_time_a_round_trip_leaves_a_file_out_of_is_not_half_copied(backend, store):
+    """A file left out without a failure is the #103 state all the same: `get_tree`
+    returns, having skipped the member (`backend/hosted.py:1505` passes over a
+    non-regular one), and nothing raised for the cycle to react to."""
+    whole(backend, (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30))
+    real = backend.get_tree
+
+    def leaves_one_out(paths, local_dir, **kwargs):
+        return real([path for path in paths if not path.endswith("/2/p")], local_dir, **kwargs)
+
+    backend.get_tree = leaves_one_out
+    report = cycle(browser_for(backend, store), refused={})
+
+    case = mirror.local_for(report.local_dir, f"{HOME}/case")
+    assert [p.name for p in case.iterdir()] == ["3"], "no 2/U on its own"
+    assert report.bytes_pulled == 30
+    assert {Path(s.path).name for s in report.skipped} == {"U", "p"}
+    assert "came back without 1 of its 2 files" in report.skipped[0].reason
+
+
+def test_holding_a_time_back_touches_nothing_another_sync_mirrored(backend, store):
+    """An `openreynolds pull` and a background cycle can both be fetching `2/U`. The
+    cycle's `2/p` failing used to unlink the copy the pull had just reported
+    mirrored; a cycle that holds a time back now deletes nothing at all."""
+    whole(backend, (f"{HOME}/case/3/U", 30), (f"{HOME}/case/2/U", 30), (f"{HOME}/case/2/p", 30))
+    pulled_elsewhere = mirror.local_for(store.fetch_dir(), f"{HOME}/case/2/U")
+    real = backend.get_tree
+
+    def flaky(paths, local_dir, **kwargs):
+        if any(path.endswith("/2/p") for path in paths):
+            # The other sync lands its copy while this round trip is in flight.
+            pulled_elsewhere.parent.mkdir(parents=True, exist_ok=True)
+            pulled_elsewhere.write_bytes(b"x" * 30)
+            raise BackendError("timed out", code="timeout")
+        return real(paths, local_dir, **kwargs)
+
+    backend.get_tree = flaky
+    cycle(browser_for(backend, store), refused={})
+
+    assert pulled_elsewhere.read_bytes() == b"x" * 30
 
 
 def test_a_time_with_a_file_left_behind_is_left_whole(backend, store, monkeypatch):

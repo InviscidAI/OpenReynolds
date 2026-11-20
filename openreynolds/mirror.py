@@ -40,6 +40,8 @@ mirror that ends a session is worse than one that misses a file.
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 import threading
 import time
 from collections import Counter
@@ -607,8 +609,8 @@ def _sync(
         entries, root, report, everything, max_file_bytes, live=live, refused=refused,
         earlier_times=gate is not None,
     )
-    wanted, later = _within_budget(now, times, report, max_total_bytes)
-    _pull(browser, wanted, report, refused=refused, gate=gate, later=later)
+    wanted, backfill = _within_budget(now, times, report, max_total_bytes)
+    _pull(browser, wanted, backfill, report, refused=refused, gate=gate)
     return report
 
 
@@ -794,10 +796,10 @@ def _within_budget(
     times: list[tuple[str, list[Entry]]],
     report: MirrorReport,
     max_total_bytes: int,
-) -> tuple[list[Entry], dict[str, int]]:
+) -> tuple[list[Entry], list[tuple[str, list[Entry]]]]:
     """As much as fits, smallest first, and a live cycle's earlier times after that.
-    Returns the files, and of those the earlier times' paths with their time's rank,
-    which `_batches` sends last.
+    Returns the files, and separately the earlier times that fit, each one's name and
+    files, which `_pull` fetches last and a whole time at a time.
 
     Smallest first because of what running out should cost: one enormous log left
     behind is a sentence in the report, and three hundred dictionaries left behind
@@ -820,9 +822,9 @@ def _within_budget(
         budget -= entry.size
         wanted.append(entry)
 
-    later: dict[str, int] = {}
+    backfill: list[tuple[str, list[Entry]]] = []
     full = False
-    for rank, (name, files) in enumerate(times):
+    for name, files in times:
         size = sum(entry.size for entry in files)
         if full or size > budget:
             full = True
@@ -830,12 +832,11 @@ def _within_budget(
             report.skipped.extend(Skip(entry.path, reason, entry.size) for entry in files)
             continue
         budget -= size
-        wanted.extend(files)
-        later.update((entry.path, rank) for entry in files)
-    return wanted, later
+        backfill.append((name, files))
+    return wanted, backfill
 
 
-def _batches(wanted: list[Entry], later: dict[str, int] | None = None) -> list[list[Entry]]:
+def _batches(wanted: list[Entry]) -> list[list[Entry]]:
     """Split into round trips bounded by both count and bytes.
 
     A single file over the byte budget still goes on its own rather than being dropped
@@ -850,13 +851,11 @@ def _batches(wanted: list[Entry], later: dict[str, int] | None = None) -> list[l
     # decomposed solve the smallest files are the per-processor ones, so a 200 KB render
     # the model had just looked at sat behind thousands of them -- nine minutes for one
     # picture, and a second that never arrived before the session ended.
-    # And an earlier time directory goes after everything else: the newest time is
-    # what the viewer opens on, and a cycle cut short should have brought that.
-    later = later or {}
+    # An earlier time directory is not in here at all: `_pull` fetches the backfill
+    # after this, one whole time at a time, because the newest time is what the viewer
+    # opens on and a cycle cut short should have brought that.
 
     def order(item: Entry) -> tuple:
-        if item.path in later:
-            return (3, later[item.path], item.path)
         return (_priority(item), item.size, item.path)
 
     for entry in sorted(wanted, key=order):
@@ -873,10 +872,10 @@ def _batches(wanted: list[Entry], later: dict[str, int] | None = None) -> list[l
 def _pull(
     browser: Browser,
     wanted: list[Entry],
+    backfill: list[tuple[str, list[Entry]]],
     report: MirrorReport,
     refused: dict[str, str] | None = None,
     gate: "Gate | None" = None,
-    later: dict[str, int] | None = None,
 ) -> None:
     """Fetch in batches, and treat a failed batch as a fact rather than an end.
 
@@ -884,76 +883,113 @@ def _pull(
     come down without it. The usual cause is one awkward file in otherwise fine
     company, and losing the company with it is how a mirror comes back empty from a
     study that had plenty worth keeping -- which is exactly what a live run did.
+
+    `backfill` is a live cycle's earlier time directories, each whole
+    (`_earlier_within`), fetched after everything else and one whole time at a time
+    by `_pull_time`.
     """
-    later = later or {}
-    asked, had = len(report.skipped), len(report.pulled)
-    failed: set[int] = set()
-    for batch in _batches(wanted, later):
-        batch = [entry for entry in batch if later.get(entry.path) not in failed]
-        if batch:
-            _pull_batch(browser, batch, report, refused, gate, later)
-        failed = {later[skip.path] for skip in report.skipped[asked:] if skip.path in later}
-    if failed:
-        did_not_copy = {skip.path for skip in report.skipped[asked:]}
-        rest = [
-            entry
-            for entry in wanted
-            if later.get(entry.path) in failed and entry.path not in did_not_copy
-        ]
-        _take_back(rest, had, report)
+    for batch in _batches(wanted):
+        _pull_batch(browser, batch, report, refused, gate)
+    for name, files in backfill:
+        _pull_time(browser, name, files, report, refused, gate)
 
 
-def _take_back(rest: list[Entry], had: int, report: MirrorReport) -> None:
-    """Remove what this cycle copied of an earlier time one file of which failed (#103).
-
-    Only a path in `report.pulled[had:]` goes: a round trip can succeed without a
-    file it was asked for, and an earlier cycle's copy there is not this one's to
-    delete."""
-    reason = f"{EARLIER_TIME}, held back with a file of it that did not copy"
-    root = report.local_dir.resolve()
-    written = {Path(path).resolve() for path in report.pulled[had:]}
-    gone: set[Path] = set()
-    for entry in rest:
-        report.skipped.append(Skip(entry.path, reason, entry.size))
-        target = local_for(root, entry.path).resolve()
-        if target not in written:
-            continue
-        try:
-            target.unlink(missing_ok=True)
-        except OSError as exc:
-            report.warnings.append(f"could not take back {target}: {exc}")
-            continue
-        gone.add(target)
-        report.bytes_pulled -= entry.size
-        for parent in target.parents:
-            if parent == root:
-                break
-            try:
-                parent.rmdir()
-            except OSError:
-                break
-    report.pulled = [path for path in report.pulled if Path(path).resolve() not in gone]
-
-
-def _pull_batch(
+def _pull_time(
     browser: Browser,
-    batch: list[Entry],
+    name: str,
+    files: list[Entry],
     report: MirrorReport,
     refused: dict[str, str] | None,
     gate: "Gate | None",
-    later: dict[str, int] | None = None,
-) -> bool:
-    """One archive request, and what to do when it fails. True when it came down.
+) -> None:
+    """Bring one earlier time directory home whole, or bring none of it (#103, #106).
 
-    The search for the file a batch failed on used to be every file on its own: a
-    round trip each, and on a service where the awkward one costs two minutes and the
-    ordinary ones four seconds, thirty files was six minutes -- then the same six
-    minutes on the next cycle, because the awkward file never arrived and so was
-    never "already here". Now it is: one at a time only until one fails, then the
-    remainder as a batch again (it was fine without the file it failed on), and a
-    file whose failure is a fact about the path is remembered and not asked for again
-    this session. Which file it was is named, because the log never said.
+    Staged beside the mirror rather than into it, and moved in only once every file
+    asked for has landed. Downloading straight into the mirror and deleting what
+    arrived when a later file failed was the first fix, and it cannot be made right:
+
+    * a time that was already whole has this cycle's fresh `U` and `p` deleted and
+      its older copies left, which is worse than what it replaced -- a restarted
+      solve rewrites times that are already here;
+    * a file a round trip simply leaves out is no failure to react to, so the
+      half-copied state #103 is about survives it. `_extract_tar_gz` skips a
+      non-regular member silently (`backend/hosted.py:1505`), and a file deleted on
+      the instance between the listing and the request is not in the archive either;
+    * an `openreynolds pull` running alongside a background cycle has the file it
+      has just reported mirrored unlinked under it.
+
+    Nothing is deleted here. A partial copy is a directory under the study rather
+    than under `files/`, so the files pane, the viewer and the S3 sync never walk
+    into a half-copied time (every one of them reads `store.files_dir`), and
+    dropping it is one `rmtree` of this cycle's own temporary.
+
+    A time that did not arrive whole is set aside for the session, like a path the
+    service refused, so that one which will not copy does not hold every older time
+    behind it cycle after cycle (`_earlier_within` takes them newest first).
+    `openreynolds pull` passes no `refused` and so asks again.
     """
+    # Beside `files/`, not inside it, and named with a leading dot. On the same
+    # filesystem, so moving a landed file into place is a rename rather than a copy.
+    staging = Path(tempfile.mkdtemp(dir=report.local_dir.parent, prefix=".partial-"))
+    try:
+        for batch in _batches(files):
+            try:
+                _get_tree(browser, [entry.path for entry in batch], staging, report, gate)
+            except (BackendError, OSError) as exc:
+                report.warnings.append(f"could not copy {name}/: {exc}")
+                _held_back(name, files, report, refused, f"did not copy this session ({exc})")
+                return
+        # What landed, asked of the staging directory rather than of the paths
+        # `get_tree` returned: the question is whether the file is there, and only
+        # the directory can answer it. `local_for` is the same prediction the rest
+        # of the mirror makes, and both backends honour it -- the service preserves
+        # the shape below the workspace root, and the local backend's root is not
+        # `/work`, so `local_for` and its `destination / source.name`
+        # (`backend/local.py:250`) both reduce to the file's own name.
+        landed = [(local_for(staging, entry.path), entry) for entry in files]
+        missing = [entry.path for source, entry in landed if not source.is_file()]
+        if missing:
+            _held_back(
+                name, files, report, refused,
+                f"came back without {len(missing)} of its {len(files)} files",
+            )
+            return
+        for source, entry in landed:
+            target = local_for(report.local_dir, entry.path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(target)
+            report.pulled.append(target)
+            report.bytes_pulled += entry.size
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _held_back(
+    name: str,
+    files: list[Entry],
+    report: MirrorReport,
+    refused: dict[str, str] | None,
+    why: str,
+) -> None:
+    """Leave a whole earlier time on the instance, named like every other skip.
+
+    The time is in the reason, as it is in `_earlier_within`'s and `_within_budget`'s:
+    a report saying only "an earlier time directory" does not say which one."""
+    reason = f"{EARLIER_TIME} ({name}/), {why}"
+    for entry in files:
+        report.skipped.append(Skip(entry.path, reason, entry.size))
+        if refused is not None:
+            refused[entry.path] = reason
+
+
+def _get_tree(
+    browser: Browser,
+    paths: list[str],
+    local_dir: Path,
+    report: MirrorReport,
+    gate: "Gate | None",
+) -> list[Path]:
+    """One archive request, counted, and bounded when a tool call may be in flight."""
     # `gate is not None` is exactly "this cycle is running in the background while a
     # tool call may be in flight" (see `LiveMirror._cycle`), and what it buys is the
     # bound below, not a different route. Both were tried: for one afternoon a live
@@ -967,25 +1003,50 @@ def _pull_batch(
     # (39 s against 7 s). So the ordinary archive it is, bounded: this cycle must not
     # sit on one file for minutes even when nothing else is waiting on it.
     report.round_trips += 1
+    if gate is not None:
+        return browser.backend.get_tree(
+            paths, local_dir, timeout=LIVE_PULL_TIMEOUT_S, max_attempts=1
+        )
+    return browser.backend.get_tree(paths, local_dir)
+
+
+def _pull_batch(
+    browser: Browser,
+    batch: list[Entry],
+    report: MirrorReport,
+    refused: dict[str, str] | None,
+    gate: "Gate | None",
+) -> bool:
+    """One archive request, and what to do when it fails. True when it came down.
+
+    The search for the file a batch failed on used to be every file on its own: a
+    round trip each, and on a service where the awkward one costs two minutes and the
+    ordinary ones four seconds, thirty files was six minutes -- then the same six
+    minutes on the next cycle, because the awkward file never arrived and so was
+    never "already here". Now it is: one at a time only until one fails, then the
+    remainder as a batch again (it was fine without the file it failed on), and a
+    file whose failure is a fact about the path is remembered and not asked for again
+    this session. Which file it was is named, because the log never said.
+
+    This is the newest time and everything beside it. An earlier time directory is
+    fetched by `_pull_time` instead, which stages it and has no company to save: a
+    file of it that fails means the whole time waits, so taking the batch apart to
+    find that file would be round trips spent on a copy already being dropped.
+    """
     try:
-        if gate is not None:
-            written = browser.backend.get_tree(
-                [entry.path for entry in batch], report.local_dir,
-                timeout=LIVE_PULL_TIMEOUT_S, max_attempts=1,
-            )
-        else:
-            written = browser.backend.get_tree([entry.path for entry in batch], report.local_dir)
+        paths = [entry.path for entry in batch]
+        written = _get_tree(browser, paths, report.local_dir, report, gate)
     except (BackendError, OSError) as exc:
         if len(batch) > 1:
             report.warnings.append(
                 f"a batch of {len(batch)} failed ({exc}); looking for the file it failed on"
             )
             for index, entry in enumerate(batch):
-                if _pull_batch(browser, [entry], report, refused, gate, later):
+                if _pull_batch(browser, [entry], report, refused, gate):
                     continue
                 rest = batch[index + 1 :]
                 if rest:
-                    _pull_batch(browser, rest, report, refused, gate, later)
+                    _pull_batch(browser, rest, report, refused, gate)
                 return False
             return True
         entry = batch[0]
@@ -993,12 +1054,6 @@ def _pull_batch(
         report.skipped.append(Skip(entry.path, "the copy failed", entry.size))
         if refused is not None and is_a_fact_about_the_path(exc):
             refused[entry.path] = refusal(exc)
-        elif refused is not None and later and entry.path in later:
-            # An earlier time is a nicety, and one that will not copy must not hold
-            # every older time behind it, cycle after cycle (`_earlier_within` takes
-            # them newest first). So it is set aside for the session, whole, like a
-            # path the service refused; `openreynolds pull` asks for it again.
-            refused[entry.path] = f"{EARLIER_TIME} that did not copy this session ({exc})"
         return False
     report.pulled.extend(written)
     report.bytes_pulled += sum(entry.size for entry in batch)
