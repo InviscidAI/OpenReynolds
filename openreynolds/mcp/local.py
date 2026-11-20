@@ -30,7 +30,7 @@ from .. import sharing as sharing_mod
 from ..backend.base import WORKSPACE_ROOT, BackendError
 from ..config import Config
 from ..mirror import local_for
-from ..store import Store, list_studies
+from ..store import Store, TornRecord, list_studies
 from ..study_style import normalize_style, preferences_for
 from ..transcript import TranscriptTail, read_items
 from ..uploads import place_upload, safe_filename
@@ -699,6 +699,10 @@ class LocalHost(HostDefaults):
     def explain(self, exc: BaseException) -> str | None:
         if isinstance(exc, BackendError):
             return f"the workspace refused: {exc}"
+        if isinstance(exc, TornRecord):
+            # In its own words, as a 400 rather than a 500: the record is the
+            # caller's to repair, and nothing has been written to it (#167).
+            return str(exc)
         return None
 
 
