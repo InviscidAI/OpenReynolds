@@ -161,16 +161,32 @@ class Store:
         """
         if not self._session_path.exists():
             return {}
+        # Windows refuses the open for a moment while another writer's `os.replace`
+        # lands, so a sound record is not called torn for that.
+        for attempt in range(20):
+            try:
+                data = self._session_path.read_bytes()
+                break
+            except PermissionError as exc:
+                if attempt == 19:
+                    raise TornRecord(f"{self._session_path} cannot be read: {exc}") from exc
+                time.sleep(0.02)
+            except OSError as exc:
+                raise TornRecord(f"{self._session_path} cannot be read: {exc}") from exc
         try:
-            raw = json.loads(self._session_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+            # `utf-8-sig` so a record saved by an editor that adds a byte-order mark
+            # still loads. ValueError covers a file cut inside a UTF-8 character too.
+            raw = json.loads(data.decode("utf-8-sig"))
+            if not isinstance(raw, dict):
+                raise ValueError(f"a JSON {type(raw).__name__}, not an object")
+            for rec in (raw.get("jobs") or {}).values():
+                JobRecord(**rec)
+        except (ValueError, TypeError, AttributeError) as exc:
             raise TornRecord(
                 f"{self._session_path} will not parse ({exc}); it has not been written "
                 "to. Repair it or move it aside -- the transcript beside it is intact."
             ) from exc
-        except OSError as exc:
-            raise TornRecord(f"{self._session_path} cannot be read: {exc}") from exc
-        return raw if isinstance(raw, dict) else {}
+        return raw
 
     def _load(self) -> None:
         raw = self._read()
@@ -268,9 +284,15 @@ class Store:
         for key, value in disk.items():
             if key not in mine or was.get(key, value) == mine[key]:
                 payload[key] = value
-        tmp = self._session_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        _replace(tmp, self._session_path)
+        # A temp name of this writer's own: with one shared name, a second save
+        # truncates the file the first is about to move into place.
+        tmp = self._session_path.with_name(
+            f"{self._session_path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            _replace(tmp, self._session_path)
+        finally:
+            tmp.unlink(missing_ok=True)
         self._adopt(payload, mine)
         self._mark()
 
@@ -431,7 +453,7 @@ def _replace(tmp: Path, path: Path, tries: int = 20) -> None:
         except PermissionError:
             if attempt == tries - 1:
                 raise
-            time.sleep(0.02)
+            time.sleep(0.05)
 
 
 def _now() -> str:
