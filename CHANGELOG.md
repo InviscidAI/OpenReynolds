@@ -413,6 +413,67 @@ All notable changes to this project are recorded here. The format follows
     (`mirror.py:195-197`), which is right, the marker being an empty file whose contents
     the reader ignores. With no sidecar the manifest says ParaView will rescale to the
     data range instead of inventing a limit.
+- **Electromagnetics: a Hartmann-flow case `mhdFoam` can solve, against a closed form.**
+  `mhdFoam` ships in ESI OpenFOAM and was referenced nowhere in this repository.
+  `openreynolds/toolbox/templates/mhd_hartmann.py` writes a complete case -- a graded 2D
+  channel with a uniform magnetic field across it -- and `benchmarks/mhd/grade.py` grades
+  it against the velocity profile, which has a closed form rather than a published figure.
+  - The reference is derived in the template's docstring and in `benchmarks/mhd/README.md`
+    from the solver's own two equations, not from a textbook's: in a transverse field the
+    Lorentz force on a fully developed flow reduces to a **linear drag**, so the momentum
+    equation is the Poiseuille equation with a `-k*u` and its solution is a constant minus
+    a cosh. `u/u_c = (cosh Ha - cosh(Ha y/L))/(cosh Ha - 1)` and
+    `u_c/u_mean = (cosh Ha - 1)/(cosh Ha - sinh Ha/Ha)`, with
+    `Ha = B0*L*sqrt(sigma/(rho*nu))` -- 3/2 at Ha 0 and 1.05263157 at Ha 20, a 29%
+    flattening that is the physics being measured.
+  - The shape carries Ha and nothing else, so a solved profile divided by its own
+    centreline value is checkable with no constant fitted; the centreline speed is
+    absolute, because the inlet is a plug and a 2D case has nowhere else for the mass to
+    go. `tests/test_journey_mhd.py` runs the template at Ha 20 and at Ha 0 in the
+    workspace image, solves both, grades both and cross-grades them, so the agreement is
+    two runs 29% apart against two formulae rather than one run against a cosh.
+  - `blockMesh` rather than gmsh, because the domain is a box and multi-grading toward
+    both walls puts seven cells inside the `L/Ha` Hartmann layer that a uniform mesh
+    straddles with one. The three quiet factors are in the case and in its comments:
+    `mu` in `constant/transportProperties` is the magnetic **permeability** in H/m and a
+    dynamic viscosity written there is accepted in silence, `0/pB` is a fictitious flux
+    pressure the case does not start without, and `fvSolution` needs a `BPISO`
+    sub-dictionary as well as a `PISO`.
+
+- **Combustion: a `chemFoam` reactor whose end temperature is computed independently.**
+  `reactingFoam` and every other combustion solver were referenced nowhere in this
+  repository. `openreynolds/toolbox/chem0d.py` writes a single-cell well-stirred reactor,
+  computes the temperature it has to reach from the case's own JANAF coefficients, and
+  grades the run against it.
+  - The target needs no paper: `chemFoam`'s `readInitialConditions.H`,
+    `solveChemistry.H` and `hEqn.H` together conserve the mixture's **absolute** enthalpy
+    at constant pressure, so `sum Y_i(end)*Ha_i(T_end) = sum Y_i(0)*Ha_i(T0)` is one
+    scalar equation in one unknown, solved by bisection over the narrowest interval every
+    species' fit is valid on. `constantProperty volume` gets the same treatment with
+    `u = h - R_mix*T` and a second independent number, the end pressure.
+  - No JANAF coefficient and no rate constant in it is a number anybody here typed:
+    `write` copies `constant/reactions` and `constant/thermo` out of
+    `$FOAM_TUTORIALS/combustion/reactingFoam/laminar/counterFlowFlame2D`, and the journey
+    test asserts the copies are byte-identical to the distribution's files.
+  - **The real-world reference is the thermo data, not the temperature.** `Ha_i(298.15 K)`
+    is a formation enthalpy, so each one is compared with NIST's Chemistry WebBook
+    gas-phase value, read off the WebBook's own pages with its published uncertainty. The
+    image's own fit reads CH4 -74.5992 against -74.6 +/- 0.3, CO2 -393.5487 against
+    -393.51 +/- 0.13 and H2O -241.8465 against -241.826 +/- 0.040 kJ/mol, and the methane
+    lower heating value that follows, 50.0312 MJ/kg, is 0.010% from the 50.0263 Hess's law
+    gives from the NIST values. Every difference is inside the reference's own stated
+    uncertainty.
+  - What is deliberately **not** claimed: a flame temperature. One irreversible global
+    step makes no CO, OH, H, O or NO, so the graded number is the complete-combustion
+    value and a real flame of the same mixture is cooler -- by how much is not asserted,
+    because no primary source for it has been read here, and `benchmarks/combustion/README.md`
+    names NASA CEA and NIST-JANAF as where to get it. No ignition delay is graded either:
+    with a one-step mechanism that is a property of `A` and `Ta` rather than of
+    combustion. Rich mixtures are refused by name. The reactor starts at 1000 K because a
+    one-step mechanism has no ignition chemistry and `exp(-14906/300)` is 3e-22.
+  - The control is what makes the agreement evidence: the journey test writes a second
+    case with `chemistry off` and nothing else changed, and requires it to come back at
+    its initial temperature and to be failed.
 
 - **Learn mode and beginner mode, as a depth the person chooses.** `study_style.py` gains
   `learn` and `beginner` beside `quick` and `full`, and `openreynolds --depth` makes all

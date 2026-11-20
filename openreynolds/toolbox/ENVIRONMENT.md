@@ -74,13 +74,20 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   run and not a flag, because the motion solver reads its constraints once at start-up,
   and the released case ships tightly coupled -- `moveMeshOuterCorrectors yes` with
   `accelerationRelaxation 1.0` -- because the cheaper scheme held a limit cycle 13% too
-  wide and only the energy audit saw it), and `evaluate_steady.py` (a cambered section over a ground plane, which is the `build.py`
-  of a parametric round: its section comes from a `design_constants.py` the caller
-  writes beside it rather than from numbers edited at the top, and `--write-round DIR`
-  lays the round out with a sample `hooks.py` and `goal.lock.json`). The last six are the
-  ones whose dictionaries are the real ones rather than stubs for the mesh tools. All eight
-  run `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
-  top, and run it -- the whole 2D, 3D, two-phase, rotating, porous, thermal-stress or moving-body recipe, gotchas
+  wide and only the energy audit saw it), `evaluate_steady.py` (a cambered section over
+  a ground plane, which is the build script of a parametric round: its section comes
+  from a `design_constants.py` the caller writes beside it rather than from numbers
+  edited at the top, and `--write-round DIR` lays the round out with a sample hooks.py
+  and `goal.lock.json`), and `mhd_hartmann.py` (Hartmann flow: a conducting liquid in a
+  duct across a magnetic field, as a complete `mhdFoam` case, meshed by `blockMesh`.
+  `mu` in its `constant/transportProperties` is the magnetic **permeability** in H/m,
+  not a dynamic viscosity, and the case does not start without a `0/pB`. Its answer is
+  closed form: `u/u_c = (cosh Ha - cosh(Ha y/L))/(cosh Ha - 1)`). All but `duct2d.py`
+  and `body_in_box.py` have dictionaries that are the real ones rather than stubs for
+  the mesh tools, and every one of them runs `checkMesh` and ends with a `mesh_look.py`
+  call. Copy one into a case directory, edit the two numbers marked at the top, and run
+  it -- the whole 2D, 3D, two-phase, rotating, porous, thermal-stress, moving-body,
+  parametric or MHD recipe, gotchas
   included, rather than a page to reconstruct from memory.
 - `lbm.py` and `sph.py` in the toolbox are solvers, and the only two here that are not
   OpenFOAM applications: a D2Q9 two-relaxation-time lattice Boltzmann and a 2D weakly
