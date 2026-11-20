@@ -392,9 +392,27 @@ def build(names: Sequence[str], points: np.ndarray, values: np.ndarray,
         raise Unavailable(
             f"{len(values)} points support no degree up to {max_degree}: "
             + "; ".join(row["refused"] for row in tried))
-    chosen = min(graded, key=lambda row: row["rmse_loo"])
+    # An exact fit's leave-one-out error is round-off, so choosing between two of them
+    # by `min` compares noise: on a quadratic sampled without error, degree 2 and
+    # degree 3 both land near 1e-16 and which is smaller depends on the BLAS. That is
+    # how this picked a cubic on Windows and a quadratic on Linux for the same points.
+    # Anything at or below the floor is exact, and the lowest exact degree is the model
+    # -- the extra terms of a richer basis are fitting round-off, and the fit is what
+    # `--at` evaluates afterwards. The floor is relative to the data's own scale
+    # because a residual's round-off is relative to the magnitudes being differenced,
+    # and 32 eps is slack for the factorisation and the leverage divide rather than for
+    # a single operation.
+    scale = float(np.sqrt(np.mean(np.square(values)))) if values.size else 0.0
+    exact_floor = 32.0 * float(np.finfo(float).eps) * max(scale, 1.0)
+    exact = [row for row in graded if row["rmse_loo"] <= exact_floor]
+    if exact:
+        chosen = min(exact, key=lambda row: row["degree"])
+    else:
+        chosen = min(graded, key=lambda row: row["rmse_loo"])
     fit = dict(chosen)
     fit.update({
+        "exact_floor": exact_floor,
+        "exact_degrees": [row["degree"] for row in exact],
         "design": list(names),
         "objective_mean": float(values.mean()),
         "objective_range": [float(values.min()), float(values.max())],

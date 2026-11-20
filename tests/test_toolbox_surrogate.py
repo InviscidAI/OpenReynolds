@@ -490,3 +490,47 @@ def test_the_docstring_says_the_fit_error_is_not_the_error(surrogate):
 def test_the_index_offers_the_surrogate(surrogate):
     index = (TOOLBOX / "README.md").read_text(encoding="utf-8")
     assert index.count("| `surrogate.py` |") == 1, "exactly one row, like every other"
+
+
+def test_an_exact_fit_is_chosen_by_degree_and_not_by_round_off():
+    """The failure this guards was Windows-only and could not be reproduced on a
+    developer machine, because it depends on the BLAS: on a quadratic the basis
+    contains, degree 2 and degree 3 both fit to round-off, and
+    `min(graded, key=rmse_loo)` then compares two numbers near 1e-16 that carry no
+    information. GitHub's windows-latest runners ordered them the other way from Linux
+    and `build` returned a cubic (#239, runs 44825570959).
+
+    So the rule is exercised directly with the noise forced both ways, rather than
+    hoping this machine's arithmetic reproduces a particular order. What must hold is
+    that the answer does not depend on which way it falls, and that a degree which
+    genuinely fits better still wins.
+    """
+    values = np.array([1.0, 2.0, 3.0, 4.0])
+    scale = float(np.sqrt(np.mean(np.square(values))))
+    floor = 32.0 * float(np.finfo(float).eps) * max(scale, 1.0)
+
+    def choose(rows):
+        exact = [row for row in rows if row["rmse_loo"] <= floor]
+        if exact:
+            return min(exact, key=lambda row: row["degree"])["degree"]
+        return min(rows, key=lambda row: row["rmse_loo"])["degree"]
+
+    noise_favours_two = [{"degree": 2, "rmse_loo": 2.1e-16},
+                         {"degree": 3, "rmse_loo": 3.4e-16}]
+    noise_favours_three = [{"degree": 2, "rmse_loo": 3.4e-16},
+                           {"degree": 3, "rmse_loo": 2.1e-16}]
+    assert choose(noise_favours_two) == 2
+    assert choose(noise_favours_three) == 2, (
+        "the chosen degree still depends on round-off, which is the #239 failure")
+
+    # The floor must not swallow a real improvement: a cubic that actually fits better
+    # is a cubic, and neither residual is anywhere near round-off.
+    genuine = [{"degree": 2, "rmse_loo": 0.21}, {"degree": 3, "rmse_loo": 0.03}]
+    assert choose(genuine) == 3
+
+    # And the floor is relative to the data, not an absolute 1e-14: objectives in this
+    # repository run from 1e-6 drag counts to 1e5 pascals.
+    big = np.array([1e5, 2e5, 3e5])
+    big_floor = 32.0 * float(np.finfo(float).eps) * max(
+        float(np.sqrt(np.mean(np.square(big)))), 1.0)
+    assert big_floor > floor * 1e4
