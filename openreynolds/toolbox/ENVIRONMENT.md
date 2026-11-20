@@ -199,7 +199,7 @@ over the forward drop, at the same flow rate, on the same grid. The lock says so
   case's flags go after the lock's `case_gen_args` and before `hooks.case_args()`, and
   may not repeat a flag either of those sets: the patch flags append, so a repeat would
   be two inlets rather than a swapped one, and it is refused before anything runs.
-  `--mode mesh` ignores `cases` — a probe meshes once and there is nothing per-case
+  `--mode mesh` ignores `cases`: a probe meshes once and there is nothing per-case
   about it. A lock cannot have both `cases` and a `trim`.
 - `derived` -- `{"diodicity": "reverse.dp / forward.dp"}`. Arithmetic over metric names
   and numbers: `+ - * /`, parentheses, nothing else. It is checked as a syntax tree and
@@ -211,5 +211,5 @@ over the forward drop, at the same flow rate, on the same grid. The lock says so
 case's numbers namespaced (`forward.dp`, `reverse.Cd`) plus the derived ones, `cases`
 carries each case's own `label`, `detail`, `window`, `converged` and `case_args`, and
 the candidate's `label` is the **worst** of its cases' and its mesh's (`mesh`,
-`diverged`, `timeout`, `unconverged`, `yplus`, `cells`, `ok`, worst first) — so a
+`diverged`, `timeout`, `unconverged`, `yplus`, `cells`, `ok`, worst first), so a
 diverged reverse solve is never averaged away by a converged forward one.
