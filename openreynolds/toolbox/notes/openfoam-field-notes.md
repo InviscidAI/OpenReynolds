@@ -360,14 +360,31 @@ produced by different code, and nothing ever put the two numbers side by side.
 
 **The backward-facing step.** The reattachment length was computed twice, by two
 scripts written in the same session. One walked the wall shear, found sign changes at
-0.21, 6.32, 7.86 and 9.97, and read x_r/h = 6.32 — right; 0.21 is the corner eddy,
-6.32 closes the primary bubble, and it is 4% above Gartling's 6.1. The other, the one
-that drew the delivered figure, read 7.5667 — 24% above the benchmark. The written
+0.21, 6.32, 7.86 and 9.97, and read x_r/h = 6.32 -- the right crossing; 0.21 is the
+corner eddy and 6.32 closes the primary bubble. The other, the one that drew the
+delivered figure, took the next crossing up and read 7.5667, 16% away. The written
 answer quoted 6.4, pointed the reader at the figure, and the figure was annotated
 "reattachment x/h=7.57" with a green line drawn there. Nothing reconciled the three
 numbers. A reader who trusts the picture — which is what a picture is for — came away
 with the wrong one, and both numbers had been printed minutes apart in the same
 session's tool output.
+
+There is a second thing in that study worth knowing, found later: it reported 6.32 as
+4% above Gartling's 6.1, and that comparison did not exist. **Gartling's 6.1 is in
+units of the downstream channel height**, which on an expansion ratio of 2 is 12.2
+step heights, and both of the study's numbers are in step heights. The same mistake
+set the case up at Re 1600 on the channel height where the benchmark's 800 is on that
+same length, because it took Gartling's unit length to be the step height throughout.
+One wrong unit length, two factors of two, and a printed agreement that was neither.
+
+A reattachment length, a Reynolds number and a drag coefficient all carry a length
+whose choice is somebody else's convention, and the cheap habit is to write down which
+length is in each of them before comparing with anything. Here the two conventions are
+unusually easy to confuse, because the step height and the *inlet* channel height are
+the same 0.5 and only the *downstream* channel height differs, so "Re on the channel
+height" and "Re on the step height" differ by exactly the factor nobody notices.
+`benchmarks/README.md` has this case written out, including that Gartling (1990) itself
+is paywalled and unread and what the normalisation rests on instead.
 
 **The ONERA M6 round-1 notes** said the upper-surface contour "shows the classic
 lambda-shock herringbone pattern clearly". It does not. The structure in that image is

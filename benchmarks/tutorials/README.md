@@ -182,19 +182,39 @@ rather than shorter in this range, a correct solve of the run's own case should 
 than 12.2 step heights, not less. The two factors of two do not cancel. The unit error
 manufactured an agreement and the Reynolds error made the real shortfall worse.
 
-**What is confirmed and what is not.** Gartling (1990), *Int. J. Numer. Methods Fluids*
-**11**, 953-967, is behind a paywall with no open copy, so his own table was not read.
-The geometry, the inlet profile, the Re definition and the value 6.10 are each stated
-identically by three independent benchmark suites that reproduce the case (MFIX-Exa, SU2,
-and the GALES benchmark set) and by the Abaqus verification manual, which also carries his
-upper-wall bubble from 4.85 to 10.48 in channel heights. The factor of two is closed
-independently by a published table that lists Gartling as x_r/h = 12.20 with h the step
-height, which is exactly 2 x 6.10, alongside 11.26 = 2 x 5.63 for the upper bubble.
-Armaly's experiment supports the same reading: at the same flow rate it measures about 14
-step heights, and a 2D steady computation is expected to underpredict a flow that is
-three-dimensional above Re about 400, which puts 12.2 in the right place and 6.1 nowhere
-near it. **Until somebody reads the paper, the normalisation rests on that corroboration
-and is flagged here rather than asserted.**
+**What the normalisation rests on, since it is not read from Gartling.** Gartling (1990),
+*Int. J. Numer. Methods Fluids* **11**, 953-967, is behind the Wiley paywall with no open
+copy, so his own table was never opened. The chain is this, and it is worth following
+because the first attempt at it reached the opposite answer from a search-engine
+paraphrase:
+
+- **MFIX-Exa's reproduction of the case states its own units outright**: `rho = 1`,
+  `mu = 0.00125`, `H = 1`, "where H is the expanded channel height", the mean velocity
+  over the inlet opening `u_bar = 1`, and `Re = rho u_bar H / mu = 800`. Its domain is
+  x in [0, 30] with the expanded channel over -0.5 <= y <= 0.5 and the inlet over
+  0 < y <= 0.5, so the channel height is 1, the step height is 0.5, and every length on
+  that page is in channel heights.
+- Its grid table is headed "Lower-wall eddy vs. mesh resolution (cf. Gartling, Table
+  II)", and it matches its own Richardson-extrapolated **6.097** to "Gartling's reported
+  value of **6.10**" to within 0.05%, **with no conversion**. That only works if
+  Gartling's 6.10 is in those same channel-height units.
+- A published MHD benchmarking table corroborates by doubling, listing the Gartling row
+  as `x_r/h = 12.20` and `11.26` with `h` the step height: exactly 2 x 6.10 and
+  2 x 5.63.
+- The 5.63 is the **upper-wall bubble length**, 10.48 - 4.85, not a rival value for the
+  lower-wall reattachment, which is what made the pair of numbers confusing.
+- Armaly's experiment sits where this reading predicts: at the same flow rate it measures
+  about 14 step heights, and a 2D steady computation is expected to underpredict a flow
+  Armaly states is three-dimensional above Re about 400. That puts 12.2 in the right
+  place and 6.1 nowhere near it.
+
+**So Gartling's 6.1 is in channel heights and his Re 800 is on the channel height with
+the mean inlet velocity.** The paper is still unread, and that is said here rather than
+implied away. That gap is issue #205, which also records
+what would close it: reading Gartling, and then re-running this case at Re 800 on the
+channel height so it becomes a validation instead of a worked units failure. He reports
+an upper-wall bubble from 4.85 to 10.48 channel heights as well, which nothing here has
+measured and which is a second independent check on the same solve.
 
 The other two things the run did are worth keeping regardless of the units. It reported
 that the pressure residual plateaued around 0.25 to 0.29 out to 15,000 iterations,

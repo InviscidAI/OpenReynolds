@@ -4,14 +4,23 @@ next to the number the answer quotes.
 
 Why this exists. In the backward-facing-step study the agent measured the
 reattachment length twice with two of its own scripts. `reattach.py` found the
-wall-shear sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32, which
-is right -- 0.21 is the corner eddy and 6.32 matches Gartling's 6.1. `analyze.py`,
-which is the one that *drew the picture*, read 7.5667, which is wrong. The written
-answer quoted 6.4, pointed the reader at the figure, and the figure was annotated
-"reattachment x/h=7.57" with a green line across it. Nothing reconciled the two, so
-a reader who trusts the picture -- which is what a picture is for -- came away with
-a number 24% above the benchmark instead of 4% above it. Both numbers existed in
-the same session's tool output, minutes apart.
+wall-shear sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32, which is
+the right crossing -- 0.21 is the corner eddy and 6.32 closes the primary bubble.
+`analyze.py`, which is the one that *drew the picture*, took the next crossing up and
+read 7.5667, which is wrong. The written answer quoted 6.4, pointed the reader at the
+figure, and the figure was annotated "reattachment x/h=7.57" with a green line across
+it. Nothing reconciled the two, so a reader who trusts the picture -- which is what a
+picture is for -- came away with a number 16% from the one in the text. Both existed
+in the same session's tool output, minutes apart.
+
+The study presented that as 4% above Gartling's 6.1 against 24% above it, and neither
+figure was available to it: Gartling's 6.1 is in downstream channel heights, which on
+an expansion ratio of 2 is 12.2 step heights, and both of these numbers are in step
+heights. So the benchmark could not separate the two scripts, and the thing that
+actually distinguishes them is which crossing of its own list each one took. That is
+the case for carrying the number into the figure rather than for trusting whichever
+number a benchmark appears to bless. (That normalisation is not read from Gartling,
+which is paywalled; `reattach.py` and `benchmarks/README.md` carry what it rests on.)
 
 The same shape has happened twice more. The ONERA M6 notes said the upper-surface
 contour "shows the classic lambda-shock herringbone pattern clearly" when the
@@ -121,8 +130,15 @@ DEFAULT_TOL = 0.05
 something. On F-36's own numbers, and measured with `apart()` below -- which
 normalises on the larger magnitude, so these are the percentages this tool actually
 prints, not the ones the study's own write-up quoted: the figure's 7.5667 against
-the answer's 6.4 is 15%, against the other script's 6.32 is 16%, and against
-Gartling's 6.1 is 19%."""
+the answer's 6.4 is 15%, and against the other script's 6.32 is 16%.
+
+Both of those are comparisons between two numbers of the study's own, in the same
+unit, which is the only kind this tool makes and the reason the tolerance means
+anything. The write-up also put 7.5667 against Gartling's 6.1 and got 19%, and that
+third comparison is not one of these: 6.1 is in downstream channel heights and the
+study's numbers are in step heights, so it was 7.5667 against 12.2 and the 19% was
+measuring the unit error rather than the disagreement. Nothing here compares a claim
+with a benchmark, and this is part of why."""
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
