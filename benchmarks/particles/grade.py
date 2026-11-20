@@ -67,19 +67,20 @@ THRESHOLDS = {
     # Grading choice, set from the convergence study in README.md rather than from
     # taste. A finite stopping criterion can only over-estimate this threshold, since
     # below it the approach to the wall takes infinite time, so the bound is one-sided
-    # and the measured value must land above 1/8. At stop_speed = 1e-10 U the measured
-    # value is +2.000%; 3% is the round number above that.
+    # and the measured value must land above 1/8. The default sweep's tightest stopping
+    # speed, 1e-14 U, measures +1.033%, and 1e-10 measures +2.000%; 3% is the round
+    # number above the loosest of the default sweep.
     "capture_error_pct": 3.0,
     # The convergence itself, which is what makes the +2% a diagnosis rather than an
     # unexplained gap: tightening the stopping speed by four decades must move the
     # measured threshold monotonically toward 1/8. Measured +5.671, +3.152, +2.000,
-    # +1.375, +1.033 at 1e-6 to 1e-14.
+    # +1.375, +1.033% at stopping speeds 1e-6 through 1e-14 of U (dt 0.005, horizon 50).
     "capture_must_converge": True,
     # Exact: v(t) = U (1 - exp(-t/tau_p)) for linear drag. RK4 at dt = tau_p/200
     # measured 1.9e-12 of U over five relaxation times, so this is six orders of
     # slack and still nowhere near a discretisation bound.
     "relaxation_exact": 1e-8,
-    # Exact: w_t = tau_p g (1 - rho_f/rho_p). Measured 1.1e-12 as a fraction.
+    # Exact: w_t = tau_p g (1 - rho_f/rho_p). Measured 2.2e-14 as a fraction.
     "terminal_exact": 1e-9,
     # The contrast that stops the two checks above being a tautology. With the
     # Schiller-Naumann correction at a particle Reynolds number of 42.8 the terminal
@@ -89,13 +90,14 @@ THRESHOLDS = {
     "sn_ratio_max": 0.9,
     # And the Schiller-Naumann terminal velocity must equal the root of
     # w = tau_p g' / phi(Re_p(w)), solved here by fixed-point iteration independently
-    # of the integrator. Exact; measured 2e-11.
+    # of the integrator. Exact; measured 5.1e-15.
     "sn_implicit_exact": 1e-7,
     # A massless tracer in solid-body rotation returns exactly to where it started
     # after one period. Measured 5.1e-8 of the radius at 200 steps per revolution.
     "orbit_closure": 1e-6,
     # And RK4 must actually be fourth order on it, or the integrator is not the one
-    # the docstring claims. Measured 4.00 at every refinement of 200 -> 1600 steps.
+    # the docstring claims. Measured 3.999989 and 4.000002 over 200 -> 400 -> 800
+    # steps per revolution, so it is four to six figures and not four to one.
     "orbit_order_min": 3.8,
 }
 
