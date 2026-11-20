@@ -411,7 +411,8 @@ reference is normalised on in every row. Three tiers:
   hydrostatic pressure and a sloshing period against closed forms, a dam break with no
   verdict because its paper could not be read, and an aerofoil and a wing against
   d'Alembert, thin-aerofoil theory and the elliptic induced drag. Each of these is a
-  single command and all of them run in CI on every pull request.
+  single command; the five graders run as commands in the `benchmarks` job on every pull
+  request and the panel method's exact checks are asserted in the `test` job.
 - **a case built from a template**, where there is an OpenFOAM:
   [`benchmarks/tutorials/templates.md`](benchmarks/tutorials/templates.md) covers the
   seven recipes in `openreynolds/toolbox/templates/`, what each builds and what is known
