@@ -191,6 +191,31 @@ def test_toolbox_is_pushed_at_session_start(backend, quiet_console):
     assert (local_dir / "log_digest.py").exists()
 
 
+def test_the_corpus_is_indexed_when_the_toolbox_is_synced(backend, quiet_console):
+    """Eager rather than lazy: a study that finished since the last sync is in the
+    earned tier before the agent asks, and `--if-stale` makes an unchanged one cheap."""
+    cli._sync_toolbox(backend)
+    assert backend.execs == [cli.CORPUS_BUILD]
+    assert backend.last_exec[1] == cli.TOOLBOX_DEST
+
+
+def test_a_felix_study_gets_no_corpus_build(backend, quiet_console):
+    """The Felix toolbox carries no `corpus.py`."""
+    cli._sync_toolbox(backend, cli.solvers.FELIX)
+    assert backend.execs == []
+
+
+def test_a_failed_corpus_build_does_not_stop_the_session(backend, quiet_console):
+    backend.exec_results[cli.CORPUS_BUILD] = ExecResult(1, "no tutorial tree", False, None)
+    cli._sync_toolbox(backend)  # must not raise
+
+    def refuse(*args, **kwargs):
+        raise BackendError("workspace gone", code="bad_request")
+
+    backend.exec = refuse
+    cli._sync_toolbox(backend)  # must not raise
+
+
 def test_a_failed_toolbox_sync_does_not_stop_the_session(backend, quiet_console):
     def refuse(local_dir, remote_dir):
         raise BackendError("disk full", code="bad_request")
