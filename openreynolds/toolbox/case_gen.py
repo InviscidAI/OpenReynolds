@@ -93,9 +93,10 @@ produce a mesh with a crack down it that checkMesh reports as an open cell."""
 
 
 PERIODIC_FILE = "periodic.json"
-"""What a periodic case leaves beside its dictionaries for `score.py` (`PERIODIC_FILE`
-there): the pair, its coupling, the drive, and the pitch the source's gradient is
-multiplied by to make a drop per period. Pinned in both files' tests."""
+"""What a periodic case leaves beside its dictionaries for a scorer to read
+(`score.py`'s `PERIODIC_FILE`, which arrives in #54): the pair, its coupling, the
+drive, and the pitch the source's gradient is multiplied by to make a drop per period.
+Pinned against the reader's name in whichever of the two PRs lands second."""
 
 
 def patch_order(patches) -> list[str]:
@@ -1420,9 +1421,11 @@ def force_coefficients(plan: Plan, flow: Flow, body: str) -> list[str]:
 
 PRESSURE_FUNCTIONS = (("inlet", "pInlet"), ("outlet", "pOutlet"))
 """The role each pressure probe sits on and the function object's name, which is also
-the `postProcessing/` directory it writes into. `score.py` reads these two names and
-subtracts them (`DP_FUNCTIONS` there); the pair is pinned by a test in both files,
-because a rename on one side would leave the other silently reporting no pressure drop."""
+the `postProcessing/` directory it writes into. A scorer reads these two names and
+subtracts them -- `score.py`'s `DP_FUNCTIONS`, which arrives in #54 -- so a rename on
+one side would leave the other silently reporting no pressure drop. A test pinning the
+two tuples against each other goes in whichever of the two PRs lands second; it cannot
+sit in either while the other side's name is not on main."""
 
 
 def pressure_objects(plan: Plan) -> list[str]:
