@@ -126,34 +126,12 @@ def times(case: Path) -> list[dict[str, str]]:
     and every number in it is the initial condition with a confident label on it --
     the trap `showcase.open_case` refuses by name for a decomposed case and that
     nothing refuses for a reconstructed one that never got going."""
-    written = [t for t in study_state.written_times(case)] if hasattr(
-        study_state, "written_times") else []
-    if not written:
-        written = sorted(
-            value for value in (_as_time(entry.name) for entry in _dirs(case))
-            if value is not None
-        )
-    beyond = [t for t in written if t > 0.0]
-    if not beyond:
+    latest = study_state.latest_time(case)
+    if not latest or float(latest) <= 0.0:
         return [note(STOP, "no time directory but 0: every field here is the initial "
                            "condition, whatever a picture of it looks like", "the case")]
-    return [note(CLEAR, f"solution written at {len(beyond)} time"
-                        f"{'s' if len(beyond) > 1 else ''}, latest t = {beyond[-1]:g}",
+    return [note(CLEAR, f"a solution was written, latest t = {float(latest):g}",
                  "the case")]
-
-
-def _dirs(case: Path):
-    try:
-        return [entry for entry in case.iterdir() if entry.is_dir()]
-    except OSError:
-        return []
-
-
-def _as_time(name: str) -> float | None:
-    try:
-        return float(name)
-    except ValueError:
-        return None
 
 
 FROM_STATUS = {"ok": CLEAR, "warn": CAVEAT, "fail": STOP, "skipped": CAVEAT}
