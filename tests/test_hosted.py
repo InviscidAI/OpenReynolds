@@ -188,6 +188,25 @@ def test_extraction_is_atomic_per_file(tmp_path):
     assert leftovers == []
 
 
+def test_an_extracted_file_keeps_the_workspaces_time(tmp_path):
+    """The copy says when the file was written on the workspace, not when it was
+    copied, so the workspace's listing and the copy agree on it (ui#131)."""
+    import io as _io
+    import tarfile as _tarfile
+
+    from openreynolds.backend.hosted import _extract_tar_gz
+
+    buf = _io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = _tarfile.TarInfo("case/constant/polyMesh/points")
+        info.size, info.mtime = 4, 1_700_000_000
+        tar.addfile(info, _io.BytesIO(b"1234"))
+
+    _extract_tar_gz(buf.getvalue(), tmp_path)
+
+    assert int((tmp_path / "case/constant/polyMesh/points").stat().st_mtime) == 1_700_000_000
+
+
 def test_a_script_by_shebang_is_shipped_executable(tmp_path):
     """The geometry desk writes `Allmesh` on the user's machine and ships it with
     `put_tree`. On Windows there is no execute bit to carry, so it arrived as

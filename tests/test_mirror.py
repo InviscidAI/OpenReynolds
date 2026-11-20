@@ -267,6 +267,22 @@ def test_a_file_already_here_is_not_asked_for_twice(backend, store):
     assert backend.fetched == []
 
 
+def test_a_copy_with_the_workspaces_whole_second_is_already_here(tmp_path):
+    """The archive keeps whole seconds and a listing has fractions. A copy carrying
+    the workspace's time must still count as here, or it is pulled every cycle."""
+    import os
+
+    from openreynolds.browse import Entry
+
+    copy = tmp_path / "points"
+    copy.write_bytes(b"1234")
+    os.utime(copy, (1_700_000_000, 1_700_000_000))
+    listed = Entry(path="/work/s/points", size=4, mtime=1_700_000_000.7, is_dir=False)
+    assert mirror._already_here(copy, listed)
+    later = Entry(path="/work/s/points", size=4, mtime=1_700_000_001.2, is_dir=False)
+    assert not mirror._already_here(copy, later)
+
+
 def test_a_file_rewritten_on_the_instance_comes_down_again(backend, store):
     workspace(backend, (f"{HOME}/notes.md", 1))
     mirror.sync(browser_for(backend, store))

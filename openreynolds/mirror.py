@@ -962,16 +962,18 @@ def _pull_batch(
 def _already_here(target: Path, entry: Entry) -> bool:
     """Whether the local copy is still the remote file.
 
-    The local copy is written fresh on extraction, so its mtime is when it was pulled,
-    not when it was written on the instance. That makes "the instance's copy is newer
-    than the moment we copied it" the question worth asking, and it is the one that
-    keeps a per-turn sync down to the handful of files that actually changed.
+    "Is the instance's copy newer than ours" is the question that keeps a per-turn
+    sync down to the handful of files that actually changed. A copy carries the
+    instance's own time for the file (the archive's, `hosted._extract_tar_gz`); one
+    made before that carries the moment it was pulled, which is later still. Whole
+    seconds, because the archive keeps no more: a listing's 1700000000.7 is the
+    archive's 1700000000, and a fractional comparison would pull the file every cycle.
     """
     try:
         stat = target.stat()
     except OSError:
         return False
-    return stat.st_size == entry.size and stat.st_mtime >= entry.mtime
+    return stat.st_size == entry.size and int(stat.st_mtime) >= int(entry.mtime)
 
 
 def _is_initial_fields(part: str) -> bool:

@@ -7,6 +7,7 @@ in the package that knows the contract exists.
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 import threading
 import time
@@ -1517,6 +1518,13 @@ def _extract_tar_gz(data: bytes, local_dir: Path) -> list[Path]:
             try:
                 with source, partial.open("wb") as out:
                     out.write(source.read())
+                # The workspace's own time, not the moment of the copy: the copy then
+                # says when the file was written, as the workspace's listing does, so
+                # the two agree on a file -- which is what lets the web viewer tell
+                # one mesh from another by its files without re-drawing it each time
+                # it is listed from the other (ui#131).
+                if member.mtime > 0:
+                    os.utime(partial, (member.mtime, member.mtime))
                 partial.replace(target)
             except OSError:
                 partial.unlink(missing_ok=True)
