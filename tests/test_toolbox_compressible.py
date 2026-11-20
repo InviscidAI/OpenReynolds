@@ -151,6 +151,37 @@ def test_thermophysical_properties_replaces_transport_properties(
     assert "nu  " not in thermo and "transportModel" not in thermo
 
 
+def test_an_incompressible_transport_properties_left_in_the_case_is_named(
+        compressible, duct, capsys):
+    """#194 item 10. The M0.3 case converted from an incompressible one kept
+    `nu 0.001;` from the original while the constants table printed "a compressible
+    case has no nu in any file, so Re is an output". `rhoSimpleFoam` reads
+    `thermophysicalProperties` and not that file, so the solve is unaffected and the
+    printed statement is false about the case on disk. Named rather than deleted: this
+    run did not write it."""
+    stale = duct / "constant" / "transportProperties"
+    stale.write_text("""FoamFile { version 2.0; format ascii; class dictionary; object transportProperties; }
+
+transportModel  Newtonian;
+nu              0.001;
+""", encoding="utf-8")
+
+    run(compressible, duct, "--mach", "0.3", *CONDITIONS, "--solver", "rhoSimpleFoam",
+        "--force")
+    printed = capsys.readouterr().out
+    assert "constant/transportProperties is still in this case" in printed
+    assert "nu 0.001" in printed
+    assert "rhoSimpleFoam does not read" in printed
+    assert "Delete it" in printed
+    assert stale.is_file(), "and it is still there: this run did not write it"
+
+    # The ordinary case says nothing of the kind.
+    stale.unlink()
+    run(compressible, duct, "--mach", "0.3", *CONDITIONS, "--solver", "rhoSimpleFoam",
+        "--force")
+    assert "still in this case" not in capsys.readouterr().out
+
+
 def test_the_energy_variable_follows_the_solver_that_has_to_solve_it(
         compressible, tmp_path, capsys):
     """rhoSimpleFoam's energy equation is in enthalpy and the density-based solvers'

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -1097,6 +1098,11 @@ def turbulence_for(solver: str, opts, reynolds: float) -> tuple[str, str]:
     )
 
 
+_NU = re.compile(r"^\s*nu\s+([^;]+);", re.M)
+"""The viscosity line of an incompressible `constant/transportProperties`, for naming
+what a converted case still has lying in it (#194)."""
+
+
 def summary(case: Path, plan, thermo: dict, mach: float, solver: str, why: str,
             study: str, model: str, model_why: str, notes: list[str]) -> list[str]:
     """What was decided, in the order somebody checking it would ask.
@@ -1149,6 +1155,24 @@ def summary(case: Path, plan, thermo: dict, mach: float, solver: str, why: str,
     ]
     lines += notes
     lines += [f"           {note}" for note in plan.notes]
+    stale = case / "constant" / "transportProperties"
+    if stale.is_file():
+        # #194 item 10: the constants table below says "a compressible case has no nu
+        # in any file, so Re is an output", and on a case converted from an
+        # incompressible one the incompressible `nu` is still sitting beside it.
+        # `rhoSimpleFoam` reads `thermophysicalProperties` and not this, so the solve
+        # is unaffected and the printed statement is simply false about the case on
+        # disk. Named rather than deleted: this run did not write it, and a generator
+        # that removes files it found is a worse habit than one that reports them.
+        nu = _NU.search(stale.read_text(encoding="utf-8", errors="replace"))
+        lines.append(
+            "           constant/transportProperties is still in this case"
+            + (f", with nu {nu.group(1)}" if nu else "")
+            + " -- the incompressible case's, which this did not write and "
+            f"{solver} does not read (its viscosity is Sutherland's, in "
+            "constant/thermophysicalProperties). Delete it: while it is there the "
+            "constants table's 'no nu in any file' is not true of this directory"
+        )
     lines.append("")
     lines.append("constants  every number this run wrote, and where it came from")
     for name, value, unit, source in sources(thermo):
