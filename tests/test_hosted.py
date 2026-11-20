@@ -593,6 +593,102 @@ def test_a_429_through_a_303_still_backs_off_instead_of_raising_at_once(monkeypa
     assert len(execs) == 3, "backed off twice and got there, rather than raising at once"
 
 
+def test_a_429_outlasts_the_ordinary_attempt_budget(monkeypatch):
+    """A sustained rate limit used to end the run that hit it.
+
+    `_MAX_ATTEMPTS` is five and `_retry_delay` tops out at 30 s, so a 429 that keeps
+    coming back raised `rate_limited` after about fifteen seconds of waiting -- fine
+    for a burst, nothing like enough for several clients polling one key. 429 now has
+    its own budget (`_THROTTLE_ATTEMPTS`) and does not spend the ordinary one, so a
+    limit lasting far longer than five tries is waited out rather than raised.
+    """
+    from openreynolds.backend.hosted import _MAX_ATTEMPTS
+
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if len(calls) <= _MAX_ATTEMPTS * 4:
+            return httpx.Response(429, json={"error": "rate_limited",
+                                             "message": "slow down"})
+        return httpx.Response(200, json={"instances": []})
+
+    client = _client_against(httpx.MockTransport(handler))
+
+    assert client.list_instances() == {"instances": []}
+    assert len(calls) == _MAX_ATTEMPTS * 4 + 1, calls[:3]
+
+
+def test_a_429_that_never_clears_still_gives_up(monkeypatch):
+    """Patient, not unbounded: the budget is large and it is a budget."""
+    from openreynolds.backend.hosted import _THROTTLE_ATTEMPTS
+
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(429, json={"error": "rate_limited", "message": "slow down"})
+
+    client = _client_against(httpx.MockTransport(handler))
+    with pytest.raises(BackendError) as excinfo:
+        client.list_instances()
+
+    assert excinfo.value.code == "rate_limited"
+    assert len(calls) == _THROTTLE_ATTEMPTS
+
+
+def test_a_503_keeps_the_ordinary_budget_rather_than_the_throttles(monkeypatch):
+    """A workspace that cannot boot answers 503 for ever, so waiting it out two hundred
+    times turns a five-attempt failure into a half-hour hang. Only 429 always clears."""
+    from openreynolds.backend.hosted import _MAX_ATTEMPTS
+
+    monkeypatch.setattr(hosted_mod.time, "sleep", lambda _s: None)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(503, json={"error": "unavailable", "message": "booting"})
+
+    client = _client_against(httpx.MockTransport(handler))
+    with pytest.raises(BackendError):
+        client.list_instances()
+
+    assert len(calls) == _MAX_ATTEMPTS
+
+
+def test_the_services_own_retry_after_wins_over_the_throttles_backoff():
+    """It knows when its window rolls; second-guessing it is how a client that means to
+    be polite ends up hammering."""
+    from openreynolds.backend.hosted import _throttle_delay
+
+    assert _throttle_delay(response(429, {}, headers={"Retry-After": "11"}), 5) == 11.0
+
+
+def test_a_throttle_wait_is_jittered_over_the_whole_interval_and_capped():
+    """Full jitter, not a wobble on a fixed delay: clients throttled by the same window
+    would otherwise all sleep the same eight seconds and all come back together."""
+    from openreynolds.backend.hosted import _THROTTLE_MAX_DELAY_S, _throttle_delay
+
+    waits = [_throttle_delay(response(429, {}), 4) for _ in range(200)]
+
+    assert min(waits) >= 8.0 and max(waits) <= 16.0
+    assert len(set(waits)) > 1, "a fixed delay is the synchronising failure"
+    assert _throttle_delay(response(429, {}), 50) <= _THROTTLE_MAX_DELAY_S
+
+
+def test_a_retry_after_header_reaches_the_caller_on_the_error():
+    """`extra` carries the error body; the wait only ever arrives in a header, so it is
+    carried on the error too -- the client is what gives up, and once its budget is
+    spent the error is all the caller gets."""
+    error = _decode_error(response(429, {"error": "rate_limited", "message": "slow down"},
+                                   headers={"Retry-After": "30"}))
+
+    assert error.retry_after == 30.0
+    assert _decode_error(response(429, {"error": "rate_limited"})).retry_after is None
+
+
 def test_a_400_collected_through_a_303_hop_is_raised_on_the_first_answer():
     """A hop earns a 4xx no special treatment, in either direction.
 
