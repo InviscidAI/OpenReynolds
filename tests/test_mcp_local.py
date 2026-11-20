@@ -213,13 +213,50 @@ def test_a_second_message_and_the_cursor(world):
     world.studies.ready.set()
     sid = call(world, "start_study", task="first")["session_id"]
     first = until(world, sid, "waiting_for_input")
+    # #188: `waiting_for_input` used to be reported off `picture["turn"]` alone, which
+    # another thread sets, while the cursor came from `picture["items"]`, which had not
+    # caught up -- so this came back 0 about 1 run in 40 and the next poll was handed
+    # the whole transcript again as if it were new.
+    assert first["state"] == "waiting_for_input", first
+    assert first["next_after_seq"] > 0, first
+    assert first["transcript"], "the turn it says to go and read is in this answer"
+
     call(world, "send_message", session_id=sid, text="second")
     deadline = time.monotonic() + 10
+    later = None
     while time.monotonic() < deadline:
         later = call(world, "study_status", session_id=sid, after_seq=first["next_after_seq"], wait_seconds=0)
         if later["state"] == "waiting_for_input" and later["transcript"]:
             break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f"the second turn never came back in 10 s: {later}")
     assert [r["text"] for r in later["transcript"]] == ["second", "done: second"]
+    assert later["next_after_seq"] > first["next_after_seq"], "the cursor has to move"
+
+
+def test_waiting_for_input_is_never_said_before_the_answer_is_in_the_transcript():
+    """#188, the defect under the flake, deterministically. The state and the cursor
+    come from two fields of one picture that two threads fill at two moments: `turn`
+    (the session thread, `LocalView.prompt`) and `items` (the refresh, from the
+    transcript tail). `waiting_for_input`'s own `next` is "Reynolds has finished its
+    turn. Read its last message" -- so the state is only true where that message is in
+    the transcript the same call returns."""
+    row = {"status": "running"}
+    picture = {"session": {"status": "running", "workspace": core.WORKSPACE_READY},
+               "turn": "user", "items": [], "jobs": []}
+
+    assert core.state_of(row, picture, False) == "working", "an empty transcript"
+
+    picture["items"] = [{"seq": 1, "kind": "user", "text": "first"}]
+    assert core.state_of(row, picture, False) == "working", "nobody has answered it"
+
+    picture["items"].append({"seq": 2, "kind": "assistant", "text": "done: first"})
+    assert core.state_of(row, picture, False) == "waiting_for_input"
+    # And the cursor the same call hands back covers what it just returned, which is
+    # the invariant the flake broke: an empty slice leaves `cursor = after_seq`.
+    rows, cursor, _cut = core.transcript_since(picture["items"], 0)
+    assert rows and cursor == 2
 
 
 def test_an_approval_is_asked_and_answered(world):
