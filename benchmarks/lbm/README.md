@@ -92,8 +92,11 @@ order in 1982, and this runs on 128 cells across.
 
 ## What it measured
 
-On a GitHub Actions `ubuntu-latest` runner -- a slow, consistent two-core machine, so a
-floor rather than a flattering number:
+On a GitHub Actions `ubuntu-latest` runner, so a floor rather than a flattering number.
+The agreements and the step counts are deterministic and repeat exactly between runs; the
+wall-clock times do not -- the same cavity run measured 103 s and 160 s on two runners, a
+factor of 1.5 -- so the times below are what a slow shared machine gives and not a
+property of the solver.
 
 | run | agreement | cost |
 |---|---|---|
@@ -102,7 +105,7 @@ floor rather than a flattering number:
 | Poiseuille, TRT, nu = 0.4 (tau_plus 1.70) | **3.30e-12** | 27,200 steps, 5.7 s |
 | Poiseuille, BGK, nu = sqrt(3)/12 | **9.04e-12** | -- |
 | Poiseuille, BGK, nu = 4 sqrt(3)/12 | **3.66e-03**, and that is the point | -- |
-| Cavity Re 1000, n = 128 | u RMS **0.736%**, v RMS **0.749%** of the lid speed | 123,500 steps, 103.1 s, 19.63 MLUPS |
+| Cavity Re 1000, n = 128 | u RMS **0.736%**, v RMS **0.749%** of the lid speed | 123,500 steps, 103-160 s, 12.6-19.6 MLUPS |
 
 The channel is exact to between 3e-12 and 5e-11 of u_max across a factor of twenty in
 viscosity, and the residual it stopped at was 5e-14 -- so what is being measured there is
