@@ -28,6 +28,7 @@ from .base import (
     cannot_see,
     neutral_blocks,
     split_result,
+    stream_with_retries,
 )
 
 
@@ -196,7 +197,10 @@ class OpenAIProvider(Provider):
             if effort and not self.lean:
                 kwargs["reasoning_effort"] = effort
             try:
-                return self._stream_once(kwargs, listener)
+                # A stream that drops partway is sent again: the raw transport error
+                # escapes the SDK's wrapping and used to end the session (#197).
+                return stream_with_retries(
+                    lambda heard, sent=kwargs: self._stream_once(sent, heard), listener)
             except openai.BadRequestError as exc:
                 text = _message(exc)
                 lowered = text.lower()

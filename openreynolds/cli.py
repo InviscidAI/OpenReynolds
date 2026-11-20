@@ -3899,7 +3899,18 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
         console.print(f"[yellow]could not check for other running jobs ({exc})[/]")
         return []
     mine = {job.job_id for job in store.session.jobs.values()}
-    return [row for row in rows if str(row.get("id") or "") not in mine]
+    return [row for row in rows if _listed_job_id(row) not in mine]
+
+
+def _listed_job_id(row: dict) -> str:
+    """The id of one row of `active_jobs()`: `job_id`, the service's name for it.
+
+    This read `id`, which the service never sends, so every row counted as somebody
+    else's -- this session's own job included. That only showed when this session's
+    kill had not reached the service and the job's row still read running: then the
+    session's own job kept its instance up, billing, until someone stopped it by hand
+    (#197). `HostedBackend.active_jobs` settles the spelling."""
+    return str(row.get("job_id") or "")
 
 
 _NEIGHBOUR_PROBE = r"""self=$$
@@ -4150,7 +4161,7 @@ def _close_down(backend: Backend, store: Store, keep_alive: Any = False) -> None
         # done, the two animation passes left holding empty output directories, and the
         # job reported `killed / sandbox_expired` with nothing saying who did it.
         names = ", ".join(
-            str(job.get("name") or str(job.get("id") or "")[:8]) for job in running)
+            str(job.get("name") or _listed_job_id(job)[:8]) for job in running)
         console.print(
             f"[yellow]{len(running)} job(s) still running on this workspace:[/] {names}"
         )

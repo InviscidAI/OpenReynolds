@@ -37,6 +37,7 @@ from .base import (
     Turn,
     cannot_see,
     neutral_blocks,
+    stream_with_retries,
 )
 
 
@@ -158,7 +159,8 @@ class AnthropicProvider(Provider):
         max_tokens: int,
         listener: Listener,
     ) -> Turn:
-        """One model, asked once -- twice when the first try is what teaches `lean`."""
+        """One model, asked once -- twice when the first try is what teaches `lean`,
+        and again when the connection drops mid-stream (`stream_with_retries`)."""
         for attempt in (1, 2):
             kwargs: dict[str, Any] = dict(
                 model=model,
@@ -183,7 +185,8 @@ class AnthropicProvider(Provider):
                 # left out, which on these models is adaptive anyway.
                 kwargs["output_config"] = {"effort": effort or "high"}
             try:
-                return self._stream_once(kwargs, listener)
+                return stream_with_retries(
+                    lambda heard, sent=kwargs: self._stream_once(sent, heard), listener)
             except anthropic.BadRequestError as exc:
                 text = _message(exc)
                 if "system" in text.lower() or self.lean or attempt == 2:
