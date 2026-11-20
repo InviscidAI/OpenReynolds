@@ -183,8 +183,21 @@ def compose(amplification: dict[float, np.ndarray], sectors: list[dict[str, Any]
     exceeded = np.zeros(shapes.pop(), dtype=float)
     covered = 0.0
     used = []
+    claimed: dict[float, float] = {}
     for centre, k in sorted(amplification.items()):
         sector = nearest_sector(sectors, centre)
+        # Two runs either side of a sector boundary both land on it, and the quiet
+        # outcome is that sector's hours counted twice: a coverage above 1 and a
+        # probability inflated by exactly the overlap.
+        if sector["centre_deg"] in claimed:
+            raise Refused(
+                f"refused: the runs at {claimed[sector['centre_deg']]:g} and "
+                f"{centre:g} degrees are both nearest the sector centred "
+                f"{sector['centre_deg']:g}, so its hours would be counted twice. "
+                f"One run per sector centre; the file's sectors are "
+                f"{360.0 / len(sectors):g} degrees wide"
+            )
+        claimed[sector["centre_deg"]] = centre
         hours, width = histogram_of(sector)
         exceeded += sector_exceedance(k, hours, width, threshold)
         covered += float(sector.get("hours") or 0)

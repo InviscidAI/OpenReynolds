@@ -154,6 +154,16 @@ def test_two_runs_on_different_grids_are_refused_rather_than_broadcast(comfort):
     assert "different grids" in str(raised.value)
 
 
+def test_two_runs_landing_on_one_sector_are_refused_rather_than_counted_twice(comfort):
+    """235 and 245 degrees are both nearest the sector centred on 240. Summing both
+    counts that sector's hours twice: a coverage above 1 and a probability inflated
+    by exactly the overlap, which nothing downstream would look odd about."""
+    sectors = [sector(240.0, [0, 0, 10])]
+    with pytest.raises(comfort.Refused) as raised:
+        comfort.compose({235.0: np.array([1.0]), 245.0: np.array([1.0])}, sectors, 2.0)
+    assert "counted twice" in str(raised.value)
+
+
 def test_a_site_file_without_a_histogram_is_refused_and_names_the_fix(comfort):
     """Files fetched before the histogram existed carry only the percentiles. Fitting
     a distribution to five points would answer anyway, and wrongly."""
