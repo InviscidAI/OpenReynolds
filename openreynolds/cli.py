@@ -1519,9 +1519,17 @@ def push_cmd(local: Path, dest: str | None, study_id: str | None) -> None:
     else:
         target = home
 
+    if not store.session.instance_id:
+        # A study that has never run has no workspace of its own yet. Asked for none,
+        # the service hands out the account's latest -- another study's -- and the
+        # file would land there, never seen by this one when it starts on its own.
+        console.print(f"[yellow]{escape(chosen)} has no workspace yet[/]: start it first "
+                      f"([bold]openreynolds --study {escape(chosen)}[/]), then push while it runs")
+        raise SystemExit(1)
+
     try:
         backend, _client, instance = hosted.acquire(
-            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
+            cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id
         )
     except BackendError as exc:
         console.print(f"[red]Could not reach the workspace service:[/] {exc}")
