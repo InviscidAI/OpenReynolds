@@ -284,7 +284,14 @@ def test_the_sampled_temperature_is_linear_and_spans_the_rise(plane_stress_run):
     residual = float(np.sqrt(np.mean((temperature - (slope * y + intercept)) ** 2)))
     print(f"  T over {y.size} points: line-fit residual {residual / DELTA_T_K:.3e} of dT, "
           f"extrapolated to y=0 gives {intercept:.4f} K, slope {slope:.2f} K/m")
-    assert residual / DELTA_T_K < 2e-3
+    # 2e-2, the same as the grader's, and set by the sampler rather than by the
+    # solver. A linear field is reproduced exactly at cell centres by any consistent
+    # finite-volume scheme, so the residual ought to be round-off -- but `midPoint`
+    # returns about two points per cell on this mesh (40 points over 20 cells across
+    # y), and the second of each pair is not at the cell centre, so the profile has a
+    # mild staircase in it. Measured 1.373e-3 of dT, which a 2e-3 bound passed by a
+    # factor of 1.5 and would have failed on a slightly different mesh.
+    assert residual / DELTA_T_K < 2e-2
     # the hot face's fixedValue, recovered from the interior
     assert intercept == pytest.approx(DELTA_T_K, rel=5e-3)
     # and the cold face's: the line reaches zero at y = H
@@ -331,6 +338,7 @@ def test_the_free_face_carries_no_traction(plane_stress_run):
         assert worst < 2e-2
 
 
+@pytest.mark.parametrize("plane_stress", [True, False])
 def test_the_benchmark_grader_agrees_through_its_own_command_line(
         plane_stress, plane_stress_run, plane_strain_run):
     """The grader as a person runs it, exit status and all. The assertions above are

@@ -200,5 +200,45 @@ has to run before `singleGraph`; that is the order the plateHole tutorial's own
 `Allrun` uses, for the same reason.
 
 `tests/test_journey_thermal_stress.py` is that whole sequence as a test, and it is what
-the `journey` job in `.github/workflows/tests.yml` runs inside the image. The run
-recorded in `benchmarks/README.md` is that job's.
+the `journey` job in `.github/workflows/tests.yml` runs inside the image.
+
+## The recorded run
+
+The `journey` job, run 44693376242, both plane states, 800 cells, 100 steps each,
+0.5 s of solver time apiece:
+
+| | plane stress | plane strain |
+|---|---|---|
+| `sigma_xx` vs `-E alpha T`, RMS / peak | **0.094%** | **0.162%** |
+| the same, max over all 40 samples | 0.300% | 0.556% |
+| `sigma_xx` extrapolated to the hot face | -220.2858 MPa, **+0.130%** | -314.6932 MPa, **+0.130%** |
+| `max sigmaEq` | 220.5740 MPa, +0.261% | 315.3043 MPa, +0.324% |
+| `sigma_yy` / peak | 0.314% | -- |
+| `sigma_xy` / peak | 1.077% | -- |
+| T, departure from a straight line / dT | 0.137% | -- |
+| the hot face's BC recovered from the interior | 100.1282 K, +0.128% | -- |
+| H recovered from the same line | 0.020012 m, +0.06% | -- |
+| the two states' ratio | **1.429471** against an exact 1.428571, **+0.063%** | |
+
+and the `image` job's gate, on a `blockMesh` grid rather than a gmsh one:
+220.0000 MPa against an exact 220.0000 MPa and 314.2857 against 314.2857, **0.00%**
+both, in 0.33 s of build time.
+
+**Where the difference comes from: the mesh, and only the mesh.** The answer is
+mesh-independent -- that is what makes it exact -- so the 0.00% on the gate's uniform
+`blockMesh` grid is the whole closed form reproduced, and the few tenths of a percent
+in the table above belong to the gmsh mesh the template builds. Blossom recombination
+produces quads that are mildly non-orthogonal (`checkMesh` measures 27.5 degrees on the
+comparable duct) and `grad(D)` is `leastSquares` on them. Two things corroborate that
+reading rather than leaving it a guess: `sigma_xy`, which is identically zero in the
+exact solution and is the component a skewed cell manufactures, is the largest
+departure in the table at 1.077%; and the ratio of the two plane states is the
+smallest at 0.063%, because whatever the mesh does to one state it does to the other
+and the ratio divides it out. The remaining candidate -- the linear solver -- is ruled
+out by size: GAMG is asked for 1e-10 and the displacement residual for 1e-9, four
+orders of magnitude below what is seen.
+
+The honest summary is therefore that this case measures the closed form to 0.00% where
+the mesh is right for it and to a few tenths of a percent on an unstructured mesh, and
+that the second number is a statement about `leastSquares` gradients on skewed quads
+rather than about `solidDisplacementFoam`.
