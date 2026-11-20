@@ -45,6 +45,8 @@ from .base import (
     ExecResult,
     JobStatus,
     Stat,
+    StoredEntry,
+    StoredListing,
 )
 from .kernel import KernelHost
 
@@ -215,6 +217,79 @@ class LocalBackend(KernelHost, Backend):
             return Stat(str(target), "directory", info.st_size, int(info.st_mtime), entries)
         kind = "symbolic link" if target.is_symlink() else "regular file"
         return Stat(str(target), kind, info.st_size, int(info.st_mtime))
+
+    MAX_STORED_ENTRIES = 20_000
+    """The cap this listing answers with. `browse` cuts to its own `MAX_ENTRIES`
+    breadth-first afterwards, so this one only has to stop a pathological tree from
+    being walked in full; a transient study's `processors4/` is the shape in mind."""
+
+    def list_stored(self, path: str, depth: int) -> StoredListing | None:
+        """Everything under `path`, read off the filesystem rather than walked by a
+        shell.
+
+        A local workspace is the "copy of the workspace" this seam was added for, and
+        answering here fixes the thing that made a local study invisible: the fallback
+        walk is one `find` over the ADVERTISED path, so on this backend it either
+        searched a `/work` that does not exist or printed real absolute paths that
+        nothing downstream can relate back to `/work/<id>`. Either way the mirror
+        pulled nothing, and with it went the case bundle, the renders folder and every
+        artifact the service would have been sent.
+
+        `depth` is ignored for the same reason the protocol says to ignore it: the copy
+        answers a whole tree and `browse` cuts it. Paths come back in the advertised
+        form, because that is what `browse._from_store` passes straight into `Entry`
+        and what every caller above it believes a workspace path looks like.
+
+        None on any failure, which puts the walk back exactly where it was.
+        """
+        try:
+            root = self._resolve(path)
+        except BackendError:
+            return None
+        if not root.is_dir():
+            return None
+        entries: list[StoredEntry] = []
+        truncated = False
+        try:
+            for item in root.rglob("*"):
+                if len(entries) >= self.MAX_STORED_ENTRIES:
+                    truncated = True
+                    break
+                if item.is_symlink():
+                    # Not followed, exactly as the walk leaves deeper symlinks alone,
+                    # so no loop can be walked into.
+                    continue
+                try:
+                    info = item.stat()
+                    is_dir = item.is_dir()
+                except OSError:
+                    # A file that went away mid-walk, which a live workspace does.
+                    continue
+                entries.append(StoredEntry(
+                    path=self.advertised(item),
+                    is_dir=is_dir,
+                    size=0 if is_dir else info.st_size,
+                    mtime=info.st_mtime,
+                ))
+        except OSError:
+            return None
+        return StoredListing(entries=entries, truncated=truncated)
+
+    def advertised(self, real: Path) -> str:
+        """A real path on this machine as the protocol names it.
+
+        The inverse of `_resolve`, and the reason this backend needs one at all:
+        everything above the protocol -- the frozen prompt, the toolbox, the mirror,
+        the store -- speaks `/work`, and this machine's workspace is somewhere else.
+        Forward slashes because a workspace path is a POSIX path everywhere else it
+        is read.
+        """
+        try:
+            inside = real.resolve().relative_to(self.root.resolve())
+        except (OSError, ValueError):
+            return str(real).replace(chr(92), "/")
+        text = str(inside).replace(chr(92), "/")
+        return WORKSPACE_ROOT if text == "." else f"{WORKSPACE_ROOT}/{text}"
 
     def put_tree(self, local_dir: Path, remote_dir: str) -> None:
         target = self._resolve(remote_dir)

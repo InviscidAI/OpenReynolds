@@ -1448,3 +1448,127 @@ def test_a_cycle_whose_wait_was_cut_by_stop_does_not_walk(backend, store):
     finally:
         gate.exit()
     assert backend.execs == [] and report.pulled == []
+
+
+# -- a workspace on this machine ----------------------------------------------
+#
+# Measured before the fix below: a `LocalBackend` workspace holding a
+# `system/controlDict` and a `plot.png` mirrored NOTHING. `mirror.sync` returned
+# `pulled: []` and `studies/<id>/files/` stayed empty. That one fact was the root of
+# three separate holes in a local study, all of them downstream of this file:
+#
+#   * no case bundle, because `casebundle` reads the mirror (`store.fetch_dir()`);
+#   * no `studies/<id>/renders/`, because `delivery.Gallery.ingest` surfaces what a
+#     sync `pulled`;
+#   * no artifacts on the service, because `Gallery` is what sends them -- and before
+#     it existed a render reached the platform only if the model happened to call
+#     `fetch`, which is the bug it was built for.
+#
+# The cause was the listing. `Browser.tree` falls back to a walk over `exec`, one
+# `find` over the ADVERTISED path, so on this backend it either searched a `/work`
+# that does not exist -- under Git Bash on Windows, Git's own root -- or searched the
+# right directory and printed every result as a real absolute path that nothing
+# downstream can relate back to `/work/<id>`.
+
+
+def _local_study(tmp_path, files: dict[str, bytes]):
+    """A local workspace with these files in the study's own directory, and a store."""
+    import os
+
+    from openreynolds.backend.local import LocalBackend
+    from openreynolds.store import Store
+
+    work = tmp_path / "work"
+    work.mkdir()
+    study_id = "20260101-000000-aaaa"
+    for name, blob in files.items():
+        path = work / study_id / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(blob)
+    os.environ.pop("OPENREYNOLDS_FOAM_BASHRC", None)
+    backend = LocalBackend(root=work, bashrc="")
+    store = Store(tmp_path / "studies", study_id)
+    store.session.home = f"/work/{study_id}"
+    store.save()
+    return backend, store
+
+
+def test_a_local_workspace_lists_itself_in_the_paths_the_protocol_uses(tmp_path):
+    """Advertised paths, because that is what `browse._from_store` passes straight
+    into `Entry` and what every caller above it believes a workspace path is."""
+    backend, _ = _local_study(tmp_path, {"tank/system/controlDict": b"endTime 1;"})
+
+    listed = backend.list_stored("/work/20260101-000000-aaaa", 4)
+
+    assert listed is not None, "the walk's fallback is what was broken"
+    assert sorted(e.path for e in listed.entries) == [
+        "/work/20260101-000000-aaaa/tank",
+        "/work/20260101-000000-aaaa/tank/system",
+        "/work/20260101-000000-aaaa/tank/system/controlDict",
+    ]
+    assert not listed.truncated
+
+
+def test_a_local_study_is_mirrored_at_all(tmp_path):
+    """The whole of it. `pulled` was empty and `files/` stayed empty."""
+    backend, store = _local_study(tmp_path, {
+        "tank/system/controlDict": b"endTime 1;",
+        "tank/log.icoFoam": b"Time = 1\nEnd\n",
+    })
+
+    report = mirror.sync(Browser(backend, store, home=store.session.home), live=True)
+
+    assert sorted(p.name for p in report.pulled) == ["controlDict", "log.icoFoam"]
+    landed = sorted(p.name for p in store.files_dir.rglob("*") if p.is_file())
+    assert landed == ["controlDict", "log.icoFoam"]
+
+
+def test_a_render_from_a_local_study_reaches_the_folder_and_the_service(tmp_path):
+    """The user-visible half. `Gallery` surfaces what a sync pulled and sends the same
+    file for keeping, so a study run here can be looked at from the browser."""
+    from openreynolds.delivery import Gallery
+
+    png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082")
+    backend, store = _local_study(tmp_path, {"hydro.png": png})
+    sent: list[str] = []
+
+    class _Capture:
+        def artifact(self, path, kind=None):
+            sent.append(path.name)
+
+    gallery = Gallery(store.files_dir, store.renders_dir, capture=_Capture())
+    report = mirror.sync(Browser(backend, store, home=store.session.home), live=True)
+    gallery.ingest(report)
+
+    assert [p.name for p in report.pulled] == ["hydro.png"]
+    assert sorted(p.name for p in store.renders_dir.glob("*")) == ["hydro.png"]
+    assert sent == ["hydro.png"], "and the service was sent it"
+
+
+def test_a_path_outside_the_workspace_is_not_listed(tmp_path):
+    """`_resolve` refuses it, and a refusal here has to read as "no listing" rather
+    than as an exception out of a convenience the mirror runs on a timer."""
+    backend, _ = _local_study(tmp_path, {"tank/system/controlDict": b"x"})
+
+    assert backend.list_stored("/work/../..", 4) is None
+    assert backend.list_stored("/work/20260101-000000-aaaa/nope", 4) is None
+
+
+def test_a_symlink_is_listed_no_further_than_the_walk_would(tmp_path):
+    """Deeper symlinks are left alone, so no loop can be walked into."""
+    import os
+
+    backend, _ = _local_study(tmp_path, {"tank/system/controlDict": b"x"})
+    loop = tmp_path / "work" / "20260101-000000-aaaa" / "tank" / "self"
+    try:
+        os.symlink(tmp_path / "work" / "20260101-000000-aaaa", loop,
+                   target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("this machine will not make a symlink without more privilege")
+
+    listed = backend.list_stored("/work/20260101-000000-aaaa", 4)
+
+    assert listed is not None
+    assert not any(e.path.endswith("/self") for e in listed.entries)
