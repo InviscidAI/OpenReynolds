@@ -8,6 +8,24 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **Three `case_gen.py` flags a design study needs and a hand-written case does not.**
+  `--yplus` writes the `yPlus` function object at `writeTime`, so the wall spacing a
+  turbulence model assumed can be read off the case rather than asserted; `--dp` writes
+  two `surfaceFieldValue` objects -- `areaAverage` of `p` on the first inlet and the
+  first outlet, every time step, into `postProcessing/pInlet/` and
+  `postProcessing/pOutlet/` -- because a pressure drop is the number an internal flow is
+  judged by and it is not a force on a body, so `forceCoeffs` does not carry it and no
+  amount of reading the log recovers it; and `--periodic A,B` couples two patches as a
+  cyclic pair in `constant/polyMesh/boundary` itself and drives the cell at a fixed bulk
+  velocity with a `meanVelocityForce` source in `constant/fvOptions`, writing the pitch
+  it measured off the two patches' centres to `periodic.json`, so one stage of a
+  many-stage device is measured without paying for the other stages and the end
+  fittings. `cyclic` when the two patches have the same face count, else `cyclicAMI`;
+  `--periodic-kind` overrides. The three function objects are assembled as lines beside
+  the ones already there (`case_gen.force_coeffs`), so a case with no body, no drop and
+  no y+ still gets no empty `functions {}`. Split out of #54 at review; the consumers of
+  `periodic.json` and the two pressure records arrive with `score.py` in that PR.
+
 - **Every case this repository can run is in the tutorial index, with the scale each
   reference is normalised on.** The index listed three of them. `benchmarks/tutorials/`
   carried the heated pipe, the buoyant cavity and the backward-facing step, while the

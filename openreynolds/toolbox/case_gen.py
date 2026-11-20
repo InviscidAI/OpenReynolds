@@ -50,18 +50,36 @@ roles
     python3 case_gen.py /work/study/mesh --study transient --end-time 2 --dry-run
     python3 case_gen.py /work/study/channel --study transient --end-time 5 \
         --turbulence WALE --les-delta vanDriest --average-from 2
+    python3 case_gen.py /work/study/cell --periodic west,east --speed 0.1 --length 0.0032
 
 LES is not another solver here: `pimpleFoam` runs it and `constant/turbulenceProperties`
 is the only file that says so. What the switch costs is everything around it -- the
 schemes (central convection, second-order ddt), the Courant bound, the time average,
 and a resolution requirement nothing here can verify and this does print. `--turbulence`
 takes a subgrid model by name; `--study steady` with one is refused rather than written.
+
+a periodic cell
+
+    `--periodic A,B` couples two patches of the mesh as a cyclic pair -- written into
+    `constant/polyMesh/boundary` itself, each naming the other -- and drives the cell
+    at a fixed flow rate -- `--speed` is the bulk velocity through A, along
+    `--direction` (default from A toward B) -- with a `meanVelocityForce` source in
+    `constant/fvOptions`. The flow rate is then the duty and the pressure drop is what
+    comes out: the source prints the gradient it needed each iteration, and a scorer
+    reports it times the pitch (measured off the two patches' centres, left in
+    `periodic.json`) as a pressure drop per period. That is how one stage of a
+    many-stage device is measured without paying for the other stages and the end
+    fittings: the alternative is meshing every stage, and the answer wanted is per
+    stage either way. `cyclic` when the two patches have the same face count, else
+    `cyclicAMI`; `--periodic-kind` says which.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -72,6 +90,12 @@ TOLERANCE = 1e-9
 """Coordinates closer than this are the same point. blockMesh matches faces by
 vertex index, not by position, so two points that ought to be one and are not
 produce a mesh with a crack down it that checkMesh reports as an open cell."""
+
+
+PERIODIC_FILE = "periodic.json"
+"""What a periodic case leaves beside its dictionaries for `score.py` (`PERIODIC_FILE`
+there): the pair, its coupling, the drive, and the pitch the source's gradient is
+multiplied by to make a drop per period. Pinned in both files' tests."""
 
 
 def patch_order(patches) -> list[str]:
@@ -355,6 +379,12 @@ def roles_for(mesh: MeshFacts, opts) -> dict:
             raise SystemExit(f"--spin wants name:radius[:axis], not {entry!r}")
         stated[parts[0]] = "spinning"
 
+    pair = named(opts, "periodic")
+    if pair and len(pair) != 2:
+        raise SystemExit(f"--periodic takes two patches, A,B -- the pair to couple -- not {pair}")
+    for name in pair:
+        stated[name] = "cyclic"
+
     unknown = [n for n in stated if n not in mesh.patch_faces]
     if unknown:
         raise SystemExit(
@@ -368,6 +398,8 @@ def roles_for(mesh: MeshFacts, opts) -> dict:
         if kind is None:
             if entry.get("type") == "empty":
                 kind = "empty"
+            elif str(entry.get("type", "")).startswith("cyclic"):
+                kind = "cyclic"
             elif str(entry.get("type", "")).startswith("symmetry"):
                 kind = "symmetry"
             elif _looks_like(name, INLET_NAMES):
@@ -381,8 +413,83 @@ def roles_for(mesh: MeshFacts, opts) -> dict:
             role["direction"] = inlet_direction(entry, mesh, opts)
         if kind == "spinning":
             role.update(_spin(name, opts))
+        if kind == "cyclic":
+            role["type"] = (cyclic_kind(mesh, pair, opts) if name in pair
+                            else str(entry.get("type")))
         roles[name] = role
     return roles
+
+
+def cyclic_kind(mesh: MeshFacts, pair: list[str], opts) -> str:
+    """`cyclic` for a pair whose face counts match -- a build that meshed the two ends
+    alike (gmsh `setPeriodic`) -- else `cyclicAMI`, which interpolates between faces
+    that do not line up. `--periodic-kind` wins."""
+    asked = opts.get("periodic_kind") or "auto"
+    if asked != "auto":
+        return asked
+    counts = {mesh.patch_faces.get(name) for name in pair}
+    return "cyclic" if len(counts) == 1 else "cyclicAMI"
+
+
+def periodic_facts(mesh: MeshFacts, roles: dict, opts) -> dict:
+    """The pair, its coupling, the drive and the pitch, measured off the mesh.
+
+    The separation is the vector between the two patches' centres (`mesh_look`), and
+    the pitch is its length along the drive: the distance one period spans, which the
+    source's gradient is multiplied by. The drive is `--direction`, else from the first
+    patch toward the second -- so `--periodic west,east` runs +x and the reverse case
+    is the same cell with `--direction=-x` (the `=` because argparse reads a
+    bare `-x` as a flag).
+    """
+    a, b = named(opts, "periodic")
+    inlets = [n for n, r in roles.items() if r.get("kind") == "inlet"]
+    if inlets:
+        raise SystemExit(f"a periodic cell is driven by its momentum source, and {', '.join(inlets)} "
+                         "would be an inlet driving it too: name the inlet a wall or drop --periodic")
+    ca, cb = mesh.patch(a).get("center") or [], mesh.patch(b).get("center") or []
+    if len(ca) != 3 or len(cb) != 3:
+        raise SystemExit(f"the centres of {a} and {b} could not be measured, so the period is "
+                         "unknown -- this needs mesh_look's pyvista half")
+    separation = [cb[i] - ca[i] for i in range(3)]
+    if opts.get("direction"):
+        drive = list(inlet_direction({}, mesh, opts))
+    else:
+        norm = math.sqrt(sum(c * c for c in separation))
+        if norm <= TOLERANCE:
+            raise SystemExit(f"{a} and {b} are in the same place: there is no period between them")
+        drive = [c / norm for c in separation]
+    pitch = abs(sum(separation[i] * drive[i] for i in range(3)))
+    if pitch <= TOLERANCE:
+        raise SystemExit(f"the drive {vector(drive)} runs across the pair, not from {a} to {b}: "
+                         "the period along it is zero")
+    return {"patches": [a, b], "type": roles[a]["type"], "separation": separation,
+            "drive": [c + 0.0 for c in drive], "pitch": pitch,
+            "bulk_to_mean": bulk_to_mean(mesh, a, pitch)}
+
+
+def bulk_to_mean(mesh: MeshFacts, face: str, pitch: float) -> float:
+    """Volume-mean velocity over bulk velocity through `face`: area x pitch / volume.
+
+    `meanVelocityForce` holds the VOLUME mean of U at `Ubar`, and a cell with a loop,
+    a pocket or an island holds more or less fluid per period than a plain channel of
+    its end width -- so the same `Ubar` would be a different flow rate on every
+    design, and a flow rate is what the duty is. By continuity the volume integral of
+    the streamwise velocity over one period is the flux times the pitch, so holding
+    `Ubar = speed x area x pitch / volume` holds the flux through `face` at `speed x
+    area` whatever is drawn between the ends. On a plain channel the factor is 1.
+
+    The volume is the 2D one, half the `empty` patches' area times the thickness.
+    """
+    # ponytail: 2D only (the volume comes off the empty patches); a 3D cell needs the
+    # mesh volume from checkMesh, add it when a 3D periodic case turns up.
+    area = float(mesh.patch(face).get("area") or 0.0)
+    empty = sum(float(p.get("area") or 0.0) for p in mesh.patches if p.get("type") == "empty")
+    volume = 0.5 * empty * mesh.thickness
+    if not (mesh.two_d and area > 0 and volume > 0):
+        raise SystemExit(f"a periodic cell needs {face}'s area and the fluid volume to hold a flow "
+                         "rate, and this mesh gave neither (a 2D mesh with an empty frontAndBack, "
+                         "measured by mesh_look's pyvista half, gives both)")
+    return area * pitch / volume
 
 
 def _looks_like(name: str, words: tuple[str, ...]) -> bool:
@@ -542,6 +649,12 @@ def build_plan(case: Path, opts) -> Plan:
         notes.append("the smallest cell could not be measured, so the y+ estimate and "
                      "the Courant time step are left out")
     info = {"external": external, "bodies": bodies, "length_from": source}
+    if named(opts, "periodic"):
+        info["periodic"] = periodic_facts(mesh, roles, opts)
+        facts = info["periodic"]
+        notes.append(f"periodic {facts['patches'][0]} -> {facts['patches'][1]} ({facts['type']}), "
+                     f"pitch {facts['pitch']:.4g} m, driven along {vector(facts['drive'])} by "
+                     "meanVelocityForce: dp per period = its pressure gradient x the pitch")
     return Plan(mesh, roles, length, info, notes)
 
 
@@ -863,7 +976,10 @@ def boundary_field(plan: Plan, entry) -> str:
                 f"the mesh has a patch '{name}' that the template did not give a role; "
                 "every patch needs one, or its 0/ entries are guesses"
             )
-        body = entry(name, role)
+        # A coupled pair is a constraint, the same in every field: one line here rather
+        # than a branch in each writer that could be forgotten in one of them.
+        body = ([f"type            {role['type']};"] if role["kind"] == "cyclic"
+                else entry(name, role))
         lines.append(f"    {name}")
         lines.append("    {")
         for item in body:
@@ -879,8 +995,11 @@ def stream_direction(plan: Plan) -> tuple[float, float, float]:
     The internal field and the outlet's fall-back value are seeded with this. A
     duct whose inlet is on the floor (`duct-f`, `duct-m`) runs up the y axis, and
     starting every cell in it at (U 0 0) points the whole domain across the duct
-    instead of along it -- which converges, eventually, from further away.
+    instead of along it -- which converges, eventually, from further away. A periodic
+    cell has no inlet and starts at its drive.
     """
+    if plan.info.get("periodic"):
+        return tuple(plan.info["periodic"]["drive"])
     for name in patch_order(plan.roles):
         role = plan.roles[name]
         if role.get("kind") == "inlet":
@@ -1182,6 +1301,15 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") 
     `lRef` and `Aref` are written from the geometry this template actually built, so the
     coefficients mean what their names say without anybody re-deriving them. Only the
     external templates get forces -- a duct has no body to take them on.
+
+    `--yplus` adds the `yPlus` function object, written at every field write: one row
+    per wall patch of min, max and mean y+ into `postProcessing/yPlus/`. It is what
+    `score.py` reads to hold a design study inside its wall-treatment band, and it is
+    the measurement `turbulence_notes` can only estimate before the run.
+
+    `--dp` adds the two `surfaceFieldValue` objects a pressure drop is: the
+    area-averaged `p` on the inlet and on the outlet, at every iteration. See
+    `pressure_objects`.
     """
     entries: list[str] = []
     entries += force_coeffs(plan, flow, opts)
@@ -1237,8 +1365,27 @@ def field_average(opts, model: str) -> list[str]:
 
 def force_coeffs(plan: Plan, flow: Flow, opts) -> list[str]:
     body = str(opts.get("body_patch") or "body")
-    if body not in plan.mesh.patch_face_counts():
-        return []
+    entries: list[str] = []
+    if body in plan.mesh.patch_face_counts():
+        entries += force_coefficients(plan, flow, body)
+    if opts.get("dp"):
+        entries += pressure_objects(plan)
+    if opts.get("yplus"):
+        # writeTime, not timeStep: y+ is a field over the patch and a per-iteration
+        # write of it is the solve's whole output again. The last write is the one a
+        # scorer reads, and the wall spacing does not move once the flow has settled.
+        entries += [
+            "    yPlus", "    {",
+            "        type            yPlus;",
+            "        libs            (fieldFunctionObjects);",
+            "        writeControl    writeTime;",
+            "    }",
+        ]
+    return entries
+
+
+def force_coefficients(plan: Plan, flow: Flow, body: str) -> list[str]:
+    """The `forceCoeffs` block on `body`, and the residual log beside it."""
     area = plan.length * plan.mesh.thickness
     magnitude = flow.speed
     entries = [
@@ -1269,6 +1416,52 @@ def force_coeffs(plan: Plan, flow: Flow, opts) -> list[str]:
         "    }",
     ]
     return entries
+
+
+PRESSURE_FUNCTIONS = (("inlet", "pInlet"), ("outlet", "pOutlet"))
+"""The role each pressure probe sits on and the function object's name, which is also
+the `postProcessing/` directory it writes into. `score.py` reads these two names and
+subtracts them (`DP_FUNCTIONS` there); the pair is pinned by a test in both files,
+because a rename on one side would leave the other silently reporting no pressure drop."""
+
+
+def pressure_objects(plan: Plan) -> list[str]:
+    """Area-averaged `p` on the inlet and on the outlet, every iteration.
+
+    A pressure drop is the number an internal flow is judged by -- a valve, a manifold,
+    a cold plate -- and it is not a force on a body, so `forceCoeffs` does not have it
+    and no amount of reading the log recovers it. Two `surfaceFieldValue` objects do:
+    `areaAverage` of `p` over one patch each, written at every time step so the tail of
+    the record can be averaged the same way the coefficients are (`score.py`'s
+    `fidelity.window`), rather than read off whichever iteration wrote last.
+
+    The first inlet and the first outlet in patch order, one each: a case with two
+    inlets has a pressure drop per inlet and no single number, and guessing which one
+    was meant is worse than reporting none. `p` is the solver's own field, so on
+    `simpleFoam` it is kinematic (m2/s2) and the drop is too; a ratio of two drops --
+    a diodicity -- does not care, and a drop in pascals is rho times this.
+    """
+    lines: list[str] = []
+    for kind, function in PRESSURE_FUNCTIONS:
+        patch = next((name for name in patch_order(plan.roles)
+                      if plan.roles[name].get("kind") == kind), "")
+        if not patch:
+            continue
+        lines += [
+            f"    {function}", "    {",
+            "        type            surfaceFieldValue;",
+            "        libs            (fieldFunctionObjects);",
+            "        regionType      patch;",
+            f"        name            {patch};",
+            "        operation       areaAverage;",
+            "        fields          (p);",
+            "        writeFields     false;",
+            "        writeControl    timeStep;",
+            "        writeInterval   1;",
+            "        log             false;",
+            "    }",
+        ]
+    return lines
 
 
 def purge_write(study: str, opts) -> int:
@@ -1558,7 +1751,12 @@ def residual_control(fields: tuple[str, ...]) -> list[tuple[str, float]]:
     return entries
 
 
-def fv_solution(study: str, model: str) -> str:
+PRESSURE_REFERENCE = ["    pRefCell        0;", "    pRefValue       0;"]
+"""Where p is pinned when no boundary fixes it. A periodic cell has no outlet, so its
+pressure is defined only up to a constant and the solver needs one cell to hold."""
+
+
+def fv_solution(study: str, model: str, reference: bool = False) -> str:
     """The linear solvers.
 
     PIMPLE asks for `pFinal` and `UFinal` by those exact literal names on the last
@@ -1586,16 +1784,69 @@ def fv_solution(study: str, model: str) -> str:
     lines += ["}", ""]
     if study == "transient":
         lines += ["PIMPLE", "{", "    nOuterCorrectors 2;", "    nCorrectors     2;",
-                  "    nNonOrthogonalCorrectors 1;", "}"]
+                  "    nNonOrthogonalCorrectors 1;", *PRESSURE_REFERENCE * reference, "}"]
     else:
         lines += ["potentialFlow", "{", "    nNonOrthogonalCorrectors 10;", "}", "",
                   "SIMPLE", "{", "    nNonOrthogonalCorrectors 1;", "    consistent      yes;",
+                  *PRESSURE_REFERENCE * reference,
                   "    residualControl", "    {"]
         lines += [f"        {field:<15} {tol:g};" for field, tol in residual_control(fields)]
         lines += ["    }", "}", "",
                   "relaxationFactors", "{", "    equations", "    {",
                   '        U               0.9;', '        ".*"            0.9;', "    }", "}"]
     return foam_file("dictionary", "fvSolution", "\n".join(lines), "system")
+
+
+def cyclic_boundary(text: str, facts: dict) -> str:
+    """`constant/polyMesh/boundary` with the pair coupled, everything else untouched.
+
+    Each of the two entries loses its `type` and `inGroups` and gains the coupled type
+    and its `neighbourPatch`; `nFaces` and `startFace` are the mesh's and stay. A
+    `cyclic` pair needs no transform -- OpenFOAM works the translation out from faces
+    that match -- but `cyclicAMI` does, so it gets `translational` and the measured
+    separation, toward the neighbour from this side.
+    """
+    # ponytail: the AMI separationVector sign is this reading of the ESI source, not yet
+    # checked on a live solve; the default (a matched pair, plain cyclic) does not use it.
+    a, b = facts["patches"]
+    kind = facts["type"]
+    for name, other, sign in ((a, b, 1.0), (b, a, -1.0)):
+        found = re.search(rf"^(\s*{re.escape(name)}\s*\n\s*\{{)(.*?)(\n\s*\}})", text, re.M | re.S)
+        if not found:
+            raise SystemExit(f"constant/polyMesh/boundary has no entry for {name}")
+        indent = "        "
+        kept = [line for line in found.group(2).split("\n") if line.strip() and not re.match(
+            r"\s*(type|inGroups|neighbourPatch|transform|separationVector)\b", line)]
+        added = [f"{indent}type            {kind};", f"{indent}inGroups        1({kind});",
+                 f"{indent}neighbourPatch  {other};"]
+        if kind == "cyclicAMI":
+            added += [f"{indent}transform       translational;",
+                      f"{indent}separationVector {vector([sign * c for c in facts['separation']])};"]
+        text = text[:found.start(2)] + "\n" + "\n".join(added + kept) + text[found.end(2):]
+    return text
+
+
+def mean_velocity(facts: dict, flow: Flow) -> list[float]:
+    return [c * flow.speed * facts["bulk_to_mean"] for c in facts["drive"]]
+
+
+def fv_options(facts: dict, flow: Flow) -> str:
+    """The source that holds the cell's flow rate at `--speed` through the first patch.
+
+    `meanVelocityForce` adds whatever uniform pressure gradient keeps the volume-mean
+    velocity at `Ubar` and prints it every iteration, so the flow rate is fixed (the
+    duty) and the drop per period is measured rather than imposed. `Ubar` is the bulk
+    speed converted to a volume mean (`bulk_to_mean`).
+    """
+    ubar = mean_velocity(facts, flow)
+    body = "\n".join([
+        "momentumSource", "{",
+        "    type            meanVelocityForce;",
+        "    selectionMode   all;",
+        "    fields          (U);",
+        f"    Ubar            {vector(ubar)};",
+        "}"])
+    return foam_file("dictionary", "fvOptions", body, "constant")
 
 
 def transport_properties(flow: Flow) -> str:
@@ -1681,10 +1932,19 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
     files = {
         "system/controlDict": control_dict(plan, flow, opts, study, model),
         "system/fvSchemes": fv_schemes(study, model),
-        "system/fvSolution": fv_solution(study, model),
+        "system/fvSolution": fv_solution(study, model, reference=bool(plan.info.get("periodic"))),
         "constant/transportProperties": transport_properties(flow),
         "constant/turbulenceProperties": turbulence_properties(model, delta),
     }
+    facts = plan.info.get("periodic")
+    if facts:
+        boundary = Path(opts["case"]) / "constant" / "polyMesh" / "boundary"
+        files["constant/polyMesh/boundary"] = cyclic_boundary(boundary.read_text(encoding="utf-8"), facts)
+        files["constant/fvOptions"] = fv_options(facts, flow)
+        files[PERIODIC_FILE] = json.dumps(
+            {**facts, "Ubar": mean_velocity(facts, flow), "bulk_speed": flow.speed,
+             "dp": "meanVelocityForce's pressure gradient x pitch, per period (score.py)"},
+            indent=1) + "\n"
     files["0/U"] = field_U(plan, flow)
     files["0/p"] = field_p(plan)
     fields = turbulence_fields(model)
@@ -1938,7 +2198,9 @@ def main(argv: list[str] | None = None) -> int:
                            "of the inlet, measured off the mesh.")
     flow.add_argument("--direction", default="",
                       help="Which way the inlet flows: x, y, z, -x, -y, -z. Default: the "
-                           "inlet patch's own normal, pointed into the domain.")
+                           "inlet patch's own normal, pointed into the domain. With "
+                           "--periodic, the drive (default from A toward B); write "
+                           "--direction=-x, since a bare -x reads as a flag.")
     flow.add_argument("--turbulence", default="auto", metavar="MODEL",
                       # No `choices`: the refusal in `turbulence_model` names the model
                       # that was asked for, lists the RAS and the LES sets separately,
@@ -2007,6 +2269,22 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--body", default="body", dest="body_patch",
                          help="The patch forces are taken on, when there is one (default 'body'). "
                               "A patch by that name gets a forceCoeffs function object.")
+    patches.add_argument("--dp", action="store_true",
+                         help="Add the two surfaceFieldValue objects a pressure drop is: "
+                              "area-averaged p on the first inlet and the first outlet at "
+                              "every iteration, into postProcessing/pInlet/ and pOutlet/. "
+                              "score.py reads them as dp = p_inlet - p_outlet.")
+    patches.add_argument("--periodic", action="append", default=[],
+                         help="A,B: couple two patches as a cyclic pair and drive the cell at "
+                              "the bulk velocity --speed through A, along --direction (default A "
+                              "toward B), "
+                              "with meanVelocityForce; score.py reports dp per period.")
+    patches.add_argument("--periodic-kind", default="auto", dest="periodic_kind",
+                         choices=["auto", "cyclic", "cyclicAMI"],
+                         help="auto: cyclic when the pair's face counts match, else cyclicAMI.")
+    patches.add_argument("--yplus", action="store_true",
+                         help="Add a yPlus function object: min, max and mean y+ per wall "
+                              "patch at every write, into postProcessing/yPlus/.")
 
     args = ap.parse_args(argv)
 
