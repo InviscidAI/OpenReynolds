@@ -447,14 +447,29 @@ def test_end_pressed_during_a_held_job_check_ends_the_wait_and_the_turn(
         message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
         message([text_block("the solve is done")]),
     ])
-    threading.Timer(0.3, lambda: reader._lines.append(leaving)).start()
+    # The press records when it happened, and the claim is the ORDERING: the wait
+    # outlasted the press. A `0.25 <= elapsed` lower bound said the same thing by
+    # proxy and said it wrongly, because the timer starts here while `began` was
+    # taken after `loop.say`, so the setup in between was charged against the 0.3 s
+    # window. On a loaded Windows runner that left 0.172 s and 0.187 s of it and
+    # made `main` red twice (runs 44694231420 and 44694394108, neither caused by the
+    # change it failed on). Ordering needs no tolerance and cannot be outrun.
+    pressed: list[float] = []
+
+    def press():
+        reader._lines.append(leaving)
+        pressed.append(time.monotonic())
+
+    threading.Timer(0.3, press).start()
 
     loop.say("watch it")
     began = time.monotonic()
     response = loop.run()
-    elapsed = time.monotonic() - began
+    returned = time.monotonic()
 
-    assert 0.25 <= elapsed < 5, "held until End was pressed, then answered at once"
+    assert pressed, "End was never pressed, so the wait was not the thing measured"
+    assert returned >= pressed[0], "the wait returned before End was pressed"
+    assert returned - began < 5, "and it answered at once afterwards"
     assert polls["n"] >= 1 and backend.jobs[job_id].status == "running"
     assert len(fake.calls) == 1, "the model was not asked again"
     assert response.stop_reason == "tool_use", "the turn that was in flight is the one returned"
