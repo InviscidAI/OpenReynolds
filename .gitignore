@@ -62,3 +62,7 @@ docs/cad-buildup/sweeps/*/runs/
 
 # Editor project settings
 .idea/
+
+# Local tool output: gstack state and graphify knowledge graphs
+.gstack/
+graphify-out/
