@@ -71,6 +71,14 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   run `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
   top, and run it -- the whole 2D, 3D, two-phase, rotating, porous or thermal-stress recipe, gotchas
   included, rather than a page to reconstruct from memory.
+- `lbm.py` and `sph.py` in the toolbox are solvers, and the only two here that are not
+  OpenFOAM applications: a D2Q9 two-relaxation-time lattice Boltzmann and a 2D weakly
+  compressible SPH, both in numpy, which is already installed. They are in the toolbox
+  and not in the image on purpose -- the toolbox is copied into `/work/.toolbox` at
+  session start, so they travel with the package and cost the image nothing. Neither has
+  a turbulence model, both are explicit and second order, and what each was measured
+  against is in `benchmarks/lbm/` and `benchmarks/sph/`. `advise.py` lists them beside
+  the image's applications for the class of case it reads.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 

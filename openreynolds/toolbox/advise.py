@@ -2,8 +2,11 @@
 """Which solver, how many ranks, and whether this machine can finish it.
 
 Three questions that get answered from memory and are cheap to answer from the case:
-which of this image's solvers suits the problem, what `-np` is worth asking for, and
-whether the mesh about to be built fits in the memory and the hours there are.
+which of the solvers available here suits the problem, what `-np` is worth asking for,
+and whether the mesh about to be built fits in the memory and the hours there are.
+"Available here" is the image's applications and the two solvers that are scripts in
+this toolbox (`lbm.py` and `sph.py`), which are listed beside the rest because the
+question is what can solve the case and not where the solver is installed.
 Neither has an instrument. `ladder.py` already classifies a case and `compressible.py`
 already picks between the three density- and pressure-based compressible solvers from
 a Mach number, but nothing puts the families side by side, and nothing anywhere turns
@@ -63,8 +66,9 @@ what is not claimed
 Nothing here edits, refuses or blocks. It writes no case, runs no solver, and the exit
 code is 0 whatever the report says -- a case that will not fit is reported as not
 fitting, beside the cell counts that would, and the decision stays where it was. A
-solver named below and not found on `$PATH` is reported as not found rather than left
-out, because "this image does not have it" and "nobody looked" are different answers.
+solver named below and not found -- on `$PATH` for an application, beside this file
+for a toolbox script -- is reported as not found rather than left out, because "this
+image does not have it" and "nobody looked" are different answers.
 
     python3 advise.py /work/case
     python3 advise.py /work/case --mach 0.84 --cores 8
@@ -100,9 +104,15 @@ import preflight  # noqa: E402
 # `compressible.SOLVERS` supplies its own three verbatim so the two cannot drift.
 
 
-def Option(name: str, what: str, when: str) -> dict[str, str]:
-    """One candidate solver: what it is, and the condition that makes it the one."""
-    return {"name": name, "what": what, "when": when}
+def Option(name: str, what: str, when: str, script: str = "") -> dict[str, str]:
+    """One candidate solver: what it is, and the condition that makes it the one.
+
+    `script` names a solver that is a toolbox script beside this file rather than a
+    binary on `$PATH`. Both kinds belong in the same comparison -- the question a session
+    asks is "what can solve this", and "it is a file in /work/.toolbox rather than a
+    compiled application in $FOAM_APPBIN" is an answer to a different question.
+    """
+    return {"name": name, "what": what, "when": when, "script": script}
 
 
 COMPRESSIBLE_SWITCH = (
@@ -169,6 +179,32 @@ FAMILIES: dict[str, tuple[Option, ...]] = {
                "the loading does not change and only the final deflection is "
                "wanted; small-strain linear elasticity either way"),
     ),
+    # The two solvers that are not in the image. They are numpy scripts in this
+    # directory, so they travel with the package rather than with the workspace, and
+    # they are in this table for the reason the table exists: a solver a session cannot
+    # see is a solver the product does not have.
+    "lattice-boltzmann": (
+        Option("lbm.py", "D2Q9 two-relaxation-time lattice Boltzmann in numpy, a script "
+               "in this toolbox rather than an application in the image",
+               "the geometry is a solid mask rather than a mesh -- an awkward passage, a "
+               "porous sample, anything voxelised -- and the meshing step is the "
+               "expensive part of the question. It is explicit, weakly compressible, "
+               "second order, and carries no turbulence model at all, so a transonic "
+               "case or a high-Reynolds one belongs to the families above; "
+               "`benchmarks/lbm/` has what it measured against Poiseuille and Ghia",
+               script="lbm.py"),
+    ),
+    "particle": (
+        Option("sph.py", "2D weakly compressible smoothed-particle hydrodynamics in "
+               "numpy, a script in this toolbox rather than an application in the image",
+               "a free surface that breaks, folds or separates, with no mesh to deform "
+               "through it -- a collapsing column, a slosh, a wave impact. interFoam "
+               "above solves the same physics and resolves a thin interface better once "
+               "a mesh exists; this needs none. The time step is acoustic, so a second "
+               "of motion is thousands of steps however few particles there are, and "
+               "`benchmarks/sph/` has both what it was graded on and what it was not",
+               script="sph.py"),
+    ),
 }
 """The candidates per family. `heat.py` measures what comes out of the conjugate ones
 and `ladder.CHT_APPLICATIONS` is what recognises them on the way in; the names here are
@@ -185,10 +221,12 @@ invisible to whoever reads it, which is the only reason they were missing."""
 # an external aerodynamics case is incompressible or compressible depending on a Mach
 # number that is not in the case files, so both are offered and the switch is stated.
 CLASS_FAMILIES: dict[str, tuple[str, ...]] = {
-    "external-aerodynamics": ("incompressible", "compressible"),
-    "internal-flow": ("incompressible", "compressible"),
+    "external-aerodynamics": ("incompressible", "compressible", "lattice-boltzmann"),
+    "internal-flow": ("incompressible", "compressible", "lattice-boltzmann"),
+    # Not rotating machinery: both toolbox solvers have static boundaries, and neither
+    # an MRF zone nor a sliding interface exists in either of them.
     "rotating-machinery": ("incompressible", "compressible"),
-    "free-surface-marine": ("free-surface",),
+    "free-surface-marine": ("free-surface", "particle"),
     "conjugate-heat-transfer": ("conjugate-heat-transfer",),
     # `stress-analysis` reaches a case only through `generic`, and deliberately.
     # `ladder.classify` recognises a case from its flow signals -- a free stream, an
@@ -198,22 +236,33 @@ CLASS_FAMILIES: dict[str, tuple[str, ...]] = {
     # the case a solid stress question presents as, and it is not offered beside
     # `interFoam` on a dam break where it would be noise.
     "generic": ("incompressible", "compressible", "free-surface",
-                "conjugate-heat-transfer", "stress-analysis"),
+                "conjugate-heat-transfer", "stress-analysis",
+                "lattice-boltzmann", "particle"),
 }
 
 
-def present(name: str) -> dict[str, Any]:
+def present(name: str, script: str = "") -> dict[str, Any]:
     """Whether this solver is on this machine, as a fact rather than an assumption.
 
     `compressible.available` for everything it knows -- it is the one that link-checks
     HiSA rather than trusting a binary that is there and whose `libhisa*.so` does not
-    resolve -- and a `$PATH` lookup for the rest.
+    resolve -- a file check for the toolbox's own solvers, and a `$PATH` lookup for the
+    rest. A toolbox solver travels with this file, so it is here whenever this is.
     """
+    if script:
+        path = Path(__file__).resolve().parent / script
+        return {
+            "present": path.is_file(),
+            "label": "in this toolbox",
+            "where": str(path) if path.is_file()
+                     else f"{script} is not beside advise.py, so this toolbox is partial",
+        }
     if name in compressible.SOLVERS:
-        return compressible.available(name)
+        return {"label": "on PATH", **compressible.available(name)}
     found = shutil.which(name)
     return {
         "present": found is not None,
+        "label": "on PATH",
         "where": found or "not on $PATH here (the workspace image has its solvers at "
                           "$FOAM_APPBIN)",
     }
@@ -234,7 +283,7 @@ def options_for(class_key: str, mach: float | None) -> list[dict[str, Any]]:
         for option in FAMILIES[family]:
             row = dict(option)
             row["family"] = family
-            row.update(present(option["name"]))
+            row.update(present(option["name"], option.get("script", "")))
             row["mach_pick"] = bool(picked) and option["name"] == picked
             rows.append(row)
     return rows
@@ -815,7 +864,7 @@ def render(data: dict[str, Any]) -> str:
                      f"{label}, {meaning}")
     for row in data["solvers"]:
         mark = " <- choose_solver points here" if row["mach_pick"] else ""
-        here = "on PATH" if row["present"] else "not found here"
+        here = row.get("label", "on PATH") if row["present"] else "not found here"
         lines.append(f"  {row['name']:<24} [{here}]{mark}")
         lines.append(f"      is:   {row['what']}")
         lines.append(f"      when: {row['when']}")

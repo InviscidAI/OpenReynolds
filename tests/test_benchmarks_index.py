@@ -198,7 +198,7 @@ def test_an_unread_primary_source_is_flagged_as_unread():
     assert "no primary access" in text or "was not read" in text or "paywall" in text
 
 
-@pytest.mark.parametrize("case", ["felix", "moving_mesh", "tutorials"])
+@pytest.mark.parametrize("case", ["felix", "moving_mesh", "tutorials", "lbm", "sph"])
 def test_the_index_names_every_family_beside_it(case):
     """A family added under benchmarks/ and not added to the index is invisible."""
     assert f"{case}/" in INDEX.read_text(encoding="utf-8")
