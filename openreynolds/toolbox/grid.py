@@ -126,6 +126,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mesh_digest
+import study_state
 
 FORMAL_ORDER = 2.0
 """The formal order of the schemes this is used with unless told otherwise. OpenFOAM's
@@ -625,13 +626,24 @@ CHECKMESH_GLOBS = ("log.checkMesh*", "checkMesh.log", "log.checkmesh*", "*checkM
 
 
 def cells_from_case(case: Path) -> tuple[int | None, str]:
-    """A case's cell count and where it was read, out of `checkMesh` output.
+    """A case's cell count and where it was read: a `checkMesh` log, the mesh's own
+    header, or a `checkMesh` run, in that order.
 
     A log already in the case directory is preferred over running anything: the mesh
     this ladder is about may be on a machine with no OpenFOAM, and a log written when
     the mesh was built is the same number. `checkMesh` is run only where no log is
     there and the binary is, and the report says which happened, because a cell count
     is the x axis of everything below it.
+
+    The mesh header sits between those two, and it is here because of #171. Only logs
+    were looked at, so a real three-grid ladder whose finest rung had no checkMesh log
+    became a two-grid estimate on the wrong grid with a band 2.1x too wide, and a
+    second real ladder with no log on any of its three rungs was refused outright --
+    while all six cell counts were on disk one file away, in the
+    `constant/polyMesh/owner` note OpenFOAM writes (`nPoints:94080 nCells:46080 ...`),
+    in the same directory as the `boundary` that `--dim auto` read successfully in
+    those very cases. `study_state.owner_ncells` is that read, a regex over the first
+    2 kB, and it is the same number: it is what the mesh says about itself.
     """
     for pattern in CHECKMESH_GLOBS:
         for path in sorted(case.glob(pattern)) + sorted((case / "logs").glob(pattern)):
@@ -639,15 +651,21 @@ def cells_from_case(case: Path) -> tuple[int | None, str]:
             if "cells" in counts:
                 return counts["cells"], str(path)
 
+    count = study_state.owner_ncells(case)
+    if count is not None:
+        return count, f"the nCells note in {case / 'constant' / 'polyMesh' / 'owner'}"
+
     try:
         done = subprocess.run(["checkMesh", "-case", str(case)], capture_output=True,
                               text=True, timeout=600)
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"no checkMesh log in {case} and checkMesh did not run ({exc})"
+        return None, (f"no checkMesh log in {case}, no nCells note in its "
+                      f"constant/polyMesh/owner, and checkMesh did not run ({exc})")
     counts = mesh_digest.parse(done.stdout + done.stderr)["counts"]
     if "cells" in counts:
         return counts["cells"], f"checkMesh run here on {case}"
-    return None, f"no cell count in any checkMesh log or run for {case}"
+    return None, (f"no cell count in any checkMesh log, in constant/polyMesh/owner's "
+                  f"note, or in a checkMesh run, for {case}")
 
 
 def dimension_from_case(case: Path) -> tuple[int | None, str]:
@@ -808,6 +826,16 @@ def report(analysis: dict[str, Any], provenance: list[str]) -> str:
     lines.append("## where the numbers came from")
     for line in provenance:
         lines.append(f"  {line}")
+
+    if analysis.get("dropped"):
+        lines.append("")
+        lines.append(f"## {len(analysis['dropped'])} grid(s) given on the command line "
+                     f"are not in this estimate")
+        for line in analysis["dropped"]:
+            lines.append(f"  {line}")
+        lines.append("  This estimate is DEGRADED: it is a ladder with a rung missing, so "
+                     "the grid it names, the value it gives and the width of its band are "
+                     "not the ones the ladder as given would have produced.")
 
     lines.append("")
     lines.append("## the ladder")
@@ -992,6 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
 
     grids: list[dict[str, Any]] = []
     provenance: list[str] = []
+    dropped: list[str] = []
     quantity = split_quantity(opts.quantity)[1] if opts.quantity else "value"
 
     for h, value in _explicit(opts.spacing, "--spacing"):
@@ -1015,6 +1044,11 @@ def main(argv: list[str] | None = None) -> int:
                          "postProcessing file is the number this study is about")
         count, where = cells_from_case(case)
         if count is None:
+            # Not only stderr. The report is the artifact that gets saved, and a
+            # three-grid ladder that quietly became a two-grid estimate named the
+            # wrong grid, gave the wrong value and widened the band 2.1x with no
+            # notice in it anywhere (#171).
+            dropped.append(f"{case.name}: no cell count -- {where}")
             print(f"{case}: {where}", file=sys.stderr)
             continue
         if opts.dim in (None, "auto"):
@@ -1025,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
             dimension, route = int(opts.dim), f"{opts.dim}D, declared with --dim"
         measured = quantity_from_case(case, opts.quantity, opts.tail)
         if measured["value"] is None:
+            dropped.append(f"{case.name}: no value -- {measured['note']}")
             print(f"{case}: {measured['note']}", file=sys.stderr)
             continue
         grids.append({"h": representative_spacing(count, dimension),
@@ -1047,11 +1082,17 @@ def main(argv: list[str] | None = None) -> int:
             + f"; h = N**(-1/{dimension}), {route}")
 
     if len(grids) < 2:
+        # The reasons, not only the count. On a real ladder whose three rungs all had
+        # their cell count in `constant/polyMesh/owner` and none had a checkMesh log,
+        # this said "0 was readable" and the three reasons went to stderr only (#171).
         parser.error(f"a grid-convergence estimate needs two or more grids and {len(grids)} "
-                     "was readable; there is nothing to report on one grid")
+                     "was readable; there is nothing to report on one grid"
+                     + (f" -- {len(dropped)} dropped: " + "; ".join(dropped)
+                        if dropped else ""))
 
     analysis = analyse(grids, opts.formal_order, opts.safety_factor)
     analysis["quantity"] = quantity
+    analysis["dropped"] = dropped
     text = report(analysis, provenance)
     print(text, end="")
 

@@ -17,7 +17,10 @@ figure of a pressure field is made of.
 
 `--diff OTHER` is the fixed cameras cashed in: one field, two runs, drawn as two panels
 on one colour scale plus their difference on a diverging map centred on zero. It refuses
-rather than drawing when the two runs are not of the same domain.
+rather than drawing when the two runs are not of the same domain. Both panels are at one
+instant -- the latest time the two runs share, said out loud, or whatever `--time` asks
+for -- and that time is on the labels, in the file names and in the sidecar, because a
+difference view whose halves are at different times is mostly a picture of the clock.
 
     python3 render.py /work/case                      # latest time, all default scenes
     python3 render.py /work/case --fields U p --normal z --time 500
@@ -50,6 +53,27 @@ def _pyvista():
 
 
 NORMALS = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
+
+
+def same_time(first: float, second: float) -> bool:
+    """Whether two write times are the same instant, to the precision a time
+    directory's name carries."""
+    return abs(first - second) <= 1e-9 * max(1.0, abs(first), abs(second))
+
+
+def latest_shared_time(first, second) -> float | None:
+    """The latest time both runs wrote, or None when they share none.
+
+    `--diff` with no `--time` opened each run at ITS OWN latest, so a `couette` with
+    times up to 20 was differenced against a `couette_dt2` that stops at 3 and the
+    answer, 7.296e-4, was 10.7x the real run-to-run difference of 6.790e-5 at the
+    time 3 they both have. It was also a different code path: couette is a moving-mesh
+    case, its mesh at t = 20 is not its mesh at t = 3, so the correspondence silently
+    changed from `same-mesh` to `resampled` as well (#160).
+    """
+    shared = [float(t) for t in first
+              if any(same_time(float(t), float(other)) for other in second)]
+    return max(shared) if shared else None
 
 
 def open_case(case: Path, time: float | None):
@@ -430,7 +454,7 @@ def difference_on(first, second, scalars: str, name_first: str, name_second: str
     return first, a, b, how
 
 
-def diff_record(a, b, *, field: str, normal: str, names, how: str) -> dict:
+def diff_record(a, b, *, field: str, normal: str, names, how: str, times=None) -> dict:
     """The numbers both runs and their difference are drawn on, as a dict.
 
     Written beside the PNGs as a sidecar, the way `animate.py` records the `clim` it
@@ -440,14 +464,24 @@ def diff_record(a, b, *, field: str, normal: str, names, how: str) -> dict:
     itself goes on `coolwarm` centred on zero, which is what `SIGNED_FIELDS` already
     does for vorticity: zero is the answer "these two runs agree here", and it has to
     be a colour you can find.
+
+    `times` is the pair of write times the two panels are at, and it is here because
+    of #160: the record had no time key at all, so a difference that was mostly a
+    difference in physical time -- 10.7x the real one -- read as a difference between
+    the two runs, and nothing in the figure, the labels or the sidecar said otherwise.
+    It is the one number that decides whether the comparison means anything. None when
+    the caller is working on meshes it built itself rather than on cases with a clock.
     """
     delta = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
     finite = delta[np.isfinite(delta)]
     reach = float(np.max(np.abs(finite))) if finite.size else 0.0
     both = np.concatenate([np.asarray(a)[np.isfinite(a)], np.asarray(b)[np.isfinite(b)]])
+    pair = None if times is None else [float(t) for t in times]
     return {
         "field": field,
         "runs": [str(name) for name in names],
+        "times": pair,
+        "same_time": None if pair is None else bool(same_time(pair[0], pair[1])),
         "correspondence": how,
         "points": int(delta.size),
         # One scale over both runs. Each panel scaled to its own range is two pictures
@@ -484,12 +518,18 @@ def render_panel(cut, scalars: str, out: Path, *, normal: str, clim, cmap: str,
 
 
 def render_difference(first, second, field: str, normal: str, out_dir: Path, names,
-                      zoom: float | None = None, bounds: tuple | None = None):
+                      zoom: float | None = None, bounds: tuple | None = None,
+                      times=None):
     """Two runs of one field as two panels and their difference, plus the record of it.
 
     Returns `(record, paths)`, or `(None, [])` when the field is in neither run. Both
     panels share the cut plane, the camera and the colour limits; only the difference
     gets its own scale, and that one is symmetric about zero.
+
+    `times` is the write time of each panel. Given, it goes in the record, on each
+    label and into the file names -- the single-case path has written `U_z_500.png`
+    all along while this one wrote `U_z_couette.png`, so the one picture that needed
+    its instant on it was the one without it (#160).
     """
     name_first, name_second = (str(name) for name in names)
     scalars = resolve(first, field)
@@ -505,7 +545,7 @@ def render_difference(first, second, field: str, normal: str, out_dir: Path, nam
                                          name_first, name_second)
     cut_second, own = point_values(cut_second, scalars)
     record = diff_record(a, b, field=scalars, normal=normal,
-                         names=(name_first, name_second), how=how)
+                         names=(name_first, name_second), how=how, times=times)
 
     # The magnitude is written back under the array's own name so that what is drawn is
     # the number that was differenced, not a second reduction of the same vector.
@@ -517,16 +557,23 @@ def render_difference(first, second, field: str, normal: str, out_dir: Path, nam
 
     stem = f"{field}_{normal}"
     panels = dict(normal=normal, zoom=zoom, bounds=bounds)
+    at_first = f" at t = {record['times'][0]:g}" if record["times"] else ""
+    at_second = f" at t = {record['times'][1]:g}" if record["times"] else ""
+    tag_first = f"_{record['times'][0]:g}" if record["times"] else ""
+    tag_second = f"_{record['times'][1]:g}" if record["times"] else ""
+    when = (at_first if record["same_time"] else f"{at_first} minus{at_second}") \
+        if record["times"] else ""
     paths = [
-        render_panel(cut_first, scalars, out_dir / f"{stem}_{name_first}.png",
+        render_panel(cut_first, scalars, out_dir / f"{stem}_{name_first}{tag_first}.png",
                      clim=record["clim"], cmap=record["cmap"],
-                     label=f"{name_first} -- {scalars}", **panels),
-        render_panel(cut_second, scalars, out_dir / f"{stem}_{name_second}.png",
+                     label=f"{name_first} -- {scalars}{at_first}", **panels),
+        render_panel(cut_second, scalars, out_dir / f"{stem}_{name_second}{tag_second}.png",
                      clim=record["clim"], cmap=record["cmap"],
-                     label=f"{name_second} -- {scalars}", **panels),
+                     label=f"{name_second} -- {scalars}{at_second}", **panels),
         render_panel(delta, delta_name, out_dir / f"{stem}_difference.png",
                      clim=record["diff_clim"], cmap=record["diff_cmap"],
-                     label=f"{name_first} minus {name_second} -- {scalars}", **panels),
+                     label=f"{name_first} minus {name_second} -- {scalars}{when}",
+                     **panels),
     ]
     sidecar = out_dir / f"{stem}_difference.json"
     sidecar.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -629,16 +676,52 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.diff is not None:
-        other, other_time, _ = open_case(args.diff, args.time)
+        other, other_time, other_times = open_case(args.diff, args.time)
         second = internal_mesh(other)
         if second is None:
             raise SystemExit(f"no internalMesh in {args.diff} -- has it been meshed?")
+
+        # Each run was opened at its OWN latest time and the result was presented as a
+        # difference between two runs: on couette against couette_dt2 that put t = 20
+        # beside t = 3 and reported 7.296e-4, 10.7x the 6.790e-5 the two runs differ by
+        # at the time 3 they both wrote (#160). The two halves of a difference have to
+        # be at one instant, so the shared latest time is what is drawn, and it is said
+        # rather than assumed. The model is the domain refusal above: name both runs,
+        # the numbers, and why the picture would be meaningless.
+        if not same_time(chosen, other_time):
+            shared = None if args.time is not None else latest_shared_time(times, other_times)
+            if shared is None:
+                raise SystemExit(
+                    f"refusing to draw a difference: {args.case.name} is at time "
+                    f"{chosen:g} and {args.diff.name} is at time {other_time:g}, and "
+                    "the two panels of a difference have to be at one instant -- "
+                    "otherwise what it shows is mostly the time between them. "
+                    f"{args.case.name} has {', '.join(f'{t:g}' for t in times) or 'none'}; "
+                    f"{args.diff.name} has {', '.join(f'{t:g}' for t in other_times) or 'none'}"
+                    + (". They share none, so there is no time to draw this at"
+                       if args.time is None else
+                       f". --time {args.time:g} snapped to different times in the two runs")
+                )
+            print(f"both runs at time {shared:g}: the latest time they share "
+                  f"({args.case.name} was at {chosen:g} and {args.diff.name} at "
+                  f"{other_time:g} on their own latest, which is not one instant). "
+                  f"--time overrides this.")
+            block, chosen, times = open_case(args.case, shared)
+            mesh = internal_mesh(block)
+            other, other_time, other_times = open_case(args.diff, shared)
+            second = internal_mesh(other)
+            if mesh is None or second is None or not same_time(chosen, other_time):
+                raise SystemExit(
+                    f"refusing to draw a difference: asked for the shared time "
+                    f"{shared:g} and got {chosen:g} in {args.case.name} and "
+                    f"{other_time:g} in {args.diff.name}")
         print(f"against {args.diff} at time {other_time:g} "
               f"({second.n_cells:,} cells, {second.n_points:,} points)")
         for field in args.fields:
             record, paths = render_difference(
                 mesh, second, field, args.normal, out_dir,
                 (args.case.name, args.diff.name), zoom=args.zoom, bounds=bounds,
+                times=(chosen, other_time),
             )
             if record is None:
                 print(f"  (no field named {field} in both runs)")
@@ -647,6 +730,7 @@ def main() -> None:
             print(f"  {field}: {record['correspondence']}, "
                   f"max |difference| {record['max_abs_difference']:.4g}"
                   + ("  (the two runs are identical here)" if record["identical"] else "")
+                  + f", both at t = {chosen:g}"
                   + f", both panels on clim {low:.4g} .. {high:.4g} "
                   f"and the {args.normal}-normal camera")
             written += paths

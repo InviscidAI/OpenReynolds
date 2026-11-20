@@ -147,6 +147,50 @@ def test_both_runs_are_recorded_on_one_colour_scale_and_one_camera(render):
     assert record["correspondence"] == "resampled"
 
 
+def test_the_time_each_panel_is_at_is_recorded(render):
+    """#160. With no `--time`, each run was opened at ITS OWN latest time and the
+    result was presented as a difference between two runs: `couette` at t = 20 beside
+    `couette_dt2` at t = 3 reported 7.296e-4, 10.7x the 6.790e-5 the two runs differ by
+    at the time 3 they both wrote. Nothing in the figure, the labels, the file names or
+    this record said which time either panel was at -- the one number that decides
+    whether the comparison means anything was the one not recorded.
+    """
+    first = np.linspace(0.0, 10.0, 100)
+    second = np.linspace(-2.0, 8.0, 100)
+
+    together = render.diff_record(first, second, field="p", normal="z",
+                                  names=("a", "b"), how="same-mesh", times=(3.0, 3.0))
+    assert together["times"] == [3.0, 3.0]
+    assert together["same_time"] is True
+
+    apart = render.diff_record(first, second, field="p", normal="z",
+                               names=("a", "b"), how="resampled", times=(20.0, 3.0))
+    assert apart["times"] == [20.0, 3.0]
+    assert apart["same_time"] is False
+
+    # Called on meshes with no clock behind them, which is what every other test here
+    # does, the key is present and empty rather than absent.
+    bare = render.diff_record(first, second, field="p", normal="z",
+                              names=("a", "b"), how="resampled")
+    assert bare["times"] is None and bare["same_time"] is None
+
+
+def test_the_shared_time_is_the_latest_one_both_runs_wrote(render):
+    """What `--diff` draws at when no `--time` is given. The real pair: `couette` wrote
+    0,1,2,3,4,5,6,7,13,14,15,20 and `couette_dt2` wrote 0,1,3, so 3 is the instant they
+    have in common and the one that gives 6.790e-5 instead of 7.296e-4. None when they
+    share nothing, which is a refusal and not a guess."""
+    couette = [0, 1, 2, 3, 4, 5, 6, 7, 13, 14, 15, 20]
+    assert render.latest_shared_time(couette, [0, 1, 3]) == 3.0
+    assert render.latest_shared_time(couette, couette) == 20.0
+    assert render.latest_shared_time([13.0], [0.0, 1.0, 3.0]) is None
+    assert render.latest_shared_time([], [1.0]) is None
+    # Time directory names are floats and 0.3333333 is not 0.333333 to the byte, so
+    # the match is to the precision a name carries, not an `==` on two reads.
+    assert render.latest_shared_time([0.3333333], [0.3333333 + 1e-15]) == 0.3333333
+    assert render.same_time(3.0, 3.0) and not render.same_time(3.0, 20.0)
+
+
 def test_the_same_mesh_twice_is_differenced_point_by_point(render):
     """Same point count over the same box: no resampling, so no interpolation error in
     the answer at all."""

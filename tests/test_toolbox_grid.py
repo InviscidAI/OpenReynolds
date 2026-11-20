@@ -827,3 +827,93 @@ def test_a_restart_superseded_history_is_stitched_the_way_read_history_does_it(
     # wrote Cd near 1.1 at t = 6..10 where the restart wrote near 2.06 -- so the two
     # row counts are two different answers and not only two different counts.
     assert measured["value"] > 1.3
+
+
+# -- the rung that was dropped (#171) ------------------------------------------
+
+
+OWNER_HEADER = """\
+FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       labelList;
+    note        "nPoints:{points} nCells:{cells} nFaces:{faces} nInternalFaces:{internal}";
+    location    "constant/polyMesh";
+    object      owner;
+}}
+
+{faces}
+(
+)
+"""
+
+
+def rung(root: Path, name: str, cells: int, value: float) -> Path:
+    """A ladder rung with no checkMesh log: a mesh whose own header carries `nCells`,
+    an `empty` patch for `--dim auto`, and a one-column force history."""
+    case = root / name
+    poly = case / "constant" / "polyMesh"
+    poly.mkdir(parents=True, exist_ok=True)
+    (poly / "owner").write_text(
+        OWNER_HEADER.format(points=2 * cells, cells=cells, faces=3 * cells,
+                            internal=2 * cells), encoding="utf-8")
+    (poly / "boundary").write_text(BOUNDARY_2D, encoding="utf-8")
+    write_dat(case / "postProcessing" / "forces" / "0" / "moment.dat", FORCE_DAT,
+              " ".join([f"{1.0:<16g}"] + [f"{value:.8e}"] * 9))
+    return case
+
+
+def test_a_rung_with_no_checkmesh_log_is_read_from_the_mesh_header(grid, tmp_path):
+    """#171. Only checkMesh logs were looked at, so the finest rung of a real
+    three-grid ladder was dropped for want of a cell count that was on disk one file
+    away -- the `nCells` note OpenFOAM writes into `constant/polyMesh/owner`, in the
+    same directory as the `boundary` that `--dim auto` read successfully in that very
+    case. The ladder became a two-grid estimate on the wrong grid with a band 2.1x too
+    wide, and a second real ladder, with no log on any of its three rungs, was refused
+    outright: `0 was readable`.
+
+    `study_state.owner_ncells` is the read, which already existed for `digest`. A
+    checkMesh log still wins where there is one -- it is the fuller reading -- and
+    running `checkMesh` is still the last resort.
+    """
+    case = rung(tmp_path, "L2", 11520, 1.5)
+    cells, where = grid.cells_from_case(case)
+    assert cells == 11520
+    assert where.endswith("owner"), where
+
+    # A log, where there is one, is still preferred over the header.
+    (case / "log.checkMesh").write_text(CHECK_MESH, encoding="utf-8")
+    cells, where = grid.cells_from_case(case)
+    assert (cells, where.endswith("log.checkMesh")) == (76800, True)
+
+
+def test_a_dropped_rung_is_named_in_the_report_and_the_estimate_called_degraded(
+        grid, tmp_path, capsys):
+    """The other half of #171: the only notice that a rung had been dropped was a line
+    on stderr, and the report is the artifact that gets saved. A three-grid ladder
+    silently became a two-grid estimate that named the wrong grid, gave the wrong value
+    and widened its band, with nothing in the document saying so.
+
+    The first call is the ladder as given, all three rungs read from their mesh
+    headers. The second is the same ladder with the finest rung's mesh removed, which
+    is the shape the issue reported.
+    """
+    for name, cells, value in (("L1", 2880, 1.0), ("L2", 11520, 1.5), ("L3", 46080, 1.75)):
+        rung(tmp_path, name, cells, value)
+    cases = [str(tmp_path / name) for name in ("L1", "L2", "L3")]
+    argv = cases + ["--quantity", "forces/moment.dat:total_z", "--dim", "auto"]
+
+    assert grid.main(argv) == 0
+    whole = capsys.readouterr().out
+    assert "three-grid estimate on L3, L2, L1" in whole
+    assert "DEGRADED" not in whole
+    assert "are not in this estimate" not in whole
+
+    (tmp_path / "L3" / "constant" / "polyMesh" / "owner").unlink()
+    assert grid.main(argv) == 0
+    degraded = capsys.readouterr().out
+    assert "two-grid estimate on L2, L1" in degraded
+    assert "1 grid(s) given on the command line are not in this estimate" in degraded
+    assert "L3: no cell count" in degraded
+    assert "DEGRADED" in degraded

@@ -69,6 +69,9 @@ not guessed from the mesh and a free-stream speed is not guessed from anything:
 `grade.py:_need` refuses rather than assumes, and the same rule holds here. Without
 them the frequency is reported in Hz and St is absent, not defaulted. On an
 iteration axis it is refused whatever is given, because there is no f to put in it.
+It is also refused whenever the shedding verdict above it rejected the peak: a
+`too-short` Cd printed `St = 0.0113328` where the same record cropped past its
+transient gives 0.332192, and that is one number 29x out and not two readings.
 
 on settling
 
@@ -97,7 +100,7 @@ comparison has a null space and any drift symmetric about the midpoint sits in i
 What is asked now is a first third against a last third as well, and whether the
 fluctuation is still GROWING, which is what that record was really doing.
 
-Judgements are `periodic`/`aperiodic`/`trend-dominated`/`too-short` and
+Judgements are `no-variation`/`periodic`/`aperiodic`/`trend-dominated`/`too-short` and
 `settled`/`still-moving`/`too-short`, and each is printed next to the number it came
 from -- the prominence, the bin index, the period count, the half-mean and
 third-mean differences over the scatter -- so a reader can disagree with the
@@ -209,6 +212,35 @@ AR(1) at 0.98, correlated with no trend in it -- measures 1.2. The record measur
 6.3. A startup that grows and then saturates (a shedding case begun from a symmetric
 state) is refused by this and its route is the one `--from` already exists for: crop
 past the growth and ask again."""
+
+FLAT_RELATIVE = 1e-12
+"""An RMS fluctuation under this fraction of the column's own magnitude is nothing.
+
+`acoustics.py:FLAT_RELATIVE`, the same number for the same reason, and the reason it
+is now here too: every other test in this file is a ratio within the spectrum, and a
+ratio cannot tell a signal from its own round-off. A column of one repeated number is
+a real thing to find -- a probe inside a wall, a force component that is identically
+zero by symmetry -- and the linear detrend of an exactly constant column does not
+come back exactly zero; `polyfit` leaves residue around 1e-16 of the magnitude. The
+spectrum of that residue has a tallest bin like any other, and 2978 rows of exactly
+1.35 reported a confident `St = 0.167926`, inside the published Re = 100 band of
+0.164 to 0.167."""
+
+NEGLIGIBLE_FRACTION = 1e-9
+"""Below this much of the record's own largest value, a column is zero.
+
+`report.py:NEGLIGIBLE_FRACTION` and `zero_the_negligible`, the same number against
+the same scale: the record's own largest value, so nothing here depends on a unit or
+on what sort of quantity the column holds. A column can be pure round-off without
+being flat. `pressure_z` of a 2D extruded case decays smoothly from 5.7346e-25 to
+5.7343e-25 -- a real variation of 6e-6 of itself, so the test above passes it -- while
+the same file's `total_y` runs to 7.3e-13. The z-force of that case is zero by
+construction and what the solver wrote is the round-off of the summation; its
+spectrum stood 1.232e+07x over its own median and gave `St = 0.837456`.
+
+The time column is left out of the scale. It is not a quantity the other columns are
+small against: a residual of 1e-9 beside a Time that runs to 500 would be called
+negligible on an axis, which is the one thing this must not do."""
 
 
 def is_steady_solver(executable: str) -> bool:
@@ -453,6 +485,45 @@ def detrend(values: np.ndarray) -> np.ndarray:
     return values - (slope * index + intercept)
 
 
+def variation(history: dict[str, Any], name: str, values: np.ndarray) -> dict[str, Any]:
+    """How far the column moves, against the two absolute scales that say whether that
+    movement is a signal at all.
+
+    This is the one reading in the file that is not a ratio inside the spectrum.
+    `prominence`, `bin`, `periods` and the settling ratios all divide one part of the
+    record by another, so each of them survives being handed round-off: a flat signal
+    does not give a flat spectrum, it gives a round-off spectrum whose own median is
+    1e-67, and the peak over that median explodes. Both thresholds are the ones this
+    codebase already set against this exact failure -- `acoustics.FLAT_RELATIVE` and
+    `report.NEGLIGIBLE_FRACTION` -- and both numbers measured are printed with the
+    verdict, so a reader can disagree with either without rerunning anything.
+    """
+    magnitude = float(np.max(np.abs(values))) if values.size else 0.0
+    rms = float(np.sqrt(np.mean(detrend(values) ** 2))) if values.size > 1 else 0.0
+    # Every column but the time axis, whether or not it is one of the ones worth
+    # plotting: the scale wanted is the largest number the solver wrote in this record.
+    scale = magnitude
+    for other in list(history.get("columns", []))[1:]:
+        series = results.column(history, other)
+        if series.size:
+            scale = max(scale, float(np.max(np.abs(series))))
+    flat = rms <= FLAT_RELATIVE * magnitude
+    negligible = scale > 0.0 and magnitude <= NEGLIGIBLE_FRACTION * scale
+    basis = ""
+    if flat:
+        basis = (f"its RMS about its own trend is {rms:.4g}, under {FLAT_RELATIVE:g} of its "
+                 f"own magnitude {magnitude:.4g} -- that is the residue `polyfit` leaves on "
+                 "a constant column, not a fluctuation")
+    elif negligible:
+        basis = (f"its largest value {magnitude:.4g} is under {NEGLIGIBLE_FRACTION:g} of the "
+                 f"largest value in this record, {scale:.4g}, so the column is zero to within "
+                 "the record's own scale and what varies in it is the round-off of a quantity "
+                 "that is not there")
+    return {"rms": rms, "magnitude": magnitude, "record_scale": scale,
+            "flat": bool(flat), "negligible": bool(negligible),
+            "varies": not (flat or negligible), "basis": basis}
+
+
 def dominant(spectrum: dict[str, Any], span: float) -> dict[str, Any]:
     """The tallest bin above DC, refined, with how much it stands out and how many
     cycles of it the record actually holds.
@@ -493,9 +564,10 @@ def dominant(spectrum: dict[str, Any], span: float) -> dict[str, Any]:
             "resolution": spectrum["resolution"]}
 
 
-def shedding_verdict(peak: dict[str, Any], unit: str = "Hz") -> tuple[str, str]:
-    """`periodic` / `trend-dominated` / `aperiodic` / `too-short`, and the number it
-    came from.
+def shedding_verdict(peak: dict[str, Any], unit: str = "Hz",
+                     varies: dict[str, Any] | None = None) -> tuple[str, str]:
+    """`no-variation` / `periodic` / `trend-dominated` / `aperiodic` / `too-short`, and
+    the number it came from.
 
     `trend-dominated` exists because the prominence alone cannot tell a trend from a
     tone and the docstring on `PROMINENCE_PERIODIC` already said so -- it recorded an
@@ -504,9 +576,21 @@ def shedding_verdict(peak: dict[str, Any], unit: str = "Hz") -> tuple[str, str]:
     sat at bin 3 of a 101-bin spectrum. So the bin index is now a verdict and not
     only a number beside one.
 
-    The order is cycle count, then bin, then prominence. A record under two cycles
-    long is too short to say anything else about, which is the case a settling
-    transient usually lands in, and that reading comes first."""
+    The order is variation, then cycle count, then bin, then prominence. `no-variation`
+    comes first because it is the only test here with an absolute scale in it, and
+    every test after it is a ratio that round-off satisfies as well as a signal does:
+    a `pressure_z` of 8e-23 stood 1.232e+07x over its own median and 2978 rows of
+    exactly 1.35 gave 7.446e+05x, both at a confident frequency. `varies` is
+    `variation()`; passed as None the test cannot be made and is not made, which is
+    the bare-spectrum call in the tests and not a path `analyse` takes.
+
+    A record under two cycles long is too short to say anything else about, which is
+    the case a settling transient usually lands in, and that reading comes next."""
+    if varies is not None and not varies["varies"]:
+        return "no-variation", (f"the {'column does not vary over the record' if varies['flat'] else 'column is round-off'}: "
+                                f"{varies['basis']}. There is no oscillation here, so the "
+                                f"frequency, the period, the prominence and the cycle count "
+                                f"above are readings of the round-off and not of a flow")
     if peak["periods"] < MIN_PERIODS:
         return "too-short", (f"the record spans {peak['periods']:.2f} cycles of "
                              f"{peak['frequency']:.4g} {unit}, under the {MIN_PERIODS:g} needed")
@@ -778,7 +862,8 @@ def analyse(source: Path, column: str = "", segments: int = 4,
     spectrum = welch(grid, resampled, segments=segments)
     span = float(grid[-1] - grid[0])
     peak = dominant(spectrum, span)
-    verdict, basis = shedding_verdict(peak, unit=axis["unit"])
+    varies = variation(history, name, values)
+    verdict, basis = shedding_verdict(peak, unit=axis["unit"], varies=varies)
     nyquist = 0.5 / spectrum["dt"]
 
     # The expectation is checked against the SAMPLING, not against the spectrum. The
@@ -799,8 +884,19 @@ def analyse(source: Path, column: str = "", segments: int = 4,
         # Not on an iteration axis: St = f L / U needs an f per second, and the peak of
         # an iteration history is per iteration. The refusal is in `report`.
         if axis["kind"] != "iterations":
-            strouhal = {"value": peak["frequency"] * length / speed,
-                        "length": length, "speed": speed}
+            # And not from a peak this script's own shedding test has just rejected.
+            # `too-short` on a real Cd printed `St = 0.0113328` where cropping past the
+            # transient gives 0.332192 -- 29x out -- and `--json` carried the two as
+            # unlinked sibling keys, so a consumer reading `strouhal.value` got the
+            # wrong number with nothing beside it to say so. `value` is now None
+            # whenever the verdict rejects the peak: the frequency is still there to be
+            # read, under a name that is not a Strouhal number.
+            quotient = peak["frequency"] * length / speed
+            strouhal = {"value": quotient if verdict == "periodic" else None,
+                        "length": length, "speed": speed,
+                        "verdict": verdict,
+                        "quotient": quotient,
+                        "refused": "" if verdict == "periodic" else basis}
 
     return {
         "source": str(Path(source)),
@@ -816,6 +912,7 @@ def analyse(source: Path, column: str = "", segments: int = 4,
         "spectrum": {"nperseg": spectrum["nperseg"], "segments": spectrum["segments"],
                      "resolution": spectrum["resolution"]},
         "peak": peak,
+        "variation": varies,
         "shedding": {"verdict": verdict, "basis": basis},
         "strouhal": strouhal,
         "requested": request,
@@ -883,14 +980,34 @@ def report(found: dict[str, Any]) -> str:
                   else "  period            -",
                   f"  prominence        {peak['prominence']:.4g}x the spectrum median",
                   f"  cycles in record  {peak['periods']:.2f}"]
+    varies = found.get("variation")
+    if varies:
+        lines.append(f"  variation         rms {varies['rms']:.4g} about its own trend, "
+                     f"magnitude {varies['magnitude']:.4g}, largest in the record "
+                     f"{varies['record_scale']:.4g}")
     lines += ["",
               f"shedding: {found['shedding']['verdict']} -- {found['shedding']['basis']}"]
 
-    if found["strouhal"] is not None:
-        st = found["strouhal"]
+    st = found["strouhal"]
+    if st is not None and st.get("value") is not None:
         lines += ["",
                   f"strouhal: St = {st['value']:.6g}  "
                   f"(f = {peak['frequency']:.6g}, L = {st['length']:g}, U = {st['speed']:g})"]
+    elif st is not None:
+        # The refusal names the number it did not print, because a reader who sees no St
+        # line concludes the script is broken and does the division themselves.
+        hint = ""
+        settled = found.get("settling") or {}
+        if st["verdict"] == "too-short" and settled.get("verdict") == "settled":
+            hint = (f" The settling section below puts the transient's end at "
+                    f"t = {settled['from_time']:g}; `--from {settled['from_time']:g}` is the "
+                    f"second call that can answer this.")
+        lines += ["",
+                  f"strouhal: not reported -- the shedding verdict above is "
+                  f"`{st['verdict']}`, which rejects this peak, and St = f L / U is a "
+                  f"Strouhal number only when f is a shedding frequency. The quotient "
+                  f"itself is {st['quotient']:.6g} for L = {st['length']:g} and U = "
+                  f"{st['speed']:g}; it is a division, not a measurement.{hint}"]
     elif iterations:
         lines += ["",
                   "strouhal: not computed -- St = f L / U needs a frequency per second and "
@@ -968,7 +1085,7 @@ def plot(found: dict[str, Any], target: Path) -> Path:
              f"{peak['prominence']:.4g}x median")
     if unit == "Hz":
         label = f"f = {peak['frequency']:.5g} {unit}, {peak['prominence']:.4g}x median"
-    if found["strouhal"] is not None:
+    if (found["strouhal"] or {}).get("value") is not None:
         label += f", St = {found['strouhal']['value']:.4g}"
     bottom.set_title(f"{found['shedding']['verdict']}: {label}", fontsize=10)
     bottom.set_xlabel(f"frequency ({unit})")
