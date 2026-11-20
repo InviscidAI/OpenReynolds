@@ -235,11 +235,14 @@ reattachment *position*; the bubble length is 5.63. And Teruel & Fogliatto (2013
 heights, which is 5.95 / 4.75 / 10.3 channel heights: they agree on the unit and sit 2%
 to 2.5% below everyone else on the value, which looks like numbers read off a figure.
 Neither affects the normalisation, and both are the sort of thing that turns into a
-third circulating number if nobody writes it down. That gap is issue #205, which also records
-what would close it: reading Gartling, and then re-running this case at Re 800 on the
-channel height so it becomes a validation instead of a worked units failure. He reports
-an upper-wall bubble from 4.85 to 10.48 channel heights as well, which nothing here has
-measured and which is a second independent check on the same solve.
+third circulating number if nobody writes it down.
+
+**The unread paper is tracked as issue #205**, which records what would close it and what
+has already been tried: reading Gartling, or Gresho et al. (1993), which he co-authored
+and which carries the same values; and then re-running this case at Re 800 on the channel
+height so it becomes a validation instead of a worked units failure. He reports an
+upper-wall bubble from 4.85 to 10.48 channel heights as well, which nothing here has
+measured and which would be a second independent check on the same solve.
 
 The other two things the run did are worth keeping regardless of the units. It reported
 that the pressure residual plateaued around 0.25 to 0.29 out to 15,000 iterations,
@@ -273,5 +276,7 @@ shown to matter as much as the mesh might.
 **No turbulent case.** All three are laminar or buoyancy-driven at a Rayleigh number where
 steady laminar is correct. Nothing here exercises a turbulence model.
 
-**The step case is not a validation.** It is a worked example of a units failure with an
-unresolved reference, and it is labelled that way above rather than counted as a pass.
+**The step case is not a validation.** It ran at twice the benchmark's Reynolds number
+and never converged, so it could not be one whatever the units turned out to be. It is a
+worked example of a units failure, labelled that way above rather than counted as a pass.
+Its reference value is settled, from reproductions rather than from the source.
