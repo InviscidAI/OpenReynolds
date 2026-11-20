@@ -216,7 +216,8 @@ def test_a_file_outside_the_study_directory_is_refused(server):
     server.studies.ready.set()
     session_id = ask(server, "POST", "/studies", {"task": "first"}).json["session_id"]
     study_id = until(server, session_id, "waiting_for_input")["study_id"]
-    for path in ("/etc/passwd", f"/work/{study_id}/../../etc/passwd"):
+    for path in ("/etc/passwd", f"/work/{study_id}/../../etc/passwd",
+                 "/work/x\\..\\..\\..\\..\\outside-the-study.txt"):  # #180
         refused = ask(server, "GET", f"/studies/{study_id}/file?path={path}")
         assert refused.status == 400, path
         assert "not a workspace path" in refused.json["error"]

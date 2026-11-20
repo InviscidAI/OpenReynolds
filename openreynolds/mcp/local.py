@@ -631,9 +631,25 @@ class LocalHost(HostDefaults):
                 if isinstance(i.get("seq"), int) and i["seq"] > after_seq]
 
     def _check_path(self, path: str) -> str:
-        if not path.startswith(WORKSPACE_ROOT + "/") or "/../" in f"{path}/":
+        # Both separators: the workspace reads a backslash as a letter, but this
+        # machine may read it as a separator, and `..` between two is a way out (#180).
+        parts = path.replace("\\", "/").split("/")
+        if not path.startswith(WORKSPACE_ROOT + "/") or ".." in parts:
             raise McpError(f"{path!r} is not a workspace path (they start {WORKSPACE_ROOT}/)")
         return path
+
+    def _local_copy(self, store: Store, path: str) -> Path:
+        """Where this machine's copy of a workspace path is, refusing one whose copy
+        would be anywhere but inside the study's own: by the path itself, or by a link
+        it reaches through (#180)."""
+        refused = McpError(f"{path!r} is not inside this study's copy")
+        try:
+            local = local_for(store.files_dir, path)
+        except OSError as exc:
+            raise refused from exc
+        if local.exists() and not local.resolve().is_relative_to(store.files_dir.resolve()):
+            raise refused
+        return local
 
     def files(self, study_id: str) -> list[dict[str, Any]]:
         store = self._store(study_id)
@@ -654,6 +670,7 @@ class LocalHost(HostDefaults):
     def read_file(self, study_id: str, path: str) -> bytes | None:
         store = self._store(study_id)
         self._check_path(path)
+        self._local_copy(store, path)  # refused before the workspace is asked for it
         live = self._live_for(study_id)
         backend = getattr(getattr(live.view, "browser", None), "backend", None) if live else None
         if backend is not None:
@@ -662,7 +679,7 @@ class LocalHost(HostDefaults):
                 return backend.get_file(path, 0, min(size, READ_LIMIT))
             except BackendError:
                 pass
-        local = local_for(store.files_dir, path)
+        local = self._local_copy(store, path)
         if local.is_file():
             with local.open("rb") as fh:
                 return fh.read(READ_LIMIT)
@@ -681,6 +698,7 @@ class LocalHost(HostDefaults):
     def download(self, study_id: str, path: str) -> dict[str, Any]:
         store = self._store(study_id)
         self._check_path(path)
+        self._local_copy(store, path)  # refused before the workspace is asked for it
         live = self._live_for(study_id)
         browser = getattr(live.view, "browser", None) if live else None
         if browser is not None:
@@ -688,7 +706,7 @@ class LocalHost(HostDefaults):
                 browser.pull(path)
             except BackendError as exc:
                 raise McpError(f"could not copy {path} out of the workspace: {exc}") from exc
-        local = local_for(store.files_dir, path)
+        local = self._local_copy(store, path)
         if not local.exists():
             raise McpError(f"{path} is not in this machine's copy of the study"
                            + ("" if browser is not None else

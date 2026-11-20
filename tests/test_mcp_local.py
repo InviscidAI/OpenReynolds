@@ -283,9 +283,33 @@ def test_a_path_outside_the_workspace_is_refused(world):
     world.studies.ready.set()
     sid = call(world, "start_study", task="first")["session_id"]
     study = until(world, sid, "waiting_for_input")["study_id"]
-    for path in ("/etc/passwd", f"/work/{study}/../../etc/passwd"):
+    for path in ("/etc/passwd", f"/work/{study}/../../etc/passwd",
+                 f"/work/{study}\\..\\..\\..\\outside-the-study.txt"):
         with pytest.raises(core.McpError, match="not a workspace path"):
             call(world, "download_url", study_id=study, path=path)
+
+
+def test_a_path_whose_copy_is_outside_the_study_is_refused(world):
+    """#180: what passes as a workspace path must still not be read from outside the
+    study's copy on this machine -- not by a second slash, and not through a link."""
+    canary = world.tmp / "outside-the-study.txt"
+    canary.write_bytes(b"SECRET-CANARY\n")
+    world.studies.ready.set()
+    sid = call(world, "start_study", task="first")["session_id"]
+    study = until(world, sid, "waiting_for_input")["study_id"]
+    files = Store(world.root, study).files_dir
+    (files / study).mkdir(parents=True, exist_ok=True)
+    paths = [f"/work/{canary.as_posix()}"]
+    try:
+        (files / study / "link.txt").symlink_to(canary)
+        paths.append(f"/work/{study}/link.txt")
+    except OSError:  # Windows without the right to make links
+        pass
+    for path in paths:
+        with pytest.raises(core.McpError, match="not inside this study's copy"):
+            world.host.read_file(study, path)
+        with pytest.raises(core.McpError, match="not inside this study's copy"):
+            world.host.download(study, path)
 
 
 def test_closing_the_server_ends_every_live_study(world):

@@ -341,6 +341,55 @@ def test_a_pulled_file_keeps_the_shape_it_had_in_the_workspace(store):
     )
 
 
+def test_a_second_slash_does_not_make_the_copy_absolute():
+    """`Path("/local") / "/etc/passwd"` is `/etc/passwd`, so `/work//etc/passwd` was
+    this machine's password file (#180)."""
+    with pytest.raises(mirror.OutsideTheCopy):
+        mirror.local_for(Path("/local"), "/work//etc/passwd")
+    with pytest.raises(mirror.OutsideTheCopy):
+        mirror.local_for(Path("/local"), "/work/s/../../etc/passwd")
+    with pytest.raises(mirror.OutsideTheCopy):
+        mirror.local_for(Path("/local"), "..")
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "/work/x\\..\\..\\..\\outside-the-study.txt",  # #180's own path
+        "/work/C:/Windows/win.ini",
+        "/work/D:/other-drive.txt",
+    ],
+)
+def test_on_windows_a_backslash_or_a_drive_does_not_leave_the_copy(monkeypatch, remote):
+    """What Windows reads as a way out, with Windows' own path rules wherever this runs."""
+    import ntpath
+    from pathlib import PureWindowsPath
+
+    monkeypatch.setattr(mirror, "os", SimpleNamespace(path=ntpath))
+    local = PureWindowsPath("C:/Users/me/studies/s1/files")
+    assert mirror.local_for(local, "/work/s1/case/0/U") == local / "s1/case/0/U"
+    with pytest.raises(mirror.OutsideTheCopy):
+        mirror.local_for(local, remote)
+
+
+def test_a_file_whose_copy_would_leave_the_study_is_skipped_not_fatal(backend, store, monkeypatch):
+    """A name the workspace allows may be one this machine cannot hold: a Linux file
+    called `a\\..\\b` on Windows. It is left behind and named, and the rest comes down."""
+    bad = f"{HOME}/bad.md"
+    workspace(backend, (f"{HOME}/notes.md", 400), (bad, 400))
+    real = mirror.local_for
+
+    def local_for(local_dir, remote):
+        if remote == bad:
+            raise mirror.OutsideTheCopy(remote)
+        return real(local_dir, remote)
+
+    monkeypatch.setattr(mirror, "local_for", local_for)
+    report = mirror.sync(browser_for(backend, store))
+    assert [Path(p).name for p in report.pulled] == ["notes.md"]
+    assert [(s.path, s.reason) for s in report.skipped] == [(bad, "its name cannot be copied to this machine")]
+
+
 # -- wired into the session, without anyone asking -----------------------------
 
 

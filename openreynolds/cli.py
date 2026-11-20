@@ -1639,7 +1639,11 @@ def video_cmd(frames: str, study_id: str | None, fps: float | None, out_path: st
     if frames:
         mapped = workspace_path(frames)
         if mapped.startswith(WORKSPACE_ROOT):
-            directory = local_for(store.files_dir, mapped)
+            try:
+                directory = local_for(store.files_dir, mapped)
+            except OSError:
+                console.print(f"[yellow]{frames} is not inside the study[/]")
+                raise SystemExit(1) from None
         else:
             directory = Path(frames)
     else:

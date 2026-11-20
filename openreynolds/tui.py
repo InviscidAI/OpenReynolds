@@ -889,8 +889,8 @@ class OpenReynoldsApp(App):
         store = getattr(self.browser, "store", None)
         if store is None:
             return None
-        target = local_for(store.fetch_dir(), path)
         try:
+            target = local_for(store.fetch_dir(), path)
             size = target.stat().st_size
         except OSError:
             return None

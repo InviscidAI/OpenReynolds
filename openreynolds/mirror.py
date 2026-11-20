@@ -39,6 +39,7 @@ mirror that ends a session is worse than one that misses a file.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -616,18 +617,37 @@ class _Stopped(Exception):
     """Raised out of a cycle's listing when the mirror stopped while it waited."""
 
 
+class OutsideTheCopy(OSError):
+    """A workspace path whose local copy would land outside the copy's directory."""
+
+
 def local_for(local_dir: Path, remote: str) -> Path:
     """Where a workspace path lands once it has been copied out.
 
     `get_tree` preserves the shape a file had relative to the workspace root, so this
     is a prediction rather than a guess -- which is what makes it possible to ask
     whether a file is already here without pulling it to find out.
+
+    A path that would land outside `local_dir` raises `OutsideTheCopy` (#180). The
+    test is made on the joined path as this machine reads it, so it holds for what
+    only this machine treats as a separator or a root: on Windows a backslash
+    `..\\..\\` or a drive, and everywhere a second slash (`/work//etc/passwd`
+    joins as `/etc/passwd`). It is an OSError so that callers already reading a
+    copy that may not be there treat it as one that is not.
     """
     if remote.startswith(WORKSPACE_ROOT + "/"):
         relative = remote[len(WORKSPACE_ROOT) + 1 :]
     else:
         relative = Path(remote).name
-    return local_dir / relative
+    landing = local_dir / relative
+    base = os.path.normpath(local_dir)
+    try:
+        inside = os.path.commonpath([base, os.path.normpath(landing)]) == base
+    except ValueError:  # Windows: another drive, which is outside too
+        inside = False
+    if not inside:
+        raise OutsideTheCopy(f"{remote} would land outside {local_dir}")
+    return landing
 
 
 # -- the parts of one sync -----------------------------------------------------
@@ -696,7 +716,12 @@ def _wanted(
                 )
             )
             continue
-        if _already_here(local_for(report.local_dir, entry.path), entry):
+        try:
+            landing = local_for(report.local_dir, entry.path)
+        except OutsideTheCopy:
+            report.skipped.append(Skip(entry.path, "its name cannot be copied to this machine", entry.size))
+            continue
+        if _already_here(landing, entry):
             report.unchanged += 1
             if held is not None:
                 earlier_here += entry.size
