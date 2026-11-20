@@ -3203,10 +3203,11 @@ def _home_path(store: Store, resuming: bool, known_here: bool = True) -> str:
     """Which directory is this study's. Needs no workspace: see `_home_for`."""
     if store.session.home:
         return store.session.home
-    if resuming and known_here:
+    if resuming and known_here and not store.session.cloned_from:
         # A study this machine already had, whose session predates homes: it keeps
         # the whole workspace, because moving its files out from under it would be
-        # worse than the untidiness.
+        # worse than the untidiness. Never a clone: clones came after homes, and one
+        # with none recorded is new, with nothing in the root to keep (#170).
         return WORKSPACE_ROOT
     # A new study, or one resumed on a machine that has never seen it -- opened
     # in the browser, or on another laptop. `known_here` is false there, and the

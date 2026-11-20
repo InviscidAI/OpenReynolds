@@ -37,8 +37,9 @@ import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
+from .backend.base import WORKSPACE_ROOT
 from .compare import identity
-from .llm.presets import REYNOLDS, prices, spend
+from .llm.presets import REYNOLDS, priced
 from .store import Session, Store, list_stores, new_study_id, tag_name
 from .watch import conversation_rows
 
@@ -94,14 +95,13 @@ def cost_usd(session: Session) -> float | None:
     figure rather than a figure of zero.
 
     None for a hosted study whatever it spent (the money line), for a study whose
-    provider was never recorded, for a model with no rate in `PRICE_PER_MTOK`, and for
-    a study whose sessions all predate the token record.
+    provider was never recorded, for a model with no rate in `PRICE_PER_MTOK` or a
+    token class its rates do not list (#191), and for a study whose sessions all
+    predate the token record.
     """
     if not own_key(session) or not session.tokens:
         return None
-    if prices(session.model, session.provider) is None:
-        return None
-    return spend(session.tokens, session.model, session.provider)
+    return priced(session.tokens, session.model, session.provider)
 
 
 # -- rows ----------------------------------------------------------------------
@@ -236,7 +236,7 @@ CARRIED = ("project", "tags", "title", "solver", "model", "provider", "base_url"
 """What a clone takes from the study it came from: how the person filed it, and how
 the session was set up. Not `instance_id`, `remote_study_id`, `home`, `jobs`,
 `checkpoint` or the accounting -- those are facts about the run that happened, and a
-new study has not happened yet."""
+new study has not happened yet. A clone's `home` is its own, as a new study's is."""
 
 
 def duplicate(studies_dir: Path, study_id: str, rerun: bool = False) -> tuple[str, str]:
@@ -273,6 +273,9 @@ def duplicate(studies_dir: Path, study_id: str, rerun: bool = False) -> tuple[st
         setattr(fresh.session, name, getattr(old.session, name))
     fresh.session.tags = list(old.session.tags)
     fresh.session.cloned_from = study_id
+    # Its own directory, as any new study gets. Left empty, a resume read the clone
+    # as a study from before homes and opened it in the shared workspace root (#170).
+    fresh.session.home = f"{WORKSPACE_ROOT}/{fresh.session.study_id}"
     fresh.save()
 
     if old.files_dir.is_dir():
