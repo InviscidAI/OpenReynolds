@@ -190,6 +190,47 @@ def test_a_step_count_overrides_the_residual(lbm):
     assert result["converged"] is False
 
 
+# -- the reason this solver is here at all -------------------------------------------
+
+
+def test_an_arbitrary_mask_is_the_geometry(lbm):
+    """The claim the whole design rests on: the geometry is a boolean array.
+
+    A cylinder in a channel, written as `(x-a)^2 + (y-b)^2 < r^2` and nothing else -- no
+    mesh, no snappyHexMesh, no checkMesh, no cell quality. Three things are asserted and
+    each would fail differently if the bounce-back were wrong:
+
+    * mass is conserved over a closed, obstructed domain, to round-off;
+    * the solid carries no velocity, so the mask and the field agree about where the
+      fluid is;
+    * the flow through the constriction speeds up by exactly what continuity demands.
+      The cylinder blocks 8 of the channel's 20 fluid rows at its widest, leaving 0.6 of
+      the area, so the peak velocity there must be about 1/0.6 = 1.67 times the peak in
+      the clear channel. That number comes from the geometry, not from the solver, which
+      is what makes it a check.
+    """
+    ny, nx = 22, 60
+    solid = np.zeros((ny, nx), dtype=bool)
+    solid[0, :] = solid[-1, :] = True
+    rows, columns = np.mgrid[0:ny, 0:nx]
+    solid |= ((columns - 18) ** 2 + (rows - 11) ** 2) < 4**2
+
+    result = lbm.solve(solid, nu=0.1, force=(2e-6, 0.0), reference_velocity=0.02,
+                       tolerance=1e-8, check_every=200, max_steps=120_000,
+                       progress=False)
+    assert result["converged"], f"residual {result['residual']:.2e}"
+
+    fluid = ~solid
+    assert np.nansum(result["rho"]) == pytest.approx(fluid.sum(), rel=1e-6)
+    assert np.isnan(result["ux"][solid]).all(), "the solid is carrying a velocity"
+
+    clear = np.nanmax(result["ux"][:, 3])
+    past = np.nanmax(result["ux"][:, 18])
+    assert clear > 0, "the channel is not flowing"
+    assert past / clear == pytest.approx(1.67, rel=0.2), (
+        f"{past / clear:.2f}x through a constriction that leaves 0.6 of the area")
+
+
 # -- the picture ---------------------------------------------------------------------
 
 
