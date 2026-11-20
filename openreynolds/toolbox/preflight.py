@@ -2908,12 +2908,21 @@ def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]
     mesh_type = (values.get("dynamicFvMesh") or "").strip()
     motion_solver = (values.get("motionSolver") or values.get("solver") or "").strip()
     overset = "overset" in mesh_type.lower()
+    # Refinement is not motion, and a steady solver is not shut out of it. `simpleFoam`
+    # at v2512 includes `createDynamicFvMesh.H` and calls `mesh.controlledUpdate()` once
+    # per `simple.loop()` -- read from the tag on 2026-11-21 -- so a steady solve whose
+    # mesh refines as its residuals fall is a legitimate pairing, and this check used to
+    # answer it with "a motion solver attached to one has nothing to integrate" and send
+    # the reader to pimpleFoam. Nothing moves the points here: there are no points to
+    # integrate and none is being asked for. `amr.py` is the instrument for the rest of
+    # the setup.
+    refining = "refine" in mesh_type.lower()
     # STEADY_APPLICATIONS is spelled the way OpenFOAM spells the binaries and `solver`
     # arrives here lowercased, so the membership test is folded rather than direct --
     # compared as written it silently answered "no" for every steady solver there is.
     steady = solver in {name.lower() for name in STEADY_APPLICATIONS}
 
-    if steady and not overset:
+    if steady and not (overset or refining):
         out.append(Finding(
             "method", "fail",
             f"solver {application} is steady and the mesh type is {mesh_type or 'unnamed'}",
@@ -2923,6 +2932,17 @@ def _motion_findings(case: Case, application: str, solver: str) -> list[Finding]
             "use a transient solver of the same physics -- pimpleFoam for simpleFoam, "
             "interFoam is already transient -- and set the run in seconds rather than "
             "iterations",
+        ))
+    elif steady and refining:
+        out.append(Finding(
+            "method", "ok",
+            f"solver {application} is steady and the mesh type is {mesh_type}",
+            "refinement is a topology change and not motion: no point moves, so a steady "
+            "solve has nothing to integrate and nothing to lose. simpleFoam at v2512 "
+            "includes createDynamicFvMesh.H and calls mesh.controlledUpdate() once per "
+            "simple.loop(), so it reads this dictionary like a transient solver does",
+            "amr.py check <case> reads the refinement entries, which are what this check "
+            "does not look at",
         ))
     elif steady:
         out.append(Finding(

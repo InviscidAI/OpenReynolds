@@ -993,3 +993,74 @@ def test_the_field_notes_say_which_mesher_and_what_it_costs():
     assert "erode" in notes.lower()
     assert "no y⁺ control at all" in notes  # the cost, not only the remedy
     assert "cfmesh.py" in notes
+
+
+# -- the polyhedral route -------------------------------------------------------
+#
+# `pMesh` was in `MESHERS` and probed by `where` from the day this script was written,
+# and nothing could ask for it: `route()` printed `cartesianMesh` as a literal. The
+# dictionary never needed changing, which is the whole finding -- `voronoiMeshGenerator`
+# reads the same `IOobject("meshDict", runTime_.system(), ..., MUST_READ)` and hands it
+# to the same octree, layer and rename components.
+
+
+def test_the_polyhedral_mesher_reads_the_same_dictionary_and_only_the_route_changes(cfmesh):
+    hexes = cfmesh.meshdict("hull_box.stl", 0.15, wall="hull", wall_cell=0.01, layers=3)
+    assert cfmesh.meshdict("hull_box.stl", 0.15, wall="hull", wall_cell=0.01, layers=3) == hexes
+
+    poly = cfmesh.route("hull_box.stl", "hull", mesher="pMesh")
+
+    assert any(line.startswith("pMesh ") for line in poly), poly
+    assert not any(line.startswith("cartesianMesh") for line in poly)
+    assert any("--log log.pMesh" in line for line in poly), (
+        "the log the check reads is the log the mesher wrote"
+    )
+
+
+def test_the_default_mesher_is_still_the_one_every_measurement_here_used(cfmesh):
+    assert any(line.startswith("cartesianMesh") for line in cfmesh.route("h.stl", "hull"))
+
+
+def test_asking_for_pMesh_prints_what_is_not_known_about_it(cfmesh, tmp_path, capsys):
+    body = hull_stl(tmp_path / "hull.stl")
+    assert cfmesh.main(["box", str(body), "--out", str(tmp_path / "b.stl")]) == 0
+    capsys.readouterr()
+
+    assert cfmesh.main(["case", str(tmp_path), "--surface", "b.stl", "--max-cell", "0.15",
+                        "--wall", "hull", "--mesher", "pMesh"]) == 0
+
+    out = capsys.readouterr().out
+    assert "pMesh " in out
+    assert "NO polyhedral mesh has been run on this image" in out, (
+        "the hull's 100% coverage and 1.21 mm first cell are cartesianMesh's numbers"
+    )
+    assert "layer_report.py" in out
+
+
+def test_the_polyhedral_note_cites_what_it_was_read_from(cfmesh):
+    """Same rule as `COSTS`: a docstring here is a published citation. The two routes
+    were read on 2026-11-21 -- cfMesh's own `voronoiMeshGenerator.C` and `pMesh.C`
+    upstream, and `polyDualMeshApp.C` at the ESI v2512 tag -- and the one thing that
+    could not be read is said rather than smoothed over."""
+    note = cfmesh.POLYHEDRAL
+    assert "voronoiMeshGenerator" in note
+    assert "MUST_READ" in note
+    assert "surfaceFile is not present in meshDict" in note  # its one fatal
+    assert "addLayerForAllPatches" in note and "refineLayers" in note
+    assert "not from this image's v2512 copy" in note
+    assert "polyDualMesh" in note and "polyDualMeshApp.C" in note
+    assert "one cell per point" in note
+
+
+def test_the_polyhedral_note_claims_no_number_it_did_not_measure(cfmesh):
+    """The failure this guards is the cheap one: carrying the Wigley hull's cartesian
+    numbers across to a mesher nothing has run (`benchmarks/README.md`, "the reference
+    value, which is last on everyone's list and was wrong twice here"). The two numbers
+    `COSTS` is read for appear here only inside the sentence that disowns them."""
+    note = " ".join(cfmesh.POLYHEDRAL.split())
+    disclaimer = note.split("NO polyhedral mesh has been run on this image", 1)
+    assert len(disclaimer) == 2
+    for number in ("100.0%", "1.21 mm"):
+        assert number not in disclaimer[0], f"{number} is quoted before it is disowned"
+        assert number in disclaimer[1]
+    assert "none of it transfers" in disclaimer[1]

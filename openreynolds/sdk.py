@@ -169,7 +169,8 @@ def start(task: str, *, upload_ids: list[str] | None = None, study_id: str | Non
     """Start a study, or continue one by `study_id`, and return at once with a `Study`.
 
     `task` says what to simulate and what you want to know -- geometry, units, flow
-    conditions, quantities of interest. `depth` is `quick` or `full`, `mode` is `auto`,
+    conditions, quantities of interest. `depth` is `quick`, `full`, `learn` or `beginner`
+    (`study_style.py`), `mode` is `auto`,
     `partial` or `structured`, `solver` is `auto`, `openfoam` or `felix`. `upload_ids`
     are files staged with `upload(...)`; they are placed in the study's `uploads/` and
     named to the agent before it starts. `notes` is a standing instruction of your own.

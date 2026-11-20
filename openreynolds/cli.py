@@ -33,7 +33,7 @@ from .browse import Browser
 from . import casebundle
 from .capture import Capture
 from . import cad, commands, images, switch
-from . import ceiling, convergence, modes, solvers
+from . import ceiling, convergence, modes, solvers, study_style
 from .compare import TOL as COMPARE_TOL, compare as compare_studies
 from .approval import Approver
 from .llm.presets import EFFORTS, context_window_for, desk_model_for, models_for, serves, successor
@@ -229,6 +229,16 @@ class Cli(click.Group):
     type=click.Choice(EFFORTS, case_sensitive=False),
     help="How hard the model thinks this session. /effort changes it mid-study.",
 )
+@click.option(
+    "--depth",
+    type=click.Choice(sorted(study_style.STYLES), case_sensitive=False),
+    default=None,
+    help="Open the session with a standing note in your voice about how you want this "
+         "study run: quick (one coarse mesh and the headline numbers), full (a careful "
+         "study), learn (quick, with the reasoning said as it goes) or beginner (quick, "
+         "in plain language with the terms spelled out). Goes ahead of your own "
+         "preferences.md and gates nothing.",
+)
 @click.option("--no-capture", is_flag=True, help="Keep this study's transcript on this machine: no copy on the service to see or resume in the web app. Sharing has its own switch (openreynolds sharing off).")
 @click.option(
     "--local",
@@ -273,6 +283,7 @@ def main(
     instance_id: str | None,
     model: str | None,
     effort: str | None,
+    depth: str | None,
     mode: str | None,
     solver: str | None,
     no_capture: bool,
@@ -335,6 +346,13 @@ def main(
     mode_explicit = bool(mode) or modes.normalize(raw_mode) is not None
     if effort:
         cfg.effort = effort.lower()
+    if depth:
+        # The depth the MCP servers have had since `study_style.py` was written
+        # (`mcp/local.py:471-485`), reachable from the terminal. It is the person's own
+        # standing note and nothing else: their `preferences.md` goes after it, exactly
+        # as it does over there, and a session started without the flag carries the
+        # briefing it always did, byte for byte.
+        cfg.preferences = study_style.preferences_for(depth.lower(), cfg.preferences)
     if no_capture:
         cfg.capture = False
 

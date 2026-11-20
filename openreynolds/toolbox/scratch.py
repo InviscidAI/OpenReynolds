@@ -23,6 +23,19 @@ solve.
     python3 scratch.py reconstruct /work/<study>/case --time 120:135
     python3 scratch.py reconstruct /work/<study>/case            # all new times
 
+    # what an interrupted run left on disk, and which time can be restarted from
+    python3 scratch.py resume /work/<study>/case
+
+`resume` reads and prints; it edits nothing. It is here because the promise above --
+"a preempted run resumes from `latestTime` with nothing lost" -- has one hole, and the
+hole is silent. `checkpoint` says a time directory caught mid-write is completed by the
+next checkpoint, which is true of every checkpoint except the one that never comes:
+when the Sandbox is preempted, the newest time directory on the Volume is whatever
+`rsync` had reached, and `startFrom latestTime` then sends the solver into it. So
+`resume` compares the newest time's files with the time before it, checks each one for
+the end divider OpenFOAM writes last, and names the newest time that is whole. A short
+newest time is a directory to move aside, not a solve to run again.
+
 It uses only `rsync`, `cp` and the OpenFOAM tools already on the instance, and
 sources nothing: the command it runs inherits the environment it was given, which
 is the OpenFOAM one when launched from a job or a sourced shell.
@@ -123,6 +136,37 @@ def reconstruct_argv(latest: bool = False, time_range: str | None = None,
         names = " ".join(f.strip() for f in fields.replace(",", " ").split() if f.strip())
         argv += ["-fields", f"({names})"]
     return argv
+
+
+FOAM_END = b"// *****"
+"""The start of the end divider OpenFOAM writes as the last line of every file it
+writes, ascii or binary (`case_gen.py:109` writes the same line into the dictionaries
+it generates). A field file without it was not finished: either the solver was killed
+between opening it and closing it, or `rsync` copied it while it was still being
+written. Checked on the tail of the file, so it costs one seek per field."""
+
+TAIL_BYTES = 256
+"""How much of a file's tail to read looking for `FOAM_END`. The divider plus the
+newline after it is 76 bytes; 256 covers a trailing blank line or two and is still one
+read."""
+
+
+def ends_whole(tail: bytes) -> bool:
+    """Whether a file's last bytes carry OpenFOAM's end divider."""
+    return FOAM_END in tail
+
+
+def short_of(previous: set[str], newest: set[str]) -> list[str]:
+    """What the time before the newest one holds that the newest one does not.
+
+    Only the newest time is at risk, so only the newest time is compared, and it is
+    compared with its own predecessor rather than with a list of expected fields: which
+    fields a case writes is the case's business (`writeControl`, `functions`, a
+    `purgeWrite`), and the one thing known for certain about a finished write is that it
+    wrote what the write before it wrote. `uniform` is a directory of its own and is
+    counted like a field, because `uniform/time` is what a restart reads the index and
+    the deltaT from."""
+    return sorted(previous - newest)
 
 
 def rsync_argv(src: str, dst: str, delete: bool = False) -> list[str]:
@@ -231,6 +275,134 @@ def reconstruct(case: str, latest: bool = False, time_range: str | None = None,
     )
 
 
+def _listing(path: str) -> set[str]:
+    try:
+        return set(os.listdir(path))
+    except OSError:
+        return set()
+
+
+def _tail(path: str) -> bytes:
+    """The last `TAIL_BYTES` of a file, or b"" if it cannot be read."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(max(0, os.path.getsize(path) - TAIL_BYTES))
+            return handle.read()
+    except OSError:
+        return b""
+
+
+def time_homes(case: str) -> list[str]:
+    """Every directory under `case` that holds time directories of its own.
+
+    One entry for an undecomposed case (the case root), one for the collated layout
+    (`processorsN`), and one per rank for the default decomposed layout -- which is
+    why this is a list. `rsync` can be interrupted part-way through any one of them, so
+    a time that is whole in `processor0` says nothing about the same time in
+    `processor7`."""
+    names = _listing(case)
+    ranks = sorted(n for n in names if n.startswith("processor") and n[len("processor"):].isdigit())
+    collated = sorted(n for n in names
+                      if n.startswith("processors") and n[len("processors"):].isdigit())
+    if collated:
+        return [os.path.join(case, collated[0])]
+    if ranks:
+        return [os.path.join(case, n) for n in ranks]
+    return [case]
+
+
+def whole_times(home: str) -> tuple[list[str], list[str], list[str]]:
+    """`(times, missing, unfinished)` for one directory of time directories.
+
+    `missing` is what the time before the newest one holds and the newest does not;
+    `unfinished` names the files in the newest time with no end divider. Both are empty
+    for a run that stopped between writes, which is the usual case and the whole point
+    of saying so."""
+    times = time_dirs(_listing(home))
+    if len(times) < 1:
+        return times, [], []
+    newest = os.path.join(home, times[-1])
+    missing = (
+        short_of(_listing(os.path.join(home, times[-2])), _listing(newest))
+        if len(times) > 1 else []
+    )
+    unfinished = [
+        name for name in sorted(_listing(newest))
+        if os.path.isfile(os.path.join(newest, name))
+        and not ends_whole(_tail(os.path.join(newest, name)))
+    ]
+    return times, missing, unfinished
+
+
+def resume(case: str) -> int:
+    """Say what an interrupted run left on disk and which time can be restarted from.
+
+    Reads and prints. The two edits it names -- moving a short time directory aside and
+    setting `startFrom latestTime` -- are left to whoever is reading, because which of
+    them is right depends on what the run was for, and a script that moves a solver's
+    output on its own guess is a worse failure than a restart that stops with an
+    error."""
+    if not os.path.isdir(case):
+        raise SystemExit(f"scratch: no case at {case}")
+    homes = time_homes(case)
+    layout = ("undecomposed" if homes == [case]
+              else f"{len(homes)} rank director{'y' if len(homes) == 1 else 'ies'}")
+    print(f"case:   {case} ({layout})", flush=True)
+
+    flawed: dict[str, list[str]] = {}
+    seen: list[set[str]] = []
+    for home in homes:
+        times, missing, unfinished = whole_times(home)
+        where = os.path.relpath(home, case) if home != case else "."
+        seen.append(set(times))
+        if not times:
+            print(f"{where}: no time directories", flush=True)
+            continue
+        print(f"{where}: {len(times)} time(s), {times[0]} .. {times[-1]}", flush=True)
+        if missing:
+            flawed.setdefault(times[-1], []).append(where)
+            print(f"  {times[-1]}/ is short of {times[-2]}/ by: "
+                  + ", ".join(missing[:8]) + ("..." if len(missing) > 8 else ""), flush=True)
+        if unfinished:
+            flawed.setdefault(times[-1], []).append(where)
+            print("  no end divider (so written, not finished): "
+                  + ", ".join(unfinished[:8]) + ("..." if len(unfinished) > 8 else ""),
+                  flush=True)
+
+    # A time counts only where every one of those directories has it: a parallel
+    # restart and `reconstructPar` both read all of them, so a time written in
+    # processor0 and not in processor7 is not a time this case can be restarted from.
+    everywhere = time_dirs(set.intersection(*seen) if seen else set())
+    for home, times in zip(homes, seen):
+        where = os.path.relpath(home, case) if home != case else "."
+        for extra in sorted(set(times) - set(everywhere), key=float):
+            flawed.setdefault(extra, []).append(where)
+            print(f"  {extra}/ is in {where} and not in all the others", flush=True)
+
+    whole = [t for t in everywhere if t not in flawed]
+    if not whole:
+        print("\nnothing whole to resume from: " + (
+            "this case holds no time directory present in every one of those "
+            "directories." if not everywhere else
+            f"the newest time present everywhere is {everywhere[-1]}, and it is one of "
+            "the times named above."), flush=True)
+        return 1
+    print(f"\nresume from {whole[-1]}: set `startFrom latestTime;` in "
+          "system/controlDict, raise endTime, and start the solver again -- every write "
+          "so far is kept.", flush=True)
+    # `latestTime` resolves to the newest directory on disk by name, so a partial one
+    # left where it was is what the solver would read. Naming the move is the whole
+    # value of this command.
+    later = sorted(flawed, key=float)
+    later = [t for t in later if float(t) > float(whole[-1])]
+    if later:
+        print(f"first move {', '.join(later)} aside wherever they exist, because "
+              "`latestTime` resolves to the newest directory on disk and not to the "
+              "newest whole one.", flush=True)
+        return 1
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--scratch", default=SCRATCH_ROOT, help="local scratch root (default %(default)s)")
@@ -251,7 +423,12 @@ def main(argv=None) -> int:
     g.add_argument("--time", dest="time_range", help="a single time or a A:B range")
     rc.add_argument("--fields", help='space/comma list, e.g. "U p" (default: all fields)')
 
+    rs = sub.add_parser("resume", help="what an interrupted run left, and which time is whole")
+    rs.add_argument("case")
+
     a = p.parse_args(argv)
+    if a.cmd == "resume":
+        return resume(a.case)
     if a.cmd == "run":
         command = a.command
         if command and command[0] == "--":

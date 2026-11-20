@@ -229,6 +229,22 @@ def test_a_steady_overset_case_is_not_mistaken_for_a_steady_solver_moving_a_mesh
     assert "names overset" in measured(found)
 
 
+def test_a_steady_solve_whose_mesh_refines_is_not_a_steady_solver_moving_a_mesh(preflight, tmp_path):
+    """Refinement is a topology change and not motion: no point moves, so a steady
+    solver has nothing to integrate and nothing to lose by it. This check used to fail
+    the pairing with "a motion solver attached to one has nothing to integrate" and send
+    the reader to pimpleFoam -- and simpleFoam at v2512 includes createDynamicFvMesh.H
+    and calls mesh.controlledUpdate() once per simple.loop() (read from the tag on
+    2026-11-21), so AMR on the steady case `case_gen.py:1012` writes needs no change of
+    solver. The refinement entries are amr.py's business and not this check's."""
+    case = motion_case(tmp_path / "amr", "simpleFoam",
+                       "dynamicFvMesh   dynamicRefineFvMesh;\n")
+    found = preflight.run_checks(case, ["method"], preflight.Intent(resolve="motion"))
+    assert "fail" not in statuses(found)
+    assert "is steady and the mesh type is dynamicRefineFvMesh" in measured(found)
+    assert "amr.py" in " ".join(f.repair for f in found)
+
+
 def test_the_pair_that_actually_ran_is_reported_ok(preflight, tmp_path):
     case = motion_case(
         tmp_path / "wig6", "interFoam",
