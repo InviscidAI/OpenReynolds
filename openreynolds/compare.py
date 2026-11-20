@@ -507,22 +507,37 @@ def _claim_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _scale(rows: list[dict[str, Any]]) -> tuple[str, float]:
-    """The biggest coefficient magnitude in this comparison, and whose it is.
+def _scales(rows: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
+    """The biggest tail-mean magnitude in each force series, and whose it is.
 
-    The data's own scale, which is what `NEGLIGIBLE` is a fraction of. Taken over both
-    sides and every paired series, so that it is one number for the whole table and
-    the same number whichever way round the two studies were named.
+    The data's own scale, which is what `NEGLIGIBLE` is a fraction of -- one per force
+    file rather than one for the whole table, because `forces()` keys by column name
+    across cases by design and one table therefore holds dimensionless coefficients
+    beside forces in newtons. Taken over one number for the whole table, a 1311 N
+    `total_z` set the floor at 1.311 and every coefficient in a real wind-turbine-blade
+    study fell under it: `Cl = 0.73`, that study's answer, was declared zero and
+    dropped from the comparison (#178).
+
+    Per file and not per series: a series compared against its own largest value is
+    always above its own floor, so the floor would never fire and #141's two numerical
+    zeros would be "71.6% apart" again. One `force.dat`'s chosen columns are what
+    `results.plot_columns` ranked as fitting on one axes, which is the available
+    statement that they share a scale.
+
+    Keyed by the file each side was read from, so two studies naming their function
+    objects differently (`forceCoeffs` against `forceCoeffs1`) get a scale each rather
+    than one of them getting none.
     """
-    biggest = ("", 0.0)
+    biggest: dict[str, tuple[str, float]] = {}
     for row in rows:
         for side in ("a", "b"):
             held = row[side]
             if not held:
                 continue
+            key = str(held.get("series", ""))
             size = abs(float(held["tail_mean"]))
-            if size == size and size > biggest[1]:  # size == size: not a NaN
-                biggest = (row["name"], size)
+            if size == size and size > biggest.get(key, ("", 0.0))[1]:  # not a NaN
+                biggest[key] = (row["name"], size)
     return biggest
 
 
@@ -569,7 +584,7 @@ def summary(report: dict[str, Any], tol: float | None = None) -> dict[str, Any]:
     def only(which: str, what: str) -> str:
         return f"{what} only in {'a' if which == 'b' else 'b'}"
 
-    big_name, scale = _scale(report["forces"]["series"])
+    scales = _scales(report["forces"]["series"])
     for row in report["forces"]["series"]:
         if row["missing"]:
             one_sided.append(only(row["missing"], f"force series {row['name']}"))
@@ -577,10 +592,19 @@ def summary(report: dict[str, Any], tol: float | None = None) -> dict[str, Any]:
         compared += 1
         relative = row["tail_mean"]["relative"]
         sides = [float(row[side]["tail_mean"]) for side in ("a", "b")]
-        if scale and max(abs(value) for value in sides) <= NEGLIGIBLE * scale:
+        # Each side against the scale of the file it came from. Both have to be under
+        # it: "zero on both sides" skips the tolerance test, so a floor that is wrong
+        # for one side's units is a difference reported as no difference (#178).
+        floors = [scales.get(str(row[side].get("series", "")), ("", 0.0))
+                  for side in ("a", "b")]
+        under = [bool(scale) and abs(value) <= NEGLIGIBLE * scale
+                 for (_, scale), value in zip(floors, sides)]
+        if all(under):
+            against = " and ".join(dict.fromkeys(
+                f"{name} = {scale:.3g}" for name, scale in floors))
             negligible.append(
                 f"{row['name']}: {sides[0]:.3g} against {sides[1]:.3g}, both under "
-                f"{NEGLIGIBLE:g} of {big_name} = {scale:.3g}, so both are zero here "
+                f"{NEGLIGIBLE:g} of {against}, so both are zero here "
                 f"and this is not treated as a difference")
             continue
         if relative is not None and relative > tol:

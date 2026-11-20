@@ -49,7 +49,7 @@ from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line,
 from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
 from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
-from .store import Store, UnreadableRecord, list_studies, new_study_id
+from .store import Store, TornRecord, list_studies, new_study_id
 from . import catalog as catalog_mod
 from .terminal import tolerant_stdout
 from . import serve as serve_mod
@@ -175,17 +175,25 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     )
 
 
-class _Group(click.Group):
-    """Reports an unreadable study record as an error message, not a traceback."""
+class Cli(click.Group):
+    """The command group, with one refusal it makes on every command's behalf.
+
+    A `session.json` that is there but will not parse raises `TornRecord` rather than
+    loading as a blank study (#167). Every command either shows that record or writes
+    it, so every command has the same thing to say about one, and it says it here
+    instead of in forty places: what the file is, that nothing has been written to it,
+    and that the transcript beside it is still there.
+    """
 
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return super().invoke(ctx)
-        except UnreadableRecord as exc:
-            raise click.ClickException(str(exc)) from exc
+        except TornRecord as exc:
+            console.print(f"[red]{escape(str(exc))}[/]")
+            raise SystemExit(1) from None
 
 
-@click.group(cls=_Group, invoke_without_command=True)
+@click.group(cls=Cli, invoke_without_command=True)
 @click.version_option(__version__, "-V", "--version")
 @click.option("-p", "--prompt", "one_shot", help="Run non-interactively and exit.")
 @click.option("--study", "study_id", help="Resume a local study by id.")
@@ -351,8 +359,17 @@ cannot describe the same flag differently."""
 
 
 def _filtered(cfg: Config, project: str, tags: tuple[str, ...], text: str,
-              want: str | None) -> list[dict[str, Any]]:
-    return catalog_mod.filtered(cfg.studies_dir, project, tags, text, want or "")
+              want: str | None, torn: list[str] | None = None) -> list[dict[str, Any]]:
+    return catalog_mod.filtered(cfg.studies_dir, project, tags, text, want or "", torn)
+
+
+def _say_torn(torn: list[str]) -> None:
+    """Name the studies whose record will not parse, rather than leave them out of a
+    listing in silence. Nothing has written to them."""
+    for study_id in torn:
+        console.print(f"[red]{escape(study_id)}: session.json will not parse[/] -- not "
+                      "listed, and not written to. Repair it or move it aside; the "
+                      "transcript beside it is intact.")
 
 
 def _nothing_found(cfg: Config, filtered: bool) -> None:
@@ -379,15 +396,18 @@ def studies_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[str
     """
     as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
-    found = _filtered(cfg, project, tags, text, want)
+    torn: list[str] = []
+    found = _filtered(cfg, project, tags, text, want, torn)
     if as_json:
         # This and `doctor --json` are the two commands something has to run before a
         # first session, and both answered only in rich markup -- so the id needed for
         # `--study` had to be recovered by parsing a styled line. Straight to stdout
         # rather than through the console: this is data, and rich would style it.
-        payload = {"dir": str(cfg.studies_dir), "studies": found}
+        payload = {"dir": str(cfg.studies_dir), "studies": found,
+                   "unreadable": list(torn)}
         sys.stdout.write(json.dumps(payload, default=str) + "\n")
         return
+    _say_torn(torn)
     if not found:
         _nothing_found(cfg, any([project, tags, text, want]))
         return
@@ -431,11 +451,14 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
     """
     as_json = as_json or _json_asked(ctx)
     cfg = Config.load()
-    found = _filtered(cfg, project, tags, text, want)
+    torn: list[str] = []
+    found = _filtered(cfg, project, tags, text, want, torn)
     if as_json:
-        payload = {"dir": str(cfg.studies_dir), "studies": found}
+        payload = {"dir": str(cfg.studies_dir), "studies": found,
+                   "unreadable": list(torn)}
         sys.stdout.write(json.dumps(payload, default=str) + "\n")
         return
+    _say_torn(torn)
     if not found:
         _nothing_found(cfg, any([project, tags, text, want]))
         return
@@ -475,16 +498,31 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
     if not any(item["own_key"] for item in found):
         console.print("\n[dim]time and tokens, not money: what a study on Reynolds' "
                       "model uses is counted against your plan's studies[/]")
+    if any(item["own_key"] and item["cost_usd"] is None and item["total_tokens"] for item in found):
+        console.print("\n[dim]a - under cost (your key): its model, or a kind of token it "
+                      "counted, has no rate here, so there is no figure rather than a wrong one[/]")
 
 
 def _the_study(cfg: Config, study_id: str | None) -> str:
     """The study a subcommand was pointed at, or the newest. Refuses an id that is
-    not there rather than opening a Store, which would make the directory."""
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    not there rather than opening a Store, which would make the directory.
+
+    A study whose record will not parse is named here rather than read: without this
+    the id is simply absent from the listing, and `--study` with no argument would
+    pick the next one down and file the wrong study (#167)."""
+    torn: list[str] = []
+    studies = list_studies(cfg.studies_dir, torn)
+    _say_torn(torn)
+    if study_id is None and torn and (not studies or torn[0] > studies[0].study_id):
+        # Ids sort by time, so a torn id above the newest readable one is the study
+        # "the newest" means. Saying which beats quietly labelling the one below it.
+        raise SystemExit(1)
+    if not studies and not torn:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
-    chosen = study_id or studies[0].study_id
+    chosen = study_id or (studies[0].study_id if studies else "")
+    if chosen in torn:
+        raise SystemExit(1)
     if not (cfg.studies_dir / chosen / "session.json").is_file():
         console.print(f"[red]No study called[/] {escape(chosen)} under "
                       f"{cfg.studies_dir} -- `openreynolds studies` lists the ids.")
@@ -540,6 +578,14 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
                   f"-> [bold]{escape(fresh)}[/]")
     console.print("  its setup, its project and tags and its local files are copied; "
                   "its conversation is not")
+    # Its workspace directory is its own and starts empty (#170): the copied files are
+    # on this machine, and only `push` sends anything up -- once the clone is running,
+    # since before that it has no workspace, and a push would land on another study's.
+    files = Store(cfg.studies_dir, fresh).files_dir
+    console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
+    if not local_workspace():  # `push` reaches the hosted workspace only
+        console.print(f"  once it is running, [bold]openreynolds push <file> --study {fresh}[/] "
+                      "sends one of them up")
     if request:
         first = request.splitlines()[0][:90]
         console.print(f"  it opens on what started {escape(chosen)}, word for word: "
