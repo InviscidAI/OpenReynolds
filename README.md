@@ -385,6 +385,15 @@ costs nothing and a rule that is enforced costs everything.
 
 ## Benchmarks
 
+[`benchmarks/README.md`](benchmarks/README.md) is the index: every case here whose answer
+is known from outside a solver, the published or closed-form value it is measured against,
+how close the real run got, and where the remaining difference comes from. Re-checking
+those reference values against their sources changed two of them, so it also carries what
+a wrong reference looks like from the inside.
+[`benchmarks/tutorials/`](benchmarks/tutorials/) holds three cheap cases to start from: a
+heated pipe against the exact Graetz answer, a buoyant cavity against de Vahl Davis, and a
+backward-facing step that is kept for its units rather than its agreement.
+
 [`benchmarks/moving_mesh/`](benchmarks/moving_mesh/) holds the two cases the moving-mesh
 field note rests on, as the verbatim prompts they were run from and a grader: a
 `cyclicAMI` sliding interface cut through a circular-Couette annulus, where the torque is
