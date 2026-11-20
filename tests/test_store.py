@@ -238,3 +238,90 @@ def test_a_live_store_mends_a_record_torn_under_it_rather_than_dying_on_it(tmp_p
     live.append_message("assistant", "the session carries on")
     back = Store(root, "s1").session
     assert (back.model, back.capture_seq) == ("claude-opus-5", 8)
+
+
+@pytest.mark.parametrize("data", [
+    '{"study_id": "s1", "title": "Dü'.encode()[:-1],  # cut inside a character
+    b"[1, 2]",
+    b'{"study_id": "s1", "jobs": [1, 2]}',
+    b'{"study_id": "s1", "jobs": {"j": 5}}',
+    b'{"study_id": "s1", "jobs": {"j": {"job_id": "j", "unknown": 1}}}',
+])
+def test_a_record_that_is_not_a_study_is_refused_and_named_in_the_listing(tmp_path, data):
+    root = tmp_path / "studies"
+    (root / "s1").mkdir(parents=True)
+    record = root / "s1" / "session.json"
+    record.write_bytes(data)
+
+    with pytest.raises(TornRecord):
+        Store(root, "s1")
+    torn: list[str] = []
+    assert list_studies(root, torn) == [] and torn == ["s1"]
+    assert record.read_bytes() == data
+
+
+def test_a_record_saved_with_a_byte_order_mark_still_loads(tmp_path):
+    root = tmp_path / "studies"
+    (root / "s1").mkdir(parents=True)
+    (root / "s1" / "session.json").write_bytes(b'\xef\xbb\xbf{"study_id": "s1", "model": "m"}')
+
+    assert Store(root, "s1").session.model == "m"
+
+
+def test_a_save_that_dies_partway_leaves_the_record_whole_and_no_temp_file(tmp_path, monkeypatch):
+    root = tmp_path / "studies"
+    store = Store(root, "s1")
+    store.session.model = "claude-opus-5"
+    store.save()
+    record = root / "s1" / "session.json"
+    before = record.read_bytes()
+    real_write_text = type(record).write_text
+
+    def dies_halfway(self, data, *args, **kwargs):
+        real_write_text(self, data[: len(data) // 2], *args, **kwargs)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(record), "write_text", dies_halfway)
+    store.session.tags = ["anything"]
+    with pytest.raises(OSError, match="disk full"):
+        store.save()
+    monkeypatch.undo()
+
+    assert record.read_bytes() == before
+    assert [p.name for p in (root / "s1").iterdir()] == ["session.json"]
+
+
+def test_several_writers_at_once_never_show_a_reader_half_a_record(tmp_path):
+    """With one temp name shared by every writer, a second save truncated the file
+    the first was about to move into place, and readers saw a torn record."""
+    root = tmp_path / "studies"
+    Store(root, "s1").save()
+    stop = threading.Event()
+    torn: list[str] = []
+
+    def writer(n: int) -> None:
+        for i in range(30):
+            store = Store(root, "s1")
+            store.session.title = f"{n}-{i}" * 200
+            store.save()
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                Store(root, "s1")
+            except TornRecord as exc:
+                torn.append(str(exc))
+
+    watching = threading.Thread(target=reader, daemon=True)
+    watching.start()
+    writers = [threading.Thread(target=writer, args=(n,)) for n in range(3)]
+    try:
+        for thread in writers:
+            thread.start()
+        for thread in writers:
+            thread.join()
+    finally:
+        stop.set()
+        watching.join(5)
+    assert torn == []
+    assert [p.name for p in (root / "s1").iterdir()] == ["session.json"]

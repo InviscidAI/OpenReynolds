@@ -600,6 +600,21 @@ def test_label_refuses_a_study_it_does_not_have_rather_than_making_one(three_stu
     assert not (three_studies / "no-such-study").exists()
 
 
+def test_label_refuses_a_torn_record_rather_than_blanking_it(three_studies):
+    path = three_studies / "20260101-090000-aaaa" / "session.json"
+    whole = path.read_bytes()
+    path.write_bytes(whole[: len(whole) // 2])
+    torn = path.read_bytes()
+
+    result = CliRunner().invoke(cli.main, ["label", "--study", "20260101-090000-aaaa",
+                                           "--tag", "anything"])
+
+    assert result.exit_code == 1
+    assert "will not parse" in result.output
+    assert "Traceback" not in result.output
+    assert path.read_bytes() == torn
+
+
 def test_the_slash_commands_write_the_same_record(studies_dir):
     """`/project` and `/tag` in a session, `openreynolds label` out of one: one record,
     and the slash commands are answered by the harness without a model call."""
