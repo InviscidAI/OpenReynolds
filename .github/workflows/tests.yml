@@ -8,6 +8,21 @@ on:
   #     gh workflow run tests.yml --ref <branch>
   workflow_dispatch:
 
+# A push to a pull request supersedes its own previous run, which `workspace-image.yml`
+# has always done and this workflow never did. Without it every push left eleven jobs
+# running against a commit nobody would read the answer for, and on 2026-11-21 that is
+# how twenty open pull requests reached about 220 queued jobs: fifteen runs had to be
+# cancelled by hand, all of them on superseded commits or duplicates of one.
+#
+# `pull_request` only. A `push` run on main is the record of main and is never cancelled,
+# and `github.ref` differs between a pull request (`refs/pull/N/merge`) and a dispatch on
+# a branch, so a dispatch and a pull request on the same branch stay in separate groups
+# and neither takes the other down -- which matters because the pull request's run is the
+# only one its checks tab shows.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
