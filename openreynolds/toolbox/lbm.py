@@ -40,10 +40,20 @@ The numerics, and why each choice is the one that gets measured
     for a straight wall, at any viscosity. BGK is the special case tau_minus = tau_plus,
     which satisfies that at exactly one viscosity (tau = 1/2 + sqrt(3)/4 = 0.9330) and
     nowhere else, so a BGK channel has a wall that moves with the Reynolds number and a
-    parabola that is never quite the right one. The result is Ginzburg & d'Humieres,
-    Phys. Rev. E 68, 066614 (2003), and `--relaxation bgk` is here so the difference can
-    be measured rather than believed: at Re 1000 on a 128 cavity BGK runs at tau 0.538,
-    which is also close enough to the 1/2 where BGK stops being stable to matter.
+    parabola that is never quite the right one.
+
+    That property is held here by measurement and not by citation. `benchmarks/lbm/`
+    grades it at three viscosities a factor of twenty apart and grades the contrast
+    beside it -- BGK must be exact at nu = sqrt(3)/12 and measurably wrong a factor of
+    four away, or the exactness is the solver being compared with itself. The reason to
+    say that rather than name a paper: the result is attributed in the literature to
+    Ginzburg and d'Humieres, and the obvious citation for it, Phys. Rev. E 68, 066614
+    (2003), turns out on reading its abstract not to state it at all -- that paper is
+    about multireflection boundary conditions. The one whose title names the "magic"
+    collision numbers is their Computers and Mathematics with Applications 58 (2009),
+    823-840, and neither full text was readable from here, so neither is quoted as
+    though it had been. `--relaxation bgk` is in the solver so the difference stays
+    measurable by anyone who doubts it.
 
     Guo forcing for the body force (Guo, Zheng & Shi, Phys. Rev. E 65, 046308 (2002)),
     with the half-force already in the velocity the equilibrium is built from, and its

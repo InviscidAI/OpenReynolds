@@ -31,11 +31,25 @@ relaxation times and the product
     LAMBDA = (tau_plus - 1/2)(tau_minus - 1/2) = 3/16
 
 the no-slip wall of a halfway bounce-back sits exactly on the lattice link midpoint for a
-straight wall, at any viscosity -- Ginzburg, I. & d'Humieres, D. (2003), "Multireflection
-boundary conditions for lattice Boltzmann models", *Phys. Rev. E* **68**, 066614. The
-discrete solution is then the analytic parabola to the convergence residual rather than
-to second order. The grader runs three viscosities a factor of twenty apart, because one
-viscosity cannot tell "exact" from "exact at this tau".
+straight wall, at any viscosity. The discrete solution is then the analytic parabola to
+the convergence residual rather than to second order. The grader runs three viscosities a
+factor of twenty apart, because one viscosity cannot tell "exact" from "exact at this
+tau".
+
+**This property is held by the measurement and not by a citation, deliberately.** The
+result is attributed in the literature to Ginzburg and d'Humieres. The obvious reference
+for it, Ginzburg, I. & d'Humieres, D. (2003), "Multireflection boundary conditions for
+lattice Boltzmann models", *Phys. Rev. E* **68**, 066614, was checked and **its abstract
+does not state it**: that paper is about multireflection boundary conditions, and its
+nearest claim is that "Couette and Poiseuille flows are exact solutions of the lattice
+Boltzmann models for a Reynolds number Re=0" using those conditions, which is a different
+statement. The paper whose title names the "magic" collision numbers is d'Humieres, D. &
+Ginzburg, I. (2009), *Computers and Mathematics with Applications* **58**, 823-840.
+Neither full text was readable from here, so neither is quoted as though it had been, and
+the citation is given as attribution rather than as evidence. `../README.md` is blunt
+about what this repository has already paid for quoting a reference it had not read, and
+the cheap alternative was available here: the property is checkable in seconds, so it is
+checked.
 
 **The contrast is graded too, and it is what stops the above being a tautology.** BGK is
 the same code with `tau_minus = tau_plus`, which satisfies the 3/16 condition at exactly
