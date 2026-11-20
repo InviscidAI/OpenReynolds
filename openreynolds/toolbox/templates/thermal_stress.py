@@ -600,7 +600,15 @@ def main() -> None:
     print("#   solidDisplacementFoam")
     print('#   postProcess -func "components(sigma)" -noZero')
     print("#   postProcess -func singleGraph -noZero")
-    print("#   python3 benchmarks/thermal_stress/grade.py bar .")
+    print("#")
+    print("# the last two write postProcessing/singleGraph/<time>/line_*.xy, which holds")
+    print("# T and the stress components up the bar. sigma_xx there should be")
+    print(f"#   {-E_PA * ALPHA_PER_K * (1.0 if PLANE_STRESS else 1.0 / (1.0 - NU)):.6g}"
+          " * T  (Pa per K)")
+    print("# at every point, against the T in the same row -- which is the whole check,")
+    print("# and needs no geometry. `benchmarks/thermal_stress/grade.py bar <case>` does")
+    print("# it for you, in a checkout of the openreynolds repository rather than here:")
+    print("# the toolbox is synced into this workspace and benchmarks/ is not.")
 
 
 if __name__ == "__main__":
