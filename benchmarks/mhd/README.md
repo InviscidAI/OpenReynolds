@@ -162,10 +162,11 @@ also why a channel twenty half-heights long, sampled at fifteen, is far past dev
 * **`0/pB` has to exist.** It is a fictitious magnetic flux pressure whose only job is
   to project `phiB` divergence free -- the solver's own `Description` block says as
   much -- so there is no physical condition to get right, but `createFields.H` reads it
-  `MUST_READ` and a case without one does not start. `magneticFieldErr.H` prints its
-  residual every B-PISO pass, and a growing `div(B)` is the projection failing rather
-  than a physics result. The journey test differences the first ten against the last
-  ten for that reason.
+  `MUST_READ` and a case without one does not start. `magneticFieldErr.H` prints
+  `magnetic flux divergence error = ...` every B-PISO pass, which is
+  `deltaT*weightedAverage(mag(div(phiB)))`, and a growing one is the projection failing
+  rather than a physics result. The journey test differences the first ten against the
+  last ten for that reason.
 * **`fvSolution` needs `BPISO` as well as `PISO`.** `mhdFoam` runs two PISO loops per
   time step and reads their corrector counts from two separate sub-dictionaries.
   `nCorrectors` in the wrong one is read as a default.

@@ -330,8 +330,9 @@ def read_reaction(case: Path) -> tuple[dict[str, float], dict[str, float]]:
 
     Exactly one reaction, because the complete-combustion composition `predict` needs is
     only determined by stoichiometry when there is one extent of reaction. A multi-step
-    mechanism is refused here and `grade` falls back to the solver's own final
-    composition, which needs no mechanism at all.
+    mechanism is therefore refused rather than guessed at, and the refusal says so: the
+    thermodynamics in (1) would still hold, but which composition to apply it to would
+    be an assumption instead of arithmetic.
     """
     path = case / "constant" / "reactions"
     if not path.is_file():
@@ -343,9 +344,9 @@ def read_reaction(case: Path) -> tuple[dict[str, float], dict[str, float]]:
     if len(strings) != 1:
         raise Chem0dError(
             f"{path} has {len(strings)} reactions. The complete-combustion prediction "
-            "needs one extent of reaction, so a multi-step mechanism is refused here; "
-            "`grade` reads the solver's own final composition instead and does not "
-            "need a mechanism at all")
+            "needs one extent of reaction, so a multi-step mechanism is refused rather "
+            "than guessed at: the enthalpy balance would still hold, but which "
+            "composition to apply it to would be an assumption instead of arithmetic")
     left, _, right = strings[0].partition("=")
     if not right:
         raise Chem0dError(f"{strings[0]!r} has no `=` in it")
@@ -689,9 +690,7 @@ def grade(case: Path, tolerance: float = 5.0e-3) -> dict[str, Any]:
                 measured[name] = max(value, 0.0)
     if measured and abs(sum(measured.values()) - 1.0) < 1e-3:
         normalised = {name: y / sum(measured.values()) for name, y in measured.items()}
-        conserved = mixture_energy(mass_fractions(initial["moles"], species), species,
-                                  initial["temperature"], initial["constant_volume"])
-        at_own = solve_temperature(conserved, normalised, species,
+        at_own = solve_temperature(predicted["conserved_j_kg"], normalised, species,
                                    initial["constant_volume"])
         own_error = abs(got - at_own) / at_own
         check("final_temperature_at_own_composition", got, round(at_own, 4),

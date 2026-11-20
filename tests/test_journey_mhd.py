@@ -43,9 +43,10 @@ what is asserted at each seam, and not at the end
   implies and the two z faces `empty` -- a "2D" case that is really a thin 3D one has
   a different answer rather than a failure;
 * `checkMesh` says the mesh is OK, which on a graded box it has every right to;
-* the solver reached `End`, and its own `Magnetic flux error` line did not grow across
-  the run. That line is `magneticFieldErr.H` reporting `div(B)`, and a growing one is
-  the `pB` projection failing rather than a physics result;
+* the solver reached `End`, and its own `magnetic flux divergence error` line did not
+  grow across the run. That line is `magneticFieldErr.H` reporting
+  `deltaT*weightedAverage(mag(div(phiB)))`, and a growing one is the `pB` projection
+  failing rather than a physics result;
 * the profile stopped moving, by sampling the last two written times and differencing
   them. A transient that has not finished looks exactly like a converged answer in a
   single output, which is the failure this separates out;
@@ -245,13 +246,14 @@ def test_the_template_resolved_the_hartmann_layer_rather_than_straddling_it(runs
 
 
 def test_the_magnetic_flux_error_did_not_grow(runs):
-    """`magneticFieldErr.H` prints `div(B)`'s residual every B-PISO pass. The `pB`
-    projection exists only to keep it near zero, and a growing one means the projection
-    is failing -- which a converged-looking velocity field will not tell you."""
+    """`magneticFieldErr.H` prints `magnetic flux divergence error = ...` every B-PISO
+    pass, which is `deltaT*weightedAverage(mag(div(phiB)))`. The `pB` projection exists
+    only to keep it near zero, and a growing one means the projection is failing --
+    which a converged-looking velocity field will not tell you."""
     for hartmann, result in runs.items():
         errors = []
         for line in result["solve"].splitlines():
-            if "agnetic flux error" in line:
+            if "magnetic flux divergence error" in line:
                 errors.append(float(line.rsplit("=", 1)[1]))
         assert errors, f"Ha {hartmann:g}: the solver printed no magnetic flux error"
         first, last = max(errors[:10]), max(errors[-10:])

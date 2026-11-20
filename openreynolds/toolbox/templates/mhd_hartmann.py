@@ -125,9 +125,10 @@ WHAT IS IN THE CASE, AND THE THREE THINGS THAT GO QUIETLY WRONG
 * **Both `B` and `pB` are fields that have to exist.** `pB` is a fictitious magnetic
   flux pressure that exists only to project `phiB` divergence free, as the solver's own
   `Description` block says; it has no physical boundary condition to get right, but a
-  case without `0/pB` does not start. `magneticFieldErr.H` prints its residual error
-  every B-PISO pass and that line is the one to watch: a growing `div(B)` error is not a
-  physics result, it is the projection failing.
+  case without `0/pB` does not start. `magneticFieldErr.H` prints
+  `magnetic flux divergence error = ...` every B-PISO pass, which is
+  `deltaT*weightedAverage(mag(div(phiB)))`, and that line is the one to watch: a growing
+  one is not a physics result, it is the projection failing.
 
 * **The field's wall condition is `fixedValue`, not `zeroGradient`.** The applied field
   is imposed on the walls and allowed to develop in the interior, which is what makes
@@ -846,8 +847,8 @@ def main() -> None:
           "    postProcess -func sample -noZero\n"
           f"    python3 benchmarks/mhd/grade.py hartmann . "
           f"--hartmann {HARTMANN_NUMBER:g} --mean-velocity {MEAN_VELOCITY_M_S:g}\n"
-          "watch the `Magnetic flux error` line mhdFoam prints: a growing div(B) is the"
-          "\nprojection failing and not a physics result.")
+          "watch the `magnetic flux divergence error` line mhdFoam prints: a growing"
+          "\none is the pB projection failing and not a physics result.")
 
 
 if __name__ == "__main__":
