@@ -8,6 +8,38 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
+  in the repository was either a unit test against a fixture or a tool run against a
+  study somebody had already finished, so a seam between two stages was invisible to all
+  of them. `tests/test_journey_duct.py` walks the chain from an empty directory: the
+  `duct2d.py` template builds a 0.10 x 0.02 m plane duct with gmsh and `gmshToFoam`,
+  `case_gen.py` reads that mesh and writes `0/`, `system/` and `constant/` for a steady
+  laminar solve at Re 10, `simpleFoam` solves it, and then `probe.py`, `balance.py`,
+  `wall.py`, `log_digest.py`, `results.py` and `report.py` read it back. It runs in a
+  new `journey` job inside the workspace image -- 1 min 40 s of runner time, of which
+  the walk itself is 7.3 s -- and unlike the advisory `image` job it gates.
+  - The reference is exact rather than published, which is what makes the assertions
+    physics and not exit codes: developed plane Poiseuille flow is three lines of algebra
+    off the steady Navier-Stokes equations, and `u_mean` is 1 m/s because the inlet is a
+    uniform 1 m/s `fixedValue` and mass is conserved. Measured against it: `u_max` 1.4863
+    against 1.5 exactly, `u_max/u_mean` 1.532 against 1.5, the developed `(dp/dx)_kin`
+    -123.5 against -120 m/s^2, the wall shear the measured y+ implies 1.08 and 1.10
+    against 6 nu u_mean / H = 1.2 m^2/s^2, and the throughflow 3.93e-5 against
+    U x H x thickness = 4e-5 m^3/s.
+  - Asserted at the seams rather than at the end: the mesh is one cell thick with its z
+    faces `empty`; `nu` on disk is `U L / Re`; `p`'s dimensions are `m^2 s^-2` and not
+    pascals; the solver's own continuity closes to -9e-08 of a 4e-05 throughflow and
+    `balance.py`'s boundary integral to 0.84%; `wall.py`'s `nu` came out of the case's
+    own dictionary rather than a default; and `report.py`'s key numbers are the residuals
+    `log_digest` reads out of the solver's own log, number for number.
+  - Two of this test's own reference numbers were wrong on its first CI run and are now
+    measured instead of assumed. `CELL_SIZE_M` in the template is a background size
+    handed to gmsh, not a division count, and the quad recombination does not honour it
+    as one: the run came out with 1000 cells whose first wall row is 1.491 mm on a 2 mm
+    request, so the first-cell height is read off `constant/polyMesh` with
+    `layer_report.py`. And the solver's continuity error and `balance.py`'s closure are
+    two different quantities, asserted separately -- conflating them is how a reading
+    error gets called a continuity failure.
 - **An index of every validated case, three tutorial cases, and two reference values that
   turned out to be wrong.** `benchmarks/README.md` lists each case in the repository whose
   answer is known from outside a solver, with its source, the agreement the real run
@@ -64,6 +96,31 @@ All notable changes to this project are recorded here. The format follows
     answered `4`, `mpirun` did not refuse, and the 12-rank run's median 1.45 s/iteration
     landed at the bottom of the 1.45-1.77 s band its four 4-rank stages had already
     measured.
+- **Real-site data, and an atmospheric boundary layer inlet built from it.** The
+  workspace has no outbound network, so the fetching happens on your machine and the
+  workspace reads a file.
+  - `openreynolds site --lat <deg> --lon <deg>` writes one self-describing
+    `site.json`: hourly wind at 10 m and 100 m from Open-Meteo's ERA5 archive as a
+    12-sector rose with per-sector statistics, a prevailing sector and a two-height
+    shear fit; OpenStreetMap building footprints from Overpass with each height and
+    where that height came from; and a Copernicus DEM GLO-90 elevation grid. No API
+    key for any of the three. Every block names the URL, the query, the retrieval
+    time, its units and its licence, and the wind block records the reanalysis grid
+    cell it actually answered for and how far that is from the coordinates asked for.
+    A source that fails leaves its sentence in place of its block rather than taking
+    the other two down. No request carries a name, an address or an account id.
+  - `toolbox/site_abl.py` turns the wind into an inlet, by writing the dictionary
+    OpenFOAM's own `atmBoundaryLayerInlet*` conditions read rather than
+    re-implementing the profiles: `0/include/ABLConditions`, the inlet entry in
+    whichever of `0/U`, `0/k`, `0/epsilon` and `0/omega` are there, the roughness
+    wall functions on a named ground patch, and the profile as a table, a figure and
+    a `--json` sidecar. `z0` has no default and it refuses without one, printing the
+    Davenport classes. Measured against a real solver: one `simpleFoam` iteration,
+    the written inlet values read back, agreeing with the script's own arithmetic to
+    4.4e-12 at worst across U, k, epsilon and omega.
+  - `toolbox/site_stl.py` turns the footprints and the terrain into STL in the site
+    file's own frame, ear-clipping the roofs so a concave footprint comes out as its
+    own shape, and counting what it leaves out instead of extruding it to a default.
 
 - **A study record you can ask about: projects, tags, accounting, and running one
   again.** The record on disk carries a `project`, `tags`, the wall-clock time its

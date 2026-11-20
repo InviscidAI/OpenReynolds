@@ -163,7 +163,10 @@ jobs:
           # naming pyvista would make the resolver put plain vtk over vtk-osmesa and
           # take off-screen rendering with it.
           python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
-          python3 -m pytest -q
+          # The journey test is left out here and not because it would fail: it
+          # solves a case, and it has its own job below that gates on the answer.
+          # Running it twice per push would pay for the same solve twice.
+          python3 -m pytest -q --ignore=tests/test_journey_duct.py
           SH
 
       - name: The Docker backend against the real image
@@ -176,3 +179,56 @@ jobs:
         run: |
           pip install -e . pytest pytest-asyncio
           python -m pytest -q tests/test_docker_backend.py
+
+  # The path a real user takes, walked end to end, and the only job anywhere that
+  # actually solves a case: `tests/test_journey_duct.py` starts from an empty
+  # directory, builds a 2D duct with the `duct2d.py` template, dresses it with
+  # `case_gen.py`, runs simpleFoam, then reads it back with probe.py, balance.py,
+  # wall.py, log_digest.py, results.py and report.py and checks the answer against
+  # the exact plane-Poiseuille solution at every seam. Until this existed, every test
+  # in the repository was either a unit test against a fixture or a tool run against
+  # a study somebody had already finished, so a seam between two stages -- a factor
+  # of ten, a unit mismatch, a field written under a name the next stage does not look
+  # for -- was invisible to all of them.
+  #
+  # The image build is the `image` job's, deliberately: same context, same gha cache
+  # (read-only here, so the two do not fight over writing it), so nothing is
+  # recompiled and a change to the Dockerfile is tested by the journey before it
+  # ships. Only that one file is run; the rest of the suite is covered above.
+  #
+  # This one is NOT advisory. A case that stops solving, or stops producing the right
+  # answer, is the failure the job exists to catch.
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      IMAGE: reynolds-workspace:journey
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/workspace
+          load: true
+          tags: ${{ env.IMAGE }}
+          provenance: false
+          cache-from: type=gha
+
+      - name: Mesh it, solve it, read it, and check the physics
+        # `-s` rather than captured output: every stage prints its own wall-clock time
+        # and the numbers it measured, and on a green run that log is the evidence.
+        run: |
+          docker run --rm -i -v "$PWD:/src" -w /src \
+            -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
+            "$IMAGE" bash -l <<'SH'
+          set -e
+          cd /src
+          git config --global --add safe.directory /src
+          python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
+          python3 -m pytest -v -s tests/test_journey_duct.py
+          SH
