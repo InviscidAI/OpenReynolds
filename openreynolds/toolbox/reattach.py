@@ -3,12 +3,30 @@
 
 The backward-facing-step study computed its reattachment length twice, with two
 scripts it wrote itself, and got two answers. `reattach.py` found the wall-shear
-sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32, which is right:
-0.21 is the corner eddy, 6.32 closes the primary bubble, and it sits 4% above
-Gartling's 6.1. `analyze.py` -- the one that drew the delivered figure -- read
-7.5667, 24% above the benchmark, and annotated the picture with it. Both scripts
+sign changes at 0.21, 6.32, 7.86 and 9.97 and read x_r/h = 6.32, which is the right
+crossing of that list: 0.21 is the corner eddy and 6.32 closes the primary bubble.
+`analyze.py` -- the one that drew the delivered figure -- took the next crossing up,
+read 7.5667, and annotated the picture with it. The two are 16% apart. Both scripts
 existed because there was no reattachment helper here to reuse, so the study wrote
 the measurement twice and had no way to tell which one it should have believed.
+
+What made 6.32 the right answer is which crossing it is, and not that it agreed with
+anything. The study reported it as 4% above Gartling's 6.1, and that comparison was
+never available: Gartling's 6.1 is in units of the downstream channel height, which
+on an expansion ratio of 2 is **12.2 step heights**, while 6.32 and 7.5667 are both
+in step heights. In one unit 6.32 is about 48% short and 7.5667 about 38% short, and
+the case was running at Re 1600 on the channel height where Gartling's 800 is on that
+same length. So neither of the study's two numbers validated anything, and the 16%
+they disagree by is the part that was real.
+
+The normalisation is not read from Gartling, which is paywalled. It rests on MFIX-Exa's
+reproduction of the case, which states `H = 1, where H is the expanded channel height`
+and `Re = rho u_bar H / mu = 800`, and then matches its own Richardson-extrapolated
+6.097 to "Gartling's reported value of 6.10" with no conversion -- which only works if
+that 6.10 is in the same channel-height units. A published MHD benchmarking table
+corroborates by doubling, listing the Gartling row as `x_r/h = 12.20` and 11.26 with `h`
+the step height, exactly 2 x 6.10 and 2 x 5.63. `benchmarks/README.md` carries the chain
+and what is still missing from it.
 
 This is that helper. There is one implementation, it says what it did, and it
 carries its own number into the figure it draws (`claims.py`), so the next step can

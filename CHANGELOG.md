@@ -149,6 +149,40 @@ All notable changes to this project are recorded here. The format follows
     known. A study on Reynolds' model is never priced in money here, as the service's
     own spending cap is not.
 
+### Fixed
+
+- **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
+  said it was in four places.** `reattach.py`, `claims.py`,
+  `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told
+  the story of the study that measured one reattachment length twice and believed the
+  wrong script, and all four corroborated the surviving number as "4% above Gartling's
+  6.1". That comparison was not available to it. **Gartling's 6.1 is in units of the
+  downstream channel height**, which at an expansion ratio of 2 is 12.2 step heights,
+  while the study's 6.32 and 7.5667 are both in step heights. In one unit they are about
+  48% and 38% short.
+  - The same wrong unit length set the case up at **Re 1600** on the channel height
+    where Gartling's 800 is on that same length, so the run was never solving the
+    benchmark's flow either. One mistake, two independent consequences, and both of them
+    flattered the result.
+  - The incident the docstrings exist for is unchanged and is now sharper: the study's
+    two scripts disagreed with each other by **16%**, in the same unit, and *neither*
+    could have been checked against the benchmark. What makes 6.32 the right answer is
+    which crossing of its own list it is, not that a benchmark appeared to bless it. The
+    `DEFAULT_TOL` percentages for figure against answer (15%) and figure against the
+    other script (16%) are unaffected, being comparisons between two of the study's own
+    numbers in one unit, which is the only kind `claims.py` makes.
+  - Specimen strings that exercise the number parser are deliberately untouched, including
+    the study's delivered text in `tests/test_toolbox_claims.py` and the sentence
+    `LOOK_AHEAD` was measured off. Those are evidence of how people write, and the
+    physics claim inside them is not the parser's business.
+  - The normalisation is settled from MFIX-Exa's reproduction, which states `H = 1`,
+    "where H is the expanded channel height", and matches its own extrapolated 6.097 to
+    Gartling's 6.10 with no conversion, plus a published table listing him at 12.20 and
+    11.26 step heights (2 x 6.10 and 2 x 5.63, the latter being the upper-wall bubble
+    length 10.48 - 4.85). **Gartling (1990) itself is paywalled and was not read**, which
+    the docstrings now say rather than imply away. Issue #205 tracks closing that and
+    re-running the case at the benchmark's actual Reynolds number.
+
 ## [0.4.2] - 2026-11-18
 
 ### Changed

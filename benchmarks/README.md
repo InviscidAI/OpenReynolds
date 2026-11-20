@@ -20,7 +20,7 @@ below the examination is what found the defect.
 | " | amplitude A/D | **no published value for this configuration** | 0.640 loose, 0.567 tight | reported without a verdict, which is the honest thing to do with it |
 | [laminar heated pipe](tutorials/) | fully developed Nusselt number | the Graetz problem, Nu = lambda_1^2/2 = 3.6568, **exact** | 3.677 as reported, 3.63 to 3.65 recomputed, **sub-percent either way** | the wall-gradient stencil, which moves the answer 0.7% across four defensible conventions and so is larger than the 0.55% being quoted |
 | [natural convection, Ra 1e5](tutorials/) | mean Nusselt number on the hot wall | de Vahl Davis (1983), *Int. J. Numer. Methods Fluids* **3**, 249-264, Table V: **4.509** on the hot wall, 4.519 for the cavity average | 4.5335, **+0.54%** | a 40 x 40 mesh, a one-sided wall gradient, and 0.3% of reference uncertainty. Against the 4.519 that secondary sources misattribute to the hot wall it reads +0.32%, which is how a validation gets half a percent better without the solver changing |
-| [backward-facing step](tutorials/) | reattachment length on the stepped wall | Gartling (1990), 6.1 **channel** heights = 12.2 step heights (no primary access; corroborated, not read) | 6.42 step heights = 3.21 channel heights, **about 47% short**, and still drifting | the run is Gartling's geometry scaled by two at the same `nu`, so it is at Re 1600 where the benchmark is 800, and its lengths are step heights where the benchmark's are channel heights. One mistake, two factors of two, and a printed "+5%" that was neither |
+| [backward-facing step](tutorials/) | reattachment length on the stepped wall | Gartling (1990), 6.1 **channel** heights = 12.2 step heights, at **Re 800 on the channel height** with the mean inlet velocity (the paper itself is unread: see below) | 6.42 step heights = 3.21 channel heights, **about 47% short**, and still drifting | the run is Gartling's geometry scaled by two at the same `nu`, so **Re 1600 on the channel height** against the benchmark's 800 on that same length, and its lengths are step heights where the benchmark's are channel heights. One mistake, two factors of two, and a printed "+5%" that was neither |
 
 `tutorials/` holds the three cheap cases with prompts you can run as they are.
 `felix/` and `moving_mesh/` hold the four with graders, and both graders run on every
@@ -40,7 +40,8 @@ and had been read here as step heights, which is a factor of two. Both errors fl
 result, which is why neither was noticed: a reference that is wrong in the direction of
 agreement is invisible, and the only defence is reading the source rather than the
 secondary citation. Where the source could not be read, as with Gartling, the table above
-says so instead of asserting a figure.
+says so instead of asserting a figure, and the gap is tracked as issue #205 rather than
+left to be rediscovered.
 
 **And the reference's own uncertainty, which on four of these cases is larger than the
 agreement being claimed.** Ghia's Re 1000 centreline extrema are 1.5% to 2.2% from a later
