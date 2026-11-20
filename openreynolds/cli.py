@@ -625,7 +625,7 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
     files = Store(cfg.studies_dir, fresh).files_dir
     copied = files.is_dir() and any(f.is_file() for f in files.rglob("*"))
     console.print("  its setup, its project and tags" + (" and its local files" if copied else "")
-                  + " are copied; its conversation is not")
+                  + " are copied; its conversation is not, and nor are its pictures")
     # Its workspace directory is its own and starts empty (#170): the copied files are
     # on this machine, and only `push` sends anything up -- once the clone is running,
     # since before that it has no workspace, and a push would land on another study's.
@@ -653,11 +653,14 @@ def clone_cmd(study_id: str | None) -> None:
     """Copy a past study's setup and files into a new one, without its conversation.
 
     What is carried: the project and tags, the title, the solver, the model, the
-    provider and its endpoint, the session mode, and everything of the study already
-    on this machine (`files/`). What is not: the transcript, the instance, the job
-    rows and the accounting -- those are facts about a run that happened, and this one
-    has not. Nothing is started and nothing is spent; the new study is picked up like
-    any other.
+    provider and its endpoint, the session mode, and the study's input files on this
+    machine (`files/`). What is not: the transcript, the instance, the job rows and
+    the accounting -- those are facts about a run that happened, and this one has not.
+    Its `renders/` are the same kind of fact and are not carried either (#194): a
+    picture of the old run sitting in the new study's canonical "where is the image?"
+    directory is a figure the new study did not produce, and `report.py` and
+    `claims.py` read that directory as the study's own. Nothing is started and nothing
+    is spent; the new study is picked up like any other.
     """
     _duplicate(study_id, rerun=False)
 

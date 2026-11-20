@@ -226,6 +226,33 @@ def test_a_file_outside_the_study_directory_is_refused(server):
     assert ask(server, "GET", "/studies/..%2F..%2Fetc/results").status == 400
 
 
+def test_a_directory_asked_for_as_a_file_does_not_name_the_servers_own_paths(server):
+    """#194 item 9. `?path=/work/<id>/case` is a directory, which `_file` refused by
+    naming the local path it resolved to -- the studies directory, the `files/` mirror
+    and the lot -- in the 400 body: this machine's filesystem layout, in an answer to a client that gave `/work/...`
+    and has no business with the rest."""
+    server.studies.ready.set()
+    session_id = ask(server, "POST", "/studies", {"task": "first"}).json["session_id"]
+    study_id = until(server, session_id, "waiting_for_input")["study_id"]
+    asked = f"/work/{study_id}/case"
+    from openreynolds.mirror import local_for
+    from openreynolds.store import Store
+
+    local_for(Store(server.root, study_id).files_dir, asked).mkdir(parents=True,
+                                                                   exist_ok=True)
+    # Over, so the answer comes off this machine's copy -- which is where a `case`
+    # directory of a finished study is read from anyway.
+    ask(server, "DELETE", f"/sessions/{session_id}")
+    until(server, session_id, "ended")
+
+    refused = ask(server, "GET", f"/studies/{study_id}/file?path={asked}")
+    assert refused.status == 400
+    error = refused.json["error"]
+    assert asked in error and "a directory" in error
+    assert str(server.root) not in error, error
+    assert "files" not in error, error
+
+
 def test_a_request_the_capabilities_refuse_is_four_hundred_in_their_own_words(server):
     assert "say what to simulate" in ask(server, "POST", "/studies", {"task": " "}).json["error"]
     assert "not a field" in ask(server, "POST", "/studies",

@@ -770,6 +770,28 @@ def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir, mon
     assert cli._home_path(Store(studies_dir, "20261115-090000-ffff"), resuming=True) == "/work"
 
 
+def test_a_clone_carries_the_input_files_and_not_the_old_runs_pictures(studies_dir):
+    """#194 item 11: `renders/` is the canonical "where is the image?" home for a
+    study (`store.py:128`), and a clone copies `files/` and not it. Settled the way
+    round it already behaves, and said so in the help text and on the line it prints:
+    a picture of the old run sitting in the new study's own renders directory is a
+    figure the new study did not produce, and `report.py` and `claims.py` read that
+    directory as the study's own."""
+    old = with_a_transcript(studies_dir)
+    (old.fetch_dir() / "wing.stl").write_text("solid wing endsolid wing")
+    old.renders_dir.mkdir(parents=True, exist_ok=True)
+    (old.renders_dir / "vorticity.png").write_bytes(bytes([0x89, 0x50, 0x4e, 0x47]))
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    assert said.exit_code == 0, said.output
+    fresh, = [item for item in list_studies(studies_dir)
+              if item.cloned_from == "20261115-090000-ffff"]
+    clone = Store(studies_dir, fresh.study_id)
+
+    assert (clone.files_dir / "wing.stl").is_file(), "its setup is carried"
+    assert not list(clone.renders_dir.glob("*")), "the old run's figures are not"
+    assert "nor are its pictures" in said.output
+
+
 def test_rerun_reproduces_the_opening_request_word_for_word(studies_dir):
     with_a_transcript(studies_dir)
     asked = "Find the drag coefficient of a 2D cylinder at Re = 100."

@@ -355,6 +355,31 @@ def test_a_binary_payload_that_does_not_fit_its_header_is_refused_by_name(wall, 
     assert "refused" in problem
 
 
+def test_a_collated_decomposed_file_is_refused_for_the_reason_it_is_refused(wall, tmp_path):
+    """#194 item 5. The refusal was right and its stated cause was not: the payload
+    check caught it and reported "its payload of 1098 items does not end where the
+    header's widths say it should ... foamFormatConvert would rewrite it as ascii",
+    which rewrites the same container and changes nothing. The cause is in the header
+    -- `class decomposedBlockData; data.class volVectorField;` -- one file holding
+    every rank's block rather than a field. 36 such files in
+    `studies/20260912-193750-3024/.../processors8/`."""
+    case = box(tmp_path)
+    field = write_binary_field(case / "1500" / "yPlus", {"wall": HULL},
+                               cls="decomposedBlockData")
+    text = field.read_bytes().replace(
+        b"class       decomposedBlockData;",
+        b"class       decomposedBlockData; data.class  volScalarField;")
+    field.write_bytes(text)
+
+    found = wall.measure(case)
+    assert found["sources"] == []
+    (problem,) = [p for p in found["problems"] if "decomposedBlockData" in p]
+    assert "collated" in problem
+    assert "volScalarField" in problem, "what the container says it is carrying"
+    assert "reconstructPar" in problem and "-fileHandler uncollated" in problem
+    assert "does not end where the header" not in problem, "that was not the reason"
+
+
 def test_a_big_endian_binary_field_is_refused_rather_than_byte_swapped(wall, tmp_path):
     """The `arch` note states the byte order, so it is read rather than assumed: a
     guessed endianness is another silently wrong number of the #138 kind."""
@@ -723,6 +748,21 @@ def test_a_case_with_no_y_plus_at_all_says_so_and_still_exits_zero(wall, tmp_pat
     found = wall.measure(tmp_path)
     assert found["sources"] == []
     assert wall.primary(found) is None
+
+
+def test_a_directory_that_is_not_there_is_refused_rather_than_measured_as_empty(
+    wall, tmp_path, capsys
+):
+    """#194 item 4. Every reader treats a missing directory as a case with nothing in
+    it, so `wall.py <typo>` printed the ordinary "no y+ anywhere in this case" report
+    and exited 0: a typo read as a finding about a run. "No y+ here" and "there is no
+    here" are different events."""
+    assert wall.main([str(tmp_path / "no-such-case")]) == 2
+    out, err = capsys.readouterr()
+    assert "no directory at" in err and "no-such-case" in err
+    assert "no y+ anywhere" not in out
+    # And a case directory that is there and empty still reports, and still exits 0.
+    assert wall.main([str(tmp_path)]) == 0
 
 
 def test_json_carries_the_whole_measurement_and_parses(wall, tmp_path, capsys):

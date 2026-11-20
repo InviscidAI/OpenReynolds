@@ -171,6 +171,60 @@ def test_the_darcy_factor_refuses_a_length_or_a_diameter_by_name():
     assert "--length" in str(err.value.code)
 
 
+def test_a_negative_friction_factor_carries_the_caveat_k_already_has(capsys):
+    """#194. Across the bfs step the static pressure rises, so `dp_static` is negative
+    and so is the quotient: `f = -0.0328868` was printed bare. The arithmetic is right
+    and the quantity is not -- a Darcy factor is dissipation along a constant-area
+    length -- and `patch_drop`'s own docstring already says so about K."""
+    drop = {"dp_static": -0.249128, "dp_total": -0.1}
+    got = balance.coefficients(drop, "kinematic", "m^2 s^-2", None, 1.00501, 3.0, 0.2)
+    assert got["f_darcy"] == pytest.approx(-0.032893, rel=1e-3)
+    assert got["f_caveat"], "a friction factor cannot be negative"
+    assert "constant-area" in got["f_caveat"]
+    assert "--sections" in got["f_caveat"], "and what to measure instead"
+    assert balance.table({
+        "case": "bfs", "time": 0.0, "reader": "x", "pressure_convention": "kinematic",
+        "pressure_units": "m^2 s^-2", "patches": [], "notes": [],
+        "balance": {"flux_units": "m^3 s^-1", "flux_quantity": "volume", "inflow": 1.0,
+                    "outflow": 1.0, "throughflow": 1.0, "closure_error": 0.0,
+                    "closure_error_relative": 0.0, "inflow_patches": [],
+                    "outflow_patches": [], "closed_patches": [], "no_flux_patches": [],
+                    "zero_tol": 1e-6},
+        "drop": dict(drop, **{"from": "inlet", "to": "outlet",
+                              "weighted": "flux (mixed mean)"}),
+        "coefficients": got,
+    }).count(got["f_caveat"]) == 1, "and it is on the page, not only in the JSON"
+
+
+def test_a_positive_friction_factor_carries_no_caveat():
+    got = balance.coefficients({"dp_static": 10.0, "dp_total": 12.5}, "kinematic",
+                               "m^2 s^-2", None, 5.0, 2.0, 0.1)
+    assert got["f_darcy"] > 0 and "f_caveat" not in got
+
+
+def test_a_patch_with_no_flux_has_no_flux_weighted_mean_however_small_its_round_off():
+    """#194. pitzDaily's `empty` patch `frontAndBack` sums to 1.17549e-38 -- FLT_MIN,
+    which is what a closed patch's round-off looks like written in single precision --
+    and `weighted`'s `abs(total) > 0` let it through, so a patch the same table had
+    just classed "closed" printed `p mixed = 8` and `p_total mixed = 29` while
+    `lowerWall` and `upperWall`, whose faces sum to exactly 0.0, printed `--`. The
+    tolerance belongs where the case's own flux scale is, which is here."""
+    table = rows(("inlet", -1.0), ("outlet", 1.0), ("frontAndBack", 1.17549e-38),
+                 ("lowerWall", 0.0))
+    for row, mixed in zip(table, (1.0, 2.0, 8.0, None)):
+        row["p_mixed"] = mixed
+        row["p_total_mixed"] = None if mixed is None else mixed + 21
+    report = balance.split(table, 1e-6)
+    found = {row["patch"]: row for row in table}
+    assert found["frontAndBack"]["direction"] == "closed"
+    assert found["frontAndBack"]["p_mixed"] is None
+    assert found["frontAndBack"]["p_total_mixed"] is None
+    assert found["lowerWall"]["p_mixed"] is None
+    # The patches that do carry flux keep theirs, which is what the drop is taken on.
+    assert found["inlet"]["p_mixed"] == 1.0 and found["outlet"]["p_mixed"] == 2.0
+    assert report["closed_patches"] == ["frontAndBack", "lowerWall"]
+
+
 def test_no_reference_velocity_means_no_coefficient_rather_than_a_guessed_one():
     assert balance.coefficients({"dp_static": 1.0, "dp_total": 1.0}, "kinematic",
                                 "m^2 s^-2", None, None, None, None) == {}
