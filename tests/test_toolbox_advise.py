@@ -288,3 +288,157 @@ def test_it_writes_nothing_into_the_case(tmp_path, advise):
 def test_the_docstring_shows_how_to_run_it(advise):
     doc = ast.get_docstring(ast.parse((TOOLBOX / "advise.py").read_text(encoding="utf-8")))
     assert "python3 advise.py" in doc
+
+
+# -- the machine, and the budget against it ----------------------------------------
+#
+# The other half of the same question: a cell count means nothing without the machine,
+# and the machine is what the corpus repeatedly got wrong -- `nproc` answering 4 and an
+# agent decomposing for 12, and no memory reading taken anywhere at all. What is
+# asserted here is mostly the refusals: no memory reading means no memory claim, an
+# adjustable time step means no hour count, and the one measured memory pair is reported
+# as one case with the study and the PIDs it came from.
+
+
+def test_the_machine_probe_answers_on_whatever_this_is(advise):
+    """Linux, Windows and macOS read memory three different ways and this uses all
+    three. CI runs the first two, so the core count has to come back on both and memory
+    has to come back as either a number or a sentence saying why not."""
+    here = advise.machine()
+    assert here["cores_logical"] >= 1
+    assert 1 <= here["cores_usable"] <= here["cores_logical"]
+    assert "os.cpu_count()" in here["cores_source"]
+    if here["memory_bytes"] is None:
+        assert "not established" in here["memory_source"]
+    else:
+        assert here["memory_bytes"] > 64 * 2**20, "a runner with under 64 MiB is a bug"
+        assert here["memory_source"]
+
+
+def test_an_unreadable_cgroup_is_not_a_limit(advise):
+    """Both probes read files that are absent off Linux, and cgroup v1 spells "no limit"
+    as a number near 2**63 rather than as a word. A ceiling invented from either would
+    be a budget against nothing."""
+    memory, _note = advise._cgroup_memory()
+    assert memory is None or 0 < memory < 2**53
+    cores, _note = advise._cgroup_cores()
+    assert cores is None or cores > 0
+
+
+def test_the_cost_band_falls_back_and_says_so(advise):
+    """A solver with one run in the corpus has no band: p10 and p90 would be its own two
+    numbers. It falls back to every run in the corpus, with the count in the sentence."""
+    row, basis = advise.cost_band("buoyantSimpleFoam")
+    assert row is advise.COST_PER_CELL_S[""]
+    assert "under ten runs" in basis and "101 runs" in basis
+
+    row, basis = advise.cost_band("simpleFoam")
+    assert row["runs"] == 14 and "14 simpleFoam run(s)" in basis
+
+
+def test_every_band_in_the_table_carries_its_sample_size(advise):
+    """The table is the measurement, so each row says how many runs it came from, and
+    ten is the floor a row needs to be its own row at all."""
+    for application, row in advise.COST_PER_CELL_S.items():
+        assert row["runs"] >= 10, application
+        assert row["cases"] >= 1
+        assert row["p10"] <= row["median"] <= row["p90"], application
+
+
+def test_an_adjustable_time_step_yields_no_iteration_count(tmp_path, advise):
+    """The honest None. With adjustTimeStep on, the number of steps depends on a Courant
+    number the solver works out per step from a field nobody has yet."""
+    case = case_with(tmp_path, {})
+    (case / "system" / "controlDict").write_text(
+        "application     pimpleFoam;\nendTime 10;\ndeltaT 0.001;\nadjustTimeStep yes;\n")
+    count, source = advise.iterations_of(advise_case(advise, case))
+    assert count is None
+    assert "adjustTimeStep" in source
+
+    data = advise.inspect(case, cores=4)
+    assert "the hours below are left out" in advise.render(data)
+    assert not any("hours_low" in row for row in data["ranks"])
+
+
+def test_a_fixed_time_step_gives_the_hours_as_a_band(tmp_path, advise):
+    """endTime over deltaT is the step count, and the hours are that count times the
+    measured band for the load one rank carries -- a band, never a single number."""
+    case = with_mesh(case_with(tmp_path, {}), 400_000)
+    (case / "system" / "controlDict").write_text(
+        "application     simpleFoam;\nstartTime 0;\nendTime 1000;\ndeltaT 1;\n")
+    data = advise.inspect(case, cores=4, memory_gb=8)
+    assert data["iterations"] == 1000
+
+    band = advise.COST_PER_CELL_S["simpleFoam"]
+    row = next(r for r in data["ranks"] if r["ranks"] == 4)
+    assert row["s_low"] == pytest.approx(band["p10"] * 100_000)
+    assert row["s_high"] == pytest.approx(band["p90"] * 100_000)
+    assert row["hours_low"] == pytest.approx(band["p10"] * 100_000 * 1000 / 3600)
+    report = advise.render(data)
+    assert "s/iteration" in report
+    assert "not a claim that twice the ranks is half the time" in report
+
+
+def test_the_memory_claim_is_one_case_and_says_so(tmp_path, advise):
+    """The rule the repository runs on: a number that reaches a user traces to a
+    measurement. This one traces to two processes in one snapshot of one run, so the
+    report names the study and the PIDs and promises no limit."""
+    case = with_mesh(case_with(tmp_path, {}), 400_000)
+    report = advise.render(advise.inspect(case, cores=4, memory_gb=8))
+    assert "20260830-164816-eee0" in report
+    assert "10382" in report and "10383" in report
+    assert "One case, one snapshot" in report
+    assert "no cell limit is promised" in report
+
+
+def test_a_case_that_fits_is_told_so_and_offered_nothing(tmp_path, advise):
+    """400,000 cells at 1.7 kB each is 0.7 GiB, and a list of smaller meshes under a
+    case that fits in 8 GiB is noise."""
+    case = with_mesh(case_with(tmp_path, {}), 400_000)
+    data = advise.inspect(case, cores=4, memory_gb=8)
+    assert data["fit"]["fits"] is True
+    assert "coarser" not in data["fit"]
+    assert "base_cell_factor" not in data["fit"]
+
+
+def test_a_case_that_does_not_fit_is_told_what_would(tmp_path, advise):
+    """The laptop case. 20,000,000 cells against 2 GiB does not fit, and the useful
+    output is the cell counts that do, as arithmetic off the one measurement."""
+    case = with_mesh(case_with(tmp_path, {}), 20_000_000)
+    data = advise.inspect(case, cores=4, memory_gb=2)
+    fit = data["fit"]
+    assert fit["fits"] is False
+    assert fit["holds_cells"][0] < 20_000_000
+    assert fit["base_cell_factor"] == pytest.approx(
+        (20_000_000 / fit["holds_cells"][0]) ** (1 / 3))
+    # 2 GiB over 1,730 B is about 1.24M cells, 20M over that is about 16, and the cube
+    # root of 16 is about 2.5.
+    assert fit["base_cell_factor"] == pytest.approx(2.52, abs=0.05)
+    # `case_with`'s block dict is 40x20x20 over 2x1x1 m, so the shortest side is 20
+    # cells deep and one cell thick is a twentieth of the count.
+    counts = {label: count for label, count in fit["coarser"]}
+    assert 20_000_000 // 8 in counts.values()
+    assert 20_000_000 // 20 in counts.values()
+    assert any("one cell thick" in label for label in counts)
+    report = advise.render(data)
+    assert "the case is larger than that" in report
+    assert "refinement band goes as the square" in report
+
+
+def test_no_memory_reading_means_no_memory_claim(tmp_path, advise, monkeypatch):
+    """A machine whose memory cannot be read gets the sentence, not a default: a budget
+    against an assumed 8 GiB is the fabrication this section exists not to be."""
+    monkeypatch.setattr(advise, "machine", lambda: {
+        "platform": "nowhere", "cores_logical": 4, "cores_usable": 4,
+        "cores_source": "os.cpu_count() says 4", "memory_bytes": None,
+        "memory_available_bytes": None,
+        "memory_source": "not established on nowhere: no /proc/meminfo",
+    })
+    case = with_mesh(case_with(tmp_path, {}), 400_000)
+    data = advise.inspect(case, cores=4)
+    assert data["memory_bytes"] is None
+    assert "holds_cells" not in data["fit"]
+    assert "fits" not in data["fit"]
+    report = advise.render(data)
+    assert "not established" in report
+    assert "GiB at that rate is about" not in report
