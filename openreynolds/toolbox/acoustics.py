@@ -960,6 +960,48 @@ def from_cwd(path: Path) -> Path:
     return path if path.is_absolute() else Path.cwd() / path
 
 
+def tone_selftest(amplitude: float = 1.0, frequency: float = 1000.0,
+                  rate: int = 48000, seconds: float = 1.0) -> int:
+    """Write a tone of known level, measure it, and print both.
+
+    The reference needs no paper and no file. A sine of amplitude `A` has a mean square
+    of `A^2/2` exactly, so `p_rms = A/sqrt(2)` and the level is
+    `20 log10(p_rms / 20e-6)` outright. The whole tone also belongs to one
+    one-third-octave band when its centre is a band centre, which is a second,
+    independent statement about the band table rather than a restatement of the first.
+
+    Exits 1 if either disagrees by more than 0.05 dB, which is a twentieth of the
+    smallest difference anybody hears and about 0.6% in pressure.
+    """
+    t_axis = np.arange(int(rate * seconds)) / rate
+    pressure = amplitude * np.sin(2.0 * np.pi * frequency * t_axis)
+    exact_rms = amplitude / math.sqrt(2.0)
+    exact_spl = 20.0 * math.log10(exact_rms / P_REF)
+
+    found = spl_spectrum(t_axis, pressure, segments=4)
+    table = third_octave(found, 4)
+    bands = [row for row in table["bands"] if row.get("resolved", True)]
+    loudest = max(bands, key=lambda row: row["level"]) if bands else None
+
+    print(f"tone: {amplitude:g} Pa at {frequency:g} Hz, {rate} Hz for {seconds:g} s")
+    print(f"  p_rms        {exact_rms:.9f} Pa, exact")
+    print(f"  SPL exact    {exact_spl:.4f} dB re {P_REF:g} Pa")
+    print(f"  SPL measured {found['overall']:.4f} dB"
+          f"   ({found['overall'] - exact_spl:+.4f} dB)")
+    bad = abs(found["overall"] - exact_spl) > 0.05
+    if loudest is not None:
+        print(f"  loudest band {loudest['centre']:g} Hz at {loudest['level']:.4f} dB"
+              f"   ({loudest['level'] - exact_spl:+.4f} dB)")
+        # The band that holds a tone at a band centre holds all of it.
+        bad = bad or abs(loudest["level"] - exact_spl) > 0.05
+        bad = bad or abs(loudest["centre"] - frequency) > 0.06 * frequency
+    else:
+        print("  no band held a bin of this record")
+        bad = True
+    print("DISAGREES" if bad else "agrees")
+    return 1 if bad else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Noise spectra and a .wav from a pressure history: SPL against "
@@ -970,6 +1012,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("source", type=Path, nargs="?",
                         help="a case directory (its pressure history is found) or a "
                              "single probes/.dat/CSV file")
+    parser.add_argument("--tone", nargs="?", type=float, const=1000.0, default=None,
+                        metavar="HZ",
+                        help="write a tone of this frequency (default 1000) at 1 Pa, "
+                             "measure it, and print the level beside the closed form it "
+                             "has to equal; needs no case and no file")
     parser.add_argument("--column", default="",
                         help="which column holds the pressure (default: the first "
                              "after the time column)")
@@ -1004,6 +1051,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, default=None,
                         help="write the findings here as JSON")
     args = parser.parse_args(argv)
+
+    if args.tone is not None:
+        return tone_selftest(frequency=args.tone, rate=args.rate)
 
     if args.where and args.source is None:
         print(json.dumps(where(None), indent=2))
