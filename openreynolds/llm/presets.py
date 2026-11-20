@@ -121,9 +121,10 @@ def priced(tokens: dict[str, int] | None, model: str, provider: str = "") -> flo
     rates = prices(model, provider)
     if rates is None:
         return None
-    if any(int(count or 0) and name not in rates for name, count in (tokens or {}).items()):
+    counted = [(name, int(count or 0)) for name, count in (tokens or {}).items() if int(count or 0)]
+    if any(name not in rates for name, _ in counted):
         return None
-    return spend(tokens, model, provider)
+    return sum(rates[name] * count / 1e6 for name, count in counted)
 
 
 @dataclass(frozen=True)

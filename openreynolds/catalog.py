@@ -18,10 +18,10 @@ as a multiple of a normal study (`ceiling.py`), a money clause in a service mess
 stripped out before it is shown (`backend.base.without_money`), and `/status` reports
 tokens. So `row()` reports wall-clock time and token counts for every study, and a
 dollar figure only where the person's own key paid their vendor directly -- a provider
-recorded on the study, which is not `reynolds`, and whose model has a known rate
-(`llm.presets.prices`). Everything else gets `cost_usd: None`, which is the absence of
-a figure and not a figure of zero: an unpriced run reported as $0.00 is the bug
-`prices()` returns None to prevent.
+recorded on the study, which is not `reynolds`, and whose model and every token
+class it counted have a known rate (`llm.presets.priced`, #191). Everything else gets
+`cost_usd: None`, which is the absence of a figure and not a figure of zero: an
+unpriced run reported as $0.00 is the bug `prices()` returns None to prevent.
 
 STATE IS NOT GUESSED. A job row says `running` because that is how the session that
 started it left it; whether the process is alive is a question for the workspace

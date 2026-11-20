@@ -275,6 +275,7 @@ def test_a_token_class_with_no_rate_is_no_figure_rather_than_a_free_one(studies_
     row, = json.loads(data.stdout)["studies"]
     assert row["own_key"] is True and row["cost_usd"] is None
     assert "$" not in text.output, text.output
+    assert "has no rate here" in text.output, text.output
     # A listed class counted as zero still prices: nothing of the run is left out.
     assert catalog.cost_usd(byok_study(studies_dir, tokens={"input": 1_000, "reasoning": 0}).session) \
         == pytest.approx(1_000 * 5.00 / 1e6)
@@ -669,10 +670,11 @@ def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir):
     homes, and opened in `/work` among every other study's files. It is resumed the
     way the study it came from is: in a directory named after it."""
     with_a_transcript(studies_dir)
-    CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
     fresh, = [item for item in list_studies(studies_dir)
               if item.cloned_from == "20261115-090000-ffff"]
     assert fresh.home == f"/work/{fresh.study_id}"
+    assert "its workspace starts empty" in said.output and "openreynolds push" in said.output
     assert cli._home_path(Store(studies_dir, fresh.study_id), resuming=True) == f"/work/{fresh.study_id}"
 
     # One cloned before this, with no home recorded, opens in its own directory too.
