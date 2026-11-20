@@ -1076,8 +1076,13 @@ class HostedBackend(KernelHost, Backend):
         one line of warning `_close_down` prints on a failure is the honest place
         for it, not a refusal to exit."""
         try:
-            return _json(self._client.request(
+            rows = _json(self._client.request(
                 "GET", self._instance_path("/jobs"), params={"active": 1}))
+            # Each row's id is `job_id`, as in every job answer of the service's. A
+            # reader once asked for `id`, which is never sent, and counted this
+            # session's own job as somebody else's (#197). One spelling, settled here
+            # where the rows come in, for a service that ever answers with `id`.
+            return [{**row, "job_id": row.get("job_id") or row.get("id")} for row in rows]
         except BackendError:
             raise
         except Exception as exc:  # noqa: BLE001 - a bad body is not worth an exit failing

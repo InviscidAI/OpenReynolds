@@ -1642,3 +1642,14 @@ def test_a_service_that_fails_the_revoke_is_an_error():
     transport = httpx.MockTransport(lambda request: httpx.Response(503, json={"error": "busy", "message": "try later"}))
     with pytest.raises(BackendError):
         revoke_own_key("https://svc.example", "of_live_k", transport=transport)
+
+
+def test_active_jobs_rows_carry_the_services_job_id():
+    """The service names a job's id `job_id` (`app/jobs.py`, `_view`). A reader asking
+    for `id` read every row as somebody else's job, this session's own included, and
+    left its instance up (#197). The rows come out with `job_id`, whichever the
+    service sent."""
+    rows = [{"job_id": "job-1", "name": "rotating", "status": "running"},
+            {"id": "job-2", "name": "old", "status": "running"}]
+    backend = hosted_mod.HostedBackend(_client_against(_service_answering(rows)), "inst-1")
+    assert [row["job_id"] for row in backend.active_jobs()] == ["job-1", "job-2"]

@@ -3771,15 +3771,14 @@ def _still_running_on_the_instance(backend: Backend, store: Store) -> list[dict]
 
 
 def _listed_job_id(row: dict) -> str:
-    """The id of one row of `active_jobs()`.
+    """The id of one row of `active_jobs()`: `job_id`, the service's name for it.
 
-    The service names it `job_id`, as every job answer of its does. This read `id`,
-    which the service never sends, so every row counted as somebody else's -- this
-    session's own job included. That only showed when this session's kill had not
-    reached the service and the job's row still read running: then the session's own
-    job kept its instance up, billing, until someone stopped it by hand (#197).
-    `id` is still read, for a backend that answers with it."""
-    return str(row.get("job_id") or row.get("id") or "")
+    This read `id`, which the service never sends, so every row counted as somebody
+    else's -- this session's own job included. That only showed when this session's
+    kill had not reached the service and the job's row still read running: then the
+    session's own job kept its instance up, billing, until someone stopped it by hand
+    (#197). `HostedBackend.active_jobs` settles the spelling."""
+    return str(row.get("job_id") or "")
 
 
 _NEIGHBOUR_PROBE = r"""self=$$

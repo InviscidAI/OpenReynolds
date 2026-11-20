@@ -252,17 +252,17 @@ class Listener:
             self.text(delta)
 
 
-def transport_errors(*sdk: type[BaseException]) -> tuple[type[BaseException], ...]:
-    """What a stream that dies in the middle raises: `sdk`, plus the transport's own.
+def _transport_errors() -> tuple[type[BaseException], ...]:
+    """The transport's own error base, from whichever httpx is installed.
 
-    A request that fails before it opens comes back as the SDK's connection error. One
-    that dies *during* iteration does not: it raises from inside the SDK's `with`
-    block, below the layer that wraps errors, so the raw transport exception escapes
-    -- `httpx2.RemoteProtocolError: peer closed connection without sending complete
-    message body` in #197, which nothing caught and which ended the session. The httpx
-    package is `httpx2` in some environments and plain `httpx` in others, so both are
-    probed rather than one imported."""
-    found: list[type[BaseException]] = list(sdk)
+    A request that fails before its stream opens comes back as the SDK's connection
+    error, which the SDK has already retried itself. One that dies *during* iteration
+    does not: it raises from inside the SDK's `with` block, below the layer that wraps
+    and retries, so the raw transport exception escapes -- `httpx2.RemoteProtocolError:
+    peer closed connection without sending complete message body` in #197, which
+    nothing caught and which ended the session. The package is `httpx2` in some
+    environments and plain `httpx` in others, so both are probed."""
+    found: list[type[BaseException]] = []
     for name in ("httpx2", "httpx"):
         try:
             module = importlib.import_module(name)
@@ -274,46 +274,63 @@ def transport_errors(*sdk: type[BaseException]) -> tuple[type[BaseException], ..
     return tuple(found)
 
 
+DROPPED: tuple[type[BaseException], ...] = _transport_errors()
+"""What a stream that loses its connection partway raises (`_transport_errors`).
+The SDKs' own connection errors are left out on purpose: they are raised before the
+stream opens, after the SDK's own retries, and keep their own message."""
+
+
 STREAM_TRIES = 3
 """Times one streamed request is sent when the connection drops under it. The thread
 is untouched until a turn returns, so sending it again is safe; after the last try the
 drop is a `ProviderError` with no status, which `transient` reads as worth waiting
 out, so the session's own waits (`TRANSIENT_WAITS`) take over from there."""
 
+REPEAT_NOTICE = "\n[connection dropped mid-reply; the reply above may repeat]\n"
+
 
 def stream_with_retries(
     once: Callable[[Listener], Turn],
     listener: Listener,
-    errors: tuple[type[BaseException], ...],
-    pause: Callable[[float], None] = time.sleep,
+    also: tuple[type[BaseException], ...] = (),
+    pause: Callable[[float], None] | None = None,
 ) -> Turn:
-    """`once(listener)`, sent again when the stream drops partway (`errors`).
+    """`once(listener)`, sent again when the stream drops partway (`DROPPED`, and
+    `also` -- an adapter's own name for a stream that ended short).
 
-    A reply that had begun printing says so before it starts again, rather than
-    printing twice in silence."""
+    A reply that had begun to show -- its text or its thinking -- says so whenever it
+    is cut off, on the last try too: the session's own waits send the turn again
+    after that, and the reply would otherwise print twice in silence."""
+    errors = (*DROPPED, *also)
     for attempt in range(1, STREAM_TRIES + 1):
-        printed = False
+        shown = False
+
+        def seen() -> None:
+            nonlocal shown
+            shown = True
+
+        def begin() -> None:
+            seen()
+            listener.on_thinking_begin()
+
+        def thinking(delta: str) -> None:
+            seen()
+            listener.on_thinking(delta)
 
         def text(delta: str) -> None:
-            nonlocal printed
-            printed = True
+            seen()
             listener.on_text(delta)
 
-        heard = Listener(
-            thinking_begin=listener.on_thinking_begin,
-            thinking=listener.on_thinking,
-            text=text,
-            extra=listener.extra,
-        )
+        heard = Listener(thinking_begin=begin, thinking=thinking, text=text,
+                         extra=listener.extra)
         try:
             return once(heard)
         except errors as exc:
+            if shown:
+                listener.on_text(REPEAT_NOTICE)
             if attempt == STREAM_TRIES:
                 raise ProviderError(f"connection lost mid-stream: {exc}") from exc
-            if printed:
-                listener.on_text("\n[connection dropped mid-reply; retrying, "
-                                 "the text above may repeat]\n")
-            pause(2 ** attempt)
+            (pause or time.sleep)(2 ** attempt)
     raise AssertionError("unreachable")
 
 

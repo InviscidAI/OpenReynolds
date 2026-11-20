@@ -29,7 +29,6 @@ from .base import (
     neutral_blocks,
     split_result,
     stream_with_retries,
-    transport_errors,
 )
 
 
@@ -186,9 +185,6 @@ class OpenAIProvider(Provider):
         max_tokens: int,
         listener: Listener,
     ) -> Turn:
-        # A stream that drops partway is sent again (`stream_with_retries`): the raw
-        # transport error escapes the SDK's wrapping and used to end the session (#197).
-        dropped = transport_errors(openai.APIConnectionError)
         for attempt in range(1, 4):
             kwargs: dict[str, Any] = dict(
                 model=model,
@@ -201,8 +197,10 @@ class OpenAIProvider(Provider):
             if effort and not self.lean:
                 kwargs["reasoning_effort"] = effort
             try:
+                # A stream that drops partway is sent again: the raw transport error
+                # escapes the SDK's wrapping and used to end the session (#197).
                 return stream_with_retries(
-                    lambda heard, sent=kwargs: self._stream_once(sent, heard), listener, dropped)
+                    lambda heard, sent=kwargs: self._stream_once(sent, heard), listener)
             except openai.BadRequestError as exc:
                 text = _message(exc)
                 lowered = text.lower()
