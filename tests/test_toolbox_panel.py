@@ -558,6 +558,50 @@ def test_a_selig_file_is_read_as_a_selig_file(panel, tmp_path):
     assert from_file == pytest.approx(from_scratch, abs=1e-6)
 
 
+def test_a_title_line_carrying_numbers_is_a_title_line_and_not_a_point(panel, tmp_path):
+    """#140. Aerofoil files are named with numbers in them -- `E63  (4.25%)`,
+    `S1223 12%`, `NACA 63-412` -- and the reader kept any line that yielded two
+    numbers. `E63  (4.25%)` yields 63 and 4.25, both above 1.5, which is the test for
+    a Lednicer point-count header, so a plain Selig list was split, reversed and
+    "closed by hand" across a gap it did not have.
+
+    Measured on `data/qa-runs/geometry/src/airfoil_e63.dat`, the real file this was
+    found on: Cl at 5 degrees came out +1.4420 against the +1.3951 the same file gives
+    with its title line deleted, 3.4% high, under a confident statement that the file
+    was Lednicer. The rule is that a coordinate line is numbers and separators and
+    nothing else, and a genuine Lednicer header is two bare numbers on a line of its
+    own, so this and the test below both have to hold.
+    """
+    nodes, _ = panel.naca4("2412", 160)
+    titled = tmp_path / "titled.dat"
+    titled.write_text(as_selig(nodes, name="E63  (4.25%)"))
+
+    read, meta = panel.read_dat(titled)
+    assert meta["layout"].startswith("Selig"), meta["layout"]
+    assert "E63" in meta["source"], "the title line is the name, and is kept as one"
+    assert read == pytest.approx(nodes, abs=1e-6)
+    assert not meta["notes"], (
+        f"a file that closes has no trailing-edge note to make: {meta['notes']}"
+    )
+
+    # The same section with no title at all has to give the same contour, because the
+    # title was never data. Identical to the last digit, not merely close.
+    plain = tmp_path / "plain.dat"
+    plain.write_text("\n".join(as_selig(nodes).splitlines()[1:]) + "\n")
+    assert panel.solve(panel.panelise(read), 5.0)["cl"] == pytest.approx(
+        panel.solve(panel.panelise(panel.read_dat(plain)[0]), 5.0)["cl"], abs=1e-12)
+
+
+def test_a_coordinate_file_that_is_not_there_is_refused_rather_than_raised(panel, tmp_path):
+    """Every other bad input to this script takes the `Unusable` path and exits 0 with
+    the file named. A missing `--dat` raised `FileNotFoundError` out of `read_text` and
+    printed a traceback, which is the one failure mode the refusal path exists to
+    avoid. The guard is in `read_dat`, where every caller goes through."""
+    with pytest.raises(panel.Unusable, match="cannot be read"):
+        panel.read_dat(tmp_path / "nowhere" / "absent.dat")
+    assert panel.main(["--dat", str(tmp_path / "nowhere" / "absent.dat")]) == 0
+
+
 def test_a_lednicer_file_is_read_as_a_lednicer_file(panel, tmp_path):
     """The same aerofoil in the other layout is the same aerofoil, so it has to give the
     same lift to the last digit -- which only happens if the two blocks were reassembled
@@ -850,11 +894,46 @@ def test_the_json_sidecar_carries_the_numbers_and_the_caveats(panel, tmp_path, c
     assert [row["alpha_deg"] for row in data["incidence"]] == [-2.0, 0.0, 2.0, 4.0, 6.0]
     assert len(data["incidence"][0]["cp"]) == data["panels"]
     assert data["section"]["zero_lift_alpha_deg"] < 0
-    assert data["wing"]["cl"] < data["wing"]["cl_2d"]
+    # One wing per swept incidence, each carrying the incidence it is for (#147): the
+    # sidecar used to hold a single wing solved at `--alpha` while the sweep covered
+    # -2..6, and nothing in it said which angle that one number was.
+    assert [row["alpha_deg"] for row in data["wing"]] == [-2.0, 0.0, 2.0, 4.0, 6.0]
+    for row in data["wing"]:
+        assert row["cl"] < row["cl_2d"]
     assert data["flat_plate_friction"]["reynolds"] == 2.0e6
     assert data["limits"], "the sidecar must carry the limits, not only stdout"
     assert any("no viscosity" in line for line in data["limits"])
     assert "Hess-Smith" in data["method"]
+
+
+def test_the_wing_is_run_at_every_swept_incidence_and_each_row_names_its_own(
+    panel, tmp_path, capsys
+):
+    """#147. `--sweep A B STEP --wing` ran the lifting line once, at `--alpha`, which
+    defaults to 0, and printed it beside a lift curve covering A..B with nothing on
+    the page saying which angle the wing number was for. The number was right for an
+    incidence the output never named: `--naca 2412 --sweep 0 8 2 --wing` printed
+    `Cl +0.1927` against a last sweep row of `+1.2153`, eight degrees apart.
+
+    The arithmetic was never in question and must not move: 0.1927 at alpha 0 and
+    0.6478 at alpha 5 are both checked against the elliptic closed form elsewhere in
+    this file. What changes is that there is now one list of incidences and the wing
+    is on it, so no row can be read against an angle nobody stated.
+    """
+    assert panel.main(["--naca", "2412", "--sweep", "0", "8", "2", "--wing",
+                       "--aspect-ratio", "8"]) == 0
+    printed = capsys.readouterr().out
+    block = printed.split("# wing (lifting line)")[1].split("# what this cannot")[0]
+    for alpha in ("+0.00", "+2.00", "+4.00", "+6.00", "+8.00"):
+        assert alpha in block, f"the wing block names no row for alpha {alpha}"
+    assert "+0.1927" in block, "the alpha 0 wing Cl is unchanged arithmetic"
+
+    # The section's own sweep and the wing's now run over the same incidences, which is
+    # the whole of the fix: a reader can put the two tables side by side row for row.
+    section_rows = [line.split()[0] for line in
+                    printed.split("# incidence")[1].splitlines()[2:7]]
+    wing_rows = [line.split()[0] for line in block.splitlines()[3:8]]
+    assert section_rows == wing_rows, (section_rows, wing_rows)
 
 
 def test_the_figures_get_written(panel, tmp_path, capsys):

@@ -505,6 +505,36 @@ def test_y_plus_from_the_shear_agrees_with_the_number_computed_by_hand(wall, tmp
     assert row["fractions"]["log layer"] == 100.0
 
 
+def test_a_wall_whose_shear_is_all_zero_is_skipped_by_name_not_reported_at_y_plus_zero(
+    wall, tmp_path
+):
+    """`type calculated; value uniform (0 0 0)` is what OpenFOAM writes for a patch
+    the function object did not evaluate, and no wall under a moving fluid has zero
+    shear over the whole of it. #144's type filter cannot catch this one, because the
+    patch IS a wall: on `20260829-061843-9483/bfs` the 20-face `stepWall` came out of
+    `15000/wallShearStress` as `y+ 0 to 0, viscous sublayer 100%` at status ok, a
+    distribution over 20 faces manufactured from one placeholder zero.
+    """
+    case = shear_case(tmp_path, "uniform (0 0 0)")
+
+    found = wall.measure(case)
+    assert not [row for source in found["sources"] for row in source["patches"]], (
+        "nothing here was measured, so nothing should be reported as measured"
+    )
+    (problem,) = found["problems"]
+    assert "'wall'" in problem and "zero" in problem, problem
+    assert "wallShearStress did not evaluate" in problem, problem
+    statuses = {finding.status for finding in wall.findings(found) if finding.check == "y+"}
+    assert statuses == {"skipped"}, statuses
+
+    # And a shear that is uniform but not zero is still a measurement, so the rule is
+    # the zero and not the `uniform`: the case above and this one differ by one digit.
+    measured = wall.measure(shear_case(tmp_path / "live", "uniform (0.25 0 0)"))
+    assert not measured["problems"]
+    ((row,),) = [source["patches"] for source in measured["sources"]]
+    assert row["max"] == pytest.approx(100.0)
+
+
 def test_a_per_face_shear_gives_a_per_face_y_plus(wall, tmp_path):
     """The vector magnitude is what u_tau is built from, so a shear written as
     (0 0.25 0) is the same wall as one written as (0.25 0 0)."""
