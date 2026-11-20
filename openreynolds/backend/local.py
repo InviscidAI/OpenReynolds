@@ -104,6 +104,11 @@ class _Job:
 class LocalBackend(KernelHost, Backend):
     """A workspace on this machine."""
 
+    shared_workspace = True
+    """Every study on this machine opens a home inside the one root, so a study can be
+    handed what another one built (`cad/mesh_index.py`). DockerBackend inherits it: the
+    container is new each time, the mounted directory is not."""
+
     def __init__(self, root: str | Path | None = None, bashrc: str | None = None):
         chosen = root or os.environ.get("OPENREYNOLDS_LOCAL_WORK") or DEFAULT_ROOT
         self.root = Path(chosen).expanduser().resolve()

@@ -3582,11 +3582,14 @@ def _workspace_facts(
 
 
 def _meshes_note(backend: Backend, home: str) -> str:
-    """The meshes other studies finished on this workspace (`mesher/index.py`, #35).
+    """The meshes other studies finished on this workspace (`cad/mesh_index.py`, #35).
 
     The note above says only how many other directories `/work` holds; a finished mesh
-    of the very geometry being asked for was once rebuilt from scratch next to one."""
-    root = getattr(backend, "workspace_root", "") or WORKSPACE_ROOT
+    of the very geometry being asked for was once rebuilt from scratch next to one.
+
+    Empty on a workspace studies do not share, which is every hosted one: `read`
+    refuses there, since the only meshes on it would be this study's own."""
+    root = mesh_index.root_of(backend)
     exclude = home if home.rstrip("/") != root.rstrip("/") else ""
     return mesh_index.offer(mesh_index.read(backend, root, exclude=exclude), root)
 
