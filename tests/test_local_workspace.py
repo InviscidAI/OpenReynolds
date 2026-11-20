@@ -37,7 +37,13 @@ from openreynolds.backend.local import LocalBackend, what_is_missing
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> LocalBackend:
-    return LocalBackend(root=tmp_path / "work", bashrc=None)
+    """A workspace with no OpenFOAM, said as `bashrc=""` and not `bashrc=None`.
+
+    `None` means "go and look for one" (`local.py:308`), so in the image -- where
+    OpenFOAM is installed -- a `None` here produced a backend that sources it, and
+    three of these tests measured a wrapper with a `source` line in front of what
+    they were asserting about. Empty means there is none."""
+    return LocalBackend(root=tmp_path / "work", bashrc="")
 
 
 # -- python3 ------------------------------------------------------------------
@@ -121,7 +127,7 @@ def test_a_root_with_a_space_it_cannot_say_is_refused_with_the_way_out(tmp_path,
     monkeypatch.setattr(local_backend, "shell_root", lambda root: "C:/Users/A B/work")
 
     with pytest.raises(BackendError) as refused:
-        LocalBackend(root=tmp_path / "work", bashrc=None)
+        LocalBackend(root=tmp_path / "work", bashrc="")
 
     assert "OPENREYNOLDS_LOCAL_WORK" in str(refused.value)
     assert refused.value.code == "unsayable_root"
@@ -137,6 +143,28 @@ def test_a_windows_root_with_a_space_is_said_by_its_short_name_where_there_is_on
     assert said and chr(92) not in said
     if " " in str(home):
         assert " " not in said, "a space survived where a short name should have been used"
+
+
+def test_a_root_that_itself_ends_in_work_is_not_substituted_inside(tmp_path):
+    """The anchor that matters, and the reason it is a lookbehind as well as a
+    lookahead. `DEFAULT_ROOT` is `~/.openreynolds/work`, so the substituted text
+    normally contains a fresh `/work` to substitute, and an unanchored pattern
+    returned a command naming two roots glued together:
+
+        ls C:/Users/me/.openreynolds/work/case
+        -> ls C:/Users/me/.openreynoldsC:/Users/me/.openreynolds/work/case
+
+    `tests/test_cad_check.py:756-760` had written this trap down for its own `/work`
+    shim before this code existed, and it caught this in the image job of PR #228."""
+    backend = LocalBackend(root=tmp_path / "a" / "work", bashrc="")
+    assert backend.shell_root.endswith("/work"), "the case this test is about"
+
+    absolute = f"ls {backend.shell_root}/case"
+    assert backend._wrap(absolute).splitlines()[-1] == absolute
+
+    # And the alias still works in the same breath.
+    assert (backend._wrap("cp /work/a /work/b").splitlines()[-1]
+            == f"cp {backend.shell_root}/a {backend.shell_root}/b")
 
 
 # -- what the person is told --------------------------------------------------
@@ -226,7 +254,7 @@ def test_a_toolbox_script_runs_in_a_local_workspace_by_the_name_the_docs_give(tm
     twice over: `python3` was not an interpreter and `/work` was not the workspace."""
     from openreynolds import cli
 
-    backend = LocalBackend(root=tmp_path / "work", bashrc=None)
+    backend = LocalBackend(root=tmp_path / "work", bashrc="")
     cli._sync_toolbox(backend)
 
     done = backend.exec("python3 /work/.toolbox/lbm.py --help", timeout_s=120)
@@ -237,7 +265,7 @@ def test_a_toolbox_script_runs_in_a_local_workspace_by_the_name_the_docs_give(tm
 # -- the option that chooses it ----------------------------------------------
 
 
-def test_native_is_a_flag_of_its_own_and_local_still_means_docker(monkeypatch):
+def test_native_is_a_flag_of_its_own_and_local_still_means_docker():
     """`--local` stays a boolean flag. Making it take `docker` or `native` read
     better and broke `openreynolds --local doctor`: Click consumes `doctor` as the
     value, fails the Choice, and the group callback never runs. That spelling is not
@@ -247,16 +275,28 @@ def test_native_is_a_flag_of_its_own_and_local_still_means_docker(monkeypatch):
 
     from openreynolds import cli
 
-    for argv, want in (
-        (["--local", "doctor"], "docker"),
-        (["--native", "doctor"], "native"),
-        # Asked for both, the person gets the sandboxed one.
-        (["--local", "--native", "doctor"], "docker"),
-        (["doctor"], None),
-    ):
-        monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
-        CliRunner().invoke(cli.main, argv, catch_exceptions=True)
-        assert os.environ.get("OPENREYNOLDS_LOCAL") == want, argv
+    # Restored by hand rather than with `monkeypatch.delenv(raising=False)`, which
+    # records nothing when the variable is absent and so restores nothing. The CLI
+    # SETS this variable, so the value outlived the test, and every later test that
+    # built a backend got the Docker one and tried a real `docker pull`. That is how
+    # this arrived: windows-3.12 and 3.13 went red on test_store_listing, test_switch,
+    # test_warmstart and test_modes, none of which this change touches.
+    before = os.environ.get("OPENREYNOLDS_LOCAL")
+    try:
+        for argv, want in (
+            (["--local", "doctor"], "docker"),
+            (["--native", "doctor"], "native"),
+            # Asked for both, the person gets the sandboxed one.
+            (["--local", "--native", "doctor"], "docker"),
+            (["doctor"], None),
+        ):
+            os.environ.pop("OPENREYNOLDS_LOCAL", None)
+            CliRunner().invoke(cli.main, argv, catch_exceptions=True)
+            assert os.environ.get("OPENREYNOLDS_LOCAL") == want, argv
+    finally:
+        os.environ.pop("OPENREYNOLDS_LOCAL", None)
+        if before is not None:
+            os.environ["OPENREYNOLDS_LOCAL"] = before
 
 
 def test_the_native_flag_says_a_machine_with_no_openfoam_can_still_solve():

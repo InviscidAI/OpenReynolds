@@ -110,9 +110,23 @@ def shell_found() -> bool:
     return shutil.which(SHELL) is not None
 
 
-_WORK = re.compile(re.escape(WORKSPACE_ROOT) + r"(?![\w-])")
-"""`/work` where it is a path and not the start of a longer word, so `/workspace`
-and `/working` are left alone."""
+_WORK = re.compile(r"(?<![\w/])" + re.escape(WORKSPACE_ROOT) + r"(?![\w-])")
+"""`/work` where it is a whole path component of its own.
+
+Anchored at BOTH ends, and the lookbehind is the one that matters. `/workspace` and
+`/working` need the lookahead; the lookbehind is there because the root itself usually
+ENDS in `work` -- `DEFAULT_ROOT` is `~/.openreynolds/work` -- so without it the
+substituted text contains a fresh `/work` to substitute, and a command naming an
+absolute path came back pointing at two roots glued together:
+
+    ls C:/Users/me/.openreynolds/work/case
+    -> ls C:/Users/me/.openreynoldsC:/Users/me/.openreynolds/work/case
+
+`tests/test_cad_check.py:756-760` had already written this trap down, for its own
+`/work` shim: "an unanchored replace also rewrites the `/work/` inside the root it
+just substituted, and the command comes back pointing at a path made of two roots
+glued together. That is a shim bug, not a check bug." It is the same bug in the same
+place, and that shim's anchor is the one used here."""
 
 
 def shell_root(root: Path) -> str:
@@ -339,7 +353,12 @@ class LocalBackend(KernelHost, Backend):
         Sourcing is quiet and non-fatal: a machine without OpenFOAM should still be
         able to run `ls`, and a broken environment should show up as the solver saying
         so rather than as every command failing for a reason nobody can see."""
-        cmd = _WORK.sub(self.shell_root, cmd)
+        # A function and not a replacement string: `re.sub` reads backslashes and
+        # `\g<...>` in a replacement, so a Windows root would raise "bad escape\U"
+        # rather than substitute. `shell_root` forward-slashes the path, which makes
+        # that unreachable today and is exactly the kind of invariant that stops
+        # being true quietly.
+        cmd = _WORK.sub(lambda _: self.shell_root, cmd)
         if not self.bashrc:
             return f"{self.python3_line}{cmd}"
         return (f"{self.python3_line}"

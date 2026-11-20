@@ -744,35 +744,14 @@ mergePatchPairs ();
 """ % (SHEAR, SHEAR + 1, SHEAR + 1, SHEAR)
 
 
-class Mapped:
-    """A local workspace that answers to `/work` in command text as well as in paths.
-
-    `LocalBackend` already treats `/work` as an alias for its root when it *resolves a
-    path*, and this does the same for the text of a command, which nothing else does.
-    It remains here for any command text that still names the hosted root; the finish
-    check no longer needs it, because it now asks the backend where its toolbox is
-    rather than assuming `/work/.toolbox`.
-
-    The substitution is anchored deliberately. These roots are `tmp_path / "work"`, so
-    an unanchored `.replace("/work/", root)` also rewrites the `/work/` *inside* the
-    root it just substituted, and the command comes back pointing at a path made of two
-    roots glued together. That is a shim bug, not a check bug, and it only became
-    reachable once the check started naming real paths.
-    """
-
-    _HOSTED = re.compile(r"(?<![\w/])/work/")
-
-    def __init__(self, backend):
-        self._backend = backend
-        self.workspace_root = backend.workspace_root
-
-    def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
-        return self._backend.exec(
-            self._HOSTED.sub(f"{self.workspace_root}/", cmd),
-            cwd=cwd, timeout_s=timeout_s, background=background)
-
-    def __getattr__(self, name):
-        return getattr(self._backend, name)
+# `Mapped`, a shim that rewrote `/work` in command text for a `LocalBackend` whose
+# root is elsewhere, stood here. Its docstring said the backend "already treats
+# `/work` as an alias for its root when it resolves a path, and this does the same for
+# the text of a command, which nothing else does". The backend does it now
+# (`LocalBackend._wrap`), with the same anchoring this shim had worked out and for the
+# same reason -- a root that itself ends in `work`. These tests passing without the
+# shim is what says the backend's version works, since this file is the only place a
+# real OpenFOAM workspace is driven locally.
 
 
 def openfoam_workspace(root: Path, blockmesh: str, toposet: str = ""):
@@ -786,7 +765,6 @@ def openfoam_workspace(root: Path, blockmesh: str, toposet: str = ""):
     toolbox = root / ".toolbox"
     toolbox.mkdir(exist_ok=True)
     shutil.copy(TOOLBOX / "mesh_look.py", toolbox / "mesh_look.py")
-    backend = Mapped(backend)
     case = root / "s" / "mesh"
     (case / "system").mkdir(parents=True)
     (case / "system" / "controlDict").write_text(CONTROL_DICT)
@@ -854,7 +832,7 @@ def test_a_broken_region_fails_and_the_verdict_names_that_region(tmp_path, conju
     backend, case_dir = conjugate
     broken_root = tmp_path / "broken"
     shutil.copytree(Path(backend.workspace_root), broken_root)
-    broken = Mapped(LocalBackend(root=broken_root))
+    broken = LocalBackend(root=broken_root)
     points = broken_root / "s" / "mesh" / "constant" / "cooler" / "polyMesh" / "points"
     moved = [0]
 
