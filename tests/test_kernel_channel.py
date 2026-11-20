@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import PurePath
 from typing import Any
 
 import httpx2 as httpx
@@ -156,8 +157,12 @@ def test_a_binding_survives_the_step_and_does_not_survive_a_restart(desk):
 
 
 def test_the_kernel_starts_in_the_case_directory(desk):
+    """Asked of the path and not of the string it prints. `os.getcwd()` answers with
+    this machine's separator, so `endswith("/case")` was a claim about Windows rather
+    than about where the kernel started -- which it only got away with while every
+    test in this file was skipped there for want of a `python3`."""
     result = desk.kernel_run("import os\nprint(os.getcwd())", 60)
-    assert result.stdout.strip().endswith("/case")
+    assert PurePath(result.stdout.strip()).name == "case"
 
 
 # -- failure -------------------------------------------------------------------
