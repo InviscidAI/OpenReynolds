@@ -47,6 +47,30 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
 - `templates/` in the toolbox holds six working scripts, not snippets: `duct2d.py` (a
+  closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
+  `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
+  meshed body-fitted with tetrahedra, converted and retyped), `free_surface.py` (a
+  two-phase VOF dam break: a tank, a water column set by `setFields` as geometry, an open
+  top, and a complete `interFoam` case -- `p_rgh`, `constant/g`, two phases with their own
+  `rho`/`nu` and `sigma`, `maxAlphaCo` as well as `maxCo`), `rotating.py` (a frozen-rotor
+  MRF bladed mixer: two cell zones from two physical volumes, a complete `simpleFoam` case
+  with `constant/MRFProperties`, `omega` in rad/s against an editable rpm and the 9.5493
+  between them stated in the case and in the output, and the case itself saying that blade
+  passing and the unsteady wake are absent rather than small), and `porous.py` (a
+  Darcy-Forchheimer slab across a duct: `d` and `f` derived from a measured pressure-drop
+  curve by a Forchheimer plot, or from a particle size and a void fraction by Ergun, with
+  the arithmetic and the residual written into `constant/porosityProperties`, run by
+  `porousSimpleFoam`), and `thermal_stress.py` (a constrained steel bar conducting heat
+  across itself, written as a complete `solidDisplacementFoam` case with
+  `thermalStress yes`, `constant/mechanicalProperties` and `constant/thermalProperties`:
+  the stress analysis solver OpenFOAM has shipped all along and nothing here used, whose
+  one distribution tutorial has the thermal half switched off. Its T field is a
+  temperature **rise**, because the solver subtracts no reference temperature and an
+  ambient 300 in that field asks for the stress of a 300 K rise). The last four are the
+  ones whose dictionaries are the real ones rather than stubs for the mesh tools. All six
+  run `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
+  top, and run it -- the whole 2D, 3D, two-phase, rotating, porous or thermal-stress recipe, gotchas
+  included, rather than a page to reconstruct from memory.
 - `lbm.py` and `sph.py` in the toolbox are solvers, and the only two here that are not
   OpenFOAM applications: a D2Q9 two-relaxation-time lattice Boltzmann and a 2D weakly
   compressible SPH, both in numpy, which is already installed. They are in the toolbox
