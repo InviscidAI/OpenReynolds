@@ -400,6 +400,31 @@ def test_a_series_the_chooser_passed_over_is_named(studies):
                for note in notes), notes
 
 
+def test_the_columns_ranked_off_the_comparison_are_named(studies):
+    """The other half of #143's silence. `results.plot_columns` answers "what fits on
+    one axes", and once any column matches `^C[A-Za-z]*$` it returns only those -- the
+    right call for a figure and a selector nobody chose for a comparison.
+
+    On the blade study behind #143 that dropped `thrust`, `drag`, `torque` and `area`
+    out of `bladeF/force.dat`, which are the answers a wind-turbine run is for, and on
+    both sides it drops the `pressure_*` and `viscous_*` splits of every force. None of
+    it was mentioned. The ranking stays; the silence does not."""
+    make_study(studies, "20260101-120000-aaaa",
+               coefficients={"thrust": 507.7, "drag": 25.5, "torque": 134.0,
+                             "Cd": 0.01076, "Cl": 0.73042, "area": 2.227})
+    make_study(studies, "20260102-120000-bbbb",
+               coefficients={"Cd": 0.01076, "Cl": 0.73042})
+
+    report = payload("20260101-120000-aaaa", "20260102-120000-bbbb")
+    series = {row["name"] for row in report["forces"]["series"]}
+    assert series == {"Cd", "Cl"}, "the ranking itself is unchanged"
+
+    (note,) = [n for n in report["forces"]["notes"]["a"] if "also holds" in n]
+    for dropped in ("thrust", "drag", "torque", "area"):
+        assert dropped in note, note
+    assert "not compared" in note and "Cd, Cl" in note, note
+
+
 def test_a_one_row_series_is_not_called_a_mean(studies):
     """The `bladeF/force.dat` behind #143's `Cd` is a hand-written file with one data
     row, and `tail_mean` of one row is that row -- printed under a column headed "a

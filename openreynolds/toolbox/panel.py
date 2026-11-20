@@ -152,18 +152,33 @@ def read_dat(path: Path, close_tol: float = 0.01) -> tuple[np.ndarray, dict]:
     patching it would turn a broken file into a plausible number. A real finite trailing
     edge is a small gap, and those two points are moved to their midpoint and the move
     is reported.
+
+    A coordinate line is numbers and separators and NOTHING else, which is #140: a
+    title line carries two numbers as often as not -- `E63  (4.25%)`, `S1223 12%`,
+    `zone T="... at 40.18%c ... between 0 and 1"` -- and taking the first one for a
+    pair put (63, 4.25) at the head of a plain Selig file, where both values above 1.5
+    read as a Lednicer count header. The file was then split, reversed and closed
+    across a gap it did not have, and reported as Lednicer with two fabricated notes:
+    Cl 3.4% high and Cm 8.8% high on `airfoil_e63.dat`. A genuine Lednicer header is
+    two bare numbers on a line of its own, so the stricter rule keeps reading it.
     """
-    text = path.read_text(errors="replace")
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as exc:
+        # The same `Unusable` path every other bad input takes, rather than a traceback
+        # out of a tool whose contract is to report a reading or refuse by name.
+        raise Unusable(f"{path} cannot be read: {exc.strerror or exc}") from exc
     pairs, name = [], ""
     for line in text.splitlines():
-        found = NUMBER.findall(line.replace("D", "E").replace("d", "e"))
-        if len(found) >= 2:
-            try:
-                pairs.append((float(found[0]), float(found[1])))
-            except ValueError:
-                continue
-        elif line.strip() and not pairs and not name:
-            name = line.strip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        numeric = stripped.replace("D", "E").replace("d", "e")
+        found = NUMBER.findall(numeric)
+        if len(found) >= 2 and _only_numbers(numeric, found):
+            pairs.append((float(found[0]), float(found[1])))
+        elif not pairs and not name:
+            name = stripped
     if len(pairs) < 20:
         raise Unusable(f"{path} holds {len(pairs)} coordinate pairs, too few to panel")
 
@@ -224,6 +239,19 @@ def read_dat(path: Path, close_tol: float = 0.01) -> tuple[np.ndarray, dict]:
         "spacing": "as the file gives it",
     }
     return nodes, meta
+
+
+def _only_numbers(line: str, found: list[str]) -> bool:
+    """Whether `line` is the numbers `found` and separators and nothing else.
+
+    The separators a coordinate file uses: spaces, tabs, commas and semicolons. Any
+    other character left over is prose, and a line with prose on it is a title, a
+    comment or a Tecplot `zone` header rather than a point.
+    """
+    rest = line
+    for token in found:
+        rest = rest.replace(token, " ", 1)
+    return not rest.strip(" \t,;")
 
 
 def _join_blocks(upper: np.ndarray, lower: np.ndarray) -> np.ndarray:
@@ -522,6 +550,9 @@ def lifting_line(alpha_deg: float, slope_per_rad: float, zero_lift_deg: float,
     section_cl = 2.0 * circulation / chord
     downwash = np.degrees((sines * orders[None, :]) @ amplitudes / np.sin(station))
     return {
+        # Carried out with the answer because of #147: the wing's Cl is only readable
+        # beside the incidence it is for, and nothing on the page used to say which.
+        "alpha_deg": float(alpha_deg),
         "cl": cl,
         "cd_induced": cdi,
         "span_efficiency": float(cl**2 / (np.pi * aspect_ratio * cdi)) if cdi > 0 else None,
@@ -569,7 +600,7 @@ def flat_plate_friction(reynolds: float, wetted_ratio: float = 2.04) -> dict:
 
 
 def report(geom: dict, meta: dict, results: list[dict], slope: dict,
-           wing: dict | None = None, friction: dict | None = None,
+           wing: list[dict] | None = None, friction: dict | None = None,
            figures: list[Path] | None = None) -> str:
     out = ["# aerofoil", f"  {meta['source']}"]
     if "layout" in meta:
@@ -621,23 +652,33 @@ def report(geom: dict, meta: dict, results: list[dict], slope: dict,
                      if k < len(lower_x) else "")
             out.append(left + right)
 
-    if wing is not None:
+    if wing:
+        first = wing[0]
         out += ["", "# wing (lifting line)",
-                f"  aspect ratio {wing['aspect_ratio']:.3g}, taper {wing['taper']:.3g}, "
-                f"tip twist {wing['twist_deg']:+.3g} deg, {wing['modes']} modes",
-                f"  Cl           {wing['cl']:+.4f}   (the 2D section gives "
-                f"{wing['cl_2d']:+.4f} at this incidence)",
-                f"  Cd_induced   {wing['cd_induced']:.5f}  "
-                f"(elliptic loading would give {wing['elliptic_cd_induced']:.5f})"]
-        if wing["span_efficiency"] is not None:
-            out.append(f"  span efficiency e {wing['span_efficiency']:.4f}")
-        out += ["  spanwise section Cl, root to tip:",
-                "   2|y|/b   chord     Cl     induced alpha"]
-        order = np.argsort(wing["station_eta"])
-        for k in order[::max(1, len(order) // 8)]:
-            out.append(f"   {wing['station_eta'][k]:6.3f}  "
-                       f"{wing['station_chord'][k]:7.4f}  {wing['section_cl'][k]:+6.3f}  "
-                       f"{wing['induced_alpha_deg'][k]:+8.3f} deg")
+                f"  aspect ratio {first['aspect_ratio']:.3g}, taper {first['taper']:.3g}, "
+                f"tip twist {first['twist_deg']:+.3g} deg, {first['modes']} modes",
+                # #147: the incidence is printed, and it is every incidence the section
+                # above was solved at rather than one the page never named.
+                "   alpha        Cl      Cl_2d   Cd_induced   elliptic Cdi        e"]
+        for one in wing:
+            efficiency = (f"{one['span_efficiency']:8.4f}"
+                          if one["span_efficiency"] is not None else "       -")
+            out.append(f"  {one['alpha_deg']:+7.2f}  {one['cl']:+8.4f}  "
+                       f"{one['cl_2d']:+8.4f}   {one['cd_induced']:10.5f}   "
+                       f"{one['elliptic_cd_induced']:10.5f} {efficiency}")
+        if len(wing) == 1:
+            out += [f"  spanwise section Cl at alpha {first['alpha_deg']:+.2f} deg, "
+                    "root to tip:",
+                    "   2|y|/b   chord     Cl     induced alpha"]
+            order = np.argsort(first["station_eta"])
+            for k in order[::max(1, len(order) // 8)]:
+                out.append(f"   {first['station_eta'][k]:6.3f}  "
+                           f"{first['station_chord'][k]:7.4f}  "
+                           f"{first['section_cl'][k]:+6.3f}  "
+                           f"{first['induced_alpha_deg'][k]:+8.3f} deg")
+        else:
+            out.append("  the spanwise loading is in --json, one set per incidence; the "
+                       "table above is the integral of each")
         out += ["  induced drag is the only drag here: no profile drag, no viscosity.",
                 "  Cl is converged in the mode count by about 16 modes at any ordinary",
                 "  aspect ratio; the induced drag and the span efficiency converge slowest",
@@ -660,7 +701,7 @@ def report(geom: dict, meta: dict, results: list[dict], slope: dict,
 
 
 def payload(geom: dict, meta: dict, results: list[dict], slope: dict,
-            wing: dict | None, friction: dict | None,
+            wing: list[dict] | None, friction: dict | None,
             figures: list[Path] | None) -> dict:
     """The same facts for a script to read. `limits` is in here too: a sidecar that
     carried the numbers and left the caveats on stdout would be a sidecar that strips
@@ -690,9 +731,11 @@ def payload(geom: dict, meta: dict, results: list[dict], slope: dict,
         "incidence": [one(res) for res in results],
         "limits": LIMITS,
     }
-    if wing is not None:
-        data["wing"] = {k: (v.tolist() if isinstance(v, np.ndarray) else v)
-                        for k, v in wing.items()}
+    if wing:
+        # A list, one per incidence, and a list of one when there is one incidence:
+        # a key whose type changed with the flags would be a key nobody can read.
+        data["wing"] = [{k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                         for k, v in one.items()} for one in wing]
     if friction is not None:
         data["flat_plate_friction"] = friction
     if figures:
@@ -844,11 +887,15 @@ def main(argv: list[str] | None = None) -> int:
         # lift slope is quoted as everywhere it would be compared, and the curve's fall-off
         # with cos(alpha) would otherwise make the same section report two slopes.
         slope = lift_slope(geom, about_deg=0.0)
-        wing = None
-        if args.wing:
-            wing = lifting_line(args.alpha, slope["per_radian"],
-                                slope["zero_lift_alpha_deg"], args.aspect_ratio,
-                                taper=args.taper, twist_deg=args.twist, modes=args.modes)
+        # #147: at every incidence the section was solved at, not at `--alpha` while
+        # `--sweep` covered something else. There is one list of incidences and the
+        # wing is on it, so there is no second convention for the page to leave unsaid.
+        wing = [
+            lifting_line(float(alpha), slope["per_radian"],
+                         slope["zero_lift_alpha_deg"], args.aspect_ratio,
+                         taper=args.taper, twist_deg=args.twist, modes=args.modes)
+            for alpha in alphas
+        ] if args.wing else None
         friction = flat_plate_friction(args.reynolds) if args.reynolds else None
     except Unusable as exc:
         # Exit 0: not being able to panel a file is a reading about the file, and a

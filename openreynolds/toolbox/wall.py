@@ -771,6 +771,11 @@ def from_wall_shear(case: Path, requested: str | None = None,
     Walls only, since #144: on the cylinder case this source is the only one, so its
     `inlet`, `outlet`, `topWall` and `bottomWall` rows at y+ 0 were the whole report
     and the whole plot. The mesh `layer_report.py` already loaded here types them.
+
+    And a wall whose shear comes back all zero is skipped by name rather than reported
+    at y+ 0, because that is the entry written for a patch the function object did not
+    evaluate. The type filter cannot catch it: `stepWall` on the backward-facing step
+    is a `wall`, with 20 faces and `value uniform (0 0 0)`.
     """
     path = field_file(Path(case), "wallShearStress", requested, dropped)
     if path is None:
@@ -801,6 +806,23 @@ def from_wall_shear(case: Path, requested: str | None = None,
         if tau.size not in (1, height.size):
             problems.append(
                 f"patch '{name}': {tau.size} shear values against {height.size} faces"
+            )
+            continue
+        # A wall whose shear is identically zero was not measured, it was defaulted.
+        # `type calculated; value uniform (0 0 0)` is what OpenFOAM writes for a patch
+        # the function object did not evaluate, and no wall under a moving fluid has
+        # zero shear over the whole of it. #144's non-walls are filtered above, but
+        # `20260829-061843-9483/bfs` still reported the real wall `stepWall` as
+        # `20 faces, y+ 0 to 0, viscous sublayer 100%` at status ok: the same
+        # fabricated distribution over the same placeholder, on a patch the type
+        # filter cannot catch because it IS a wall. Skipped by name instead, which is
+        # this script's own answer to a source it cannot measure.
+        if not np.any(tau):
+            problems.append(
+                f"patch '{name}' in {path.parent.name}/{path.name} is a wall whose "
+                f"shear is written as {tau.size} value(s), every one zero -- what is "
+                "written for a patch wallShearStress did not evaluate, rather than a "
+                "measured shear -- so no y+ was derived from it"
             )
             continue
         y_plus = np.sqrt(np.abs(tau)) * (height / 2.0) / nu
@@ -932,7 +954,10 @@ def measure(case: Path, time: str | None = None, nu: float | None = None) -> dic
     found["wall_treatment"] = {
         patch: resolve_type(parsed, patch) for patch in sorted(walls)
     }
-    if not found["sources"]:
+    # Only where nothing was found AND nothing was refused: a case whose one shear
+    # file was read and then declined by name has not got "no wallShearStress", and
+    # saying it would talk over the refusal that is the actual answer.
+    if not found["sources"] and not found["problems"]:
         found["problems"].append(
             "no y+ anywhere: no postProcessing/yPlus/*/yPlus*.dat, no written yPlus "
             "field, and no wallShearStress to derive one from"
