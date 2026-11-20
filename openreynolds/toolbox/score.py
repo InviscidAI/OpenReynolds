@@ -121,12 +121,15 @@ tail of a run that was sized to converge, so a fifth."""
 
 DP_FUNCTIONS = ("pInlet", "pOutlet")
 """The two function objects `case_gen.py --dp` writes (`PRESSURE_FUNCTIONS` there), in
-the order the drop subtracts them: `dp = p_inlet - p_outlet`."""
+the order the drop subtracts them: `dp = p_inlet - p_outlet`. `--dp` itself is in #234;
+see `PERIODIC_FILE` below for where the test pinning the two names goes."""
 
 PERIODIC_FILE = "periodic.json"
 """What `case_gen.py --periodic` writes into the case (`PERIODIC_FILE` there): the
-pair, the drive, and the `pitch` the gradient is multiplied by. Pinned in both files'
-tests for the reason `DP_FUNCTIONS` is."""
+pair, the drive, and the `pitch` the gradient is multiplied by. A rename on one side
+would leave the other silently reporting no drop per period, so a test pins the two
+names against each other -- in whichever of this PR and #234 lands second, since
+neither side's name is on main until one of them does."""
 
 GRADIENT = re.compile(r"pressure gradient\s*=\s*([-+0-9.eE]+)")
 """`meanVelocityForce`'s log line, once per momentum solve: `Pressure gradient source:
