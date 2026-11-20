@@ -125,6 +125,19 @@ jobs:
       - name: SPH -- dam break, contained and weakly compressible
         run: python benchmarks/sph/grade.py dambreak
 
+      # The particle tracer, the third grader that solves rather than reading a run.
+      # `drag` and `tracer` are closed forms; `capture` is the one with a published
+      # number behind it, and benchmarks/particles/README.md is the argument about the
+      # factor of two between the two conventions that number is quoted in.
+      - name: Particles -- relaxation and terminal velocity against the closed forms
+        run: python benchmarks/particles/grade.py drag
+
+      - name: Particles -- a tracer orbit that must close, at fourth order
+        run: python benchmarks/particles/grade.py tracer
+
+      - name: Particles -- critical Stokes number on a cylinder against 1/8
+        run: python benchmarks/particles/grade.py capture
+
       - name: The eval that costs money refuses to run
         run: |
           status=0

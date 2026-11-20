@@ -46,6 +46,89 @@ All notable changes to this project are recorded here. The format follows
 - **A row for `templates/thermal_stress.py` in the toolbox index**, which had it in the
   prose and not in the table, so it was the one template a session reading the table could
   not find.
+- **Fluid-structure interaction, as a case generator and an instrument rather than a
+  feature.** `benchmarks/moving_mesh/` had graded a spring-mounted cylinder in September
+  and nothing in the toolbox could set one up or read one back, so the groundwork was a
+  benchmark nobody could reuse. Two scripts close that:
+  - `openreynolds/toolbox/templates/viv_cylinder.py` writes the two `pimpleFoam` cases a
+    flow-induced vibration study actually is -- `fixed/` with the body bolted still for
+    the Strouhal number, `released/` on `dynamicMotionSolverFvMesh` +
+    `sixDoFRigidBodyMotion` with a linear spring and zero structural damping -- off two
+    edited numbers, the diameter and the reduced velocity. Mass comes from the mass ratio
+    and the displaced fluid mass, stiffness from U\*, free stream from the Reynolds
+    number. The mesh is the O-grid plus H-grid `blockMeshDict` of the graded 2026-09-12
+    run, reproduced token for token: 898 tokens each, with the 42 wall-circle coordinates
+    agreeing to 1e-11 m (that run rounded its dedup key to 10 decimals). 240 cells around
+    the wall, 2.5% blockage, 51,150 cells, which is the mesh that measured St = 0.166141
+    at Re = 100 against Williamson's 0.164 for parallel shedding, +1.3%.
+  - It ships **tightly coupled** -- `moveMeshOuterCorrectors yes`, three outer correctors,
+    `accelerationRelaxation 1.0` -- because the cheaper scheme is what held a limit cycle
+    13% too wide on that run, and the comments say so where the settings are.
+  - `openreynolds/toolbox/viv.py` reads a finished case back: A/D, the response frequency
+    against both the structure's own and the frequency the same mesh shed at with the body
+    still, lock-in decided rather than asserted, the net fluid work per whole cycle, and a
+    three-panel figure. On the two committed runs in `tests/data/moving_mesh/` it
+    reproduces `benchmarks/moving_mesh/grade.py` digit for digit -- A/D 0.640193 and
+    0.567028, work -10.3734 to -10.0933% and +0.0437 to +0.1756% of the body's energy per
+    cycle -- and `tests/test_toolbox_viv.py` is what holds it there.
+  - It also prints the natural frequency with the added mass in it, which nothing here
+    did. A circular cylinder's added mass is exactly its own displaced mass (Lamb,
+    *Hydrodynamics*, 6th ed., art. 68), so at m\* = 10 the still-fluid natural frequency
+    is 0.9535 f_n, and the tight run's measured f/f_n of 0.9697 is **1.7% above** the
+    frequency it would ring at in water rather than 3% below resonance. That is a 5%
+    reading error on a quantity these cases are reported to a percent on.
+  - The amplitude is printed and not graded, and `benchmarks/moving_mesh/README.md` now
+    says why more precisely than it did (see Fixed).
+- **Particle tracking, as post-processing over a solved field, graded against a published
+  capture threshold.** `openreynolds/toolbox/tracks.py` integrates particle and tracer
+  paths through a finished Eulerian field with RK4, vectorised over the seed set: drag
+  (Stokes or Schiller-Naumann) plus buoyancy-corrected gravity, `--stokes 0` for massless
+  tracers, JSON out with every seed's fate and a PNG of the paths. It reads a real case
+  through the same reader `render.py` uses.
+  - Post-processing rather than a parcel-cloud generator, stated as a choice: `DPMFoam`,
+    `DPMDyMFoam`, `MPPICFoam` and `MPPICDyMFoam` are in `$FOAM_APPBIN` on the instance and
+    `tutorials/lagrangian/` carries four more, measured out of
+    `studies/20260823-213712-babc/messages.jsonl`, but the exact v2512 spelling of the
+    uncoupled kinematic solver could not be verified from outside the image, and a
+    generator naming a binary nobody has run is a generator that fails on the instance.
+    For a dilute, one-way-coupled cloud the physics is the same either way.
+  - `benchmarks/particles/` grades it, and like `lbm/` and `sph/` it **solves** in the
+    test job rather than reading a committed result. Three cases: velocity relaxation
+    into a uniform stream and terminal velocity under gravity, both exact closed forms
+    (1.9e-12 of U, 2.2e-14); a tracer orbit in solid-body rotation that must close, 5.1e-8
+    of the radius with an observed order of 4.00; and the critical Stokes number for
+    inertial capture on a circular cylinder in inviscid flow, **0.1262909 against 1/8,
+    +1.03%**.
+  - That 1/8 is the factor-of-two trap this repository has already paid for twice. The
+    source read is Robinson, Warren, Turner & Sear, arXiv:2310.03474v2 section III.3,
+    which states St_c = 1/4 in a convention whose U is the local stagnation-point speed
+    (twice the free stream) and whose length is the radius, and which says in the same
+    paragraph that Langmuir and Blodgett quote 1/8 because they use U_inf. The convention
+    `tau_p U_inf / R` is written into the threshold's key, the printed line, the README and
+    a test. Taylor (1940) and Langmuir & Blodgett (1946) could not be read and are named
+    as unread.
+  - The residual +1% is diagnosed, not quoted: the threshold is an infinite-time statement,
+    so a finite stopping rule can only measure it high, and the measurement walks
+    +5.671 -> +3.152 -> +2.000 -> +1.375 -> +1.033% as the stopping speed tightens from
+    1e-6 to 1e-14 of U, then stops at the double-precision floor (1e-16 measures the same
+    0.1262909). A factor of five in the time step moves it 0.12% and the release point
+    -3 to -20 radii moves it 0.01%, so it is neither discretisation nor the far field. The
+    grader fails a measurement *below* 1/8 as a bug rather than passing it as a better
+    answer.
+
+### Fixed
+
+- **`benchmarks/moving_mesh/README.md` quoted an amplitude a paper does not state.** Its
+  nearest reference for the VIV amplitude, Menon & Mittal (arXiv:2006.11649, published as
+  *J. Fluid Mech.* **907**, A37, 2021), was re-read at source and gives no A/D number in
+  its text at all -- the value at U\* = 5 is readable only off its Figure 5(a), so "about
+  0.56" was a figure read presented as a citation and now says so. The mass-ratio note was
+  right and is now exact: the paper's definition is `m* = 2m/(rho D^2)` verbatim, so its
+  m\* = 10 is 6.37 on displaced mass against this case's 10, a 57% difference in body mass
+  between two papers both saying "m\* = 10". Placzek, Sigrist & Hamdouni could not be
+  re-read (HAL and the publisher both refuse an automated request) and is now marked as
+  carried over unverified rather than reading as a checked figure. Nothing is graded
+  against either, which is the only reason the first error cost nothing.
 
 - **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
   in the repository was either a unit test against a fixture or a tool run against a
