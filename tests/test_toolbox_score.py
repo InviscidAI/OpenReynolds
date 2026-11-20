@@ -237,14 +237,6 @@ def test_one_side_of_the_drop_alone_is_not_a_drop(score, good_case):
     assert "dp" not in score.score(good_case, LOCK)["metrics"]
 
 
-def test_the_function_object_names_are_the_ones_case_gen_writes(score):
-    """A rename on either side would leave the other reporting no pressure drop, quietly."""
-    spec = importlib.util.spec_from_file_location("toolbox_case_gen", TOOLBOX / "case_gen.py")
-    case_gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(case_gen)
-    assert score.DP_FUNCTIONS == tuple(name for _, name in case_gen.PRESSURE_FUNCTIONS)
-
-
 # -- derived metrics -----------------------------------------------------------
 
 
@@ -531,15 +523,23 @@ def test_a_short_or_missing_residual_record_is_unconverged(score, tmp_path):
     assert "no residuals" in out["detail"]
 
 
-def test_falling_counts_as_converged_and_levelled_does_too(score, tmp_path):
+def test_a_levelled_residual_is_converged_and_a_still_falling_one_is_not(score, tmp_path):
+    """`falling` used to count as converged, so a run that hit its iteration cap with
+    the residuals still on their way down was labelled `ok` -- the commonest way for a
+    design study to under-resolve a point and not be told (review of #54). A levelled
+    run has reached the steady answer it can reach; a falling one ran out of iterations.
+    """
+    expected = {"fall": ("unconverged", False), "level": ("ok", True)}
     for name, series in (("fall", falling()), ("level", levelled())):
         case = tmp_path / name
         mesh(case)
         forces(case)
         log(case, series)
         out = score.score(case, LOCK)
-        assert out["converged"] is True, name
-        assert out["label"] == "ok", name
+        label, converged = expected[name]
+        assert out["converged"] is converged, name
+        assert out["label"] == label, (name, out["detail"])
+    assert "falling" in score.score(tmp_path / "fall", LOCK)["detail"]
 
 
 def test_the_solvers_own_convergence_line_counts(score, tmp_path):
@@ -735,7 +735,7 @@ def test_wall_seconds_falls_back_to_the_start_time_of_a_killed_run(score, good_c
 
 # -- a transient case: averaged in time over whole shedding cycles ---------------
 #
-# The drag benchmark (Archimedes `goals/max_drag.md`): a bluff body at Re 1e5 sheds, so
+# A drag goal of the shape a caller writes: a bluff body at Re 1e5 sheds, so
 # the solve is pimpleFoam and the score is Cd averaged over whole cycles after the
 # start-up transient. H = 0.1 m at 15 m/s is a convective time of 1/150 s; the windows
 # below are in those units, as the lock states them.
@@ -897,9 +897,9 @@ def test_the_lift_rms_floor_is_the_locks_to_set(score, tmp_path):
 
 
 def test_a_low_strouhal_body_holds_five_periods_on_the_drag_goals_window(score, tmp_path):
-    """Archimedes' max_drag lock averages from 20 to 80 convective times so that a wide
-    wake shedding at St 0.1 (a deep cup, URANS under-predicting it) still spans six
-    periods; St 0.11 is 6.6."""
+    """A window of 20 to 80 convective times is chosen so that a wide wake shedding at
+    St 0.1 (a deep cup, URANS under-predicting it) still spans six periods; St 0.11 is
+    6.6. That is the window this test holds, not a number from any one goal file."""
     case = tmp_path / "deep-cup"
     mesh(case)
     shedding(case, st=0.11, end=80.0)

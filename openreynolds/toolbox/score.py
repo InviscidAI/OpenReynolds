@@ -32,8 +32,9 @@ what it measures, and how
     solver a bluff section's coefficients oscillate about their mean, and a point read
     is whichever phase the final write landed on. `window` in the output is the number
     of rows that mean was taken over, so a ten-row window on a 1000-iteration run is
-    visible as one. `converged` is `log_digest.residual_shape` reading `levelled` or
-    `falling`, or the solver's own "solution converged" line. y+ comes from the `yPlus`
+    visible as one. `converged` is `log_digest.residual_shape` reading `levelled`, or
+    the solver's own "solution converged" line -- a run still `falling` at its
+    iteration cap has run out of iterations, not converged. y+ comes from the `yPlus`
     function object's output when the case has one (`case_gen.py --yplus`), the body
     patch's own row at the last write, min and max. The cell count is read off
     `constant/polyMesh/owner`'s header, which is the mesh's own statement of it.
@@ -60,7 +61,8 @@ the label
     One word the optimizer reads, in this order of precedence, the first that applies:
     `mesh` (no polyMesh, or `checkMesh` failed), `diverged` (a FOAM FATAL in the log, a
     residual climbing off its own best, or a field held at its bound for most of the
-    run), `unconverged` (a residual shape that is neither levelled nor falling, or no
+    run), `unconverged` (a residual shape that is not levelled, which includes a run
+    still falling when its iterations ran out, or no
     residuals at all), `yplus` (outside `fidelity.yplus`), `cells` (outside
     `fidelity.cells`), else `ok`. `timeout` is never decided here -- this cannot know how
     long a run was allowed -- so the caller that killed the run passes `--label timeout`,
@@ -658,7 +660,13 @@ def read_log(log: Path | None) -> dict:
     shape = log_digest.residual_shape(data["residuals"])["shape"]
     out["shape"] = shape
     out["steps"] = len(data["times"])
-    out["converged"] = data["converged_at"] is not None or shape in ("levelled", "falling")
+    # `falling` used to count as converged, which labelled `ok` a run that hit its
+    # iteration cap with the residuals still on their way down -- the commonest way for
+    # a design study to under-resolve a point and not be told. A still-falling run has
+    # not converged; it has run out of iterations. `levelled` has reached the steady
+    # answer it can reach, and the solver's own "solution converged" line settles it
+    # outright whatever the shape looks like (review of #54).
+    out["converged"] = data["converged_at"] is not None or shape == "levelled"
     if data["fatal"]:
         out["diverged"] = data["fatal"]
     elif shape == "diverging":

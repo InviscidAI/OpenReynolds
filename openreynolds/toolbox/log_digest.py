@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -145,13 +146,11 @@ def digest(path: Path):
 
 def _median(values: list[float]) -> float:
     """The median of the per-step `|min| / average` ratios of one bounded field: the
-    typical depth of the clip over the run, unmoved by the first few wild steps."""
-    ordered = sorted(values)
-    n = len(ordered)
-    if n == 0:
-        return 0.0
-    middle = n // 2
-    return ordered[middle] if n % 2 else 0.5 * (ordered[middle - 1] + ordered[middle])
+    typical depth of the clip over the run, unmoved by the first few wild steps.
+
+    `statistics.median` raises on an empty list, and a field that was never bounded has
+    no depth rather than no answer, so the empty case is 0.0."""
+    return statistics.median(values) if values else 0.0
 
 
 def plot(residuals, out: Path) -> None:
