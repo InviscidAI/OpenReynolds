@@ -113,6 +113,19 @@ def spend(tokens: dict[str, int] | None, model: str, provider: str = "") -> floa
                for name, count in (tokens or {}).items())
 
 
+def priced(tokens: dict[str, int] | None, model: str, provider: str = "") -> float | None:
+    """What a run cost, or `None` when any part of it has no rate: the model, or a
+    token class it counted that the model's rates do not list. `spend` prices an
+    unlisted class at zero, which is right for a sum and wrong for a figure shown to
+    somebody -- 50M tokens of a new class came out as $0.03 (#191)."""
+    rates = prices(model, provider)
+    if rates is None:
+        return None
+    if any(name not in rates for name, count in (tokens or {}).items() if int(count or 0)):
+        return None
+    return spend(tokens, model, provider)
+
+
 @dataclass(frozen=True)
 class Preset:
     name: str
