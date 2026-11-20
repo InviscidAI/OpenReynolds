@@ -1288,6 +1288,90 @@ def purge_write(study: str, opts) -> int:
     return 0 if study == "transient" else 3
 
 
+def times_on_disk(case: Path | str | None) -> list[str]:
+    """Time directory names already in a case, above 0, lowest first.
+
+    `study_state.latest_time` answers the same question with one name and counts `0`;
+    this one is for the question `startFrom` asks, which is whether a field from an
+    EARLIER run is sitting there.
+    """
+    if not case:
+        return []
+    found: list[tuple[float, str]] = []
+    try:
+        children = list(Path(case).iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if not child.is_dir() or child.name.startswith("processor"):
+            continue
+        if child.name in ("constant", "system"):
+            continue
+        try:
+            value = float(child.name)
+        except ValueError:
+            continue  # `0.orig` is not a time either
+        if value > 0.0:
+            found.append((value, child.name))
+    return [name for _, name in sorted(found)]
+
+
+def start_entries(case: Path | str | None, end: float) -> tuple[list[str], list[str]]:
+    """The `startFrom`/`startTime` pair for a case that may already hold an old run's
+    time directories, and what has to be said about it.
+
+    `startFrom latestTime` is deliberate and stays the default: the hosted container's
+    lifetime is 24 h, so an interrupted solve resumes from its last write with one
+    relaunch rather than starting over (`prompt.py`, and the same comment in the
+    templates). On a case being generated there is nothing but `0/`, and `latestTime`
+    IS `0`.
+
+    #181 is the case where it is not. Written over a finished run -- `--force` on a
+    case holding `0 0.orig 100 200 300 400 500` -- `latestTime` resolved to 500, past
+    the `--end-time 20` the user had just given, and `pimpleFoam` exited without
+    computing a single timestep while the summary reported a complete set-up and told
+    the user to run it. Neither generator looked at a time directory other than `0/`.
+
+    The worse half was `compressible.py`: the generator writes a correct absolute
+    `0/p` in Pa, and `latestTime` made the solver read a `500/p` left behind by an
+    earlier incompressible run, dimensions `[0 2 -2 0 0 0 0]` -- kinematic m2/s2,
+    silently, in the field the whole case is about.
+
+    So when an older run's times are there, the fields just written are the ones meant
+    to be read and `startFrom startTime` says so, in the dictionary and out loud. It is
+    not a refusal: continuing from 500 is a thing a person may want, and the note says
+    which line to change to get it.
+    """
+    times = times_on_disk(case)
+    if not times:
+        return ["startFrom       latestTime;", "startTime       0;"], []
+    latest = times[-1]
+    entries = [
+        "startFrom       startTime;",
+        "startTime       0;",
+        f"// NOT latestTime: {len(times)} time director{'y' if len(times) == 1 else 'ies'} "
+        f"from an earlier run ({', '.join(times[:6])}"
+        f"{', ...' if len(times) > 6 else ''}) are in this case, and the fields this "
+        f"generator just wrote are in 0/. `startFrom latestTime` would start at "
+        f"{latest}"
+        + (f", past endTime {end:g}, and the solver would exit having computed nothing"
+           if float(latest) >= end else "")
+        + ".",
+    ]
+    notes = [
+        f"start time  0 (startFrom startTime), NOT latestTime: {len(times)} time "
+        f"director{'y' if len(times) == 1 else 'ies'} from an earlier run are already "
+        f"here, the latest being {latest}"
+        + (f" -- past the endTime {end:g} given, so `latestTime` would have run zero "
+           "timesteps" if float(latest) >= end else ""),
+        f"            the fields this wrote are in 0/; the ones in {latest}/ are the "
+        "older run's and may not even be in the same units. To continue from them "
+        "instead, set `startFrom latestTime` in system/controlDict and raise endTime "
+        "above " + f"{latest}.",
+    ]
+    return entries, notes
+
+
 def io_optimisation() -> str:
     """The collated file handler, set on the case so decomposePar, the solver and
     reconstructPar all agree without a `-fileHandler` flag on each command.
@@ -1322,14 +1406,15 @@ def control_dict(plan: Plan, flow: Flow, opts, study: str, model: str = "") -> s
         fixed = opts.get("delta_t") is not None
         delta = float(opts["delta_t"]) if fixed else float(opts["courant"]) * cell / flow.speed
         interval = end / max(1, int(opts["writes"]))
-        entries = [f"application     {solver};", "startFrom       latestTime;", "startTime       0;",
-                   "stopAt          endTime;", f"endTime         {end:g};",
+        entries = ([f"application     {solver};"]
+                   + start_entries(opts.get("case"), end)[0]
+                   + ["stopAt          endTime;", f"endTime         {end:g};",
                    f"deltaT          {delta:.6g};",
                    f"writeControl    {'runTime' if fixed else 'adjustableRunTime'};",
                    f"writeInterval   {interval:.6g};", f"purgeWrite      {purge_write(study, opts)};",
                    "writeFormat     binary;",
                    "writePrecision  6;", "writeCompression off;", "timeFormat      general;",
-                   "timePrecision   6;", "runTimeModifiable true;"]
+                   "timePrecision   6;", "runTimeModifiable true;"])
         which = "the average cell" if plan.mesh.cell_is_estimate else "the shortest cell"
         if fixed:
             entries += ["adjustTimeStep  no;",
@@ -1345,14 +1430,15 @@ def control_dict(plan: Plan, flow: Flow, opts, study: str, model: str = "") -> s
                         f"// deltaT = maxCo * {cell:.4g} m ({which}) / {flow.speed:g} m/s"]
     else:
         end = float(opts["iterations"])
-        entries = [f"application     {solver or 'simpleFoam'};", "startFrom       latestTime;",
-                   "startTime       0;", "stopAt          endTime;", f"endTime         {end:g};",
+        entries = ([f"application     {solver or 'simpleFoam'};"]
+                   + start_entries(opts.get("case"), end)[0]
+                   + ["stopAt          endTime;", f"endTime         {end:g};",
                    "deltaT          1;", "writeControl    timeStep;",
                    f"writeInterval   {max(1, int(end / max(1, int(opts['writes'])))):d};",
                    f"purgeWrite      {purge_write(study, opts)};", "writeFormat     binary;",
                    "writePrecision  6;",
                    "writeCompression off;", "timeFormat      general;", "timePrecision   6;",
-                   "runTimeModifiable true;"]
+                   "runTimeModifiable true;"])
     body = ("\n".join(entries) + function_objects(plan, flow, opts, study, model)
             + io_optimisation())
     return foam_file("dictionary", "controlDict", body, "system")
@@ -1822,6 +1908,12 @@ def summary(case: Path, plan: Plan, flow: Flow, study: str, model: str, why: str
         lines += turbulence_notes(plan, flow, model, opts)
         delta = les_delta(model, opts) if model in LES_FIELDS else ""
         lines += les_notes(case, plan, flow, model, delta, opts)
+        # The summary said "next: pimpleFoam -case ..." over a case whose `latestTime`
+        # was past the end time given, so the run it promised computed nothing (#181).
+        # `start_entries` is pure and reads the directory, so asking it twice is a stat.
+        lines += [f"{note}" for note in start_entries(
+            case, float(opts["end_time"]) if opts.get("end_time") is not None
+            else float(opts.get("iterations") or 0))[1]]
     lines += [f"           {note}" for note in plan.notes]
     return lines
 

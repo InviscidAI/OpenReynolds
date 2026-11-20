@@ -953,15 +953,17 @@ def control_dict(plan, thermo: dict, mach: float, opts, solver: str, study: str)
             f"           the acoustic speed is in the denominator, not just U -- "
             f"{wave / speed:.2f}x smaller a step than the incompressible rule gives"
         )
-        entries = [f"application     {solver};", "startFrom       latestTime;",
-                   "startTime       0;", "stopAt          endTime;",
+        start, start_notes = case_gen.start_entries(opts.get("case"), end)
+        notes += start_notes
+        entries = ([f"application     {solver};"] + start
+                   + ["stopAt          endTime;",
                    f"endTime         {end:g};", f"deltaT          {delta:.6g};",
                    f"writeControl    {'runTime' if fixed else 'adjustableRunTime'};",
                    f"writeInterval   {interval:.6g};",
                    f"purgeWrite      {case_gen.purge_write(study, opts)};",
                    "writeFormat     binary;", "writePrecision  6;",
                    "writeCompression off;", "timeFormat      general;",
-                   "timePrecision   6;", "runTimeModifiable true;"]
+                   "timePrecision   6;", "runTimeModifiable true;"])
         if fixed:
             entries += ["adjustTimeStep  no;",
                         f"// --delta-t {delta:.6g} s; acoustic Co = "
@@ -972,15 +974,17 @@ def control_dict(plan, thermo: dict, mach: float, opts, solver: str, study: str)
                         f"maxDeltaT       {delta * 5:.6g};"]
     else:
         end = float(opts["iterations"])
-        entries = [f"application     {solver};", "startFrom       latestTime;",
-                   "startTime       0;", "stopAt          endTime;",
+        start, start_notes = case_gen.start_entries(opts.get("case"), end)
+        notes += start_notes
+        entries = ([f"application     {solver};"] + start
+                   + ["stopAt          endTime;",
                    f"endTime         {end:g};", "deltaT          1;",
                    "writeControl    timeStep;",
                    f"writeInterval   {max(1, int(end / max(1, int(opts['writes']))))};",
                    f"purgeWrite      {case_gen.purge_write('steady', opts)};",
                    "writeFormat     binary;", "writePrecision  6;",
                    "writeCompression off;", "timeFormat      general;",
-                   "timePrecision   6;", "runTimeModifiable true;"]
+                   "timePrecision   6;", "runTimeModifiable true;"])
         if solver == "hisa":
             entries.append("// hisa counts dual-time pseudo-iterations, so deltaT 1 and "
                            "endTime is the iteration count")

@@ -620,3 +620,33 @@ def test_the_compressible_note_states_facts_rather_than_a_procedure():
     for imperative in ("you must", "always run", "before you", "step 1", "first,",
                        "you should", "make sure"):
         assert imperative not in section
+
+
+def test_an_old_runs_kinematic_pressure_is_not_the_field_this_case_starts_from(
+        compressible, body, capsys):
+    """The dangerous half of #181. The generator writes a correct absolute `0/p` in Pa
+    and then wrote `startFrom latestTime`, so on a case left over from an
+    incompressible run the solver read `500/p` instead -- `dimensions [0 2 -2 0 0 0 0]`,
+    kinematic m2/s2 -- while the summary printed `state p = 101325 Pa (absolute)`. The
+    pressure was silently in the wrong units, in the one field the whole case is about.
+
+    Same `case_gen.start_entries` as the incompressible generator, so there is one
+    place that decides this and not two.
+    """
+    for name in ("100", "500"):
+        (body / name).mkdir()
+        (body / name / "p").write_text(
+            "dimensions      [0 2 -2 0 0 0 0];\ninternalField uniform 0;\n",
+            encoding="utf-8")
+
+    assert run(compressible, body, "--mach", "0.3", "--up", "x", "--force") == 0
+    printed = capsys.readouterr().out
+    control = (body / "system" / "controlDict").read_text(encoding="utf-8")
+
+    assert "startFrom       startTime;" in control
+    assert "startFrom       latestTime;" not in control
+    assert "500" in control and "NOT latestTime" in control
+    assert "NOT latestTime" in printed
+    # The field it will now read is the one it wrote, in Pa.
+    assert "dimensions      [1 -1 -2 0 0 0 0];" in (body / "0" / "p").read_text(
+        encoding="utf-8")

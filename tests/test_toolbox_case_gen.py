@@ -505,3 +505,58 @@ def test_the_turbulence_model_is_chosen_from_reynolds_and_can_be_overridden(case
     high = case_gen.derive_flow({"speed": 1.0, "reynolds": 1e6, "nu": None, "length": None}, 0.1)
     assert case_gen.turbulence_model({"turbulence": "auto"}, high)[0] == "kOmegaSST"
     assert case_gen.turbulence_model({"turbulence": "kEpsilon"}, low)[0] == "kEpsilon"
+
+
+# -- the time directories already in the case (#181) -------------------------------
+
+
+def test_a_case_holding_an_older_runs_times_starts_from_zero_and_says_so(
+        case_gen, duct, capsys):
+    """#181. Both generators wrote `startFrom latestTime` beside the user's own
+    `--end-time` and neither looked at a time directory other than `0/`. Run over a
+    finished study case holding `0 0.orig 100 200 300 400 500` with `--end-time 20`,
+    `latestTime` resolved to 500, the solver exited without computing a single
+    timestep, and the summary reported a complete set-up and told the user to run it.
+
+    `latestTime` is deliberate and is still the default on a case with nothing but
+    `0/`: the hosted container's lifetime is 24 h, so an interrupted solve resumes
+    from its last write rather than starting over. What is new is that the generator
+    looks before it writes it.
+    """
+    assert run(case_gen, duct, "--length", "0.1", "--study", "transient",
+               "--end-time", "20") == 0
+    clean = (duct / "system" / "controlDict").read_text(encoding="utf-8")
+    assert "startFrom       latestTime;" in clean, "an interrupted solve still resumes"
+
+    for name in ("100", "200", "300", "400", "500", "0.orig"):
+        (duct / name).mkdir()
+    capsys.readouterr()
+    assert run(case_gen, duct, "--length", "0.1", "--study", "transient",
+               "--end-time", "20", "--force") == 0
+    printed = capsys.readouterr().out
+    control = (duct / "system" / "controlDict").read_text(encoding="utf-8")
+
+    assert "startFrom       startTime;" in control
+    assert "startFrom       latestTime;" not in control
+    # The times it found, by name, and what latestTime would have done.
+    assert "500" in control and "endTime 20" in control
+    assert "0.orig" not in control, "0.orig is not a time"
+    assert "NOT latestTime" in printed
+    assert "zero timesteps" in printed
+    # And the way back, because continuing from 500 is a thing a person may want.
+    assert "startFrom latestTime" in printed and "raise endTime" in printed
+
+
+def test_times_on_disk_counts_times_and_nothing_else(case_gen, tmp_path):
+    """`0` is the initial field and not an older run; `0.orig`, `constant`, `system`
+    and `processor*` are not times at all. `study_state.latest_time` answers a
+    different question (it counts `0`), which is why this one is here."""
+    for name in ("0", "0.orig", "constant", "system", "processor0", "processor1",
+                 "1.5", "10", "2"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "log.simpleFoam").write_text("", encoding="utf-8")
+    assert case_gen.times_on_disk(tmp_path) == ["1.5", "2", "10"]
+    assert case_gen.times_on_disk(tmp_path / "nowhere") == []
+    assert case_gen.times_on_disk(None) == []
+    assert case_gen.start_entries(tmp_path / "nowhere", 20.0)[0][0] == \
+        "startFrom       latestTime;"
