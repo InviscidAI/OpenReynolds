@@ -5,11 +5,12 @@ than a solver**, sorted by what it costs to run one. Each row carries the comman
 reference, **the length and velocity scales that reference is normalised on**, and the
 agreement a run really measured. Rows with no verdict say so in words.
 
-Three of these cases are written out in full further down this page, because they are the
-three cheapest routes in and because one of them is a worked failure worth more than its
-agreement. Every other row points at the directory that carries its own account: one
-account per case, because fifteen cases summarised twice is fifteen chances for the two
-summaries to drift apart, and the thing that drifts is always the reference value.
+Three of these cases are written out in full further down this page, because their
+prompts live in this directory and because one of them is a worked failure worth more than
+any agreement in the table. They are not the cheapest cases here -- tier 1 is, and tier 1
+is where to start. Every other row points at the directory that carries its own account:
+one account per case, because nineteen cases summarised twice is nineteen chances for the
+two summaries to drift apart, and the thing that drifts is always the reference value.
 
 **Why the normalisation basis is in every row rather than in a footnote.** Of the
 reference values this repository quotes, re-checking them against their sources changed
