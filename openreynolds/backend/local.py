@@ -322,6 +322,11 @@ def _numpy_here(backend: "LocalBackend") -> bool:
 class LocalBackend(KernelHost, Backend):
     """A workspace on this machine."""
 
+    shared_workspace = True
+    """Every study on this machine opens a home inside the one root, so a study can be
+    handed what another one built (`cad/mesh_index.py`). DockerBackend inherits it: the
+    container is new each time, the mounted directory is not."""
+
     def __init__(self, root: str | Path | None = None, bashrc: str | None = None):
         chosen = root or os.environ.get("OPENREYNOLDS_LOCAL_WORK") or DEFAULT_ROOT
         self.root = Path(chosen).expanduser().resolve()
@@ -398,6 +403,20 @@ class LocalBackend(KernelHost, Backend):
                 f"{path} is outside the workspace ({self.root})", "outside_workspace"
             )
         return resolved
+
+    def real_path(self, path: str) -> Path:
+        """Where a workspace path actually is on this machine.
+
+        The public form of `_resolve`, for the callers that can do a file's work in
+        Python instead of through `exec`. That is worth reaching for: `exec` runs
+        `bash -lc`, and on a Windows CI runner `bash` is WSL's stub, so every command
+        fails whatever it says (`tests/conftest.py:a_kernel_can_come_up`). It refuses a
+        path outside the root exactly as `_resolve` does.
+
+        `DockerBackend` inherits it and it stays correct there -- `_host` is already
+        `_resolve` of a `/work` path, and that backend does its own job and log file
+        work on the host this way."""
+        return self._resolve(path)
 
     def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
              *, background: bool = False) -> ExecResult:

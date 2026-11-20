@@ -336,7 +336,7 @@ def system_prompt(step_timeout_s: int, toolbox: str = TOOLBOX) -> str:
 
 def task_message(request: str, case_dir: str, case_rel: str,
                  said: list[str] | None = None, geometry: str = "",
-                 inputs: Sequence[str] = ()) -> str:
+                 inputs: Sequence[str] = (), built: str = "") -> str:
     """The message that starts the run: the job, the file, the directory, the words.
 
     The request is written by the agent that called this desk, which makes it a
@@ -390,6 +390,10 @@ def task_message(request: str, case_dir: str, case_rel: str,
         f"something there; the kernel's working directory is it, and `{case_rel}` is how "
         "the rest of the session refers to it). Work there and nowhere else."
     )
+    if built:
+        # `mesh_index.offer`: meshes other cases on this workspace already finished,
+        # as facts. Whether one of them is the mesh wanted here is the desk's call.
+        parts.append(built)
     parts.append(
         "Start by deciding what the shape is and how it will be meshed, then build the "
         "coarsest version of it and look at it."

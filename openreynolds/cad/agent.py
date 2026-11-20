@@ -46,6 +46,7 @@ from .cells import Cell, CellLog
 from .check import Check, mesh_regions, verify
 from .review import MAX_ROUNDS, REVIEW_TIMEOUT_S, Review, facts_from_check
 from . import gate
+from . import mesh_index
 
 MAX_STEPS = 30
 """Enough for a shape, a look, two or three revisions, a mesh and a finish. A run that
@@ -542,6 +543,10 @@ class CadDesk:
             result.error = f"could not make the case directory: {exc}"
             result.seconds = time.monotonic() - started
             return result
+        # Whatever this case's mesh was, it is about to be rebuilt, and a run that
+        # stops without passing leaves the old entry pointing at a half-written mesh
+        # (`mesh_index.retire`).
+        mesh_index.retire(self.backend, case_dir)
         try:
             self._prepare(case_dir)
         except Exception as exc:  # noqa: BLE001 - a brief naming a file nobody put there
@@ -564,13 +569,17 @@ class CadDesk:
         one's news."""
 
         system = self._system()
+        # Meshes other cases on this workspace already finished (#35), leaving out this
+        # case's own: a re-run of it rebuilds what is there.
+        root = mesh_index.root_of(self.backend)
+        built = mesh_index.offer(mesh_index.read(self.backend, root, exclude=case_dir), root)
         messages: list[dict[str, Any]] = [
             {"role": "user",
              "content": [{"type": "text",
                           "text": task_message(request, case_dir, case_rel,
                                                self._said(), geometry,
                                                [p for p in self._supplied
-                                                if p != geometry])}]}
+                                                if p != geometry], built=built)}]}
         ]
         last_text = ""
         turns = 0
@@ -729,6 +738,16 @@ class CadDesk:
         self._settle()
         result.seconds = time.monotonic() - started
         result.script = self.log.script()
+        if result.ok and result.check is not None:
+            # Here and not after the fallback below, which re-verifies what is on disk
+            # for a run that stopped on steps, time or a provider error and is marked
+            # "not reviewed" for the reason its own comment gives. Such a mesh can pass
+            # `checkMesh` and still be a partial or wrong shape -- nothing judged it
+            # against the request -- and the index would then offer it to the next
+            # study under that request's words. Only a run that said done and was
+            # accepted is written down.
+            mesh_index.record(self.backend, mesh_index.entry(
+                result.check, case_dir, request, self._study_id()), root)
         if not result.ok and result.check is None and result.stopped != "refused":
             # The run ended without saying done -- out of steps, out of time, or the
             # model call failed. What is on disk may still be a finished mesh, and a
@@ -752,6 +771,19 @@ class CadDesk:
             # is the one picture the main agent gets of what was built.
             result.png = result.review.png
         return result
+
+    def _study_id(self) -> str:
+        """Which study built a mesh, for the index. `Backend.study_id` is the platform's
+        own name for it once the session has said; the home's last segment is the fallback
+        for a study that has no row, and is empty rather than `work` for one old enough to
+        own the whole workspace root (`cli._home_path`)."""
+        told = getattr(self.backend, "study_id", None)
+        if told:
+            return str(told)
+        home = self.home.rstrip("/")
+        if home == mesh_index.root_of(self.backend).rstrip("/"):
+            return ""
+        return home.rsplit("/", 1)[-1]
 
     # -- the three seams a differently-briefed desk replaces ---------------------
     #

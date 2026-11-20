@@ -28,6 +28,7 @@ from .backend import local as local_backend
 from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
+from .cad import mesh_index
 from .browse import Browser
 from . import casebundle
 from .capture import Capture
@@ -3600,14 +3601,29 @@ def _workspace_facts(
     the workspace the briefing carries, asked of it together (see `_situation_brief`).
     Each is a round trip; asked of a workspace still coming up they wait for it."""
     home = store.session.home or WORKSPACE_ROOT
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="brief") as pool:
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="brief") as pool:
         note_future = (
             pool.submit(_workspace_note, browser, home, resuming) if browser is not None else None
         )
         machine_future = pool.submit(_machine_note, backend)
+        meshes_future = pool.submit(_meshes_note, backend, home)
         note = note_future.result() if note_future is not None else ""
         machine = machine_future.result()
-    return [line for line in (note, machine) if line]
+        meshes = meshes_future.result()
+    return [line for line in (note, machine, meshes) if line]
+
+
+def _meshes_note(backend: Backend, home: str) -> str:
+    """The meshes other studies finished on this workspace (`cad/mesh_index.py`, #35).
+
+    The note above says only how many other directories `/work` holds; a finished mesh
+    of the very geometry being asked for was once rebuilt from scratch next to one.
+
+    Empty on a workspace studies do not share, which is every hosted one: `read`
+    refuses there, since the only meshes on it would be this study's own."""
+    root = mesh_index.root_of(backend)
+    exclude = home if home.rstrip("/") != root.rstrip("/") else ""
+    return mesh_index.offer(mesh_index.read(backend, root, exclude=exclude), root)
 
 
 def _starting_note(eta_s: float, interactive: bool, mode: str = "auto") -> str:

@@ -304,6 +304,15 @@ class Backend(Protocol):
     workspace_root: str
     """Absolute path of the persistent directory, e.g. "/work"."""
 
+    shared_workspace: bool = False
+    """Whether studies share this workspace, so one study can see another's files.
+
+    A local workspace is one directory on one machine and every study opens a home
+    inside it (`cli._home_path`). The hosted service gives each study a workspace of
+    its own and never shares it (#92), so there a study's `/work` holds that study and
+    nothing else. False is the safe default: a backend that does not say is read as
+    private, which costs an offer rather than making a wrong one."""
+
     study_id: str | None = None
     """Which study this workspace is serving, once the session has said (`cli.session`
     sets it when it opens or resumes the study's row). Only a backend that keeps a copy
