@@ -435,7 +435,6 @@ def test_end_pressed_during_a_held_job_check_ends_the_wait_and_the_turn(
     """The wait returns at once saying the person ended the session; the model is not
     asked again; the transcript carries one line, in the harness's voice, saying the
     turn was ended by the person; the line itself is still there for the prompt."""
-    import threading
     import time
 
     from conftest import ScriptedReader
@@ -447,20 +446,35 @@ def test_end_pressed_during_a_held_job_check_ends_the_wait_and_the_turn(
         message([tool_block("job_check", {"job_id": job_id, "wait_s": 30})], stop_reason="tool_use"),
         message([text_block("the solve is done")]),
     ])
-    # The press records when it happened, and the claim is the ORDERING: the wait
-    # outlasted the press. A `0.25 <= elapsed` lower bound said the same thing by
-    # proxy and said it wrongly, because the timer starts here while `began` was
-    # taken after `loop.say`, so the setup in between was charged against the 0.3 s
-    # window. On a loaded Windows runner that left 0.172 s and 0.187 s of it and
-    # made `main` red twice (runs 44694231420 and 44694394108, neither caused by the
-    # change it failed on). Ordering needs no tolerance and cannot be outrun.
+    # End is pressed BY THE FIRST POLL, not by a clock, and that is the third attempt
+    # at this test. A `0.25 <= elapsed` lower bound measured the wait by proxy and
+    # measured it wrongly: the timer started before `began` was taken, so the setup
+    # was charged against the window, and `main` went red twice on a loaded runner
+    # (runs 44694231420 and 44694394108). Replacing it with an ordering assertion
+    # fixed that and left a second timing assumption nobody had noticed -- the lower
+    # bound had also been the only thing guaranteeing a poll happened before the
+    # press, and `assert polls["n"] >= 1` below depends on it. With a 0.3 s timer a
+    # runner slow enough to finish the setup late presses End before `run()` ever
+    # polls, so the wait answers on its first look and `polls["n"]` is 0: red on
+    # PR #22's windows-3.13 job with `assert (0 >= 1)`, on a branch that touches
+    # none of this.
+    #
+    # Pressing from inside the poll removes the clock entirely. The counter has
+    # already incremented when the press happens, so a poll provably preceded it;
+    # the press provably happens during the wait; and the ordering claim holds with
+    # no tolerance to outrun. `returned - began < 5` stays as the guard against a
+    # hang, which is the one thing here a wall clock is the right instrument for.
     pressed: list[float] = []
+    counted = backend.job_status
 
-    def press():
-        reader._lines.append(leaving)
-        pressed.append(time.monotonic())
+    def press_on_first_poll(jid):
+        status = counted(jid)
+        if not pressed:
+            reader._lines.append(leaving)
+            pressed.append(time.monotonic())
+        return status
 
-    threading.Timer(0.3, press).start()
+    backend.job_status = press_on_first_poll
 
     loop.say("watch it")
     began = time.monotonic()
