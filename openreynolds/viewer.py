@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 from pathlib import Path
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
@@ -50,10 +51,15 @@ gallery -- 32 of them in one real study, and `animate.py` will write hundreds --
 and a page that lists every frame buries the one render that matters. The rest are
 counted, not hidden: the line says how many and where they are."""
 
-SKIP_DIRS = frozenset({".reynolds", ".git", "__pycache__", "processor0", "node_modules"})
-"""Directories not walked. `.reynolds` is the study's own bookkeeping, and a
-`processorN` directory is one rank's copy of what the reconstructed case already
-holds."""
+SKIP_DIRS = frozenset({".reynolds", ".git", "__pycache__", "node_modules"})
+"""Directories not walked by name. `.reynolds` is the study's own bookkeeping."""
+
+PROCESSOR = re.compile(r"processor\d+$")
+"""`processor0`, `processor1`, ... -- one rank's copy of what the reconstructed case
+already holds. Matched rather than listed, because a decomposed case has as many of
+them as it had cores and a literal `processor0` in the skip list would walk the
+other seven. Nothing in them can reach the page anyway (an OpenFOAM field file has
+no suffix), so this is what it costs to walk them, not what it would show."""
 
 NOT_INTERACTIVE = (
     "This page shows the pictures the study rendered. It does not stream the mesh "
@@ -76,7 +82,8 @@ def walk(root: Path) -> tuple[list[Path], list[Path]]:
     pictures: list[Path] = []
     reports: list[Path] = []
     for here, dirs, names in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not _is_hidden(d))
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS
+                         and not _is_hidden(d) and not PROCESSOR.match(d))
         for name in names:
             if _is_hidden(name) or name == PAGE_NAME:
                 continue

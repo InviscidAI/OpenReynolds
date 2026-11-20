@@ -54,6 +54,22 @@ def test_the_studys_own_bookkeeping_is_not_a_result(tmp_path):
     assert not any(r.name == "log.simpleFoam" for r in reports)
 
 
+def test_every_rank_of_a_decomposed_case_is_skipped_not_just_the_first(tmp_path):
+    """A decomposed case has as many `processorN` directories as it had cores. They
+    are one rank's copy of the reconstructed case, and a skip list naming only
+    `processor0` would walk the other seven."""
+    for rank in range(4):
+        where = tmp_path / "files" / "case" / f"processor{rank}"
+        where.mkdir(parents=True)
+        (where / "slice.png").write_bytes(PNG)
+    (tmp_path / "files" / "case" / "processors4").mkdir()
+    (tmp_path / "files" / "case" / "processors4" / "keep.png").write_bytes(PNG)
+
+    pictures, _ = viewer.walk(tmp_path)
+
+    assert [p.parent.name for p in pictures] == ["processors4"], pictures
+
+
 def test_pictures_group_by_the_folder_that_wrote_them(tmp_path):
     """Without the manifest the directory is the only grouping there is -- and it is
     not a poor one: `renders_zoom` was named by whatever drew into it."""
