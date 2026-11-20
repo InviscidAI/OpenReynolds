@@ -110,9 +110,10 @@ NU = SPEED * RE_LENGTH / REYNOLDS   # case_gen.derive_flow:592  nu = U*L/Re  -> 
 
 # The one thing here that is NOT a constant. `CELL_SIZE_M` is a background size
 # handed to gmsh, not a division count, and the Blossom recombination that makes the
-# quads does not honour it as one: the first measured run came out with 1000 cells of
-# about 1.41 mm on a 2 mm request, so a y+ computed from an assumed 2 mm first cell
-# was out by sqrt(2) and looked like a solver problem. The first-cell height is
+# quads does not honour it as one: the first measured run came out with 1000 cells
+# whose first row at the wall is 1.491 mm on a 2 mm request, so a y+ computed from an
+# assumed 2 mm first cell was out by a third and looked like a solver problem. The
+# measured number is not a constant either, which is the point. The first-cell height is
 # therefore measured off `constant/polyMesh` with `layer_report.py` -- the same
 # measurement `wall.py` itself uses -- and never assumed.
 
@@ -159,11 +160,12 @@ TOL = {
     "profile_mean": 0.05,
     # Second-order on ten cells, over a 30 mm window of a 100 mm duct. Measured +2.9%.
     "dpdx": 0.08,
-    # The wall shear the measured y+ implies, against the exact 6 nu u_mean / H. This
-    # is the loosest number here on purpose: y+ is squared into tau, the entrance
-    # region raises the shear over part of the wall, and the first-cell height varies
-    # face to face on a recombined quad mesh. What it still catches is the class of
-    # thing that broke it the first time -- a y+ off by sqrt(2), or a defaulted nu.
+    # The wall shear the measured mean y+ implies, against the exact 6 nu u_mean / H.
+    # The loosest number here on purpose: y+ is squared into tau, the entrance region
+    # raises the shear over part of the wall, and the first-cell height varies face to
+    # face on a recombined quad mesh. Measured -9.7% and -8.7% on the two walls, so
+    # there is three times the margin. What it still catches is the class of thing
+    # that broke it the first time -- a y+ out by sqrt(2), or a defaulted nu.
     "tau": 0.30,
     # The two walls of a symmetric duct see the same shear, and the profile either
     # side of the centreline is the same. Any gap is numerical. Measured 0.6%.
@@ -535,7 +537,7 @@ def test_y_plus_is_measured_off_the_case_and_not_defaulted(journey):
               f"{h.size} faces")
 
     # Sources with no wall row at all are skipped rather than failed: the
-    # wallShearStress path cannot produce one on a real OpenFOAM case (issue filed --
+    # wallShearStress path cannot produce one on a real OpenFOAM case (issue #199 --
     # `wallShearStress` is a vector field and `from_wall_shear` compares 3N numbers
     # against N faces). Both y+ sources must be there, and they must agree.
     usable = [source for source in found["sources"]
@@ -550,24 +552,22 @@ def test_y_plus_is_measured_off_the_case_and_not_defaulted(journey):
         assert set(heights) <= set(rows), (
             f"{source['source']} reported {sorted(rows)}, not both duct walls")
         for name in heights:
-            # Both the lowest y+ on the wall and the mean over it. The lowest is the
-            # developed value, since the entrance region's thin layer carries a higher
-            # shear than the settled parabola does; the mean is over the whole wall,
-            # and on a 100 mm duct whose entrance is under 40 mm the two are close.
-            # Measured: min -> 0.98 m2/s2, mean -> 1.20, against the exact 1.2.
+            # The mean y+ over the patch against the median first-cell height, which
+            # is the comparison that matches: the min y+ belongs to whichever face has
+            # the smallest cell (1.12 mm against a 1.491 mm median on the first graded
+            # run) and pairing it with the median reads 26% low for a reason that is
+            # arithmetic, not flow. Both are printed; the mean is the one asserted.
             y = float(np.median(heights[name])) / 2.0
-            taus = {stat: (rows[name][stat] * found["nu"] / y) ** 2
-                    for stat in ("min", "mean")}
+            tau = (rows[name]["mean"] * found["nu"] / y) ** 2
+            low = (rows[name]["min"] * found["nu"] / y) ** 2
             print(f"{source['source']}, {name}: y+ {rows[name]['min']:.4g} to "
                   f"{rows[name]['max']:.4g} (mean {rows[name]['mean']:.4g}) -> tau "
-                  + ", ".join(f"{stat} {value:.4g}" for stat, value in taus.items())
-                  + f" m2/s2; 6 nu u_mean / H = {TAU_WALL:.4g}")
-            for stat, tau in taus.items():
-                assert tau == pytest.approx(TAU_WALL, rel=TOL["tau"]), (
-                    f"{source['source']} on {name}: the {stat} y+ it reports implies a "
-                    f"wall shear of {tau:.4g} m2/s2 over a {2000 * y:.4g} mm first "
-                    f"cell; developed plane Poiseuille flow has 6 nu u_mean / H = "
-                    f"{TAU_WALL:.4g}")
+                  f"{tau:.4g} m2/s2 (from the lowest y+, {low:.4g}); "
+                  f"6 nu u_mean / H = {TAU_WALL:.4g}")
+            assert tau == pytest.approx(TAU_WALL, rel=TOL["tau"]), (
+                f"{source['source']} on {name}: the y+ it reports implies a wall shear "
+                f"of {tau:.4g} m2/s2 over a {2000 * y:.4g} mm first cell; developed "
+                f"plane Poiseuille flow has 6 nu u_mean / H = {TAU_WALL:.4g}")
             assert rows[name]["max"] < 1.0, (
                 f"{name} is not in the viscous sublayer (y+ max "
                 f"{rows[name]['max']:.4g}), which a laminar Re 10 duct must be")
