@@ -433,12 +433,64 @@ def test_forces_are_computed_only_where_there_is_a_body_to_take_them(case_gen, t
     rename_patches(plain, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
     run(case_gen, plain, "--length", "0.1")
     assert "forceCoeffs" not in (plain / "system" / "controlDict").read_text()
+    assert "yPlus" not in (plain / "system" / "controlDict").read_text()
 
     withbody = mesh_only(tmp_path, "withbody")
     rename_patches(withbody, {"movingWall": ("inlet", "patch"), "fixedWalls": ("body", "wall")})
     run(case_gen, withbody, "--length", "0.1", "--body", "body")
     text = (withbody / "system" / "controlDict").read_text()
     assert "forceCoeffs" in text and "patches         (body);" in text
+
+
+def test_yplus_is_a_function_object_only_when_asked_for(case_gen, tmp_path):
+    """`score.py` reads `postProcessing/yPlus/` to hold a design study inside its
+    wall-treatment band; the object is written at field writes, not every step, and it
+    does not need a body -- a duct's walls have a y+ too."""
+    plain = mesh_only(tmp_path, "plain")
+    rename_patches(plain, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
+    run(case_gen, plain, "--length", "0.1", "--yplus")
+    text = (plain / "system" / "controlDict").read_text()
+    assert "type            yPlus;" in text
+    assert "libs            (fieldFunctionObjects);" in text
+    assert "writeControl    writeTime;" in text
+    assert "forceCoeffs" not in text, "no body, no forces; the y+ object stands alone"
+
+    withbody = mesh_only(tmp_path, "withbody")
+    rename_patches(withbody, {"movingWall": ("inlet", "patch"), "fixedWalls": ("body", "wall")})
+    run(case_gen, withbody, "--length", "0.1", "--body", "body", "--yplus")
+    text = (withbody / "system" / "controlDict").read_text()
+    assert "forceCoeffs" in text and "yPlus" in text
+    assert text.count("functions") == 1, "one functions block carries both"
+
+
+def test_dp_is_two_surface_field_values_on_the_inlet_and_the_outlet(case_gen, duct_with_outlet):
+    """A pressure drop is not a force on a body, so `forceCoeffs` does not have it and
+    nothing in the log does: `score.py` reads these two records and subtracts them."""
+    run(case_gen, duct_with_outlet, "--length", "0.1", "--dp")
+    text = (duct_with_outlet / "system" / "controlDict").read_text()
+    assert text.count("type            surfaceFieldValue;") == 2
+    assert "    pInlet\n" in text and "    pOutlet\n" in text
+    assert "operation       areaAverage;" in text
+    assert "fields          (p);" in text
+    assert "regionType      patch;" in text
+    assert "name            inlet;" in text and "name            outlet;" in text
+    # every iteration, as the coefficients are, so the tail of the record is a window
+    assert text.count("writeControl    timeStep;") >= 2
+    assert text.count("functions") == 1
+
+
+def test_without_dp_there_are_no_pressure_probes(case_gen, duct_with_outlet):
+    run(case_gen, duct_with_outlet, "--length", "0.1")
+    assert "surfaceFieldValue" not in (duct_with_outlet / "system" / "controlDict").read_text()
+
+
+def test_dp_on_a_case_with_no_outlet_writes_the_inlet_probe_alone(case_gen, duct):
+    """One side is not a drop -- `score.py` reports none -- but the probe that exists is
+    still worth having, and the case must not fail over the other."""
+    run(case_gen, duct, "--length", "0.1", "--dp")
+    text = (duct / "system" / "controlDict").read_text()
+    assert text.count("type            surfaceFieldValue;") == 1
+    assert "    pInlet\n" in text and "pOutlet" not in text
 
 
 def test_writing_over_a_case_needs_force(case_gen, duct):
@@ -688,3 +740,132 @@ def test_a_case_with_no_tracer_asks_for_none_of_this(case_gen, duct):
     assert not (duct / "0" / "smoke").exists()
     assert "scalarTransport" not in (duct / "system" / "controlDict").read_text(
         encoding="utf-8")
+# -- a periodic cell: a cyclic pair driven at a fixed mean velocity -----------------
+
+
+@pytest.fixture
+def cell(tmp_path):
+    """The cavity cut into a periodic channel cell: `fixedWalls` split into its three
+    8-face sides -- `west` (x = 0), `east` (x = 0.1), `floor` -- and the lid a wall. The
+    faces are the cavity's own, so west and east really are one pitch (0.1 m) apart
+    with the same y-coordinates, which is what a cyclic pair needs."""
+    case = mesh_only(tmp_path, "cell")
+    path = case / "constant" / "polyMesh" / "boundary"
+
+    def block(name, start, kind):
+        return (f"    {name}\n    {{\n        type            {kind};\n        inGroups        1({kind});\n"
+                f"        nFaces          8;\n        startFace       {start};\n    }}\n")
+
+    text = re.sub(r"    fixedWalls\n    \{.*?\n    \}\n",
+                  block("west", 120, "patch") + block("east", 128, "patch") + block("floor", 136, "wall"),
+                  path.read_text(encoding="utf-8"), flags=re.S)
+    path.write_text(text.replace("\n3\n(", "\n5\n("), encoding="utf-8")
+    return case
+
+
+def boundary_entry(case: Path, patch: str) -> str:
+    text = (case / "constant" / "polyMesh" / "boundary").read_text(encoding="utf-8")
+    match = re.search(rf"^    {patch}\n    \{{\n(.*?)^    \}}", text, re.S | re.M)
+    assert match, text
+    return match.group(1)
+
+
+PERIODIC = ("--periodic", "west,east", "--speed", "0.1", "--nu", "1e-6", "--length", "0.0032",
+            "--turbulence", "laminar")
+
+
+def test_a_periodic_pair_is_made_cyclic_in_the_boundary_file(case_gen, cell):
+    """The mesh arrives with two ordinary patches; the pair is coupled where OpenFOAM
+    reads it, each naming the other. Face counts, starts and the other patches are the
+    mesh's and stay exactly as they were."""
+    run(case_gen, cell, *PERIODIC)
+    west, east = boundary_entry(cell, "west"), boundary_entry(cell, "east")
+    assert "type            cyclic;" in west and "neighbourPatch  east;" in west
+    assert "type            cyclic;" in east and "neighbourPatch  west;" in east
+    assert "nFaces          8;" in west and "startFace       120;" in west
+    assert "startFace       128;" in east
+    assert "type            wall;" in boundary_entry(cell, "floor")
+    assert "type            empty;" in boundary_entry(cell, "frontAndBack")
+
+
+def test_a_mismatched_pair_is_coupled_by_ami_with_the_measured_separation(case_gen, cell):
+    run(case_gen, cell, *PERIODIC, "--periodic-kind", "cyclicAMI")
+    west, east = boundary_entry(cell, "west"), boundary_entry(cell, "east")
+    assert "type            cyclicAMI;" in west and "transform       translational;" in west
+    assert "separationVector (0.1 0 0);" in west
+    assert "separationVector (-0.1 0 0);" in east
+
+
+def test_every_field_carries_the_pair_as_the_constraint_it_is(case_gen, cell):
+    """A cyclic patch takes `type cyclic` in every field, p included; anything else stops
+    the solver on the first step (`preflight.py` knows the message)."""
+    run(case_gen, cell, *PERIODIC)
+    for name in ("U", "p"):
+        text = field(cell, name)
+        for patch in ("west", "east"):
+            assert entry_for(text, patch).strip() == "type            cyclic;", (name, patch)
+
+
+def test_the_cell_is_driven_at_the_mean_velocity_and_the_pitch_is_measured(case_gen, cell):
+    """The flow rate is the duty, so it is held by `meanVelocityForce` and the pressure
+    drop is what comes out; `periodic.json` carries the pitch `score.py` multiplies the
+    source's gradient by. Driven from the first patch of the pair toward the second."""
+    run(case_gen, cell, *PERIODIC)
+    options = (cell / "constant" / "fvOptions").read_text()
+    assert "type            meanVelocityForce;" in options
+    assert "Ubar            (0.1 0 0);" in options
+    assert "selectionMode   all;" in options and "fields          (U);" in options
+    facts = json.loads((cell / "periodic.json").read_text())
+    assert facts["pitch"] == pytest.approx(0.1, rel=1e-6)
+    assert facts["patches"] == ["west", "east"] and facts["drive"] == [1.0, 0.0, 0.0]
+    assert "internalField   uniform (0.1 0 0);" in field(cell, "U")
+
+
+def test_reverse_is_the_same_cell_driven_the_other_way(case_gen, cell):
+    run(case_gen, cell, *PERIODIC, "--direction=-x")  # "-x" alone reads as a flag
+    assert "Ubar            (-0.1 0 0);" in (cell / "constant" / "fvOptions").read_text()
+    facts = json.loads((cell / "periodic.json").read_text())
+    assert facts["drive"] == [-1.0, 0.0, 0.0] and facts["pitch"] == pytest.approx(0.1, rel=1e-6)
+
+
+def test_a_cell_with_no_outlet_gets_a_pressure_reference(case_gen, cell):
+    """Nothing fixes p in a periodic cell, so it is only defined up to a constant and
+    simpleFoam needs a reference cell to pin it."""
+    run(case_gen, cell, *PERIODIC)
+    text = (cell / "system" / "fvSolution").read_text()
+    assert "pRefCell        0;" in text and "pRefValue       0;" in text
+
+
+def test_a_periodic_pair_is_two_patches(case_gen, cell):
+    with pytest.raises(SystemExit) as raised:
+        run(case_gen, cell, "--periodic", "west", "--length", "0.1")
+    assert "two patches" in str(raised.value)
+
+
+def test_a_periodic_cell_with_an_inlet_is_refused(case_gen, cell):
+    """The cell is driven by its source; an inlet would be a second, contradicting drive."""
+    with pytest.raises(SystemExit) as raised:
+        run(case_gen, cell, *PERIODIC, "--inlet", "floor")
+    assert "inlet" in str(raised.value)
+
+
+def test_a_non_periodic_case_gets_none_of_it(case_gen, duct_with_outlet):
+    run(case_gen, duct_with_outlet, "--length", "0.1")
+    assert not (duct_with_outlet / "constant" / "fvOptions").exists()
+    assert not (duct_with_outlet / "periodic.json").exists()
+    assert "pRefCell" not in (duct_with_outlet / "system" / "fvSolution").read_text()
+
+
+def test_the_drive_holds_the_flow_rate_not_the_volume_mean(case_gen):
+    """A 4 mm cell with a 2 mm-wide, 1 mm-thick end face and 16 mm2 of fluid (a loop
+    doubling a plain channel's 8 mm2): the flux through the face is speed x 2 mm, and
+    by continuity the volume mean that carries it is speed x 2 x 4 / 16 = speed / 2.
+    Holding the volume mean at `speed` would push twice the duty through this design."""
+    mesh = case_gen.MeshFacts(
+        patches=[{"name": "west", "type": "patch", "area": 2e-6},
+                 {"name": "frontAndBack", "type": "empty", "area": 2 * 16e-6}],
+        bounds=[0, 0, 0, 0.004, 0.006, 0.001], cells=1000, min_volume=0, two_d=True)
+    assert case_gen.bulk_to_mean(mesh, "west", 0.004) == pytest.approx(0.5)
+    flow = case_gen.Flow(0.2, 0.002, 1e-6, 400, "reynolds")
+    facts = {"drive": [-1.0, 0.0, 0.0], "bulk_to_mean": 0.5}
+    assert "Ubar            (-0.1 0 0);" in case_gen.fv_options(facts, flow)
