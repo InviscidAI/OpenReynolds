@@ -40,7 +40,7 @@ from typing import Any, Iterable
 from .backend.base import WORKSPACE_ROOT
 from .compare import identity
 from .llm.presets import REYNOLDS, priced
-from .store import Session, Store, list_stores, new_study_id, tag_name
+from .store import REVISED, Session, Store, list_stores, new_study_id, tag_name
 from .watch import conversation_rows
 
 NEW = "new"
@@ -287,3 +287,67 @@ def duplicate(studies_dir: Path, study_id: str, rerun: bool = False) -> tuple[st
     if request:
         fresh.append_message("user", request)
     return fresh.session.study_id, request
+
+
+# -- what became of one study, in order ----------------------------------------
+
+
+def lineage(studies_dir: Path, study_id: str) -> list[str]:
+    """This study and the studies it was cloned from, oldest first.
+
+    `cloned_from` has been recorded on every clone and rerun since they existed
+    (`store.Session.cloned_from`) and nothing read it, so a study three reruns deep
+    could not say what it was a rerun of. The walk stops at a parent this machine does
+    not have -- a clone of a study since deleted, or one made on another machine --
+    rather than reporting a gap as an origin, and a `cloned_from` cycle cannot wedge
+    it: a study already seen ends the walk.
+    """
+    studies_dir = Path(studies_dir)
+    chain, seen = [study_id], {study_id}
+    while True:
+        record = studies_dir / chain[0] / "session.json"
+        if not record.is_file():
+            break
+        try:
+            parent = str(json.loads(record.read_text(encoding="utf-8")).get("cloned_from") or "")
+        except (OSError, json.JSONDecodeError):
+            break
+        if not parent or parent in seen or not (studies_dir / parent / "session.json").is_file():
+            break
+        chain.insert(0, parent)
+        seen.add(parent)
+    return chain
+
+
+def history(studies_dir: Path, study_id: str) -> dict[str, Any]:
+    """One study's own record of itself over time: where it came from, what was
+    changed about its setup and when, and how much conversation is on disk.
+
+    Three sources, none of them new: `revisions.jsonl`, which `Store.save` appends to
+    whenever a setup field changes; `cloned_from`, walked by `lineage`; and
+    `messages.jsonl`, counted rather than quoted. What this does NOT do is diff two
+    studies' results -- `openreynolds compare` does that, and doing it twice in two
+    voices is how two tools come to disagree about one pair of runs.
+    """
+    studies_dir = Path(studies_dir)
+    store = Store(studies_dir, study_id)
+    said: dict[str, int] = {}
+    transcript = studies_dir / study_id / "messages.jsonl"
+    if transcript.is_file():
+        for line in transcript.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                role = str(json.loads(line).get("role") or "?")
+            except json.JSONDecodeError:
+                continue
+            said[role] = said.get(role, 0) + 1
+    return {
+        "study_id": study_id,
+        "created_at": store.session.created_at,
+        "cloned_from": store.session.cloned_from,
+        "lineage": lineage(studies_dir, study_id),
+        "revisions": store.revisions(),
+        "messages": said,
+        "now": {field: getattr(store.session, field) for field in REVISED},
+    }

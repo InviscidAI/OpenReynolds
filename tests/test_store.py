@@ -324,4 +324,10 @@ def test_several_writers_at_once_never_show_a_reader_half_a_record(tmp_path):
         stop.set()
         watching.join(5)
     assert torn == []
-    assert [p.name for p in (root / "s1").iterdir()] == ["session.json"]
+    # No temp file left behind by any of the three, which is what this line is for.
+    # It used to read `== ["session.json"]`; `revisions.jsonl` now sits beside it,
+    # appended to by whichever writer changed the title (`store.REVISED`), so the
+    # check is spelled as the absence of leftovers rather than as a file count.
+    left = {p.name for p in (root / "s1").iterdir()}
+    assert left == {"session.json", "revisions.jsonl"}, left
+    assert not any(".tmp" in name for name in left)

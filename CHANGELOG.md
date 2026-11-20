@@ -144,6 +144,71 @@ All notable changes to this project are recorded here. The format follows
     -3 to -20 radii moves it 0.01%, so it is neither discretisation nor the far field. The
     grader fails a measurement *below* 1/8 as a bug rather than passing it as a better
     answer.
+- **A surrogate for a finished parametric sweep, reported with the error it makes on
+  points it was not fitted to.** `toolbox/surrogate.py` fits a polynomial response
+  surface over the design variables of a sweep -- read from a `.csv`/`.json` table, or
+  from a round of candidate directories holding `design_constants.py` and
+  `metrics.json` -- and keeps the degree with the lowest leave-one-out error.
+  - The fit residual is not an error and is labelled as not being one. A degree-4
+    surface through 16 points in two variables scores 0.000109 on its own samples and
+    is wrong by 0.005236 on 2500 points it never saw, 48x more; the leave-one-out error
+    said 0.044015. Both numbers are printed for every degree tried, and a degree whose
+    basis has as many terms as there are points is refused by name instead of fitted,
+    because at that point the surface interpolates and there is nothing left to grade
+    it on.
+  - Leave-one-out is exact and free rather than estimated: `r_i / (1 - h_ii)` off the
+    projection's leverages, checked in `tests/test_toolbox_surrogate.py` against twenty
+    actual refits. The estimator itself is checked against a response whose value is
+    known everywhere -- on 25 points it came back 26% optimistic against the truth
+    measured on 2500 independent points, where the fit error was out by a factor of
+    three -- because there is no published number for how well a cubic fits somebody's
+    sweep, and a surrogate graded only on its training points is a lie by construction.
+  - A candidate whose score label is not `ok` is named and left out: a diverged run's
+    coefficient is not a sample of the response, and fitting it in is how a surrogate
+    learns that a broken mesh is a good design. The predicted optimum is the surface's
+    own extreme inside the box the samples span, carried with the leave-one-out error
+    as its bar and never solved for, and an optimum on a face of that box says so,
+    that bound being the sweep's and not the response's. numpy only; scipy is not on
+    the image and sklearn cannot be added.
+
+- **Whether this instance has the adjoint optimisation solver, asked rather than
+  assumed.** `toolbox/adjoint_env.py`. `adjointOptimisationFoam` gives
+  dJ/d(every surface point) for about the cost of one extra primal solve, and nothing
+  in this package knew it existed: the only adjoint name anywhere was the legacy
+  `adjointShapeOptimizationFoam`, a porosity-field topology optimisation that is not a
+  substitute for it and is now reported separately. It is in the ESI v2512 source tree
+  at `applications/solvers/incompressible/adjointOptimisationFoam`, read from the
+  release tag itself; whether this image's package built it is a fact about the
+  instance, and guessing wrong is expensive both ways.
+  - It prints paths rather than writing a case, on the argument `hisa_env.py` makes
+    about the ONERA M6 case it points at: the installed build ships complete working
+    dictionary sets per objective under `$FOAM_TUTORIALS`, and a set retyped here would
+    be a second copy nothing on the instance can check and no test in this repository
+    can run. So it finds every directory with a `system/optimisationDict`, reads each
+    one's `optimisationManager`, `sensitivityType`, objective types and
+    `adjointRASModel` off the disk in front of it, says which are `singleRun` (a
+    sensitivity map, not an optimisation loop), reports an incomplete case as incomplete
+    rather than offering it, and copies one out while saying the mesh lives in the
+    tutorials' shared `resources/` and did not come with it.
+  - **No sensitivity from this solver has been checked against a finite difference by
+    anything here**, which the output states every time it runs.
+    `--finite-difference` prints the recipe and the two traps that make an honest
+    adjoint look wrong: a perturbation that moved a surface file instead of the mesh the
+    primal solved on, and a step h smaller than the two primals' own convergence
+    tolerance.
+
+- **`openreynolds history`: what was changed about one study's setup, and where it came
+  from.** `session.json` is rewritten whole on every save, so the record on disk had
+  only ever said what a study is now. A study whose model was swapped mid-run, whose
+  solver was settled on after the first mesh, or that was filed and refiled, kept none
+  of that -- and one token total with two models behind it cannot be split back apart.
+  Each change to a setup field is now appended to the study's own `revisions.jsonl` as
+  it happens (`store.REVISED`), and the command prints them with both values. It also
+  walks `cloned_from`, which `clone` and `rerun` have always written and nothing read,
+  so a study three reruns deep can say what it is a rerun of. Accounting fields are
+  deliberately not logged: they change on nearly every save and their history is the
+  transcript's. A study with no log is reported as having no log, which is not the same
+  as having changed nothing.
 
 ### Fixed
 
@@ -479,6 +544,15 @@ All notable changes to this project are recorded here. The format follows
   extent, a 2D formula. `tests/test_toolbox_reference_area.py` puts R01's mesh
   shape, built from the hull's published equations, and R01's recorded force through
   that code and holds the answer to 87.4 N and Ct 3.15e-3.
+- **`adjointOptimisationFoam`'s time column counts iterations, and
+  `preflight.STEADY_APPLICATIONS` did not know it.** The list named its predecessor
+  `adjointShapeOptimizationFoam` and not it, the two differing by one word and a
+  capital, so a Courant number would have been reported for a run that has no clock.
+  ESI v2512's own sensitivity tutorial settles it: `system/controlDict` says
+  `application adjointOptimisationFoam`, `deltaT 1`, `endTime 6000`, and its
+  `system/fvSchemes` says `ddtSchemes { default steadyState; }`, so that 6000 is six
+  thousand SIMPLE iterations. Quoted in `tests/test_toolbox_adjoint_env.py` from the
+  release tag rather than from a secondary source.
 
 - **A study on a local workspace uploaded nothing at all.** Capture is on by default and
   `--no-capture` is how it is turned off, but `cli.session` leaves the workspace

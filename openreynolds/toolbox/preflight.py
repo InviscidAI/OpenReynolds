@@ -192,11 +192,20 @@ which is why their absence from the written-out entries is not a missing entry."
 
 STEADY_APPLICATIONS = frozenset({
     "simpleFoam", "potentialFoam", "boundaryFoam", "porousSimpleFoam",
-    "SRFSimpleFoam", "adjointShapeOptimizationFoam", "buoyantSimpleFoam",
-    "rhoSimpleFoam", "rhoPorousSimpleFoam", "overSimpleFoam",
+    "SRFSimpleFoam", "adjointShapeOptimizationFoam", "adjointOptimisationFoam",
+    "buoyantSimpleFoam", "rhoSimpleFoam", "rhoPorousSimpleFoam", "overSimpleFoam",
 })
 """Solvers whose `deltaT` counts iterations rather than seconds. Reporting a Courant
-number for one of these would be reporting a number that does not exist."""
+number for one of these would be reporting a number that does not exist.
+
+`adjointOptimisationFoam` was missing while its predecessor
+`adjointShapeOptimizationFoam` was here, which is the easiest kind of omission to
+leave: the two differ by one word and a capital. ESI v2512's own sensitivity tutorial
+settles it -- `system/controlDict` says `application adjointOptimisationFoam`,
+`deltaT 1`, `endTime 6000` and its `system/fvSchemes` says
+`ddtSchemes { default steadyState; }`, so that 6000 is six thousand SIMPLE iterations
+and no clock (quoted in `tests/test_toolbox_adjoint_env.py` from the OpenFOAM-v2512
+release tag). `toolbox/adjoint_env.py` is the probe that found this."""
 
 
 def strip_comments(text: str) -> str:
