@@ -448,7 +448,9 @@ def decode_binary(path: Path) -> tuple[str, list[np.ndarray]]:
             "decoded here"
         )
     default_items = 3 if "Vector" in fobj.cls else 1
-    pieces: list[str] = []
+    # The header comes back with the body: `field_components` reads `class` out of the
+    # returned text, and without it every binary volVectorField decodes as a scalar.
+    pieces: list[str] = [fobj.text[:fobj.body_at]]
     payloads: list[np.ndarray] = []
     at = fobj.body_at
     while True:

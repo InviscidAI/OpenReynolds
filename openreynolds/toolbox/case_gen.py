@@ -1762,7 +1762,7 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
             y_low, y_high = estimate_y_plus(low, flow), estimate_y_plus(high, flow)
             notes.append(
                 f"           {name}: first cell {low:.3g}-{high:.3g} m -> y+ ~ "
-                f"{y_low:.0f}-{y_high:.0f} a priori (flat plate, Re_x = Re/2)"
+                f"{y_low:.2g}-{y_high:.2g} a priori (flat plate, Re_x = Re/2)"
             )
         notes.append(
             "           (wall-resolved LES wants that y+ of order 1 and a near-isotropic "
