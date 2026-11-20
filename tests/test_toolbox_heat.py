@@ -20,8 +20,10 @@ import ast
 import importlib.util
 import json
 import shutil
+import struct
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -762,3 +764,83 @@ def test_the_mesh_and_field_reading_are_the_toolboxs_and_not_a_second_copy(heat)
     for rewritten in ("def read_points", "def read_faces", "def read_labels",
                       "def cell_centres", "def read_mesh"):
         assert rewritten not in source, "nothing here reads the mesh files itself"
+
+
+# -- the binary spelling, which this file never read (#163) --------------------
+
+
+def write_binary(path: Path, cls: str, entries: dict[str, Any], kind: str,
+                 items: int) -> Path:
+    """A `format binary;` field with a real little-endian IEEE-754 payload.
+
+    The same writer `tests/test_toolbox_wall.py` has, because the thing under test is
+    that heat.py now reads through the same decoder wall.py does. A `str` entry is
+    written as ascii.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parts = [(
+        "FoamFile\n{\n    version     2.0;\n    format      binary;\n"
+        '    arch        "LSB;label=32;scalar=64";\n'
+        f"    class       {cls};\n    object      {path.name};\n}}\n\n"
+        "dimensions      [0 0 0 0 0 0 0];\n\ninternalField   uniform 0;\n\n"
+        "boundaryField\n{\n"
+    ).encode("ascii")]
+    for name, value in entries.items():
+        parts.append(f"    {name}\n    {{\n        type            calculated;\n".encode())
+        if isinstance(value, str):
+            parts.append(f"        value           {value};\n".encode("ascii"))
+        else:
+            parts.append(f"        value           nonuniform List<{kind}> \n"
+                         f"{len(value) // items}\n(".encode("ascii"))
+            parts.append(struct.pack(f"<{len(value)}d", *[float(v) for v in value]))
+            parts.append(b");\n")
+        parts.append(b"    }\n")
+    parts.append(b"}\n\n// " + b"*" * 40 + b" //\n")
+    path.write_bytes(b"".join(parts))
+    return path
+
+
+def binary_bulk_case(root: Path) -> Path:
+    """`bulk_case`, written `format binary` -- the same case and the same answers."""
+    case = box(root, rename_wall="inlet")
+    write_binary(case / "0.5" / "T", "volScalarField",
+                 {"inlet": [300.0] * 4 + [400.0] * 4}, "scalar", 1)
+    write_binary(case / "0.5" / "U", "volVectorField",
+                 {"inlet": [c for face in [(0, 0, -1.0)] * 4 + [(0, 0, -3.0)] * 4
+                            for c in face]}, "vector", 3)
+    return case
+
+
+def test_a_binary_T_and_U_give_the_same_reference_temperature_as_the_ascii_ones(
+        heat, tmp_path):
+    """#138 fixed the binary reader in wall.py; heat.py was never switched to it, so
+    it went on scraping decimal digits out of IEEE-754 bytes for T_wall and for the
+    bulk reference. Both now go through `wall.read_field`.
+
+    Same numbers as the ascii `bulk_case`: 360 K area-weighted, 840/2.2 K mixed.
+    """
+    case = binary_bulk_case(tmp_path)
+    regions, _ = heat.regions_of(case)
+    (region,) = regions
+    mesh = heat.mesh_of(region)
+
+    scraped = heat.wall.boundary_values(
+        (case / "0.5" / "T").read_text(encoding="utf-8", errors="replace")
+    ).get("inlet")
+    assert scraped is None or scraped.size != 8, (
+        "the fixture has to be a file the ascii reader gets wrong, or it proves nothing"
+    )
+
+    temperatures = heat.patch_values(case / "0.5" / "T")
+    assert temperatures["inlet"].tolist() == [300.0] * 4 + [400.0] * 4
+
+    velocities = heat.boundary_vectors(case / "0.5" / "U")["inlet"]
+    assert velocities.shape == (8, 3)
+    assert velocities[:, 2].tolist() == [-1.0] * 4 + [-3.0] * 4
+
+    flux = heat.reference_temperature(region, mesh, temperatures, stated=None,
+                                      patch="inlet", convention="bulk", time=None)
+    area = heat.reference_temperature(region, mesh, temperatures, stated=None,
+                                      patch="inlet", convention="inlet", time=None)
+    assert area.value == pytest.approx(360.0)
+    assert flux.value == pytest.approx(840.0 / 2.2)

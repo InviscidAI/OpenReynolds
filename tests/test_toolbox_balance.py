@@ -99,6 +99,42 @@ def test_direction_comes_from_the_sign_and_not_from_the_name():
     assert [row["direction"] for row in table] == ["inflow", "outflow"]
 
 
+def test_a_patch_whose_declared_type_carries_no_flux_is_in_neither_total():
+    """A sign is a measurement and a name is a convention, but a *type* out of
+    `constant/polyMesh/boundary` is neither. Four symmetry planes reconstructing
+    18.6% of the reported outflow between them put a real tube-bank case 20.53% out
+    of balance where its own `phi` closes to 0.0000089% (#161)."""
+    table = rows(("inlet", -1.0), ("outlet", 1.0), ("front", 0.15), ("back", 0.27),
+                 ("wedge1", -0.05), ("slice", 0.02))
+    for row, kind in zip(table, ("patch", "patch", "symmetryPlane", "symmetryPlane",
+                                 "wedge", "empty")):
+        row["type"] = kind
+    report = balance.split(table, 1e-6)
+    found = {row["patch"]: row for row in table}
+    for name in ("front", "back", "wedge1", "slice"):
+        assert found[name]["direction"] == "no flux", name
+        assert found[name]["share_pct"] is None, name
+    assert report["inflow"] == pytest.approx(1.0)
+    assert report["outflow"] == pytest.approx(1.0)
+    assert report["closure_error"] == pytest.approx(0.0)
+    assert report["inflow_patches"] == ["inlet"]
+    assert report["outflow_patches"] == ["outlet"]
+    assert report["no_flux_patches"] == ["front (symmetryPlane)", "back (symmetryPlane)",
+                                         "wedge1 (wedge)", "slice (empty)"]
+
+
+def test_a_cyclic_patch_is_still_in_the_split():
+    """A cyclic patch really does carry flux and its pair carries the opposite, so
+    excluding it would be the same mistake in the other direction."""
+    table = rows(("in", -1.0), ("out", 1.0), ("cyc_a", -0.3), ("cyc_b", 0.3))
+    for row, kind in zip(table, ("patch", "patch", "cyclic", "cyclic")):
+        row["type"] = kind
+    report = balance.split(table, 1e-6)
+    assert report["inflow_patches"] == ["in", "cyc_a"]
+    assert report["outflow_patches"] == ["out", "cyc_b"]
+    assert report["no_flux_patches"] == []
+
+
 def test_k_is_the_total_drop_over_the_dynamic_head():
     drop = {"dp_static": 10.0, "dp_total": 12.5}
     got = balance.coefficients(drop, "kinematic", "m^2 s^-2", None, 5.0, None, None)
@@ -243,6 +279,31 @@ def test_an_inflow_is_identified_by_its_flux_sign_however_it_is_named(tmp_path):
     assert found["outlet_west"]["volume_flux"] == pytest.approx(-INFLOW, rel=1e-4)
     assert found["outlet_west"]["share_pct"] == pytest.approx(100.0)
     assert report["balance"]["inflow_patches"] == ["outlet_west"]
+
+
+def retype(case: Path, patch: str, kind: str) -> None:
+    """Change one patch's declared type in `constant/polyMesh/boundary`."""
+    path = case / "constant" / "polyMesh" / "boundary"
+    text = path.read_text()
+    out = [(name, kind if name == patch else was, int(count), int(start))
+           for name, was, count, start in PATCH_ENTRY.findall(text)]
+    body = "".join(f"    {name} {{ type {was}; nFaces {count}; startFace {start}; }}\n"
+                   for name, was, count, start in out)
+    path.write_text(f"{text.splitlines()[0]}\n{len(out)}\n(\n{body})\n")
+
+
+def test_a_patch_declared_symmetry_is_reported_as_carrying_no_flux(tmp_path, capsys):
+    """Read off the case's own `constant/polyMesh/boundary`, and said in the summary,
+    so nobody has to wonder why a patch is in neither total (#161)."""
+    case = manifold(tmp_path)
+    retype(case, "walls", "symmetryPlane")
+    report = run(case)
+    walls = by_patch(report)["walls"]
+    assert walls["type"] == "symmetryPlane"
+    assert walls["direction"] == "no flux" and walls["share_pct"] is None
+    assert report["balance"]["no_flux_patches"] == ["walls (symmetryPlane)"]
+    assert report["balance"]["closed_patches"] == []
+    assert "no flux by declared patch type" in capsys.readouterr().out
 
 
 def test_a_wall_carries_zero_flux_and_does_not_pollute_the_shares(tmp_path):

@@ -493,10 +493,18 @@ def read_field(path: Path) -> tuple[str, list[np.ndarray] | None]:
     return decode_binary(path)
 
 
-def boundary_values(text: str,
-                    payloads: list[np.ndarray] | None = None
-                    ) -> dict[str, np.ndarray | None]:
-    """`{patch: magnitudes}` out of a field's `boundaryField`, one per wall face.
+_DECLARED = re.compile(r"\bnonuniform\b[^(]*?(\d+)\s*(?:\(|@payload)")
+
+
+def boundary_scalars(text: str,
+                     payloads: list[np.ndarray] | None = None
+                     ) -> dict[str, np.ndarray | None]:
+    """`{patch: the numbers written on it}` out of a field's `boundaryField`.
+
+    The one place a `boundaryField` entry's values are read. `boundary_values` folds
+    these to magnitudes and `boundary_vectors` reshapes them; both tools go through
+    here, which is the point -- `heat.py` had its own copy of this loop and its own
+    number regex, so #138's binary fix reached `wall.py` and not it (#163).
 
     The brace matching is `preflight.py`'s, so a nested patch entry is not read as
     the end of the block. A `uniform` entry comes back as a single value rather than
@@ -507,10 +515,15 @@ def boundary_values(text: str,
     than as an empty array, which would read as a measured nothing.
 
     `payloads` is `decode_binary`'s, and an `@payload n@` marker is resolved from it
-    instead of being handed to the number regex. Without it the reading is the ascii
-    one it has always been, which is what `heat.py` calls this for.
+    instead of being handed to the number regex.
+
+    A `nonuniform List<...> N(` whose body does not yield N items is `None` too. That
+    check is what makes a size of one trustworthy downstream: `heat.patch_mean`
+    broadcasts a single value over the whole patch, and the way a wrong answer got
+    through it silently was a `nonuniform` list of hundreds of faces from which the
+    number regex happened to scrape exactly one number.
     """
-    components = field_components(text)
+    items = 3 if field_components(text) == 3 else 1
     found: dict[str, np.ndarray | None] = {}
     body = preflight.block_body(text, "boundaryField")
     for name, inner in preflight.block_entries(body):
@@ -521,31 +534,64 @@ def boundary_values(text: str,
         if not match:
             found[patch] = None
             continue
-        tail = inner[match.end():].split(";", 1)[0]
+        entry = inner[match.end():].split(";", 1)[0]
+        declared = _DECLARED.search(entry)
         # The count in `nonuniform List<scalar> 8(...)` is not a datum; everything
         # from the opening parenthesis on is.
-        if "(" in tail:
-            tail = tail[tail.index("("):]
+        tail = entry[entry.index("("):] if "(" in entry else entry
         marker = _PAYLOAD.search(tail)
         if marker is not None and payloads is not None:
             index = int(marker.group(1))
-            values = payloads[index].astype(float) if index < len(payloads) else None
-            if values is None:
+            if index >= len(payloads):
                 found[patch] = None
                 continue
+            values = payloads[index].astype(float)
         else:
             numbers = [float(token) for token in _NUMBER.findall(tail)]
             if not numbers:
                 found[patch] = None
                 continue
             values = np.asarray(numbers, dtype=float)
-        if components == 3:
-            if values.size % 3:
-                found[patch] = None
-                continue
-            values = np.linalg.norm(values.reshape(-1, 3), axis=1)
+        if values.size % items or (declared is not None
+                                   and values.size != int(declared.group(1)) * items):
+            found[patch] = None
+            continue
         found[patch] = values
     return found
+
+
+def boundary_values(text: str,
+                    payloads: list[np.ndarray] | None = None
+                    ) -> dict[str, np.ndarray | None]:
+    """`{patch: magnitudes}` out of a field's `boundaryField`, one per wall face.
+
+    A vector field's three components per face become one magnitude, which is what a
+    y+ or a wall shear is measured off. `boundary_vectors` is the same read with the
+    components kept, for the places where a sign matters.
+    """
+    components = field_components(text)
+    found = boundary_scalars(text, payloads)
+    if components != 3:
+        return found
+    return {patch: None if values is None else np.linalg.norm(values.reshape(-1, 3), axis=1)
+            for patch, values in found.items()}
+
+
+def boundary_vectors(text: str,
+                     payloads: list[np.ndarray] | None = None
+                     ) -> dict[str, np.ndarray | None]:
+    """`{patch: (n, 3) values}` out of a vector field's `boundaryField`.
+
+    `boundary_values` returns a magnitude, and the sign of `U . A` is what makes a
+    flux a flux: a magnitude cannot tell an inlet from an outlet. So the components
+    are kept here -- the same read, not a second one. `None` for a patch of a field
+    that is not a vector field, since three numbers a face is the shape this promises
+    and a scalar field cannot supply it.
+    """
+    if field_components(text) != 3:
+        return {patch: None for patch in boundary_scalars(text, payloads)}
+    return {patch: None if values is None else values.reshape(-1, 3)
+            for patch, values in boundary_scalars(text, payloads).items()}
 
 
 def is_wall_type(kind: str) -> bool:
