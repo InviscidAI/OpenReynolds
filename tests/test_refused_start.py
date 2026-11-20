@@ -46,11 +46,15 @@ class _Platform:
 
     def __init__(self, transcript=None, row=None):
         self.posted: list[dict] = []
+        self.created: list[tuple] = []
+        """Each `create_study`: the title, the instance named (empty for a study on
+        this machine's own workspace) and whatever else was sent."""
         self.transcript = list(transcript or [])
         self.row = row
         self.reads: list[dict] = []
 
     def create_study(self, title, instance_id, **extra):
+        self.created.append((title, instance_id, extra))
         return "remote-1"
 
     def post_messages(self, study_id, messages):
@@ -77,8 +81,13 @@ class _Platform:
 
 
 def _session(monkeypatch, tmp_path, responses, *, lines=(), one_shot=None, study_id=None,
-             starter=None, platform=None, on_call=None, capture=False):
-    """One session end to end against a scripted model and a stand-in service."""
+             starter=None, platform=None, on_call=None, capture=False, local=None):
+    """One session end to end against a scripted model and a stand-in service.
+
+    `local` runs it on a workspace of this machine's (`native` or `docker`): nothing
+    is reserved and the backend is the fake one, so what is exercised is the wiring
+    around a local workspace rather than Docker or an OpenFOAM install.
+    """
     monkeypatch.setattr(pending_mod, "WAIT_CEILING_S", 10.0)
     monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
     monkeypatch.delenv("OPENREYNOLDS_MODE", raising=False)
@@ -108,6 +117,17 @@ def _session(monkeypatch, tmp_path, responses, *, lines=(), one_shot=None, study
 
     monkeypatch.setattr(cli.hosted, "reserve", reserve)
     monkeypatch.setattr(cli, "Loop", ScriptedLoop)
+    if local:
+        monkeypatch.setenv("OPENREYNOLDS_LOCAL", local)
+        # `bashrc` so the native branch does not warn about a machine with no
+        # OpenFOAM on it; `ensure_up` so the Docker branch has a container to not
+        # start. Neither is what these tests are about.
+        backend.bashrc = "/opt/openfoam/etc/bashrc"
+        backend.ensure_up = lambda: None
+        monkeypatch.setattr(cli, "LocalBackend", lambda *a, **k: backend)
+        monkeypatch.setattr(cli, "DockerBackend", lambda *a, **k: backend)
+        monkeypatch.setattr(cli.docker_backend, "describe", lambda b: "the fake image")
+        monkeypatch.setattr(cli.hosted, "FoamdClient", lambda *a, **k: platform)
     cfg = Config(foamd_url="u", foamd_api_key="k", llm_api_key="sk-test", model="m",
                  studies_dir=tmp_path / "studies", capture=capture, desk=False,
                  mesh_tool=False, mirror_interval_s=0.0, workspace_eta_s=20.0)

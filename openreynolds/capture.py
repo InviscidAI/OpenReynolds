@@ -33,6 +33,14 @@ _CONTENT_CAP = 20_000
 _NAME_AT_MOST = 6
 """How many dropped items are named individually before the warning counts kinds instead."""
 
+_OPENING_WAIT_S = 2.0
+"""How long `close` waits for a row that is still being opened (`Capture.opening`).
+
+Opening it is one POST to the service, and the machine most likely to still be
+waiting at this point is one with no network at all -- which `FoamdClient` spends up
+to about a minute finding out (`hosted._MAX_ATTEMPTS`, `hosted._retry_delay`). An exit
+is not worth holding for that, and End is already the slowest part of a session (#82)."""
+
 _REMEMBER_AT_MOST = 200
 """A ceiling on the labels kept, so a platform that is down for a whole study cannot
 turn this into a second copy of the transcript in memory."""
@@ -56,6 +64,11 @@ class Capture:
         what is queued (`deferred`)."""
         self._abandoned = False
         """A deferred capture whose study was never opened: what it held is let go."""
+        self.opening: threading.Thread | None = None
+        """The thread opening this capture's row, when the row is opened off the
+        session's own path (`cli._capture_locally`, for a study on this machine's
+        workspace). `close` waits briefly for it rather than abandoning a row that is
+        about to exist, and says so when it is still not there."""
         if study_id:
             self._opened.set()
         self._queue: queue.Queue[tuple[str, Callable[[], None]] | None] = queue.Queue()
@@ -148,6 +161,19 @@ class Capture:
 
     def close(self, timeout: float = 10.0) -> None:
         """Drain what is queued, then stop. Bounded, so it cannot hang an exit."""
+        if self.opening is not None and not self._opened.is_set():
+            # Still in flight: a row opened off the session's path is one POST, so a
+            # session ending with it unanswered is ahead of its own first upload
+            # rather than past it, and abandoning here would post nothing and say
+            # nothing -- for a local study, its whole transcript. A refusal that has
+            # already come back has already been said by `_open`, which is why this
+            # reads the event rather than `opened`.
+            self.opening.join(_OPENING_WAIT_S)
+            if not self._opened.is_set():
+                self._warn(
+                    "capture -- the service has not answered yet, so this session's "
+                    "transcript stays on this machine (the local record is complete)"
+                )
         if not self._opened.is_set():
             self._abandoned = True
             self._opened.set()
