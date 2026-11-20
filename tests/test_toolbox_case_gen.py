@@ -560,3 +560,131 @@ def test_times_on_disk_counts_times_and_nothing_else(case_gen, tmp_path):
     assert case_gen.times_on_disk(None) == []
     assert case_gen.start_entries(tmp_path / "nowhere", 20.0)[0][0] == \
         "startFrom       latestTime;"
+
+
+# -- a passive tracer rides along --------------------------------------------------
+#
+# `simpleFoam` transports no extra scalar, so smoke or a pollutant is OpenFOAM's own
+# `scalarTransport` function object plus the four things it needs: a field, a
+# `div(phi,<name>)` scheme under a `default none`, a linear solver named for it, and
+# a patch to come out of. Three of those four are silent when missing in the way that
+# matters -- the run either stops on the first iteration with `keyword ... undefined`
+# or finishes with a field of zeros that reads as a clean site.
+
+
+def test_a_tracer_is_released_from_the_patch_named_and_from_nowhere_else(case_gen, duct):
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls") == 0
+    text = field(duct, "smoke")
+
+    assert "dimensions      [0 0 0 0 0 0 0];" in text, "a fraction of the source value"
+    assert "internalField   uniform 0;" in text
+    assert "uniform 1" in entry_for(text, "walls")
+    assert "fixedValue" in entry_for(text, "walls")
+    assert "uniform 0" in entry_for(text, "inlet"), "clean air arrives"
+    assert "empty" in entry_for(text, "frontAndBack")
+
+
+def test_an_outlet_returns_clean_air_on_a_reversed_face(case_gen, duct_with_outlet):
+    """`zeroGradient` on an outlet that recirculates draws the concentration standing
+    at the boundary back in as though it had come from upstream, which in a street
+    canyon is most of the outlet."""
+    assert run(case_gen, duct_with_outlet, "--length", "0.1", "--tracer", "smoke",
+               "--source", "inlet") == 0
+    text = field(duct_with_outlet, "smoke")
+
+    assert "inletOutlet" in entry_for(text, "outlet")
+    assert "inletValue      uniform 0;" in entry_for(text, "outlet")
+    assert "uniform 1" in entry_for(text, "inlet"), "a background concentration"
+
+
+def test_a_tracer_names_its_own_div_scheme_because_the_default_is_none(case_gen, duct):
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls") == 0
+    schemes = (duct / "system" / "fvSchemes").read_text(encoding="utf-8")
+
+    assert "default         none;" in schemes
+    assert "div(phi,smoke)" in schemes
+    assert "upwind" not in schemes.split("div(phi,smoke)")[1].split(";")[0], (
+        "upwind's numerical diffusion on an urban mesh is the same order as the "
+        "turbulent diffusion the Schmidt number is there to set"
+    )
+
+
+def test_a_tracer_gets_a_linear_solver_named_after_it(case_gen, duct):
+    """Without one the run stops with `keyword smoke is undefined in dictionary
+    solvers`, which is the function object asking the mesh for its own field."""
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls") == 0
+    solution = (duct / "system" / "fvSolution").read_text(encoding="utf-8")
+
+    assert re.search(r"^    smoke\n    \{", solution, re.M)
+
+
+def test_a_transient_tracer_gets_the_final_entry_pimple_asks_for(case_gen, duct):
+    assert run(case_gen, duct, "--length", "0.1", "--study", "transient",
+               "--end-time", "1", "--tracer", "smoke", "--source", "walls") == 0
+    solution = (duct / "system" / "fvSolution").read_text(encoding="utf-8")
+
+    assert re.search(r"^    smokeFinal\n    \{", solution, re.M)
+
+
+def test_the_function_object_is_openfoams_own_and_names_its_library(case_gen, duct):
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls") == 0
+    control = (duct / "system" / "controlDict").read_text(encoding="utf-8")
+
+    assert "type            scalarTransport;" in control
+    assert "libs            (solverFunctionObjects);" in control
+    assert "field           smoke;" in control
+
+
+def test_a_turbulent_schmidt_number_becomes_the_alphaDt_that_multiplies_nut(case_gen, duct):
+    """`scalarTransport::D()` returns `alphaD*nu + alphaDt*nut` on the incompressible
+    branch, so Dt = nut/Sc_t means alphaDt = 1/Sc_t, and 0.7 is 1.42857."""
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls", "--schmidt", "0.7") == 0
+    control = (duct / "system" / "controlDict").read_text(encoding="utf-8")
+
+    assert "alphaDt         1.42857;" in control
+
+
+def test_without_a_schmidt_number_nothing_is_written_and_openfoams_default_stands(
+        case_gen, duct):
+    """Published urban values are lower than 1 and none of them could be read from a
+    primary source here, so the default is the solver's own and it is left alone."""
+    assert run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+               "--source", "walls") == 0
+    control = (duct / "system" / "controlDict").read_text(encoding="utf-8")
+
+    assert "alphaDt" not in control
+
+
+def test_a_tracer_with_no_source_is_refused_rather_than_solved_as_zero(case_gen, duct):
+    with pytest.raises(SystemExit) as raised:
+        run(case_gen, duct, "--length", "0.1", "--tracer", "smoke")
+    assert "no --source" in str(raised.value)
+
+
+def test_a_source_patch_the_mesh_does_not_have_is_refused_by_name(case_gen, duct):
+    with pytest.raises(SystemExit) as raised:
+        run(case_gen, duct, "--length", "0.1", "--tracer", "smoke", "--source", "vent")
+    assert "vent" in str(raised.value)
+    assert "looks like a clean site" in str(raised.value)
+
+
+def test_a_source_on_an_empty_patch_is_refused_because_the_case_would_not_start(
+        case_gen, duct):
+    with pytest.raises(SystemExit) as raised:
+        run(case_gen, duct, "--length", "0.1", "--tracer", "smoke",
+            "--source", "frontAndBack")
+    assert "empty or a symmetry patch" in str(raised.value)
+
+
+def test_a_case_with_no_tracer_asks_for_none_of_this(case_gen, duct):
+    """The whole feature is off unless asked for: no field, no scheme, no solver."""
+    assert run(case_gen, duct, "--length", "0.1") == 0
+
+    assert not (duct / "0" / "smoke").exists()
+    assert "scalarTransport" not in (duct / "system" / "controlDict").read_text(
+        encoding="utf-8")
