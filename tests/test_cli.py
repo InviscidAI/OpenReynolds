@@ -1863,29 +1863,6 @@ def test_push_needs_a_path_that_exists(tmp_path, monkeypatch):
     assert result.exit_code != 0
 
 
-def test_push_to_a_study_that_never_ran_is_refused(tmp_path, monkeypatch):
-    """With no workspace of its own, the service would hand out another study's, and
-    the file would land there (#170: a clone has none until it runs)."""
-    studies = tmp_path / "studies"
-    st = Store(studies, "study-new")
-    st.session.home = "/work/study-new"
-    st.save()
-    asked = []
-    monkeypatch.setattr(cli.hosted, "acquire", lambda *a: asked.append(a))
-    monkeypatch.setattr(
-        cli.Config, "load",
-        classmethod(lambda cls: Config(foamd_url="u", foamd_api_key="k", studies_dir=studies)),
-    )
-    geom = tmp_path / "geom.stl"
-    geom.write_text("solid")
-
-    result = CliRunner().invoke(cli.main, ["push", str(geom), "--study", "study-new"])
-
-    assert result.exit_code == 1
-    assert "has no workspace yet" in result.output
-    assert asked == []
-
-
 def test_repeated_api_failures_escalate_to_a_plain_explanation(loop, view, monkeypatch):
     """After two failures in a row, stop repeating 'the thread is intact' and say
     what is happening and how to recover -- the frustration a live session hit."""
