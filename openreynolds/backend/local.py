@@ -288,10 +288,17 @@ def what_is_missing(backend: "LocalBackend") -> list[str]:
             "for the Docker workspace."
         )
         if not _numpy_here(backend):
+            # Named as the extra and not as `pip install numpy matplotlib`. That
+            # spelling is the #204 defect written out again: the toolbox imports
+            # eight third-party modules, the documented install used to declare
+            # four, and four scripts raised ImportError off it. `[toolbox]` is the
+            # one place that says what the scripts need, and
+            # `tests/test_toolbox_extras.py` holds it to that.
             notes.append(
                 "[yellow]and no numpy for the interpreter `python3` resolves to:[/] that "
-                "leaves the toolbox scripts that only read files. `pip install numpy "
-                "matplotlib` into that interpreter brings the solvers back."
+                "leaves the toolbox scripts that only read files. "
+                "`pip install 'openreynolds[toolbox]'` into that interpreter brings "
+                "the solvers back."
             )
     return notes
 

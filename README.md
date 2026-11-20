@@ -364,14 +364,25 @@ no Docker, no download, no sandbox. It uses whatever OpenFOAM is installed here
 (`OPENREYNOLDS_FOAM_BASHRC` names it if it is not found), and the agent is written for
 ESI v2512, so another version or fork will differ in places.
 
-**With no OpenFOAM at all, `--native` still solves.** `lbm.py` and `sph.py` in the
-toolbox are a lattice-Boltzmann and an SPH solver written in numpy, so they need no
-image and no install beyond this package; `advise.py` lists them beside the OpenFOAM
-applications and marks which are actually here. On a Windows laptop with neither
-OpenFOAM nor Docker, `lbm.py poiseuille --n 32` converges in 4.1 s and matches the
-exact parabola to 9.7e-07 of the centreline speed. Neither carries a turbulence model,
-both are 2D and explicit, so they are the small end of the product rather than a
-replacement for it -- but they are the end that runs anywhere.
+**With no OpenFOAM at all, `--native` still solves**, with one install:
+
+```
+pip install 'openreynolds[toolbox]'
+```
+
+`lbm.py` and `sph.py` in the toolbox are a lattice-Boltzmann and an SPH solver written
+in numpy, so they need no image and no OpenFOAM; `advise.py` lists them beside the
+OpenFOAM applications and marks which are actually here. The `[toolbox]` extra is what
+puts numpy and the rest on your own machine, where the image would otherwise have
+provided them -- a plain `pip install openreynolds` ships both solvers and nothing they
+import, so they exit on `ModuleNotFoundError: No module named 'numpy'`. Measured on a
+clean virtual environment, which is the only way to find that.
+
+On a Windows laptop with neither OpenFOAM nor Docker, `lbm.py poiseuille --n 32`
+converges in 4.1 s and matches the exact parabola to 9.7e-07 of the centreline speed.
+Neither solver carries a turbulence model, both are 2D and explicit, so they are the
+small end of the product rather than a replacement for it -- but they are the end that
+runs anywhere.
 
 ## Editing the mesh by hand — the hosted app only
 

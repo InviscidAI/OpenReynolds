@@ -1939,10 +1939,10 @@ def _check_native_foam() -> tuple[str, bool, str]:
                 "etc/bashrc, or use the Docker workspace (--local)")
         return "local solvers (native)", False, (
             "no OpenFOAM to source, and no numpy for the interpreter `python3` resolves "
-            "to, which leaves nothing here that can solve. `pip install numpy "
-            "matplotlib` brings the toolbox's own solvers up; or set "
-            "OPENREYNOLDS_FOAM_BASHRC to an OpenFOAM installation's etc/bashrc, or use "
-            "the Docker workspace (--local)")
+            "to, which leaves nothing here that can solve. "
+            "pip install 'openreynolds[toolbox]' brings the toolbox's own solvers up; "
+            "or set OPENREYNOLDS_FOAM_BASHRC to an OpenFOAM installation's etc/bashrc, "
+            "or use the Docker workspace (--local)")
     result = backend.exec(FOAM_PROBE, timeout_s=60)
     lines = result.output.strip().splitlines()
     if result.exit_code != 0 or len(lines) < 2:

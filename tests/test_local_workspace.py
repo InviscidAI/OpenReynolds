@@ -209,6 +209,15 @@ def test_no_numpy_is_said_too_because_it_takes_the_two_solvers_with_it(workspace
     notes = " ".join(what_is_missing(workspace))
 
     assert "no numpy" in notes
+    # Named as the extra, not as `pip install numpy matplotlib`. That spelling is
+    # defect #204 written out again: the toolbox imports eight third-party modules,
+    # the documented install declared four, and four scripts raised ImportError off
+    # it. Measured on a clean venv with only the wheel in it: numpy, matplotlib,
+    # pandas and pyvista were all absent, so `lbm.py` exited 1 on
+    # `ModuleNotFoundError: No module named 'numpy'` -- the package ships the two
+    # solvers that need no OpenFOAM and nothing they import.
+    assert "openreynolds[toolbox]" in notes
+    assert "pip install numpy" not in notes
 
 
 def test_a_machine_with_openfoam_is_told_nothing_about_it(tmp_path, monkeypatch):
@@ -343,4 +352,5 @@ def test_doctor_fails_a_machine_where_nothing_can_solve(tmp_path, monkeypatch):
 
     assert ok is False
     assert "nothing here that can solve" in detail
-    assert "pip install numpy" in detail
+    assert "openreynolds[toolbox]" in detail, (
+        "the extra, not the four package names that left four scripts broken (#204)")
