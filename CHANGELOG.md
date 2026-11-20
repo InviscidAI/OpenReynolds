@@ -233,6 +233,23 @@ All notable changes to this project are recorded here. The format follows
     already reported `failed`. Both go through `_not_completed` now, and
     `test_one_shot_returns_failed_when_the_person_stops_at_a_job_pause` holds it.
 
+- **A rate limit ended the run that hit it.** `_MAX_ATTEMPTS` is five and the ordinary
+  backoff is `min(2**attempt, 30)` seconds (`backend/hosted.py:145`, `_retry_delay`), so
+  a 429 that keeps coming back raised `rate_limited` at the caller after about fifteen
+  seconds of waiting. That is sized for a burst, not for a sustained overload -- several
+  workspaces polling one account's key is one, and it lasts as long as they are all up.
+  On 2026-09-27 three multi-hour runs ended inside eight minutes of each other that way,
+  on ordinary bookkeeping calls that had no answer to `rate_limited` but to die. A 429
+  now has its own patience (`_THROTTLE_ATTEMPTS`), its own cap on one wait
+  (`_THROTTLE_MAX_DELAY_S`), full jitter rather than a fixed delay several clients would
+  all wake from together, and -- the point -- it does not spend the ordinary attempt
+  budget. 503 and 500/502/504 keep theirs on purpose: a 429 always clears because the
+  window always rolls, while a workspace that cannot boot answers 503 for ever, and
+  waiting that out two hundred times turns a five-attempt failure into a half-hour hang.
+  `BackendError.retry_after` carries the service's `Retry-After` through to the caller,
+  since `extra` carries the error body and the wait only ever arrives in a header. Split
+  out of #54 at review.
+
 - **A study on a local workspace uploaded nothing at all.** Capture is on by default and
   `--no-capture` is how it is turned off, but `cli.session` leaves the workspace
   service's client `None` for a workspace it does not reserve, and the capture block
@@ -254,7 +271,26 @@ All notable changes to this project are recorded here. The format follows
   - The service's own listing of a workspace copy is not offered for these studies --
     their files are on this machine, and `backend.study_id` stays unset -- and the row
     carries no `instance_id`, which foamd's `create_study` already allows.
-
+- **An earlier time directory now reaches the mirror whole or not at all.** A live
+  cycle brings earlier written times home behind the newest one, and it copied them
+  straight into `files/`, so a round trip that failed partway left a time holding half
+  its fields: one the viewer lists and cannot draw (#103). `mirror._pull_time` fetches
+  each one into a staging directory beside `files/` instead, and renames its files into
+  place only once every file asked for has landed. A partial copy is a directory nothing
+  else walks -- the files pane, the viewer and the S3 sync all read `store.files_dir` --
+  and it is dropped.
+  - Deleting what had arrived once a later file failed was tried first and could not be
+    made right. It took back the fresh copies of a time that was *already* whole, which
+    is the common case since a restarted solve rewrites times that are already here; a
+    file a round trip simply left out raised nothing for it to react to, so the
+    half-copied state survived it (`_extract_tar_gz` passes over a non-regular member
+    silently, `backend/hosted.py:1505`); and an `openreynolds pull` running alongside a
+    background cycle had the file it had just reported mirrored unlinked under it.
+  - A time that does not arrive whole is set aside for the session, as before, so one
+    that will not copy does not hold every older time behind it; its skip now names the
+    time, as the other earlier-time skips do. `bytes_pulled` counts a time only once it
+    is in the mirror, and a failed earlier-time batch is no longer taken apart to find
+    the file it failed on -- that copy is being dropped either way.
 - **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
   said it was in four places.** `reattach.py`, `claims.py`,
   `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told

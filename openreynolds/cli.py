@@ -917,8 +917,12 @@ def site_cmd(lat: float, lon: float, name: str, radius: float, start: str, end: 
     request carries a name, an address or an account id.
 
     In the workspace, `toolbox/site_abl.py` turns the wind into an atmospheric
-    boundary layer inlet and `toolbox/site_stl.py` turns the footprints and the
-    terrain into surfaces. `openreynolds push site.json` puts the file there.
+    boundary layer inlet, `toolbox/site_stl.py` turns the footprints and the terrain
+    into surfaces, and `toolbox/wind_comfort.py` draws the rose and composes one
+    solved case per wind direction into a pedestrian comfort map. That last one is
+    why the wind block carries a 1 m/s speed histogram per sector and not only the
+    percentiles: an exceedance probability is a count of hours per speed bin.
+    `openreynolds push site.json` puts the file there.
     """
     from . import site as site_mod
 

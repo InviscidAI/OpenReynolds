@@ -72,6 +72,19 @@ seconds to minutes under load; 60 is its own default `[timeout:]` and not a gues
 SECTORS = 12
 """30-degree compass sectors, the convention a wind rose is read in."""
 
+SPEED_BIN_MS = 1.0
+"""Width of the per-sector speed histogram's bins, in m/s.
+
+Why a histogram at all, when the file already carries a mean and four percentiles per
+sector. A pedestrian comfort criterion is an **exceedance probability**: the fraction of
+hours in which the speed at a place passes a threshold. Composed over directions that
+is `sum_sectors sum_bins hours * [K_sector * u_bin > threshold]`, where `K` is the
+amplification a CFD run measured for that direction -- so the question asked of the
+weather is "how many hours did this sector blow between 6 and 7 m/s", which p50/p90/p98
+cannot answer. Five percentiles are five points on a curve; the hours per bin are the
+curve. 1 m/s against a reanalysis whose own speeds are a 25 km cell average is already
+finer than the data, and twelve sectors of about 25 bins is 300 integers in the file."""
+
 
 class Unreachable(Exception):
     """A source could not be read. Carries a sentence a person can act on."""
@@ -257,6 +270,27 @@ def roughness_from_two_heights(u_low: float, u_high: float, z_low: float,
     return math.sqrt(lo * hi)
 
 
+def _histogram(values: list[float], bins: int) -> dict[str, Any]:
+    """Hours per `SPEED_BIN_MS` bin, counting from zero.
+
+    `bins` is passed in rather than taken from these values so that every sector gets
+    the same axis: a rose stacks the sectors on one another and an exceedance sums
+    across them, and both are wrong if sector 3's bin 7 is a different speed from
+    sector 4's. Everything at or above the last bin's lower edge lands in it, which
+    only happens when the caller sized the axis off a different sample.
+    """
+    hours = [0] * max(bins, 1)
+    for value in values:
+        index = int(value / SPEED_BIN_MS)
+        hours[min(max(index, 0), len(hours) - 1)] += 1
+    return {
+        "bin_width_ms": SPEED_BIN_MS,
+        "bins": len(hours),
+        "hours": hours,
+        "edges": "bin i covers i*bin_width_ms up to (i+1)*bin_width_ms, m/s at 10 m",
+    }
+
+
 def _sector_of(direction: float) -> int:
     width = 360.0 / SECTORS
     return int(((direction % 360.0) + width / 2) // width) % SECTORS
@@ -275,14 +309,22 @@ def wind_summary(hourly: dict[str, list[Any]]) -> dict[str, Any]:
         if bearing is None:
             continue
         s10 = speed10[index] if index < len(speed10) else None
-        if s10 is None:
+        # A not-a-number is dropped here and not further down, so that this sector's
+        # `hours`, its percentiles and its histogram are all counts of the same set
+        # of hours. `_stats` has always dropped them; when only it did, the hours a
+        # sector reported and the hours its histogram held could differ, and the
+        # exceedance arithmetic divides one by the other.
+        if s10 is None or math.isnan(float(s10)):
             continue
         bucket = buckets[_sector_of(float(bearing))]
         bucket["s10"].append(float(s10))
         s100 = speed100[index] if index < len(speed100) else None
-        if s100 is not None:
+        if s100 is not None and not math.isnan(float(s100)):
             bucket["s100"].append(float(s100))
         counted += 1
+
+    every10 = [v for bucket in buckets for v in bucket["s10"]]
+    bins = int(max(every10) / SPEED_BIN_MS) + 1 if every10 else 1
 
     sectors = []
     for index, bucket in enumerate(buckets):
@@ -295,6 +337,7 @@ def wind_summary(hourly: dict[str, list[Any]]) -> dict[str, Any]:
             "frequency": round(len(bucket["s10"]) / counted, 4) if counted else 0.0,
             "speed_10m": _stats(bucket["s10"]),
             "speed_100m": _stats(bucket["s100"]),
+            "speed_10m_histogram": _histogram(bucket["s10"], bins),
         })
 
     summary: dict[str, Any] = {
@@ -303,6 +346,7 @@ def wind_summary(hourly: dict[str, list[Any]]) -> dict[str, Any]:
         "direction_convention": "degrees clockwise from true north, the direction the wind blows FROM",
         "speed_10m": _stats([float(v) for v in speed10 if v is not None]),
         "speed_100m": _stats([float(v) for v in speed100 if v is not None]),
+        "speed_10m_histogram": _histogram(every10, bins),
         "sectors": sectors,
     }
 

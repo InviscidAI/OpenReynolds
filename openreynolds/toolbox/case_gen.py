@@ -50,6 +50,19 @@ roles
     python3 case_gen.py /work/study/mesh --study transient --end-time 2 --dry-run
     python3 case_gen.py /work/study/channel --study transient --end-time 5 \
         --turbulence WALE --les-delta vanDriest --average-from 2
+    python3 case_gen.py /work/study/site --tracer smoke --source vent --schmidt 0.7
+
+a tracer rides along, and does not need its own solver
+
+    `--tracer` adds a passive scalar -- smoke, a pollutant, a released gas -- as
+    OpenFOAM's own `scalarTransport` function object plus the four things it needs to
+    run: the field, a `div(phi,<name>)` scheme under a `default none`, a linear solver
+    named for it, and a source patch at a value of 1. The field is dimensionless, so
+    what comes out is a fraction of the source value and a real concentration is one
+    multiplication afterwards; the equation is linear in it, which is what makes that
+    exact. There is no buoyancy in it, so a hot plume's rise is absent rather than
+    approximate. On a site case, run this before `site_abl.py --write`: this writes
+    0/ and system/ wholesale, and `site_abl.py` edits the inlet in place afterwards.
 
 LES is not another solver here: `pimpleFoam` runs it and `constant/turbulenceProperties`
 is the only file that says so. What the switch costs is everything around it -- the
@@ -959,6 +972,105 @@ def field_p(plan: Plan) -> str:
     return foam_file("volScalarField", "p", body, "0")
 
 
+def field_tracer(plan: Plan, name: str, sources: tuple[str, ...]) -> str:
+    """A passive tracer: smoke, a pollutant, a released gas. Dimensionless on purpose.
+
+    The field is 1 on the source patches and 0 in the clean air arriving at the
+    inlet, so what the solver writes is a **fraction of the source value**: 0.01 in a
+    street is one part in a hundred of whatever leaves the vent. That rescaling is
+    exact rather than approximate, because `scalarTransport`'s equation is linear in
+    the field -- there is no reaction term and no concentration-dependent coefficient
+    (`scalarTransport.C`, the single-phase branch: `fvm::ddt(s) + fvm::div(phi, s) -
+    fvm::laplacian(D, s) == fvOptions(s)`). So one solve answers for every source
+    strength, and a real concentration is a multiplication afterwards. Giving the
+    field kg/m3 instead would tie the run to one emission rate and invite the reader
+    to treat it as calibrated.
+
+    What this is not: there is no buoyancy (a hot plume rises and this one does not),
+    no deposition, no settling, no chemistry and no decay. A fire plume's rise is
+    buoyancy-driven and a passive tracer will put it in the wrong place.
+
+    The outlet is `inletOutlet`, not `zeroGradient`: a street-canyon or urban case
+    recirculates, and a reversed outlet face with zeroGradient draws whatever
+    concentration is at the boundary back into the domain as if it had come from
+    upstream. `inletOutlet` with `inletValue 0` returns clean air on an inflow face
+    and leaves outflow alone.
+    """
+
+    def entry(patch: str, role: dict) -> list[str]:
+        kind = role["kind"]
+        # The two constraint types come before the source on purpose: OpenFOAM
+        # refuses a `fixedValue` on an `empty` or a `symmetry` patch, so a source
+        # named on one would write a case that does not start. `case_files` refuses
+        # that combination outright; this ordering is what makes the refusal the only
+        # way it can happen.
+        if kind == "empty":
+            return ["type            empty;"]
+        if kind == "symmetry":
+            return ["type            symmetry;"]
+        if patch in sources:
+            return ["type            fixedValue;", "value           uniform 1;"]
+        if kind == "inlet":
+            return ["type            fixedValue;", "value           uniform 0;"]
+        if kind == "outlet":
+            return ["type            inletOutlet;", "inletValue      uniform 0;",
+                    "value           uniform 0;"]
+        return ["type            zeroGradient;"]
+
+    body = ("dimensions      [0 0 0 0 0 0 0];   // a fraction of the source value, "
+            "not a concentration\n\ninternalField   uniform 0;\n\n"
+            + boundary_field(plan, entry))
+    return foam_file("volScalarField", name, body, "0")
+
+
+def scalar_transport(name: str, schmidt: float | None) -> list[str]:
+    """The `scalarTransport` function object, which is how a tracer rides along.
+
+    Why a function object and not a solver: `simpleFoam` and `pimpleFoam` do not
+    transport an extra scalar, and the alternatives are a different solver family
+    (`scalarTransportFoam`, which then does not solve the flow) or re-deriving the
+    equation by hand. OpenFOAM already has it, so this writes the dictionary rather
+    than the physics. Every entry below is from the class's own header and source,
+    read at `src/functionObjects/solvers/scalarTransport/` (ESI, the repository at
+    gitlab.com/openfoam/core/openfoam), not from a tutorial:
+
+      * `libs (solverFunctionObjects);` -- the header's table marks `libs` required.
+      * `field` defaults to `s`, written anyway so the dictionary says what it does.
+      * the **diffusivity**, which is the one modelling choice here. `D()` has four
+        branches; with no `D` and no `nut` entry and an incompressible turbulence
+        model present it returns `alphaD_ * turb->nu() + alphaDt_ * turb->nut()`,
+        both coefficients defaulting to 1. So the turbulent Schmidt number is exactly
+        `1 / alphaDt`, and OpenFOAM's own default is Sc_t = 1. Published urban
+        dispersion work uses lower values, which spread a plume faster laterally;
+        this writes `alphaDt` only when `--schmidt` says so, because a number nobody
+        here could check against a primary source has no business being a default.
+      * `bounded01` defaults to true and is **not** a clip on a single-phase run: in
+        the source it only wraps the `MULES::explicitSolve` call on the two-phase
+        branch, the one taken when `phase` is set. A single-phase tracer is bounded
+        by its schemes and its boundary conditions, not by that switch.
+
+    And one thing it is worth knowing before trusting a converged log: a
+    `scalarTransport` field is not a field the SIMPLE loop solves, so naming it in
+    `residualControl` does nothing -- the control never sees a function object's
+    field. `heat.py` found a heated run that stopped at iteration 87 on p and U with
+    its passive T still moving 3% an iteration (`heat.py:878-884`), and the same
+    applies here: `heat.py` reports that gap and this tracer is subject to it.
+    """
+    entries = [
+        f"    {name}Transport", "    {",
+        "        type            scalarTransport;",
+        "        libs            (solverFunctionObjects);",
+        f"        field           {name};",
+        "        writeControl    writeTime;",
+    ]
+    if schmidt is not None:
+        entries.append(
+            f"        alphaDt         {1.0 / schmidt:.6g};   // Sc_t = {schmidt:g}: "
+            f"Dt = nut/Sc_t, and alphaDt multiplies nut")
+    entries += ["    }", ""]
+    return entries
+
+
 CMU = 0.09
 """The k-epsilon family's model constant. The omega and epsilon estimates are the same
 mixing-length argument written twice."""
@@ -1186,6 +1298,8 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") 
     entries: list[str] = []
     entries += force_coeffs(plan, flow, opts)
     entries += field_average(opts, model)
+    if opts.get("tracer"):
+        entries += scalar_transport(str(opts["tracer"]), opts.get("schmidt"))
     if not entries:
         return ""
     return "\n" + "\n".join(["functions", "{", *entries, "}"])
@@ -1469,7 +1583,7 @@ damps, and 0.9 is what ESI's own LES tutorials run.
 """
 
 
-def fv_schemes(study: str, model: str) -> str:
+def fv_schemes(study: str, model: str, tracer: str = "") -> str:
     les = is_les(model)
     if les:
         # LES is transient by construction and `case_files` refuses a steady one, so
@@ -1495,6 +1609,14 @@ def fv_schemes(study: str, model: str) -> str:
     # transport stops the run on the first iteration.
     for field in turbulence_fields(model):
         lines.append(f"    {f'div(phi,{field})':<16}{prefix}Gauss limitedLinear 1;")
+    if tracer:
+        # `scalarTransport` asks the mesh for `div(phi,<schemesField>)` by that exact
+        # name, and `default none` above means an unnamed one stops the run on the
+        # first iteration. `limitedLinear 1` and not `upwind`: upwind's numerical
+        # diffusion on an urban-scale mesh is the same order as the turbulent
+        # diffusion the Schmidt number is there to set, so the scheme would be doing
+        # the modelling and the plume would spread for the wrong reason.
+        lines.append(f"    {f'div(phi,{tracer})':<16}{prefix}Gauss limitedLinear 1;")
     lines += ["    div((nuEff*dev2(T(grad(U))))) Gauss linear;", "}", "",
               "laplacianSchemes", "{", "    default         Gauss linear corrected;", "}", "",
               "interpolationSchemes", "{", "    default         linear;", "}", "",
@@ -1558,7 +1680,7 @@ def residual_control(fields: tuple[str, ...]) -> list[tuple[str, float]]:
     return entries
 
 
-def fv_solution(study: str, model: str) -> str:
+def fv_solution(study: str, model: str, tracer: str = "") -> str:
     """The linear solvers.
 
     PIMPLE asks for `pFinal` and `UFinal` by those exact literal names on the last
@@ -1571,6 +1693,12 @@ def fv_solution(study: str, model: str) -> str:
     entries = [("p", P_SOLVER), ("U", SMOOTH_SOLVER)]
     if fields:
         entries.append((f'"({"|".join(fields)})"' if len(fields) > 1 else fields[0], SMOOTH_SOLVER))
+    if tracer:
+        # A named entry rather than leaning on a regex: `scalarTransport` looks the
+        # solver up by its own field name, and a missing one stops the run with
+        # `keyword <field> is undefined in dictionary solvers`. It goes through the
+        # same loop as the rest, so a transient case gets its `Final` entry too.
+        entries.append((tracer, SMOOTH_SOLVER))
 
     lines = ["solvers", "{"]
     for name, settings in entries:
@@ -1678,15 +1806,46 @@ def case_files(plan: Plan, flow: Flow, opts, study: str, model: str) -> dict[str
             "--average-from says it does"
         )
     delta = les_delta(model, opts) if model in LES_FIELDS else ""
+    tracer = str(opts.get("tracer") or "")
+    sources = tuple(opts.get("source") or ())
+    if tracer:
+        known = set(plan.mesh.patch_face_counts())
+        missing = [patch for patch in sources if patch not in known]
+        if missing:
+            raise SystemExit(
+                f"--source names {', '.join(missing)}, which the mesh has no patch "
+                f"called; it has {', '.join(sorted(known))}. A source patch that is "
+                f"not in the mesh leaves the tracer released nowhere, and the run "
+                f"finishes with a field of zeros that looks like a clean site"
+            )
+        if not sources:
+            raise SystemExit(
+                f"--tracer {tracer} with no --source: the tracer would be zero at "
+                f"every boundary and zero everywhere forever. Name the patch it is "
+                f"released from"
+            )
+        constrained = [patch for patch in sources
+                       if (plan.roles.get(patch) or {}).get("kind")
+                       in ("empty", "symmetry")]
+        if constrained:
+            raise SystemExit(
+                f"--source names {', '.join(constrained)}, which is an empty or a "
+                f"symmetry patch: OpenFOAM refuses a fixedValue on either, so the "
+                f"case would not start. A tracer is released from a patch with faces "
+                f"in the flow -- a vent, a stack, a ground panel, or the inlet for a "
+                f"background concentration"
+            )
     files = {
         "system/controlDict": control_dict(plan, flow, opts, study, model),
-        "system/fvSchemes": fv_schemes(study, model),
-        "system/fvSolution": fv_solution(study, model),
+        "system/fvSchemes": fv_schemes(study, model, tracer),
+        "system/fvSolution": fv_solution(study, model, tracer),
         "constant/transportProperties": transport_properties(flow),
         "constant/turbulenceProperties": turbulence_properties(model, delta),
     }
     files["0/U"] = field_U(plan, flow)
     files["0/p"] = field_p(plan)
+    if tracer:
+        files[f"0/{tracer}"] = field_tracer(plan, tracer, sources)
     fields = turbulence_fields(model)
     if needs_nut(model):
         # Not inside the `if fields:` below, which is where it used to be: `WALE` and
@@ -1973,6 +2132,14 @@ def main(argv: list[str] | None = None) -> int:
                       help="Target free-stream nu_t/nu; omega follows from it (a body in "
                            "open flow, default 10). --mixing-length overrides.")
     flow.add_argument("--mixing-length", type=float, default=None, dest="mixing_length")
+    flow.add_argument("--tracer", default="", metavar="NAME",
+                      help="Carry a passive tracer of this name (smoke, a pollutant): a "
+                           "0/NAME field, a scalarTransport function object, and the "
+                           "scheme and solver entries it needs. Needs --source.")
+    flow.add_argument("--schmidt", type=float, default=None,
+                      help="Turbulent Schmidt number for the tracer; alphaDt = 1/Sc_t. "
+                           "Left out, OpenFOAM's own default of 1 applies -- no value "
+                           "is written here that was not read from a source.")
     flow.add_argument("--external", action="store_true",
                       help="Treat this as a body in open flow even when the mesh does not "
                            "say so (it says so when a wall patch is not part of the "
@@ -2004,6 +2171,10 @@ def main(argv: list[str] | None = None) -> int:
     patches.add_argument("--spin", action="append", default=[],
                          help="A wall that rotates: name:radius[:axis], e.g. wheel:0.15:z. "
                               "omega is the road speed over the radius.")
+    patches.add_argument("--source", action="append", default=[],
+                         help="A patch the --tracer is released from, at a value of 1. "
+                              "Repeatable. The patch keeps whatever role it has in "
+                              "every other field -- a vent is still a wall to U.")
     patches.add_argument("--body", default="body", dest="body_patch",
                          help="The patch forces are taken on, when there is one (default 'body'). "
                               "A patch by that name gets a forceCoeffs function object.")
