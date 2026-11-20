@@ -874,7 +874,13 @@ def from_wall_shear(case: Path, requested: str | None = None,
             )
             continue
         y_plus = np.sqrt(np.abs(tau)) * (height / 2.0) / nu
-        patches.append(patch_record(name, y_plus, faces=int(height.size)))
+        # `uniform=` was missing here, so #144's fix reached the written-yPlus source
+        # and not this one: a shear written as one value for the whole patch became a
+        # per-face histogram over the first-cell heights, printed as a percentage
+        # (#174). The spread in that y+ comes from the mesh, not from a measured
+        # shear, so the fractions are withheld the way a summary's are.
+        patches.append(patch_record(name, y_plus, faces=int(height.size),
+                                    uniform=tau.size == 1))
     if not patches and not excluded:
         if problems:
             raise WallError("; ".join(problems))
@@ -1036,7 +1042,10 @@ def primary(found: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _range(row: dict[str, Any]) -> str:
-    if row.get("uniform"):
+    # "uniform over the patch" is only true where the y+ itself came out as one
+    # number. A single shear value divided by per-face first-cell heights does not
+    # (#174), so the range is printed and the word is left to `_regions`.
+    if row.get("uniform") and row["min"] == row["max"]:
         return f"y+ {row['mean']:.3g} uniform over the patch"
     return f"y+ {row['min']:.3g} to {row['max']:.3g} (mean {row['mean']:.3g})"
 
@@ -1047,13 +1056,15 @@ def _regions(row: dict[str, Any], brief: bool = False) -> str:
 
     A `uniform` entry gets a third wording, because of #144: one value for a whole
     patch was being printed as `viscous sublayer 100%`, which reads as a per-face
-    fraction over a distribution that the file does not contain.
+    fraction over a distribution that the file does not contain. The regions it
+    reaches come from the range rather than from the mean, since a uniform shear over
+    per-face first-cell heights gives a y+ that is not itself uniform (#174).
     """
     if row.get("uniform"):
         tail = " (uniform)" if brief else (
-            " (uniform; one value for the whole patch, which is not a distribution)"
+            " (uniform; the measurement is one value, which is not a distribution)"
         )
-        return regime_of(row["mean"]) + tail
+        return ", ".join(row["spans"]) + tail
     if row["fractions"] is not None:
         parts = [f"{name} {value:g}%" for name, value in row["fractions"].items() if value]
         return ", ".join(parts) or "no faces in any region"

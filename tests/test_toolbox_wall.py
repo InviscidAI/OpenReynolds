@@ -502,7 +502,12 @@ def test_y_plus_from_the_shear_agrees_with_the_number_computed_by_hand(wall, tmp
     assert row["faces"] == 8, "a uniform entry broadcasts over the patch's faces"
     assert row["min"] == pytest.approx(100.0)
     assert row["max"] == pytest.approx(100.0)
-    assert row["fractions"]["log layer"] == 100.0
+    assert row["uniform"] is True, "the shear was written as one value for the patch"
+    assert row["fractions"] is None, (
+        "a shear written as one value carries no distribution, so no per-face "
+        "percentage is manufactured from it (#174)"
+    )
+    assert row["spans"] == ["log layer"]
 
 
 def test_a_wall_whose_shear_is_all_zero_is_skipped_by_name_not_reported_at_y_plus_zero(
@@ -533,6 +538,22 @@ def test_a_wall_whose_shear_is_all_zero_is_skipped_by_name_not_reported_at_y_plu
     assert not measured["problems"]
     ((row,),) = [source["patches"] for source in measured["sources"]]
     assert row["max"] == pytest.approx(100.0)
+
+
+def test_a_uniform_measurement_that_spreads_is_a_range_and_not_one_number(wall):
+    """#174, on the two renderers rather than through a mesh: a y+ built from one
+    shear value divided by per-face first-cell heights spreads wherever the heights
+    do, so "uniform over the patch" would be a claim about the mesh that the mesh does
+    not support. What is uniform is the measurement, and that is what is said.
+    """
+    spread = wall.patch_record("wall", np.array([25.0, 100.0]), faces=2, uniform=True)
+    assert spread["fractions"] is None
+    assert "uniform over the patch" not in wall._range(spread)
+    assert "25" in wall._range(spread) and "100" in wall._range(spread)
+    assert "log layer" in wall._regions(spread) and "%" not in wall._regions(spread)
+
+    flat = wall.patch_record("wall", np.array([100.0, 100.0]), faces=2, uniform=True)
+    assert wall._range(flat) == "y+ 100 uniform over the patch"
 
 
 def test_a_per_face_shear_gives_a_per_face_y_plus(wall, tmp_path):
