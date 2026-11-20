@@ -1575,13 +1575,25 @@ def _machine_line(ctx: ToolContext, ranks: int) -> str:
     re-decomposed for 4. So both numbers are said, and what MPI will accept without
     being told otherwise; the extra ranks a thread would add are named for what they
     are, because a CFD solve is bound by memory bandwidth and two ranks on one core
-    share it."""
+    share it.
+
+    The refusal is not universal, and the sentence says `usually` for that reason.
+    Open MPI's slot count comes from the topology it detects, and a cgroup CPU quota
+    is not part of that topology: inside a container `nproc` reports the quota while
+    Open MPI still sees the host's cores. Measured twice on this corpus, `mpirun -np
+    12` ran unrefused on a container whose `nproc` answered 4 (study
+    20260830-164816-eee0's own 12-way run, and twelve foreign ranks sharing the
+    container in 20260830-032052-6fe9). Both observations hold; which one applies
+    depends on whether the cores reported here are the machine's or a quota's. The
+    bandwidth point survives either way, and is the reason the number is worth
+    saying at all."""
     threads = ctx.cores or 0
     physical = ctx.physical_cores or 0
     if physical and physical < threads:
         line = (f"{threads} hardware threads = {physical} physical cores on this machine; "
-                f"mpirun accepts up to {physical} ranks as it is (more needs "
-                "--use-hwthread-cpus, and ranks that share a core gain little in CFD)")
+                f"mpirun usually accepts up to {physical} ranks as it is (more has needed "
+                "--use-hwthread-cpus on a bare machine, though a container's quota is not "
+                "what Open MPI counts; ranks that share a core gain little in CFD)")
         if ranks > physical:
             line += f" -- {ranks} ranks is more than the {physical} cores"
         return line
