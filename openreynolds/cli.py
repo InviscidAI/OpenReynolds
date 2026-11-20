@@ -44,6 +44,7 @@ from .llm import PRESETS, REYNOLDS, ProviderError, make_provider, preset_for
 from .llm import base as llm_base
 from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
+from . import viewer
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, local_for, sync as mirror_sync
 from .progress import Tracker
@@ -1478,6 +1479,54 @@ def renders_cmd(study_id: str | None, open_it: bool) -> None:
     view.show_renders(store.renders_dir)
     if open_it:
         _open_folder(store.renders_dir, view)
+
+
+@main.command("view")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--out", "out_path", default=None, type=click.Path(path_type=Path),
+              help=f"Where the page goes. Defaults to <study>/{viewer.PAGE_NAME}.")
+@click.option("--no-open", "no_open", is_flag=True,
+              help="Write the page and print its path instead of opening a browser.")
+def view_cmd(study_id: str | None, out_path: Path | None, no_open: bool) -> None:
+    """Look at this study's results in a browser: one local page, no ParaView.
+
+    Every picture the study rendered -- the geometry from four angles, the mesh
+    coloured per patch, the field panels, the animation frames -- grouped by the
+    folder it came from, newest first, with the reports and `results.json` linked
+    under them. Purely local: no instance is started, nothing is downloaded, and
+    the page has no script and no network in it, so it works offline.
+
+    The pictures are linked, not embedded, so the page is a few kilobytes whatever
+    the study weighs. For a page that can be attached to a message and opened
+    somewhere else, the `gallery.py` toolbox script embeds them instead.
+
+    It shows what was rendered; it does not rotate the mesh in the browser.
+    """
+    cfg = Config.load()
+    studies = list_studies(cfg.studies_dir)
+    if not studies:
+        console.print(f"No studies under {cfg.studies_dir}")
+        raise SystemExit(1)
+    chosen = study_id or studies[0].study_id
+    store = Store(cfg.studies_dir, chosen)
+    if not store.dir.is_dir():
+        console.print(f"[red]No study {chosen} under {cfg.studies_dir}[/]")
+        raise SystemExit(1)
+
+    page, pictures, reports = viewer.build(store.dir, out=out_path, title=chosen)
+    console.print(f"[green]{page}[/]  ({pictures} picture(s), {reports} report(s))")
+    if not pictures and not reports:
+        console.print(
+            f"[dim]nothing was rendered here yet - openreynolds pull --study {chosen}[/]"
+        )
+    if no_open:
+        return
+    try:
+        opened = bool(webbrowser.open(page.resolve().as_uri()))
+    except Exception:  # noqa: BLE001 - a browser that will not open is not an error here
+        opened = False
+    if not opened:
+        console.print("[dim]open that file in a browser[/]")
 
 
 @main.command("video")
