@@ -20,6 +20,14 @@ hosted studies needs the index kept on the service and the files copied between
 workspaces, which is a separate decision. `Backend.shared_workspace` is the gate, and
 it is read here rather than at the two call sites so neither can forget it.
 
+That scope is also why none of this goes through `exec`. A workspace studies share is
+a directory on this machine, so the file is opened with `pathlib` under
+`LocalBackend.real_path`. Through a shell it was broken on Windows CI and nobody could
+have known: `exec` runs `bash -lc`, and on a Windows runner `bash` is WSL's stub, so
+every command fails whatever its text says -- `tests/conftest.py:a_kernel_can_come_up`
+measures precisely that and skips the tests which need a shell. Doing it in Python also
+takes the read from two round trips, to one, to none.
+
 Every function here swallows workspace errors. The index is a convenience: a mesh that
 cannot be recorded is still a finished mesh, and a session that cannot read the index
 is a session that builds, which is what it did before this file existed.
@@ -28,16 +36,17 @@ is a session that builds, which is what it did before this file existed.
 from __future__ import annotations
 
 import json
-import shlex
 import time
+from pathlib import Path
 from typing import Any
 
 from ..backend.base import WORKSPACE_ROOT
 
-INDEX_REL = ".reynolds/meshes.jsonl"
-"""Where the index is, relative to the workspace root -- which is also how every
-command here names it, with `cwd` at the root. See `_rel`."""
 INDEX_DIR = ".reynolds"
+INDEX_NAME = "meshes.jsonl"
+INDEX_REL = f"{INDEX_DIR}/{INDEX_NAME}"
+"""Where the index is, relative to the workspace root. The advertised form, for saying
+so in the offer; the file itself is opened under `LocalBackend.real_path`."""
 REQUEST_CHARS = 200
 """Enough of the request to recognise the geometry; the full text is in the study."""
 SHOWN = 5
@@ -101,25 +110,16 @@ def entry(check: Any, case_dir: str, request: str, study_id: str) -> dict[str, A
 
 
 def _rel(case_dir: str, root: str) -> str:
-    r"""A case directory as the index stores it: relative to the workspace root.
+    """A case directory as the index stores it: relative to the workspace root.
 
-    No absolute path goes into a line, and no absolute path goes into a command. Every
-    command here runs with `cwd` at the root, which the backend resolves in Python
-    (`LocalBackend.exec` hands it to `subprocess`), so the shell only ever sees relative
-    POSIX paths.
+    The file is read on the machine that holds it and the paths are handed back in the
+    form the session uses, and those are not always the same string: a Docker workspace
+    is `/work/<study>` to everything above this module and a directory on the host to
+    the code that opens the file. One relative entry serves both.
 
-    A Windows workspace root is why. `C:\Users\...` carries a drive colon, which POSIX
-    `PATH` uses as a separator, and backslashes, which the shell and `re.sub` both read
-    as escapes -- and whether an absolute Windows path resolves at all depends on which
-    bash is on PATH. It did on this developer's machine and did not on the Windows CI
-    runner, where `mkdir -p C:/Users/.../.reynolds` left Python unable to find the
-    directory it had just been told was made: six tests, every one of them "expected a
-    path, got nothing". Relative POSIX paths have none of those traps.
-
-    A case directory outside the root is left absolute. Nothing produces one -- a
-    study's home is inside the root by construction (`cli._home_path`) -- and if
-    something did, it simply never matches the relative existence test and so is never
-    offered, which is the safe direction.
+    A case directory outside the root is left as it is. Nothing produces one -- a
+    study's home is inside the root by construction (`cli._home_path`) -- and one that
+    appeared would simply never be found, which is the safe direction.
     """
     case = _posix(case_dir)
     base = _posix(root).rstrip("/")
@@ -130,35 +130,68 @@ def _rel(case_dir: str, root: str) -> str:
 
 def _abs(case_dir: str, root: str) -> str:
     """A stored case directory as the session refers to it. The model is handed a path
-    it can copy, so what is read back out of the line is joined onto the root again."""
+    it can copy, so what is read out of the line is joined onto the root again."""
     case = _posix(case_dir)
     if case.startswith("/") or ":" in case.split("/", 1)[0]:
         return case
     return f"{_posix(root).rstrip('/')}/{case}"
 
 
-def record(backend: Any, line: dict[str, Any], root: str | None = None) -> bool:
-    """Append one entry. One short `>>` append, so two sessions on one workspace
-    cannot lose each other's lines the way a read-modify-write would.
+def _real_dir(backend: Any, root: str) -> Path | None:
+    """Where this workspace's index directory really is on this machine, or None when
+    the backend cannot say.
 
-    False when nothing was written, which includes a workspace studies do not share
-    and an append that failed: a `>>` into a read-only or full volume comes back with
-    a non-zero exit code and no exception, and reporting that as recorded would put a
-    line in the index that nobody could read back.
+    None is the honest answer for a backend with no local filesystem behind it, and it
+    turns every function here into a no-op rather than a guess. In practice it does not
+    arise: `shared(backend)` is only true of the local backends, which all answer
+    `real_path` (`LocalBackend.real_path`, inherited by `DockerBackend`).
+    """
+    locate = getattr(backend, "real_path", None)
+    if locate is None:
+        return None
+    try:
+        return Path(locate(root)) / INDEX_DIR
+    except Exception:  # noqa: BLE001 - see the module docstring
+        return None
+
+
+def record(backend: Any, line: dict[str, Any], root: str | None = None) -> bool:
+    """Append one entry, as one short line opened `"a"` and written once.
+
+    In Python, not through `exec`. `exec` runs `bash -lc`, and on a Windows CI runner
+    `bash` is WSL's stub, so every command fails whatever its text says
+    (`tests/conftest.py:a_kernel_can_come_up` measures exactly this and skips the tests
+    that need a shell). The index only ever lives on a workspace studies share, which
+    is only ever a local one, so the file is on this machine and `pathlib` can have it:
+    no shell, no quoting, no absolute Windows path for a drive colon or a backslash to
+    be mangled in.
+
+    Still an append rather than a read-modify-write, so two sessions on one workspace
+    do not lose each other's lines wholesale. It is not perfectly atomic and the claim
+    is not made: #22's casebook measured buffered append losing 137 of 900 records
+    under six concurrent writers on Windows, and a single `os.write` to an `O_APPEND`
+    descriptor losing 104 -- the same defect #120 tracks for `study_state.record`. The
+    shell `>>` this replaces had that exposure too. A lost line costs one offer, which
+    is what the module docstring means by a convenience.
+
+    False when nothing was written: a workspace studies do not share, a backend with no
+    local path, or a write that failed -- a full or read-only volume, where reporting
+    success would put a line in the index that nobody could read back.
     """
     if not shared(backend):
         return False
     where = root if root is not None else root_of(backend)
-    stored = {**line, "case_dir": _rel(str(line.get("case_dir") or ""), where)}
-    text = json.dumps(stored, separators=(",", ":"))
-    try:
-        res = backend.exec(
-            f"mkdir -p {INDEX_DIR} && printf '%s\\n' {shlex.quote(text)} >> {INDEX_REL}",
-            cwd=where, timeout_s=60,
-        )
-    except Exception:  # noqa: BLE001 - see the module docstring
+    folder = _real_dir(backend, where)
+    if folder is None:
         return False
-    return int(getattr(res, "exit_code", 0) or 0) == 0
+    stored = {**line, "case_dir": _rel(str(line.get("case_dir") or ""), where)}
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / INDEX_NAME, "a", encoding="utf-8") as index:
+            index.write(json.dumps(stored, separators=(",", ":")) + "\n")
+    except OSError:
+        return False
+    return True
 
 
 def retire(backend: Any, case_dir: str, root: str | None = None) -> bool:
@@ -171,83 +204,75 @@ def retire(backend: Any, case_dir: str, root: str | None = None) -> bool:
     at the mesh that is now half-written. The directory still exists, so the offer
     passed it and the next study copied it.
 
-    A tombstone rather than an edit, because the index is append-only on purpose: two
-    sessions on one workspace cannot lose each other's lines, and `read` already takes
-    the newest line per case directory, so a tombstone written after an entry retires
-    it and an entry written after a tombstone revives it. Nothing is created to retire
-    into: with no index there is nothing to invalidate.
+    A tombstone rather than an edit, because the index is append-only: `read` takes the
+    newest line per case directory, so a tombstone written after an entry retires it
+    and an entry written after a tombstone revives it. Nothing is created to retire
+    into -- with no index there is nothing to invalidate.
     """
     if not shared(backend):
         return False
     where = root if root is not None else root_of(backend)
-    text = json.dumps({"case_dir": _rel(case_dir, where), "retired": True},
-                      separators=(",", ":"))
+    folder = _real_dir(backend, where)
+    if folder is None or not (folder / INDEX_NAME).is_file():
+        return False
+    line = {"case_dir": _rel(case_dir, where), "retired": True}
     try:
-        backend.exec(
-            f"test -f {INDEX_REL} && printf '%s\\n' {shlex.quote(text)} "
-            f">> {INDEX_REL} || true",
-            cwd=where, timeout_s=60,
-        )
-    except Exception:  # noqa: BLE001 - see the module docstring
+        with open(folder / INDEX_NAME, "a", encoding="utf-8") as index:
+            index.write(json.dumps(line, separators=(",", ":")) + "\n")
+    except OSError:
         return False
     return True
 
 
-_READ_CMD = """\
-test -f {path} || exit 0
-tail -n {lines} {path} | while IFS= read -r line; do
-  d=${{line#*:\\"}}
-  d=${{d%%\\"*}}
-  [ -n "$d" ] || continue
-  for f in "$d"/constant/polyMesh/faces "$d"/constant/*/polyMesh/faces; do
-    [ -f "$f" ] && printf '%s\\n' "$line" && break
-  done
-done
-true
-"""
-r"""Tail the index and test each entry's mesh in one round trip, printing only the lines
-whose mesh is still on disk.
+def _has_mesh(case: Path) -> bool:
+    """Whether a case directory still holds a mesh that could be copied.
 
-Two commands before this, and both are charged to the desk's step budget ahead of its
-first model call. The case directory is taken off the front of the line by the shell's
-own prefix stripping rather than parsed, which is sound because this file writes the
-line: `json.dumps` with compact separators and `case_dir` first. Not `sed`:
-`s|\\\\|/|g` is an unterminated expression to the sed in Git for Windows.
-
-Every path in it is relative, and it runs with `cwd` at the workspace root, for the
-reason `_rel` gives: an absolute Windows path in command text is resolved by whichever
-bash is on PATH, and the two disagreed.
-
-Either mesh layout counts as present: `constant/polyMesh/faces` for a single-region
-case and `constant/<region>/polyMesh/faces` for the multi-region one that
-`cad.check.mesh_regions` accepts. Testing only the first dropped every CHT mesh on
-every read, so they were recorded and never offered."""
+    Either layout counts: `constant/polyMesh` for a single-region case and
+    `constant/<region>/polyMesh` for the multi-region one `cad.check.mesh_regions`
+    accepts. Checking only the first dropped every CHT mesh on every read, so they were
+    recorded and never offered.
+    """
+    constant = case / "constant"
+    if (constant / "polyMesh" / "faces").is_file():
+        return True
+    try:
+        return any(faces.is_file() for faces in constant.glob("*/polyMesh/faces"))
+    except OSError:
+        return False
 
 
 def read(backend: Any, root: str | None = None, exclude: str = "") -> list[dict[str, Any]]:
     """The entries still on disk, newest first, one per case directory, leaving out
     `exclude` and anything under it (a case directory, or a study's own home).
 
-    An entry whose mesh is gone (the study was deleted, the mesh was rebuilt elsewhere)
-    is dropped by the command itself, so what is offered is what can be copied. A
-    retired entry drops out here, and takes the case directory with it so no older
-    entry for the same case is offered in its place. A line that does not parse is
-    skipped rather than failing the read.
+    An entry whose mesh is gone -- the study was deleted, the mesh was rebuilt
+    elsewhere -- is dropped, so what is offered is what can be copied. A retired entry
+    drops out and takes its case directory with it, so no older entry for the same case
+    is offered in its place. A line that does not parse is skipped rather than failing
+    the read.
+
+    Read in Python for the reason `record` gives, which also means the two round trips
+    the review asked be made one are now none: nothing here waits on a shell before the
+    desk's first model call.
     """
     if not shared(backend):
         return []
     where = root if root is not None else root_of(backend)
-    try:
-        res = backend.exec(_READ_CMD.format(path=INDEX_REL, lines=READ_LINES),
-                           cwd=where, timeout_s=60)
-    except Exception:  # noqa: BLE001 - see the module docstring
+    folder = _real_dir(backend, where)
+    if folder is None:
         return []
+    try:
+        with open(folder / INDEX_NAME, encoding="utf-8", errors="replace") as index:
+            raw = index.read().splitlines()[-READ_LINES:]
+    except OSError:
+        return []
+    base = Path(folder).parent
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     left_out = _posix(exclude).rstrip("/")
-    for raw in reversed((res.output or "").splitlines()):
+    for text in reversed(raw):
         try:
-            item = json.loads(raw)
+            item = json.loads(text)
         except ValueError:
             continue
         stored = item.get("case_dir") if isinstance(item, dict) else None
@@ -256,13 +281,17 @@ def read(backend: Any, root: str | None = None, exclude: str = "") -> list[dict[
         seen.add(stored)
         if item.get("retired"):
             continue
-        # Stored relative, handed back absolute: the model is given a path it can copy.
         case_dir = _abs(stored, where)
-        item["case_dir"] = case_dir
         if left_out and (case_dir == left_out or case_dir.startswith(left_out + "/")):
             continue
+        if not _has_mesh(base / stored):
+            continue
+        # Stored relative, handed back absolute: the model is given a path it can copy.
+        item["case_dir"] = case_dir
         out.append(item)
-    return out[:SHOWN]
+        if len(out) == SHOWN:
+            break
+    return out
 
 
 def mesh_paths(item: dict[str, Any]) -> list[str]:

@@ -159,6 +159,20 @@ class LocalBackend(KernelHost, Backend):
             )
         return resolved
 
+    def real_path(self, path: str) -> Path:
+        """Where a workspace path actually is on this machine.
+
+        The public form of `_resolve`, for the callers that can do a file's work in
+        Python instead of through `exec`. That is worth reaching for: `exec` runs
+        `bash -lc`, and on a Windows CI runner `bash` is WSL's stub, so every command
+        fails whatever it says (`tests/conftest.py:a_kernel_can_come_up`). It refuses a
+        path outside the root exactly as `_resolve` does.
+
+        `DockerBackend` inherits it and it stays correct there -- `_host` is already
+        `_resolve` of a `/work` path, and that backend does its own job and log file
+        work on the host this way."""
+        return self._resolve(path)
+
     def exec(self, cmd: str, cwd: str | None = None, timeout_s: int = 120,
              *, background: bool = False) -> ExecResult:
         # `background` is accepted and ignored: it exists to stop a hosted backend

@@ -8,18 +8,22 @@ costs a mesh or a session when the workspace will not answer.
 
 Local workspaces only, both ways: a hosted study gets a workspace of its own (#92), so
 there the index could only ever hold the current study's own meshes.
+
+None of it runs a command, which is what Windows CI caught: `exec` is `bash -lc`, and on
+a Windows runner `bash` is WSL's stub (`conftest.a_kernel_can_come_up`). These tests had
+never run there -- every earlier CI run on the branch was `action_required` -- and the
+first one that did failed six of them.
 """
 
 from __future__ import annotations
 
 import json
 
-from openreynolds.backend.base import ExecResult
 from openreynolds.backend.local import LocalBackend
 from openreynolds.cad import mesh_index
 from openreynolds.cli import _meshes_note
 
-from test_cad_agent import DONE, PASSES, REFUSES, answers, block, checking, desk, kernelled
+from test_cad_agent import DONE, PASSES, REFUSES, block, checking, desk, kernelled
 
 
 def _polymesh(root, case, region=""):
@@ -39,23 +43,15 @@ def _line(case_dir, request="the text Inviscid AI in a 2D channel", cells=3750,
     return mesh_index.entry(check, case_dir, request, "20260920-155504-4379")
 
 
-def _shared(**attrs):
-    """A fake workspace studies share, which is what a local one is."""
-    class Fake:
-        workspace_root = "/work"
-        shared_workspace = True
+def _shared(root, **attrs):
+    """A workspace studies share, which is what a local one is, with no shell behind it
+    at all -- `exec` raises, so anything reaching for one fails the test."""
+    made = LocalBackend(root=root, bashrc="")
 
-        def __init__(self):
-            self.execs: list[str] = []
-            self.cwds: list[str | None] = []
-            self.result = ExecResult(0, "", False, None)
+    def no_shell(*a, **k):
+        raise AssertionError("the mesh index must not need a shell")
 
-        def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
-            self.execs.append(cmd)
-            self.cwds.append(cwd)
-            return self.result
-
-    made = Fake()
+    made.exec = no_shell
     for name, value in attrs.items():
         setattr(made, name, value)
     return made
@@ -162,70 +158,62 @@ def test_no_index_is_no_offer(tmp_path):
     assert mesh_index.offer([]) == ""
 
 
-def test_the_index_is_read_in_one_round_trip(tmp_path):
-    """Both the tail and the per-entry existence test are charged to the desk's budget
-    before its first model call, so they are one command."""
-    backend = _shared()
-    mesh_index.read(backend)
-    assert len(backend.execs) == 1
+def test_the_index_never_runs_a_command(tmp_path):
+    """The whole of it works with no shell, which is the bug Windows CI caught.
 
-
-def test_no_command_carries_an_absolute_path(tmp_path):
-    r"""Whether an absolute Windows path in command text resolves depends on which bash
-    is on PATH. `mkdir -p C:/Users/.../.reynolds` made the directory on the developer's
-    Git bash and not on the Windows CI runner, where six of these tests failed as
-    "expected a path, got nothing" -- including one that could not open the index the
-    shell had just reported creating. Every path in a command is relative now, and the
-    root goes through `cwd`, which the backend resolves in Python.
+    `exec` runs `bash -lc`, and on a Windows runner `bash` is WSL's stub: every command
+    fails whatever its text says, which is what `conftest.a_kernel_can_come_up` measures
+    before skipping the tests that need a shell. Six of these tests failed there as
+    "expected a path, got nothing" -- one of them a `FileNotFoundError` on the index the
+    shell had just reported creating -- and no amount of path shaping could have fixed
+    it. A workspace studies share is a directory on this machine, so the file is opened
+    in Python and `exec` is never reached.
     """
-    backend = _shared(workspace_root=str(tmp_path))
-    case = (tmp_path / "20260920-155504-4379/mesh").as_posix()
-    mesh_index.record(backend, _line(case), str(tmp_path))
-    mesh_index.retire(backend, case, str(tmp_path))
-    mesh_index.read(backend, str(tmp_path))
-    assert backend.execs, "nothing ran, so nothing was pinned"
-    for cmd in backend.execs:
-        assert str(tmp_path) not in cmd and tmp_path.as_posix() not in cmd
-        assert ":" not in cmd.split(".reynolds")[0]
-    # The root reached the backend as `cwd`, which is resolved in Python, not by a shell.
-    assert all(c == str(tmp_path) for c in backend.cwds)
+    backend = _shared(tmp_path)
+    root = backend.workspace_root
+    case = _polymesh(tmp_path, "20260920-155504-4379/mesh")
+    assert mesh_index.record(backend, _line(case), root)
+    assert [g["case_dir"] for g in mesh_index.read(backend, root)] == [case]
+    assert mesh_index.retire(backend, case, root)
+    assert mesh_index.read(backend, root) == []
 
 
-def test_an_append_that_failed_is_not_reported_as_recorded():
-    """A `>>` into a read-only or full volume fails quietly: `exec` does not raise and
-    the exit code is the only thing that says so."""
-    backend = _shared()
-    backend.result = ExecResult(1, "Read-only file system", False, None)
-    assert mesh_index.record(backend, _line("/work/s/mesh")) is False
-    backend.result = ExecResult(0, "", False, None)
-    assert mesh_index.record(backend, _line("/work/s/mesh")) is True
+def test_a_write_that_cannot_land_is_not_reported_as_recorded(tmp_path):
+    """A full or read-only volume, staged here as a file where the index directory has
+    to go. Reporting success would put a line in the index that nobody could read back.
+    """
+    backend = _shared(tmp_path)
+    (tmp_path / mesh_index.INDEX_DIR).write_text("not a directory\n")
+    assert mesh_index.record(backend, _line("/work/s/mesh"), backend.workspace_root) is False
+    assert mesh_index.read(backend, backend.workspace_root) == []
 
 
 def test_a_workspace_studies_do_not_share_is_never_recorded_to_or_read(tmp_path):
     """Every hosted study gets its own workspace (#92), so a hosted index can only ever
     hold the current study's meshes: it cannot answer #35, and offering a study its own
     earlier meshes as though somebody else built them is worse than offering nothing."""
-    backend = _shared()
-    backend.shared_workspace = False
-    assert mesh_index.record(backend, _line("/work/s/mesh")) is False
-    assert mesh_index.retire(backend, "/work/s/mesh") is False
-    assert mesh_index.read(backend) == []
-    assert backend.execs == []
-    assert _meshes_note(backend, "/work/s") == ""
+    backend = _shared(tmp_path, shared_workspace=False)
+    case = _polymesh(tmp_path, "some-study/mesh")
+    root = backend.workspace_root
+    assert mesh_index.record(backend, _line(case), root) is False
+    assert mesh_index.retire(backend, case, root) is False
+    assert mesh_index.read(backend, root) == []
+    assert not (tmp_path / mesh_index.INDEX_DIR).exists()
+    assert _meshes_note(backend, f"{root}/some-study") == ""
 
 
-def test_a_workspace_that_will_not_answer_costs_nothing():
+def test_a_workspace_that_cannot_be_located_costs_nothing():
     """A mesh that cannot be recorded is still a finished mesh; a session that cannot
-    read the index builds, which is what it did before there was one."""
-    class Gone:
+    read the index builds, which is what it did before there was one. A backend that
+    declares a shared workspace but cannot say where it is on this machine is the one
+    case `_real_dir` returns None for."""
+    class Nowhere:
         workspace_root = "/work"
         shared_workspace = True
 
-        def exec(self, *a, **k):
-            raise ConnectionError("workspace recycled")
-
-    assert mesh_index.record(Gone(), _line("/work/s/mesh")) is False
-    assert mesh_index.read(Gone()) == []
+    assert mesh_index.record(Nowhere(), _line("/work/s/mesh")) is False
+    assert mesh_index.retire(Nowhere(), "/work/s/mesh") is False
+    assert mesh_index.read(Nowhere()) == []
 
 
 def test_the_offer_says_what_it_is_and_where(tmp_path):
@@ -243,120 +231,154 @@ def test_the_offer_says_what_it_is_and_where(tmp_path):
 # with a passing or failing one.
 
 
-def _appended(backend):
-    return [c for c in backend.execs
-            if ">>" in c and mesh_index.INDEX_REL in c and '"retired"' not in c]
+def _entries(tmp_path):
+    """The index as it was actually written. The desk tests used to read the command the
+    module sent; it sends none now, so they read the file."""
+    index = tmp_path / mesh_index.INDEX_REL
+    if not index.is_file():
+        return []
+    return [json.loads(line) for line in index.read_text(encoding="utf-8").splitlines()]
 
 
-def _retired(backend):
-    return [c for c in backend.execs if mesh_index.INDEX_REL in c and '"retired"' in c]
+def _appended(tmp_path):
+    return [e for e in _entries(tmp_path) if not e.get("retired")]
+
+
+def _retired(tmp_path):
+    return [e for e in _entries(tmp_path) if e.get("retired")]
 
 
 def _first_message(made):
     return made.provider.calls[0]["messages"][0]["content"][0]["text"]
 
 
-def _local(backend):
-    """The fake workspace, read as a local one. `FakeBackend` is the hosted protocol by
-    default (`Backend.shared_workspace` is False), and the index is local-only."""
+def _local(backend, tmp_path):
+    """The fake workspace, read as a local one: studies share it, and `/work` is a real
+    directory on this machine.
+
+    `FakeBackend` is the hosted protocol by default (`Backend.shared_workspace` is
+    False) and keeps its files in a dict, so the index -- a real file under the
+    workspace root, opened in Python rather than through a shell -- needs a real
+    directory to live in. `real_path` is what `LocalBackend` offers for this.
+    """
     backend.shared_workspace = True
+    backend.real_path = lambda path: _mapped(path, tmp_path)
     return backend
 
 
-def test_a_finished_mesh_is_written_to_the_index(backend, store, monkeypatch):
+def _mapped(path, tmp_path):
+    text = str(path)
+    rel = text[len("/work"):].lstrip("/") if text.startswith("/work") else text
+    return tmp_path / rel
+
+
+def test_a_finished_mesh_is_written_to_the_index(backend, store, monkeypatch, tmp_path):
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
     made = desk(backend, store, [DONE])
     result = made.run("the text Inviscid AI in a 2D channel", case="mesh")
     assert result.ok
-    (cmd,) = _appended(backend)
-    assert '"case_dir":"study/mesh"' in cmd and '"cells":3750' in cmd
-    assert '"study_id":"study"' in cmd
-    assert '"two_d":true' in cmd and '"patches":["inlet"]' in cmd and '"regions":[""]' in cmd
+    (written,) = _appended(tmp_path)
+    assert written["case_dir"] == "study/mesh" and written["cells"] == 3750
+    assert written["study_id"] == "study" and written["two_d"] is True
+    assert written["patches"] == ["inlet"] and written["regions"] == [""]
 
 
-def test_the_study_is_named_as_the_platform_names_it(backend, store, monkeypatch):
+def test_the_study_is_named_as_the_platform_names_it(backend, store, monkeypatch, tmp_path):
     """`Backend.study_id` is the real value; the home's last segment is `work` for a
     study old enough to own the workspace root."""
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
     backend.study_id = "stu_2bK9"
     made = desk(backend, store, [DONE])
     made.run("a duct", case="mesh")
-    (cmd,) = _appended(backend)
-    assert '"study_id":"stu_2bK9"' in cmd
+    (written,) = _appended(tmp_path)
+    assert written["study_id"] == "stu_2bK9"
 
 
-def test_a_mesh_that_never_passed_is_not_written(backend, store, monkeypatch):
+def test_a_mesh_that_never_passed_is_not_written(backend, store, monkeypatch, tmp_path):
     checking(monkeypatch, REFUSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
     made = desk(backend, store, [DONE], mesher_max_steps=2)
     result = made.run("a duct", case="mesh")
     assert not result.ok
-    assert _appended(backend) == []
+    assert _appended(tmp_path) == []
 
 
-def test_a_mesh_nobody_reviewed_is_not_written(backend, store, monkeypatch):
+def test_a_mesh_nobody_reviewed_is_not_written(backend, store, monkeypatch, tmp_path):
     """A run that stopped on steps, time or a provider error is re-verified so a built
     mesh is not reported as nothing, and marked "not reviewed" because no reviewer
     judged the shape against the request. Such a mesh can pass `checkMesh` and still be
     partial or the wrong shape, and the index would offer it under that request's words.
     """
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
     made = desk(backend, store, [block('print("still working")')], mesher_max_steps=1)
     result = made.run("the text Inviscid AI in a 2D channel", case="mesh")
     assert result.ok and result.check is not None and result.review is None
-    assert _appended(backend) == []
+    assert _appended(tmp_path) == []
 
 
-def test_the_case_the_desk_starts_on_is_retired_from_the_index(backend, store, monkeypatch):
+def test_the_case_the_desk_starts_on_is_retired_from_the_index(backend, store, monkeypatch,
+                                                              tmp_path):
     checking(monkeypatch, REFUSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
+    _polymesh(tmp_path, "study/mesh")
+    mesh_index.record(backend, _line("/work/study/mesh"), "/work")
     made = desk(backend, store, [DONE], mesher_max_steps=2)
     made.run("a duct", case="mesh")
-    (cmd,) = _retired(backend)
-    assert '"case_dir":"study/mesh"' in cmd
+    (gone,) = _retired(tmp_path)
+    assert gone["case_dir"] == "study/mesh"
+    # And what it retired is no longer offered, though the mesh is still on disk.
+    assert mesh_index.read(backend, "/work") == []
 
 
-def test_the_desk_is_told_what_is_already_built(backend, store, monkeypatch):
+def test_the_desk_is_told_what_is_already_built(backend, store, monkeypatch, tmp_path):
     other = "/work/20260920-155504-4379/mesh"
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
-    answers(backend, {"tail -n": ExecResult(0, json.dumps(_line(other)) + "\n", False, None)})
+    kernelled(_local(backend, tmp_path))
+    _polymesh(tmp_path, "20260920-155504-4379/mesh")
+    mesh_index.record(backend, _line(other), "/work")
     made = desk(backend, store, [DONE])
     made.run("the text Inviscid AI in a 2D channel", case="mesh")
     first = _first_message(made)
     assert "Meshes already built on this workspace" in first and other in first
 
 
-def test_the_desk_is_not_offered_the_case_it_is_rebuilding(backend, store, monkeypatch):
-    mine = "/work/study/mesh"
+def test_the_desk_is_not_offered_the_case_it_is_rebuilding(backend, store, monkeypatch,
+                                                           tmp_path):
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
-    answers(backend, {"tail -n": ExecResult(0, json.dumps(_line(mine)) + "\n", False, None)})
+    kernelled(_local(backend, tmp_path))
+    _polymesh(tmp_path, "study/mesh")
+    mesh_index.record(backend, _line("/work/study/mesh"), "/work")
     made = desk(backend, store, [DONE])
     made.run("a duct", case="mesh")
     assert "already built" not in _first_message(made)
 
 
-def test_the_desk_is_told_nothing_when_nothing_is_built(backend, store, monkeypatch):
+def test_the_desk_is_told_nothing_when_nothing_is_built(backend, store, monkeypatch, tmp_path):
     checking(monkeypatch, PASSES)
-    kernelled(_local(backend))
+    kernelled(_local(backend, tmp_path))
     made = desk(backend, store, [DONE])
     made.run("a duct", case="mesh")
     assert "already built" not in _first_message(made)
 
 
-def test_a_hosted_desk_neither_offers_nor_records(backend, store, monkeypatch):
+def test_a_hosted_desk_neither_offers_nor_records(backend, store, monkeypatch, tmp_path):
     checking(monkeypatch, PASSES)
-    kernelled(backend)  # left as the hosted protocol: studies do not share the workspace
-    answers(backend, {"tail -n": ExecResult(
-        0, json.dumps(_line("/work/20260920-155504-4379/mesh")) + "\n", False, None)})
+    # Left as the hosted protocol: studies do not share the workspace. The mesh and an
+    # index entry are both staged, so only the gate can be what withholds the offer.
+    kernelled(backend)
+    backend.real_path = lambda path: _mapped(path, tmp_path)
+    _polymesh(tmp_path, "20260920-155504-4379/mesh")
+    (tmp_path / mesh_index.INDEX_DIR).mkdir(parents=True, exist_ok=True)
+    staged = {**_line("/work/20260920-155504-4379/mesh"),
+              "case_dir": "20260920-155504-4379/mesh"}
+    (tmp_path / mesh_index.INDEX_REL).write_text(json.dumps(staged) + "\n", encoding="utf-8")
     made = desk(backend, store, [DONE])
     assert made.run("a duct", case="mesh").ok
     assert "already built" not in _first_message(made)
-    assert _appended(backend) == [] and _retired(backend) == []
+    assert _retired(tmp_path) == [] and _appended(tmp_path) == [staged]
 
 
 # -- the session-start note ------------------------------------------------------
