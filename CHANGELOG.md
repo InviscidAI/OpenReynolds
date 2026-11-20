@@ -352,20 +352,27 @@ All notable changes to this project are recorded here. The format follows
   out of #54 at review.
 
 - **A half model's drag is reported for the whole body again, and a coefficient below
-  flat-plate friction is called impossible.** R01, the SUBOFF hull (F-43): 43.74 N on a
+  the friction line says to check the area.** R01, the SUBOFF hull (F-43): 43.74 N on a
   half model over the whole hull's wetted area delivered Ct 0.00158 against a towing
   tank's 3.15e-3, beside the agent's own ITTC-57 figure of 0.002907. The fix -- the area
   halved where the mesh was cut, the friction floor printed on every case -- lived in
   `snappy_gen.py` and went when it was deleted on 2026-09-07 (`b6ac498`), with nothing
   failing. It is back as `toolbox/reference_area.py`, which reads the cut off
   `constant/polyMesh` rather than off the generator that made it: a symmetry patch that
-  shares points with the body patch mirrors it. `results.py` now says, on every force
-  series, how much of the body the mesh holds and the whole body's drag, flags an Aref
-  that is the whole body's area on a part of it (or more area than the body has), and
-  holds Cd to ITTC-57 (Blasius when laminar). `case_gen.py` writes a 3D body's Aref as
-  its own frontal (`--area wetted`) area measured off the mesh -- it had been the
-  characteristic length times the domain's z extent, a 2D formula -- and `--not-mirror`
-  names a double-body waterline. `tests/test_toolbox_reference_area.py` puts R01's mesh
+  crosses an open edge of the body patch mirrors it, where sharing points is not enough
+  -- a car on a slip floor of type `symmetry` touches it at four tyre patches that span
+  the wheelbase. Each plane doubles only the components that survive its mirror, so on a
+  hull cut at y = 0 the drag doubles while the half model's large Cl and its Cm are zero
+  on the whole body rather than twice the file's, and a plane normal to `dragDir`
+  cancels drag rather than doubling it. `results.py` now says, on every force series,
+  how much of the body the mesh holds, the factor for each of `forceCoeffs`' three
+  directions and the whole body's drag, flags an Aref that is the whole body's wetted or
+  frontal area on a part of it (or more area than the body has), takes `--not-mirror`
+  for a double-body waterline, and holds Cd to ITTC-57 (Blasius when laminar) as a
+  reason to check the area rather than as an impossibility, ITTC-57 being a correlation
+  line. `case_gen.py` writes a 3D body's Aref as its own frontal (`--area wetted`) area
+  measured off the mesh -- it had been the characteristic length times the domain's z
+  extent, a 2D formula. `tests/test_toolbox_reference_area.py` puts R01's mesh
   shape, built from the hull's published equations, and R01's recorded force through
   that code and holds the answer to 87.4 N and Ct 3.15e-3.
 

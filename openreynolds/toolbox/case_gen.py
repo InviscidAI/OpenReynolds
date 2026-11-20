@@ -1610,7 +1610,11 @@ def reference_aref(plan: Plan, opts) -> tuple[float, str]:
     3D: the body patch's own frontal (default) or wetted area, measured off the mesh
     as meshed -- on a half model, half the body's. 2D: span-chord times the one cell's
     thickness, over the mirror factor when a symmetry plane cuts the body, since the
-    chord is not halved by a cut along it but the force is."""
+    chord is not halved by a cut along it but the force is.
+
+    The area factor is the plain 2^planes either way. Which of the coefficients the
+    mirror actually doubles is a separate question, and `reference_lines` answers it
+    from `reference_area.component_report`."""
     ref = plan.info.get("reference") or {}
     factor = int(ref.get("mirror_factor") or 1)
     cut = f", 1/{factor} of the body's because a symmetry plane cuts it" if factor > 1 else ""
@@ -1634,9 +1638,12 @@ def reference_lines(plan: Plan, flow: Flow, model: str) -> list[str]:
                 "controlDict is span x thickness, which is not a 3D body's area -- set it"]
     lines = [f"forces     {line}" for line in reference_area.lines(ref)[1:]]
     floor, name = reference_area.friction_floor(flow.reynolds, model != "laminar")
-    lines.append(f"           floor: flat-plate friction alone at Re {flow.reynolds:.3g} is "
-                 f"Cf = {floor:.5f} ({name}); a total Cd below it on these areas is "
-                 "impossible, not tight")
+    # Not "impossible": ITTC-57 is a model-ship correlation line rather than a bound,
+    # so a transitional case can be honestly under it, and what being under it means
+    # is that the area wants checking (review of #61, item 6).
+    lines.append(f"           floor: friction alone at Re {flow.reynolds:.3g} is "
+                 f"Cf = {floor:.5f} ({name}); a total Cd below that on these areas is a "
+                 "reason to check the area it was divided by")
     return lines
 
 

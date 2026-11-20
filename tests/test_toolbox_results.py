@@ -523,7 +523,7 @@ def test_the_forces_summary_says_rows_were_dropped(tmp_path, results):
         pass
 
     ctx = Ctx()
-    ctx.case, ctx.out_dir = case, out
+    ctx.case, ctx.out_dir, ctx.not_mirror = case, out, ()
     _path, notes = results.produce_forces(ctx, results.Output("forces", "forces", "forces"))
 
     assert notes["Cd (last)"] == "1.1"

@@ -2308,6 +2308,8 @@ def _force_entry(name: str, values: dict[str, str]) -> dict[str, Any]:
         "patches": values.get("patches", "").replace("(", " ").replace(")", " ")
         .replace('"', " ").split(),
         "dragDir": values.get("dragDir", ""),
+        "liftDir": values.get("liftDir", ""),
+        "pitchAxis": values.get("pitchAxis", ""),
     }
 
 
