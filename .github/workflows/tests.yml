@@ -163,10 +163,10 @@ jobs:
           # naming pyvista would make the resolver put plain vtk over vtk-osmesa and
           # take off-screen rendering with it.
           python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
-          # The journey test is left out here and not because it would fail: it
-          # solves a case, and it has its own job below that gates on the answer.
-          # Running it twice per push would pay for the same solve twice.
-          python3 -m pytest -q --ignore=tests/test_journey_duct.py
+          # The journey tests are left out here and not because they would fail:
+          # they solve cases, and they have their own job below that gates on the
+          # answers. Running them twice per push would pay for the same solves twice.
+          python3 -m pytest -q --ignore=tests/test_journey_duct.py --ignore=tests/test_journey_thermal_stress.py
           SH
 
       - name: The Docker backend against the real image
@@ -181,7 +181,7 @@ jobs:
           python -m pytest -q tests/test_docker_backend.py
 
   # The path a real user takes, walked end to end, and the only job anywhere that
-  # actually solves a case: `tests/test_journey_duct.py` starts from an empty
+  # actually solves a case. `tests/test_journey_duct.py` starts from an empty
   # directory, builds a 2D duct with the `duct2d.py` template, dresses it with
   # `case_gen.py`, runs simpleFoam, then reads it back with probe.py, balance.py,
   # wall.py, log_digest.py, results.py and report.py and checks the answer against
@@ -190,6 +190,14 @@ jobs:
   # a study somebody had already finished, so a seam between two stages -- a factor
   # of ten, a unit mismatch, a field written under a name the next stage does not look
   # for -- was invisible to all of them.
+  #
+  # `tests/test_journey_thermal_stress.py` is the same shape for the solid-mechanics
+  # side: the `thermal_stress.py` template, `solidDisplacementFoam`, the two
+  # `postProcess` samplers, and `benchmarks/thermal_stress/grade.py` on the result,
+  # in both plane states, against a closed form that is exact. It is the only place
+  # anything checks that the stress-analysis solver the image has always shipped
+  # actually produces the right number, and the only test of that capability that
+  # cannot pass on a machine with no OpenFOAM on it. Two solves of 800 cells.
   #
   # The image build is the `image` job's, deliberately: same context, same gha cache
   # (read-only here, so the two do not fight over writing it), so nothing is
@@ -221,7 +229,8 @@ jobs:
 
       - name: Mesh it, solve it, read it, and check the physics
         # `-s` rather than captured output: every stage prints its own wall-clock time
-        # and the numbers it measured, and on a green run that log is the evidence.
+        # and the numbers it measured, and on a green run that log is the evidence --
+        # the thermal-stress file prints the agreement `benchmarks/README.md` records.
         run: |
           docker run --rm -i -v "$PWD:/src" -w /src \
             -e LD_PRELOAD=/usr/local/lib/libfoamnotadmin.so \
@@ -230,5 +239,5 @@ jobs:
           cd /src
           git config --global --add safe.directory /src
           python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
-          python3 -m pytest -v -s tests/test_journey_duct.py
+          python3 -m pytest -v -s tests/test_journey_duct.py tests/test_journey_thermal_stress.py
           SH
