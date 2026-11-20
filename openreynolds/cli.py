@@ -466,8 +466,8 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
         console.print("\n[dim]time and tokens, not money: what a study on Reynolds' "
                       "model uses is counted against your plan's studies[/]")
     if any(item["own_key"] and item["cost_usd"] is None and item["total_tokens"] for item in found):
-        console.print("\n[dim]a - under cost (your key): its model, or a kind of token it "
-                      "counted, has no rate here, so there is no figure rather than a wrong one[/]")
+        console.print("\n[dim]a - under cost (your key) for a study on your own key: its model, or a "
+                      "kind of token it counted, has no rate here, so there is no figure rather than a wrong one[/]")
 
 
 def _the_study(cfg: Config, study_id: str | None) -> str:
@@ -537,8 +537,11 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
     # on this machine, and only `push` sends anything up -- once the clone is running,
     # since before that it has no workspace, and a push would land on another study's.
     files = Store(cfg.studies_dir, fresh).files_dir
-    console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
-    if not local_workspace():  # `push` reaches the hosted workspace only
+    if files.is_dir():
+        console.print(f"  its workspace starts empty; the copied files are on this machine, in {escape(str(files))}")
+    else:
+        console.print("  its workspace starts empty; the study it came from had no files on this machine")
+    if files.is_dir() and not local_workspace():  # `push` reaches the hosted workspace only
         console.print(f"  once it is running, [bold]openreynolds push <file> --study {fresh}[/] "
                       "sends one of them up")
     if request:

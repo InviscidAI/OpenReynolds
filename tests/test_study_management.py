@@ -264,6 +264,14 @@ def byok_study(root, study_id="20261115-090000-ffff", **fields):
     return store
 
 
+def test_a_clone_of_a_study_with_no_files_here_does_not_point_at_an_empty_folder(studies_dir):
+    byok_study(studies_dir)
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    assert said.exit_code == 0, said.output
+    assert "had no files on this machine" in said.output
+    assert "openreynolds push" not in said.output
+
+
 def test_a_token_class_with_no_rate_is_no_figure_rather_than_a_free_one(studies_dir):
     """#191: `spend` prices a class its rates do not list at zero, so 50M tokens of one
     came out as $0.03. A figure that leaves part of the run out is not shown."""
