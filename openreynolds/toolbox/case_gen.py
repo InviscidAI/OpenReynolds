@@ -1911,9 +1911,11 @@ def summary(case: Path, plan: Plan, flow: Flow, study: str, model: str, why: str
         # The summary said "next: pimpleFoam -case ..." over a case whose `latestTime`
         # was past the end time given, so the run it promised computed nothing (#181).
         # `start_entries` is pure and reads the directory, so asking it twice is a stat.
-        lines += [f"{note}" for note in start_entries(
-            case, float(opts["end_time"]) if opts.get("end_time") is not None
-            else float(opts.get("iterations") or 0))[1]]
+        # The same end as `control_dict` uses, by the same branch on `study`: both
+        # `--end-time` and `--iterations` have defaults, so keying off which one is set
+        # would have claimed `endTime 1` on a steady run that ends at iteration 1000.
+        end = float(opts["end_time"] if study == "transient" else opts["iterations"])
+        lines += [f"{note}" for note in start_entries(case, end)[1]]
     lines += [f"           {note}" for note in plan.notes]
     return lines
 
