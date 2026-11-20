@@ -376,10 +376,16 @@ def test_the_measured_nusselt_lands_on_dittus_boelter(heat, tmp_path):
     """Dittus-Boelter, as `ladder.py`'s conjugate catalogue states it: for turbulent
     fully developed pipe flow `Nu = 0.023 Re^0.8 Pr^n`, with n = 0.4 when the fluid
     is being heated and 0.3 when it is being cooled -- a fit to measured
-    heat-transfer data over Re > 1e4 and 0.6 < Pr < 160 whose own stated scatter is
+    heat-transfer data over Re > 1e4 and 0.7 < Pr < 160 whose own stated scatter is
     20-25%, which is the band quoted here and not a tolerance invented for the test.
     (F. W. Dittus and L. M. K. Boelter, University of California Publications in
     Engineering 2 (1930) 443; reprinted Int. Comm. Heat Mass Transfer 12 (1985) 3.)
+
+    The lower Pr bound reads 0.7 here and not 0.6, which this repository said before
+    #190: both circulate, neither the paper nor an open textbook statement of the
+    range could be read (see `heat.DITTUS_BOELTER_PR_MIN`), and the stricter bound is
+    the one that cannot produce a verdict the source does not support. Pr 0.71 below
+    is inside either reading, so nothing in the arithmetic turns on the choice.
 
     At Re = 50000 and Pr = 0.71 the correlation gives
     0.023 * 50000^0.8 * 0.71^0.4 = 115.188. The fixture is built to come out near it
@@ -416,7 +422,71 @@ def test_the_measured_nusselt_lands_on_dittus_boelter(heat, tmp_path):
 
     (finding,) = [f for f in heat.findings(found) if f.check == "correlation"]
     assert finding.status == "ok"
-    assert "Dittus-Boelter" in finding.meaning and "0.6 < Pr < 160" in finding.meaning
+    assert "Dittus-Boelter" in finding.meaning and "0.7 < Pr < 160" in finding.meaning
+
+
+def test_a_correlation_outside_its_own_range_is_refused_rather_than_evaluated(heat,
+                                                                              tmp_path):
+    """#190: at Re 3000 and Pr 0.7 the formula returns 12.0632, and that was reported
+    as the solve being "370.3% away" in the same sentence that stated the correlation
+    holds over Re > 1e4. Re 3000 is in the transitional band where neither entry in
+    the catalogue applies: Graetz is laminar and stops at 2300, Dittus-Boelter starts
+    at 1e4. What is honest there is the range violation, not a percentage.
+    """
+    case = box(tmp_path)
+    write_field(case / "0.5" / "wallHeatFlux", "volScalarField", {"wall": "uniform 7000"})
+    write_field(case / "0.5" / "T", "volScalarField",
+                {"wall": "uniform 360"}, internal=scalars([300.0] * 32))
+
+    found = heat.measure(case, length=0.016, k=0.0257, t_ref=300.0,
+                         reynolds=3000.0, prandtl=0.7)
+    (row,) = found["regions"][0]["nusselt"]
+    comparison = row["correlation"]
+
+    assert comparison["Nu"] is None, "no Nusselt number is quoted from outside the range"
+    assert comparison["relative"] is None and comparison["inside"] is None
+    assert any("Re 3000 is below" in reason for reason in comparison["outside_range"])
+
+    (finding,) = [f for f in heat.findings(found) if f.check == "correlation"]
+    assert finding.status == "skipped"
+    assert "not compared" in finding.measured
+    assert "%" not in finding.measured.split("not compared")[1], (
+        "a percentage after the refusal reads as a verdict on the CFD"
+    )
+    text = heat.report(found)
+    assert "not evaluated" in text and "12.06" not in text
+
+
+def test_a_prandtl_outside_the_range_is_named_as_the_reason(heat, tmp_path):
+    """The other bound, and the one the issue's `--prandtl 0.01` hit: liquid sodium is
+    nowhere near the data the correlation was fitted to, and it still gave "171.0%
+    away" with no note that Pr was outside anything."""
+    case = box(tmp_path)
+    write_field(case / "0.5" / "wallHeatFlux", "volScalarField", {"wall": "uniform 7000"})
+    write_field(case / "0.5" / "T", "volScalarField",
+                {"wall": "uniform 360"}, internal=scalars([300.0] * 32))
+
+    found = heat.measure(case, length=0.016, k=0.0257, t_ref=300.0,
+                         reynolds=50000.0, prandtl=0.01)
+    comparison = found["regions"][0]["nusselt"][0]["correlation"]
+    assert comparison["Nu"] is None
+    assert any("Pr 0.01 is below" in reason for reason in comparison["outside_range"])
+    assert any("0.6 is also in circulation" in reason
+               for reason in comparison["outside_range"]), (
+        "the bound itself could not be read from a source, and that is said rather "
+        "than hidden behind a number"
+    )
+
+
+def test_the_range_check_names_every_bound_that_was_broken(heat):
+    """On the numbers alone, which is where the gate lives."""
+    assert heat.dittus_boelter_outside(50000.0, 0.71) == ()
+    assert len(heat.dittus_boelter_outside(3000.0, 0.01)) == 2, "Re and Pr both"
+    (high,) = heat.dittus_boelter_outside(50000.0, 200.0)
+    assert "above" in high and "160" in high
+    assert heat.correlation_for(3000.0, 0.7, True).nu is None
+    assert heat.correlation_for(50000.0, 0.71, True).nu == pytest.approx(115.188,
+                                                                        rel=1e-4)
 
 
 def test_a_laminar_case_is_compared_against_graetz_instead(heat, tmp_path):

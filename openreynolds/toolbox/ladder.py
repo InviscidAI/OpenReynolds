@@ -1090,7 +1090,10 @@ CHT = (
               "a constant wall temperature and 4.36 for a constant wall flux -- exact "
               "eigenvalue results. For turbulent flow the Dittus-Boelter correlation "
               "Nu = 0.023*Re^0.8*Pr^n, with n = 0.4 heating and 0.3 cooling, which is a fit "
-              "to measured heat-transfer data over Re > 1e4 and 0.6 < Pr < 160.",
+              "to measured heat-transfer data over Re > 1e4 and 0.7 < Pr < 160 in a "
+              "smooth circular pipe (0.6 is also in circulation as that lower bound; "
+              "`heat.py` checks the stricter one and refuses the comparison outside "
+              "the range rather than evaluating the formula anyway).",
         tolerance="within 2% of the Graetz values, which are exact; within 20-25% of "
                   "Dittus-Boelter, which is the stated scatter of the correlation itself and "
                   "not a slack tolerance.",

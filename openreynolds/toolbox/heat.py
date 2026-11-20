@@ -706,11 +706,62 @@ offering Dittus-Boelter. The transition is a band and not a line; which side a c
 was compared on is printed with the comparison."""
 
 
+DITTUS_BOELTER_RE_MIN = 1e4
+DITTUS_BOELTER_PR_MIN = 0.7
+DITTUS_BOELTER_PR_MAX = 160.0
+"""Where Dittus-Boelter is evaluated, and outside which it is refused rather than
+evaluated anyway.
+
+The upper Pr bound and the Re bound are the ones `ladder.py`'s catalogue and this
+module's own output string have always stated. The lower Pr bound is the one number
+here that could not be read from a source: **0.6 and 0.7 both circulate**, the original
+paper is paywalled (F. W. Dittus and L. M. K. Boelter, University of California
+Publications in Engineering 2 (1930) 443, reprinted Int. Commun. Heat Mass Transfer 12
+(1985) 3-22), and the open-access alternative -- Lienhard & Lienhard, *A Heat Transfer
+Textbook*, 6th ed., section 7.3, free at ahtt.mit.edu -- is a single 32 MB PDF that was
+not retrievable here. So the STRICTER of the two is what is checked: between 0.6 and 0.7
+the range itself is unverified, and a verdict there would rest on which textbook was to
+hand rather than on the correlation. `benchmarks/README.md` records what quoting a
+reference from a secondary source has cost this repository twice, and `benchmarks/sph/`
+does the same thing with Martin & Moyce (1952): report the quantity, name the
+alternative, withhold the verdict.
+
+Separately, and not checkable from a case: Dittus-Boelter is a fit for fully developed
+flow in a smooth circular pipe. The tube bank in `20260830-000854-31c3` is not one, and
+nothing here can tell. That is said in the output rather than guarded against (#190)."""
+
+
 class Correlation(NamedTuple):
     name: str
-    nu: float
+    nu: float | None
     band: float
     source: str
+    outside: tuple[str, ...] = ()
+
+
+def dittus_boelter_outside(reynolds: float, prandtl: float) -> tuple[str, ...]:
+    """Which of the correlation's own bounds this Re and Pr are outside of.
+
+    Checked before the formula is evaluated, because `0.023 Re^0.8 Pr^n` returns a
+    plausible number for any positive inputs: at Re 3000 and Pr 0.7 it gives 12.0632,
+    and that was reported as the CFD being "370.3% away" in the same sentence that
+    stated the correlation holds over Re > 1e4 (#190). A percentage against a
+    correlation outside its range is a measurement of the range violation, not of the
+    solve.
+    """
+    out = []
+    if reynolds < DITTUS_BOELTER_RE_MIN:
+        out.append(f"Re {reynolds:g} is below the correlation's "
+                   f"Re > {DITTUS_BOELTER_RE_MIN:g}")
+    if prandtl < DITTUS_BOELTER_PR_MIN:
+        out.append(f"Pr {prandtl:g} is below the correlation's "
+                   f"Pr > {DITTUS_BOELTER_PR_MIN:g} (0.6 is also in circulation as that "
+                   "bound and could not be verified against a source, so the stricter "
+                   "one is checked)")
+    if prandtl > DITTUS_BOELTER_PR_MAX:
+        out.append(f"Pr {prandtl:g} is above the correlation's "
+                   f"Pr < {DITTUS_BOELTER_PR_MAX:g}")
+    return tuple(out)
 
 
 def correlation_for(reynolds: float, prandtl: float, heating: bool) -> Correlation:
@@ -722,6 +773,11 @@ def correlation_for(reynolds: float, prandtl: float, heating: bool) -> Correlati
     laminar flow), and Dittus-Boelter is a fit to measured data whose own scatter is
     20-25%. A Nusselt number inside 25% of Dittus-Boelter has agreed with it; one
     inside 25% of Graetz has not.
+
+    Outside Dittus-Boelter's own range there is no published number to compare with,
+    so none is returned: `nu` comes back None and `outside` names every bound that was
+    broken. The transitional band between `LAMINAR_LIMIT` and `Re = 1e4` is where
+    neither entry in the catalogue applies, and saying so is the answer there.
     """
     if reynolds < LAMINAR_LIMIT:
         return Correlation(
@@ -731,13 +787,18 @@ def correlation_for(reynolds: float, prandtl: float, heating: bool) -> Correlati
             "exact, so the 2% is the solver's and not the correlation's",
         )
     exponent = 0.4 if heating else 0.3
+    outside = dittus_boelter_outside(reynolds, prandtl)
+    source = (
+        "Dittus-Boelter, Nu = 0.023 Re^0.8 Pr^n with n = 0.4 heating and 0.3 "
+        f"cooling, a fit to measured heat-transfer data over Re > "
+        f"{DITTUS_BOELTER_RE_MIN:g} and {DITTUS_BOELTER_PR_MIN:g} < Pr < "
+        f"{DITTUS_BOELTER_PR_MAX:g} in a smooth circular pipe, whose own stated "
+        "scatter is 20-25%"
+    )
     return Correlation(
         f"Dittus-Boelter, n = {exponent:g} ({'heating' if heating else 'cooling'})",
-        0.023 * reynolds ** 0.8 * prandtl ** exponent,
-        0.25,
-        "Dittus-Boelter, Nu = 0.023 Re^0.8 Pr^n with n = 0.4 heating and 0.3 "
-        "cooling, a fit to measured heat-transfer data over Re > 1e4 and "
-        "0.6 < Pr < 160, whose own stated scatter is 20-25%",
+        None if outside else 0.023 * reynolds ** 0.8 * prandtl ** exponent,
+        0.25, source, outside,
     )
 
 
@@ -1086,7 +1147,12 @@ def measure_region(region: Region, *, time: str | None, length: float | None,
             record["correlation"] = {
                 "name": published.name, "Nu": published.nu, "band": published.band,
                 "source": published.source, "relative": relative,
-                "inside": bool(relative is not None and relative <= published.band),
+                # No verdict where the correlation was not evaluated: `inside` is None
+                # rather than False, because the measured Nu did not disagree with
+                # anything -- there is nothing here to disagree with (#190).
+                "inside": (None if published.outside else
+                           bool(relative is not None and relative <= published.band)),
+                "outside_range": list(published.outside),
                 "reynolds": float(reynolds), "prandtl": float(prandtl),
             }
         elif reynolds is not None or prandtl is not None:
@@ -1164,6 +1230,19 @@ def region_findings(found: dict[str, Any]) -> list[Finding]:
         out.append(Finding("nusselt", "ok", measured, meaning))
         published = row.get("correlation")
         if published is None:
+            continue
+        if published.get("outside_range"):
+            # The range violation IS the finding. A percentage here would be a number
+            # about the correlation's range and would read as one about the solve.
+            out.append(Finding(
+                "correlation", "skipped",
+                f"{where}{row['patch']}: Nu {row['Nu']:.6g} measured, and not compared: "
+                + "; ".join(published["outside_range"]),
+                published["source"]
+                + ". Evaluated outside its own range it still returns a plausible "
+                  "number, so no Nusselt number is quoted from it here and no "
+                  "percentage is taken against one",
+            ))
             continue
         gap = (
             f"{100.0 * published['relative']:.1f}% away"
@@ -1358,7 +1437,10 @@ def report(found: dict[str, Any]) -> str:
                 f"({row['convention']})"
             )
             published = row.get("correlation")
-            if published:
+            if published and published.get("outside_range"):
+                lines.append(f"      {published['name']} not evaluated: "
+                             + "; ".join(published["outside_range"]))
+            elif published:
                 lines.append(
                     f"      against {published['name']}: {published['Nu']:.6g}, "
                     + (f"{100.0 * published['relative']:.1f}% away"
