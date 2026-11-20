@@ -8,6 +8,45 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **Every case this repository can run is in the tutorial index, with the scale each
+  reference is normalised on.** The index listed three of them. `benchmarks/tutorials/`
+  carried the heated pipe, the buoyant cavity and the backward-facing step, while the
+  lattice Boltzmann channel and cavity, the three SPH cases, the thermal-stress bar, the
+  panel method, the plane duct solved in the `journey` job and the four graded cases in
+  `felix/` and `moving_mesh/` were reachable only by finding the directory they live in.
+  `benchmarks/tutorials/README.md` is now the index of all of them, sorted by what it
+  costs to run one: tier 1 needs nothing but this package and no account, tier 2 needs an
+  OpenFOAM, and tier 3 costs a workspace and a model turn and is run by nothing
+  automatically. Every row carries the command, the reference, **the length and velocity
+  scales that reference is normalised on**, and the agreement a real run measured; rows
+  with no verdict say so in words rather than leaving the cell empty. The normalisation
+  basis is in every row because that is where this repository's two wrong reference values
+  lived -- Gartling's 6.1 is in channel heights and had been read as step heights, a factor
+  of two that reached a customer-facing page, and de Vahl Davis's 4.519 is his cavity
+  average and not his hot-wall 4.509 -- and both errors flattered the result, which is why
+  neither was noticed.
+- **The seven templates have a tutorial.** `benchmarks/tutorials/templates.md` is the
+  tier 2 page: what each of `duct2d.py`, `body_in_box.py`, `free_surface.py`,
+  `rotating.py`, `porous.py` and `thermal_stress.py` builds, and **what is known about the
+  answer before the solver starts.** Two of them end in an exact comparison CI already
+  runs -- the plane duct against Poiseuille in `tests/test_journey_duct.py` and the bar
+  against `-E alpha T` in `tests/test_journey_thermal_stress.py`. The porous slab's
+  coefficient route is exact by construction and is checked in both directions (the fit
+  run backwards against its own four points, worst 7.6e-5%; the independent Ergun
+  reduction recovering the same `d` and `f` to 2.7e-4%), and its **solve is recorded as
+  ungraded**, because nothing here has solved it and quoted a drop against the 503.34 Pa
+  the template prints. The dam break and the frozen rotor have no reference and are
+  written that way, with the two conservation statements that are still exact for a
+  rotating case -- the impeller and vessel-wall torques equal and opposite, and
+  power = torque x omega -- and the sphere's exact Stokes `Cd = 24/Re` listed as a gap
+  rather than quoted with no measurement beside it.
+- **Two more rows in the benchmark index**: the plane duct against the exact Poiseuille
+  expressions, and the porous slab's coefficients. Both were graded in CI already and
+  neither was in `benchmarks/README.md`.
+- **A row for `templates/thermal_stress.py` in the toolbox index**, which had it in the
+  prose and not in the table, so it was the one template a session reading the table could
+  not find.
+
 - **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
   in the repository was either a unit test against a fixture or a tool run against a
   study somebody had already finished, so a seam between two stages was invisible to all
