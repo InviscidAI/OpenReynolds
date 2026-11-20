@@ -31,6 +31,18 @@ All notable changes to this project are recorded here. The format follows
     their docstrings. The case is documented as a units failure rather than as a passing
     validation, and Gartling (1990) is paywalled and was not read, which is said rather
     than smoothed over.
+  - **On four of the eleven cases the reference's own uncertainty is larger than the
+    agreement being claimed**, and the index now prints it beside the number. Ghia's
+    Re 1000 centreline extrema sit 1.46% to 2.20% from Botella & Peyret's spectral
+    solution, so agreeing with him to 0.45% is agreeing to inside his error. The 0.164
+    Strouhal reference is the value at Re 100 of Williamson's parallel-shedding fit
+    (Williamson 1989, *JFM* **206**, eq. 6, reproduced as Fig. 7(a) of the 1996 review,
+    where the number itself is never printed), and it is 0.1643, while Roshko (1954) and
+    Williamson & Brown (1998) both give 0.1671 at the same Reynolds number: the
+    correlations disagree by 1.7% against a result reported as 1.31% high. The SUBOFF
+    resistance is located to Liu & Huang (1998) Table 14 p. 23, configuration 1, where
+    the bare hull is 87.4 N and the appended hull at the same speed is 102.3 N, and its
+    total resistance coefficient is marked as derived because that table publishes none.
 
 - **`advise.py`: which solver, and how many ranks, both read out of the case.** The
   toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
