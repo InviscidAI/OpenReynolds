@@ -172,7 +172,26 @@ All notable changes to this project are recorded here. The format follows
   - The service's own listing of a workspace copy is not offered for these studies --
     their files are on this machine, and `backend.study_id` stays unset -- and the row
     carries no `instance_id`, which foamd's `create_study` already allows.
-
+- **An earlier time directory now reaches the mirror whole or not at all.** A live
+  cycle brings earlier written times home behind the newest one, and it copied them
+  straight into `files/`, so a round trip that failed partway left a time holding half
+  its fields: one the viewer lists and cannot draw (#103). `mirror._pull_time` fetches
+  each one into a staging directory beside `files/` instead, and renames its files into
+  place only once every file asked for has landed. A partial copy is a directory nothing
+  else walks -- the files pane, the viewer and the S3 sync all read `store.files_dir` --
+  and it is dropped.
+  - Deleting what had arrived once a later file failed was tried first and could not be
+    made right. It took back the fresh copies of a time that was *already* whole, which
+    is the common case since a restarted solve rewrites times that are already here; a
+    file a round trip simply left out raised nothing for it to react to, so the
+    half-copied state survived it (`_extract_tar_gz` passes over a non-regular member
+    silently, `backend/hosted.py:1505`); and an `openreynolds pull` running alongside a
+    background cycle had the file it had just reported mirrored unlinked under it.
+  - A time that does not arrive whole is set aside for the session, as before, so one
+    that will not copy does not hold every older time behind it; its skip now names the
+    time, as the other earlier-time skips do. `bytes_pulled` counts a time only once it
+    is in the mirror, and a failed earlier-time batch is no longer taken apart to find
+    the file it failed on -- that copy is being dropped either way.
 - **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
   said it was in four places.** `reattach.py`, `claims.py`,
   `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told
