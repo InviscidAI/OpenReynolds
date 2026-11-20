@@ -808,6 +808,89 @@ def compare_cmd(ctx: click.Context, left: str | None, right: str | None,
         console.print(f"  [yellow]not compared[/] {escape(line)}")
 
 
+@main.command("site")
+@click.option("--lat", "lat", type=float, required=True, help="Latitude, degrees north, WGS84.")
+@click.option("--lon", "lon", type=float, required=True, help="Longitude, degrees east, WGS84.")
+@click.option("--name", "name", default="", help="What to call the site in the file. Defaults to the coordinates.")
+@click.option("--radius", "radius", type=float, default=500.0, show_default=True,
+              help="Half-width of the square box for footprints and terrain, in metres.")
+@click.option("--from", "start", default="", help="First day of wind history, YYYY-MM-DD. Defaults to last calendar year.")
+@click.option("--to", "end", default="", help="Last day of wind history, YYYY-MM-DD.")
+@click.option("--samples", "samples", type=int, default=21, show_default=True,
+              help="Elevation samples a side. The DEM is 90 m, so more than ~2*radius/90 buys nothing.")
+@click.option("--levels-height", "levels_height", type=float, default=3.0, show_default=True,
+              help="Metres per storey, for footprints tagged with levels but no height.")
+@click.option("--no-weather", "no_weather", is_flag=True, help="Skip the wind history.")
+@click.option("--no-buildings", "no_buildings", is_flag=True, help="Skip the OSM footprints.")
+@click.option("--no-terrain", "no_terrain", is_flag=True, help="Skip the elevation grid.")
+@click.option("--opentopography-key", "ot_key", default="", envvar="OPENTOPOGRAPHY_API_KEY",
+              help="Accepted and not needed: the DEM used asks for no key.")
+@click.option("-o", "--out", "out", type=click.Path(dir_okay=False, path_type=Path),
+              default=Path("site.json"), show_default=True, help="Where to write the file.")
+@click.option("--json", "as_json", is_flag=True, help="Write to stdout instead of a file.")
+def site_cmd(lat: float, lon: float, name: str, radius: float, start: str, end: str,
+             samples: int, levels_height: float, no_weather: bool, no_buildings: bool,
+             no_terrain: bool, ot_key: str, out: Path, as_json: bool) -> None:
+    """Fetch wind, building footprints and terrain for a real location.
+
+    This runs here, on your machine, because the workspace has no outbound network:
+    `install-guard.sh` refuses anything that needs a fetch. So the fetch happens on
+    this side and the workspace reads one file -- `site.json` by default, with every
+    block naming the URL it came from, the query sent, when it was retrieved, its
+    units and its licence.
+
+    Three free sources, no key for any of them: Open-Meteo's ERA5 archive for hourly
+    wind at 10 m and 100 m, Overpass for OpenStreetMap building footprints, and
+    Copernicus DEM GLO-90 for elevation. The wind is a reanalysis, so it answers for
+    a grid cell tens of kilometres across; the file records the cell centre it
+    actually answered for and how far that is from the coordinates asked for.
+
+    Nothing personal is sent: the User-Agent is `openreynolds/<version>` and no
+    request carries a name, an address or an account id.
+
+    In the workspace, `toolbox/site_abl.py` turns the wind into an atmospheric
+    boundary layer inlet and `toolbox/site_stl.py` turns the footprints and the
+    terrain into surfaces. `openreynolds push site.json` puts the file there.
+    """
+    from . import site as site_mod
+
+    if not start or not end:
+        default_start, default_end = site_mod.default_period()
+        start = start or default_start
+        end = end or default_end
+
+    parts = [part for part, asked in (("wind", not no_weather),
+                                      ("footprints", not no_buildings),
+                                      ("terrain", not no_terrain)) if asked]
+    console.print(f"Fetching {', '.join(parts) or 'nothing'} for {lat}, {lon} ...",
+                  highlight=False)
+    data = site_mod.collect(
+        lat, lon, name=name, radius_m=radius, start=start, end=end, samples=samples,
+        levels_height=levels_height, weather=not no_weather, buildings=not no_buildings,
+        terrain=not no_terrain, opentopography_key=ot_key,
+    )
+
+    if as_json:
+        sys.stdout.write(json.dumps(data) + "\n")
+    else:
+        size = site_mod.write(data, out)
+        console.print("")
+        for line in site_mod.headline(data):
+            console.print(line, highlight=False, markup=False)
+        console.print("")
+        for line in site_mod.attributions(data):
+            console.print(f"[dim]{escape(line)}[/]")
+        console.print(f"\n[bold]{out}[/] ({size / 1024:.0f} kB)")
+        console.print(f"[dim]openreynolds push {out}[/] puts it in the workspace")
+
+    # A file with no usable block is a failure, and a script needs to be able to tell.
+    failed = [key for key in ("weather", "buildings", "terrain")
+              if isinstance(data.get(key), dict) and data[key].get("failed")]
+    asked = sum(1 for flag in (no_weather, no_buildings, no_terrain) if not flag)
+    if failed and len(failed) == asked:
+        raise SystemExit(1)
+
+
 @main.command("config")
 @click.option(
     "--from-env",

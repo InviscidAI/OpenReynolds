@@ -60,6 +60,31 @@ All notable changes to this project are recorded here. The format follows
     answered `4`, `mpirun` did not refuse, and the 12-rank run's median 1.45 s/iteration
     landed at the bottom of the 1.45-1.77 s band its four 4-rank stages had already
     measured.
+- **Real-site data, and an atmospheric boundary layer inlet built from it.** The
+  workspace has no outbound network, so the fetching happens on your machine and the
+  workspace reads a file.
+  - `openreynolds site --lat <deg> --lon <deg>` writes one self-describing
+    `site.json`: hourly wind at 10 m and 100 m from Open-Meteo's ERA5 archive as a
+    12-sector rose with per-sector statistics, a prevailing sector and a two-height
+    shear fit; OpenStreetMap building footprints from Overpass with each height and
+    where that height came from; and a Copernicus DEM GLO-90 elevation grid. No API
+    key for any of the three. Every block names the URL, the query, the retrieval
+    time, its units and its licence, and the wind block records the reanalysis grid
+    cell it actually answered for and how far that is from the coordinates asked for.
+    A source that fails leaves its sentence in place of its block rather than taking
+    the other two down. No request carries a name, an address or an account id.
+  - `toolbox/site_abl.py` turns the wind into an inlet, by writing the dictionary
+    OpenFOAM's own `atmBoundaryLayerInlet*` conditions read rather than
+    re-implementing the profiles: `0/include/ABLConditions`, the inlet entry in
+    whichever of `0/U`, `0/k`, `0/epsilon` and `0/omega` are there, the roughness
+    wall functions on a named ground patch, and the profile as a table, a figure and
+    a `--json` sidecar. `z0` has no default and it refuses without one, printing the
+    Davenport classes. Measured against a real solver: one `simpleFoam` iteration,
+    the written inlet values read back, agreeing with the script's own arithmetic to
+    4.4e-12 at worst across U, k, epsilon and omega.
+  - `toolbox/site_stl.py` turns the footprints and the terrain into STL in the site
+    file's own frame, ear-clipping the roofs so a concave footprint comes out as its
+    own shape, and counting what it leaves out instead of extruding it to a default.
 
 - **A study record you can ask about: projects, tags, accounting, and running one
   again.** The record on disk carries a `project`, `tags`, the wall-clock time its
