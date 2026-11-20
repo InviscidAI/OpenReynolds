@@ -341,6 +341,27 @@ def test_a_pulled_file_keeps_the_shape_it_had_in_the_workspace(store):
     )
 
 
+def test_a_path_that_would_land_outside_the_mirror_is_refused(tmp_path):
+    """The join is in one place, so the promise that the answer is inside the study's
+    own directory is made in one place too (#180). Every caller reads what comes
+    back, so a path that walks out has to fail here rather than there."""
+    inside = tmp_path / "files"
+    assert mirror.local_for(inside, "/work/s/case/0/U") == inside / "s/case/0/U"
+    for walk in ("/work/../../etc/passwd", "/work/s/../../../etc/passwd"):
+        with pytest.raises(mirror.OutsideMirror):
+            mirror.local_for(inside, walk)
+    # On Windows `\` is a separator too, which is the spelling that got past the
+    # string test in `mcp/local.py`. On Linux it is an ordinary character and the
+    # path stays inside, so only the containment is asserted on both platforms.
+    landed = None
+    try:
+        landed = mirror.local_for(inside, "/work/s\\..\\..\\..\\etc\\passwd")
+    except mirror.OutsideMirror:
+        pass
+    if landed is not None:
+        assert landed.resolve(strict=False).is_relative_to(inside.resolve(strict=False))
+
+
 # -- wired into the session, without anyone asking -----------------------------
 
 

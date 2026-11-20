@@ -216,7 +216,9 @@ def test_a_file_outside_the_study_directory_is_refused(server):
     server.studies.ready.set()
     session_id = ask(server, "POST", "/studies", {"task": "first"}).json["session_id"]
     study_id = until(server, session_id, "waiting_for_input")["study_id"]
-    for path in ("/etc/passwd", f"/work/{study_id}/../../etc/passwd"):
+    for path in ("/etc/passwd", f"/work/{study_id}/../../etc/passwd",
+                 # #180: the backslash spelling, which served the file with a 200.
+                 f"/work/{study_id}\\..\\..\\..\\..\\outside-the-study.txt"):
         refused = ask(server, "GET", f"/studies/{study_id}/file?path={path}")
         assert refused.status == 400, path
         assert "not a workspace path" in refused.json["error"]
