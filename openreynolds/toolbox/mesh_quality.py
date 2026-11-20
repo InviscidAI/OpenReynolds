@@ -34,11 +34,28 @@ There are two ways to get the offending cells and they are not equally good:
    established, which is the whole reason nothing here is looked up by name. These are
    the cells that failed, by definition, with no second opinion involved. Preferred
    wherever they are on disk.
+
+   Which is only true of a set `checkMesh` wrote. `topoSet`, `setFields`,
+   `createBaffles`, an MRF zone and a porous zone all leave sets in the same directory,
+   under names of their own, and nothing in the file says what wrote it. So the names
+   `checkMesh` writes are read out of its own source (`CHECKMESH_SETS`) and a set under
+   any other name is reported with its count and its provenance named as unknown: it is
+   not folded into a metric, not counted as a bad cell and not drawn red. An AMI
+   rotor/stator mesh whose own log says `Mesh OK` had 100% of its cells reported as
+   checkMesh failures before that (#173).
 2. **the computed route.** Skewness and non-orthogonality are recomputed here from the
    mesh, by the formulae in OpenFOAM's `primitiveMeshTools` -- the skewness vector
    normalised by the face's own extent along it, and the angle between the face area
    vector and the owner-to-neighbour vector. Available always, and it is its own
    measurement rather than `checkMesh`'s.
+
+The log is checked against the mesh before any of its numbers are reported. Its
+`cells:` line is the one comparison that says whether it describes this mesh at all, and
+`find_log` picks up a `log.checkMesh` sitting in the case with no flag typed -- a stale
+one from the previous mesh is what every real study directory accumulates. Where the two
+counts disagree the log is dropped and said to be dropped, because skewness and
+non-orthogonality at least have the recomputed value printed beside them to argue with
+and aspect ratio, never recomputed here, has nothing (#187).
 
 Which one drew the picture is printed in the report, in the JSON and as a caption on
 the PNG, because the two can disagree: a recomputed measure that happens not to be the
@@ -67,7 +84,9 @@ OpenFOAM distribution at all, in either direction: that is a statement about Ope
 and not about this image, and no flag here will make one appear.
 
 Nothing here edits a mesh, runs a solver or decides anything. It reports and it draws.
-Exit code is 0 whatever it finds, including when it finds nothing wrong.
+Exit code is 0 whatever it finds, including when it finds nothing wrong, and 2 when the
+mesh could not be read at all: a finding is not an error, and a mesh nobody measured is
+not a clean one.
 
     python3 mesh_quality.py report /work/case
     python3 mesh_quality.py report /work/case --png bad.png --json bad.json
@@ -132,6 +151,49 @@ copy of SKEWNESS_WARN is a second number to disagree with the gate about. Aspect
 is marked unrecomputable because OpenFOAM's cell aspect ratio is not the ratio of a
 bounding box and guessing it would put a red cell where checkMesh never found one."""
 
+CHECKMESH_SETS: dict[str, str] = {
+    # checkGeometry.C
+    "nonAlignedEdges": "edge alignment", "nonClosedCells": "closed cells",
+    "highAspectRatioCells": "aspect ratio", "zeroAreaFaces": "minimum face area",
+    "zeroVolumeCells": "minimum cell volume", "nonOrthoFaces": "non-orthogonality",
+    "wrongOrientedFaces": "face orientation", "skewFaces": "skewness",
+    "coupledFaces": "coupled point location", "lowQualityTetFaces": "tet quality",
+    "shortEdges": "short edges", "nearPoints": "point nearness",
+    "concaveFaces": "face angles", "warpedFaces": "face flatness",
+    "cellDeterminant": "cell determinant", "concaveCells": "concave cells",
+    "lowWeightFaces": "interpolation weights", "faceVolumeRatio": "volume ratio",
+    # checkTopology.C
+    "illegalCells": "cell-to-face addressing", "unusedPoints": "unused points",
+    "upperTriangularFace": "face ordering", "outOfRangeFaces": "face vertices",
+    "zipUpCells": "cell edge zip-up", "edgeFaces": "face edge connectivity",
+    "oneInternalFaceCells": "cells with one internal face",
+    "twoInternalFacesCells": "cells with two internal faces",
+    "multiRegionPoints": "points in several regions",
+    "nonManifoldPoints": "non-manifold points", "multiZoneFaces": "faces in several zones",
+    "multiZoneCells": "cells in several zones", "multiZonePoints": "points in several zones",
+}
+"""The set names `checkMesh` itself writes, and the check each belongs to.
+
+Read out of OpenFOAM's own `checkGeometry.C` and `checkTopology.C` (the `develop`
+branch at gitlab.com/openfoam/core/openfoam, fetched 2026-11-21) rather than taken from
+a summary of them, because this list decides whether a set on disk is reported as a mesh
+failure. The docstring above still stands on which names were *attested* from live runs
+on this image -- `skewFaces`, `nonOrthoFaces` and `wrongOrientedFaces`; the rest are
+attested in the source that writes them.
+
+What is deliberately NOT here is `region<n>`. `checkTopology` does write one cellSet per
+disconnected region under that name, but so does every rotor/stator split a `topoSet`
+run leaves behind, and a `cellSet` is not stamped with what wrote it. An AMI mesh whose
+own log says `Mesh OK` had both its zones reported as cells checkMesh flagged, which was
+100% of the mesh drawn red (#173). A name that is ambiguous is reported as
+unattributed, which is what it is."""
+
+UNATTRIBUTED = ("topoSet, setFields, createBaffles, an MRF zone and a porous zone all "
+                "write these, and a set on disk does not say what wrote it")
+"""Why a set of an unknown name is not a mesh failure. Reading it is still right (the
+set names were never established by this file, and a real failure under an unfamiliar
+name should arrive) -- counting it as a failure is not."""
+
 SET_HINTS: tuple[tuple[str, str], ...] = (
     ("skew", "skewness"),
     ("nonortho", "non_ortho"),
@@ -163,6 +225,16 @@ def _first(value: Any) -> float | None:
         return float(str(value).rstrip("."))
     except ValueError:
         return None
+
+
+def set_provenance(name: str) -> str:
+    """`checkMesh` for a name checkMesh writes, `unknown` for anything else.
+
+    An exact name and not a substring: `region0` is `checkMesh`'s name for a
+    disconnected region and `topoSet`'s name for a mesh zone, and the two cannot be told
+    apart by looking at the file, so it is in neither list and comes back unknown (#173).
+    """
+    return "checkMesh" if name in CHECKMESH_SETS else "unknown"
 
 
 def metric_from_set(name: str) -> str:
@@ -240,7 +312,8 @@ def read_sets(case: Path, region: str = "") -> list[dict[str, Any]]:
                 labels, _ = locate.read_list(fobj, fobj.body_at, "label")
             except locate.ListError as error:
                 out.append({"set": name, "kind": fobj.cls, "where": folder.as_posix(),
-                            "count": None, "metric": "", "problem": str(error)})
+                            "count": None, "metric": "", "problem": str(error),
+                            "provenance": set_provenance(name)})
                 continue
             out.append({
                 "set": name,
@@ -248,6 +321,8 @@ def read_sets(case: Path, region: str = "") -> list[dict[str, Any]]:
                 "where": folder.as_posix(),
                 "count": int(labels.size),
                 "metric": metric_from_set(name),
+                "provenance": set_provenance(name),
+                "check": CHECKMESH_SETS.get(name, ""),
                 "labels": np.asarray(labels, dtype=np.int64),
             })
     return out
@@ -500,30 +575,53 @@ def measure(case: Path, *, region: str = "", log: Path | None = None,
     found["log"] = Path(log_path).as_posix() if log_path else None
     if log_path is None:
         found["problems"].append(
-            "no log.checkMesh here, so the log's own numbers are absent and only the "
-            "recomputed metrics below are reported"
+            "no log.checkMesh here, so the log's own numbers are absent; whatever is "
+            "reported below was recomputed here off the mesh"
         )
     data = read_log(Path(log_path) if log_path else None)
+
+    poly = case / "constant" / region / "polyMesh" if region else case / "constant" / "polyMesh"
+    found["polyMesh"] = poly.as_posix()
+    mesh = locate.read_mesh(poly)
+    found["mesh_read"] = not isinstance(mesh, str)
+    if isinstance(mesh, str):
+        found["problems"].append(f"the mesh could not be read: {mesh}")
+        found["mesh"] = mesh
+        found["counts"], found["verdict"] = data.get("counts", {}), {}
+        found["failures"], found["warnings"] = [], []
+        return found
+    found["mesh"] = f"{mesh['n_cells']:,} cells, {len(mesh['boundary'])} patches"
+    found["n_cells"] = int(mesh["n_cells"])
+
+    # The log's `cells:` line against the mesh's own count, which is the one comparison
+    # that says whether the log describes this mesh at all (#187). Aspect ratio is never
+    # recomputed here, so a foreign log's aspect ratio has no second opinion and would
+    # stand unchallenged; a stale `log.checkMesh` from the previous mesh is what every
+    # real study directory accumulates and `find_log` picks it up with no --log typed.
+    logged_cells = data.get("counts", {}).get("cells")
+    if logged_cells is not None and int(logged_cells) != int(mesh["n_cells"]):
+        found["problems"].append(
+            f"{found['log']} describes a mesh of {int(logged_cells):,} cells and this one "
+            f"has {int(mesh['n_cells']):,}, so it is a foreign or stale log: none of its "
+            "numbers are reported as this mesh's. Run checkMesh on this mesh, or pass the "
+            "log that belongs to it with --log")
+        found["log_describes_another_mesh"] = {"log_cells": int(logged_cells),
+                                               "mesh_cells": int(mesh["n_cells"])}
+        data = read_log(None)
     found["counts"] = data.get("counts", {})
     found["verdict"] = preflight.checkmesh_verdict(data)
     found["failures"] = data.get("failures", [])
     found["warnings"] = data.get("warnings", [])
 
-    poly = case / "constant" / region / "polyMesh" if region else case / "constant" / "polyMesh"
-    found["polyMesh"] = poly.as_posix()
-    mesh = locate.read_mesh(poly)
-    if isinstance(mesh, str):
-        found["problems"].append(f"the mesh could not be read: {mesh}")
-        found["mesh"] = mesh
-        return found
-    found["mesh"] = f"{mesh['n_cells']:,} cells, {len(mesh['boundary'])} patches"
-    found["n_cells"] = int(mesh["n_cells"])
-
     sets = read_sets(case, region)
     found["sets"] = [
         {key: value for key, value in entry.items() if key != "labels"} for entry in sets
     ]
-    by_metric = {entry["metric"]: entry for entry in sets if entry["metric"]}
+    # Only a set checkMesh itself wrote names cells that failed a check. An
+    # unattributed one is listed and counted on its own line and is neither folded into
+    # a metric nor drawn red (#173).
+    flagged = [entry for entry in sets if entry.get("provenance") == "checkMesh"]
+    by_metric = {entry["metric"]: entry for entry in flagged if entry["metric"]}
 
     computed: dict[str, np.ndarray] = {}
     wanted = thresholds or {}
@@ -585,7 +683,7 @@ def measure(case: Path, *, region: str = "", log: Path | None = None,
                 row["note"] = "checkMesh -writeSets vtk leaves the cells it flagged in polyMesh/sets"
         found["metrics"].append(row)
 
-    for entry in sets:
+    for entry in flagged:
         if entry["metric"] or entry.get("labels") is None:
             continue
         cells = cells_of_set(mesh, entry)
@@ -985,18 +1083,29 @@ def report(found: dict[str, Any]) -> str:
     for line in found.get("warnings", [])[:6]:
         lines.append(f"    *   {line}")
 
-    if found.get("sets"):
+    sets = found.get("sets") or []
+    flagged = [entry for entry in sets if entry.get("provenance") == "checkMesh"]
+    other = [entry for entry in sets if entry.get("provenance") != "checkMesh"]
+    if flagged:
         lines.append("")
-        lines.append("  sets on disk (the cells checkMesh itself flagged):")
-        for entry in found["sets"]:
-            metric = entry["metric"] or "no named metric here"
+        lines.append("  sets checkMesh itself wrote (the cells it flagged):")
+        for entry in flagged:
+            metric = entry["metric"] or entry.get("check") or "no named metric here"
             lines.append(f"    {entry['set']:<24}{entry['kind']:<10}"
                          f"{str(entry['count']):>10}  {metric}")
     else:
         lines.append("")
-        lines.append("  no cellSet or faceSet on disk, so nothing came by the set route."
-                     " checkMesh -writeSets vtk")
-        lines.append("  leaves the cells it flagged under polyMesh/sets.")
+        lines.append("  no set checkMesh wrote is on disk, so nothing came by the set"
+                     " route. checkMesh")
+        lines.append("  -writeSets vtk leaves the cells it flagged under polyMesh/sets.")
+    if other:
+        lines.append("")
+        lines.append("  other sets on disk, of unknown provenance, so neither counted as"
+                     " bad cells nor drawn")
+        lines.append(f"  ({UNATTRIBUTED}):")
+        for entry in other:
+            lines.append(f"    {entry['set']:<24}{entry['kind']:<10}"
+                         f"{str(entry['count']):>10}  not a name checkMesh writes")
 
     lines.append("")
     for row in found.get("metrics", []):
@@ -1033,7 +1142,15 @@ def report(found: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"  drawn: {found.get('drawn_metric')} by the "
                      f"{found.get('drawn_route')} route")
-    if not any(row.get("cells") for row in found.get("metrics", [])):
+    if not found.get("mesh_read"):
+        # The clean bill below is a statement about metrics that were computed. With no
+        # mesh none were, and printing it two lines above "the mesh could not be read"
+        # was a clean bill of health for a mesh that is not there (#175).
+        lines.append("")
+        lines.append("  no metric was computed and no cell was looked at, because the mesh"
+                     " could not be read.")
+        lines.append("  Nothing below is a statement about this mesh.")
+    elif not any(row.get("cells") for row in found.get("metrics", [])):
         lines.append("")
         lines.append("  no cells were flagged by either route: nothing on disk names any,"
                      " and the metrics")
@@ -1108,7 +1225,11 @@ def _cmd_report(args: argparse.Namespace) -> int:
     _emit(as_json(found), report(found), json_out)
     if found.get("picture"):
         print(f"picture: {found['picture']}")
-    return 0
+    # A clean mesh exits 0 and so does a bad one: a finding is not an error. A mesh that
+    # could not be read is not a finding -- nothing was measured -- and exiting 0 there
+    # told a CI gate that a case with no polyMesh, or a mistyped --region, was fine
+    # (#175).
+    return 0 if found.get("mesh_read") else 2
 
 
 def _cmd_formats(args: argparse.Namespace) -> int:
