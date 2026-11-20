@@ -113,8 +113,8 @@ def test_the_trt_channel_is_exact_at_every_viscosity(lbm, nu):
     any viscosity -- the error below is 1e-9 of u_max, which is the residual and not a
     discretisation error, and it does not grow as nu changes by a factor of twenty.
     """
-    result = lbm.poiseuille(n=16, nu=nu, steps=None, tolerance=1e-12,
-                            check_every=200, progress=False)
+    result = lbm.poiseuille(n=16, nu=nu, steps=None, tolerance=1e-10,
+                            check_every=200, max_steps=200_000, progress=False)
     error = np.abs(result["u_profile"] - result["u_exact"]).max()
     assert error / result["u_max_exact"] < 1e-7, f"nu {nu}: {error:.3e}"
 
@@ -128,15 +128,16 @@ def test_bgk_is_exact_at_one_viscosity_and_not_at_the_others(lbm):
     off the midpoint and the profile carries it.
     """
     exact_nu = math.sqrt(3.0) / 12.0
-    at_the_magic_value = lbm.poiseuille(n=16, nu=exact_nu, tolerance=1e-12,
-                                        check_every=200, scheme="bgk", progress=False)
+    at_the_magic_value = lbm.poiseuille(n=16, nu=exact_nu, tolerance=1e-10,
+                                        check_every=200, max_steps=200_000,
+                                        scheme="bgk", progress=False)
     error = (np.abs(at_the_magic_value["u_profile"] - at_the_magic_value["u_exact"]).max()
              / at_the_magic_value["u_max_exact"])
     assert error < 1e-7, f"BGK at nu = sqrt(3)/12 should be exact too: {error:.3e}"
 
     for nu in (exact_nu / 4.0, exact_nu * 4.0):
-        off = lbm.poiseuille(n=16, nu=nu, tolerance=1e-12, check_every=200,
-                             scheme="bgk", progress=False)
+        off = lbm.poiseuille(n=16, nu=nu, tolerance=1e-10, check_every=200,
+                             max_steps=200_000, scheme="bgk", progress=False)
         wrong = (np.abs(off["u_profile"] - off["u_exact"]).max() / off["u_max_exact"])
         assert wrong > 1e-4, f"BGK at nu {nu} looks exact, so the test proves nothing"
 
@@ -187,6 +188,40 @@ def test_a_step_count_overrides_the_residual(lbm):
     result = lbm.cavity(n=6, re=100.0, steps=37, progress=False)
     assert result["steps"] == 37
     assert result["converged"] is False
+
+
+# -- the picture ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("case", ["poiseuille", "cavity"])
+def test_each_case_draws_its_figure(lbm, tmp_path, case):
+    """`--out` is the half of this script a person actually looks at, and it has a
+    branch per case. An untested drawing path is where a reference to a key the result
+    does not carry sits until somebody asks for the picture."""
+    result = lbm.CASES[case](n=6, steps=20, progress=False)
+    path = tmp_path / f"{case}.png"
+    lbm.figure(result, path)
+    assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", "not a png"
+
+
+@pytest.mark.parametrize("case", ["poiseuille", "cavity"])
+def test_each_case_reports_without_raising(lbm, case):
+    result = lbm.CASES[case](n=6, steps=20, progress=False)
+    text = lbm.report(result)
+    assert result["case"] in text
+    assert "million lattice updates" in text
+
+
+def test_a_stiff_lattice_says_so_in_the_report(lbm):
+    """nu = u_lid*n/Re, so a small cavity at a large Reynolds number puts tau_plus next
+    to the 1/2 where the collision stops relaxing. That run cannot converge, and saying
+    nothing about it is how it reads as a solver defect instead of a configuration."""
+    stiff = lbm.cavity(n=8, re=5000.0, steps=10, progress=False)
+    assert 1.0 / stiff["omega_plus"] < lbm.STIFF_TAU
+    assert "NOTE:" in lbm.report(stiff)
+    comfortable = lbm.cavity(n=8, re=100.0, steps=10, progress=False)
+    assert 1.0 / comfortable["omega_plus"] > lbm.STIFF_TAU
+    assert "NOTE:" not in lbm.report(comfortable)
 
 
 # -- the contract the toolbox holds every script to ---------------------------------

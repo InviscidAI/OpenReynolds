@@ -213,6 +213,7 @@ def solve(
     streamed = np.empty_like(f)
     ux = np.zeros(solid.shape)
     uy = np.zeros(solid.shape)
+    rho = np.ones(solid.shape)  # so that steps=0 reports the initial state, not a NameError
 
     limit = steps if steps is not None else max_steps
     stop = tolerance * abs(reference_velocity)

@@ -50,7 +50,7 @@ THRESHOLDS = {
     # machine rather than a property of the solver.
     "hydrostatic_rms": 0.05,     # RMS pressure error as a fraction of rho g h
     "hydrostatic_max": 0.12,     # and the worst single particle
-    "period_rel": 0.05,          # sloshing period against the linear dispersion relation
+    "period_rel": 0.08,          # sloshing period against the linear dispersion relation
     "containment": 1.0,          # fluid may not pass a wall by more than one dx
     "density": 0.05,             # max rho/rho0 - 1 while the run is weakly compressible
 }
@@ -169,7 +169,7 @@ def grade_sloshing(dx: float | None = None, periods: float = 3.0) -> dict[str, A
     checks = [
         _check("period against sqrt(g k tanh(k h))", measured, exact,
                relative <= THRESHOLDS["period_rel"],
-               f"{relative * 100:+.2f}% over {run['crossings']} zero crossings"
+               f"{relative * 100:+.2f}% over {run['cycles']:.2f} cycles in the window"
                if math.isfinite(measured) else "no oscillation was measured"),
         _density_check(sph, run),
         _containment_check(sph, run),

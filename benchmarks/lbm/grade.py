@@ -106,6 +106,24 @@ def _cost(result: dict[str, Any]) -> str:
 # -- Poiseuille ---------------------------------------------------------------------
 
 
+POISEUILLE_RUN = {"tolerance": 1e-12, "check_every": 200, "max_steps": 600_000,
+                  "progress": False}
+"""How hard the channel runs are driven, measured rather than chosen.
+
+On a GitHub runner the three graded viscosities cost 478,600 steps in 81.9 s, 102,600 in
+17.5 s and 27,200 in 4.7 s, all at about 1.5 million lattice updates per second -- the
+rate is low because the lattice is 66 x 4 and per-step overhead dominates at that size.
+Convergence is viscous, so the steps go as ln(1/tolerance) * n^2/(pi^2 nu) and the lowest
+viscosity is most of the bill. Driving it to 1e-12 of u_max is affordable at that price
+and is what produces a residual of 5e-14 and a profile error of 5e-11, which is the
+result worth having: it is not "within tolerance", it is indistinguishable from the
+closed form.
+
+The ceiling is 25% above the largest step count measured. It exists because `solve`'s own
+backstop is four million steps -- the right order for a person at a terminal, and a
+stalled job here if a platform's residual happens to plateau just above the stop."""
+
+
 def grade_poiseuille(n: int = 64, viscosities: tuple[float, ...] = (0.02, 0.1, 0.4)
                      ) -> dict[str, Any]:
     """The exact parabola, at three viscosities a factor of twenty apart.
@@ -113,6 +131,10 @@ def grade_poiseuille(n: int = 64, viscosities: tuple[float, ...] = (0.02, 0.1, 0
     Three rather than one because the property being tested is that the error does *not*
     depend on the viscosity. One viscosity cannot distinguish "exact" from "exact at this
     tau", which is precisely the difference between the two relaxation schemes.
+
+    A factor of twenty is worth having over a factor of two: the whole claim is that the
+    error does not track the viscosity, and tau_plus runs from 0.56 to 1.70 across these
+    three, which is most of the usable range of the scheme.
     """
     lbm = solver()
     checks: list[dict] = []
@@ -120,7 +142,7 @@ def grade_poiseuille(n: int = 64, viscosities: tuple[float, ...] = (0.02, 0.1, 0
     limit = THRESHOLDS["poiseuille_exact"]
 
     for nu in viscosities:
-        run = lbm.poiseuille(n=n, nu=nu, tolerance=1e-12, check_every=200, progress=False)
+        run = lbm.poiseuille(n=n, nu=nu, **POISEUILLE_RUN)
         error = float(np.abs(run["u_profile"] - run["u_exact"]).max() / run["u_max_exact"])
         checks.append(_check(
             f"max |u - u_exact| / u_max, nu = {nu:g} (TRT)", error, f"<= {limit}",
@@ -133,12 +155,10 @@ def grade_poiseuille(n: int = 64, viscosities: tuple[float, ...] = (0.02, 0.1, 0
     # off the link midpoint. Without this the check above would pass on a grader that
     # compared the solver to itself.
     magic = math.sqrt(3.0) / 12.0
-    bgk_off = lbm.poiseuille(n=n, nu=4.0 * magic, tolerance=1e-12, check_every=200,
-                             scheme="bgk", progress=False)
+    bgk_off = lbm.poiseuille(n=n, nu=4.0 * magic, scheme="bgk", **POISEUILLE_RUN)
     off_error = float(np.abs(bgk_off["u_profile"] - bgk_off["u_exact"]).max()
                       / bgk_off["u_max_exact"])
-    bgk_at = lbm.poiseuille(n=n, nu=magic, tolerance=1e-12, check_every=200,
-                            scheme="bgk", progress=False)
+    bgk_at = lbm.poiseuille(n=n, nu=magic, scheme="bgk", **POISEUILLE_RUN)
     at_error = float(np.abs(bgk_at["u_profile"] - bgk_at["u_exact"]).max()
                      / bgk_at["u_max_exact"])
     checks += [
@@ -188,23 +208,24 @@ def centreline_profiles(run: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     return np.interp(stations_u, y, u), np.interp(stations_v, y, v)
 
 
-def grade_cavity(n: int = 128, re: float = 1000.0, tolerance: float = 1e-5,
+def grade_cavity(n: int = 128, re: float = 1000.0, tolerance: float = 1e-6,
                  max_steps: int = 600_000) -> dict[str, Any]:
     """The cavity, with a step ceiling, because a grader that cannot finish is worse
     than one that fails.
 
-    On the tolerance, which is the one number here that decides what the run costs. The
-    stop is on the largest velocity change over `check_every` steps, and the approach to
-    steady state is exponential, so the distance still to travel when it stops is about
+    On the tolerance, which was argued down to 1e-5 from arithmetic and then put back to
+    1e-6 by the measurement. The arithmetic: the stop is on the largest velocity change
+    over `check_every` steps and the approach to steady state is exponential, so the
+    distance still to travel is about residual * tau / check_every with tau the viscous
+    L^2/(pi^2 nu), around 130,000 steps here -- which put a few hundred thousand steps on
+    1e-6 and made 1e-5 look like the sensible trade. The measurement disagreed: on a
+    GitHub runner the 1e-6 run converged in **81,500 steps, 83.1 s, at 16.07 million
+    lattice updates per second**. At that price the stricter stop is free, and the
+    estimate was pessimistic because the decay is not single-mode.
 
-        remaining ~ residual * tau / check_every
-
-    with tau the slowest decay time -- viscous, L^2/(pi^2 nu), about 130,000 steps at
-    n = 128 and Re 1000. A tolerance of 1e-5 stops at a residual of 1e-6 in lattice
-    units and so within roughly 0.3% of the lid speed of the steady answer, which is
-    well inside the 2% the agreement is graded on, and its cost is a few hundred
-    thousand steps. Asking for 1e-6 instead buys a tenth of that remaining error, which
-    nothing here can see, for another factor of two in steps.
+    Which is the general lesson and the reason the number is written down here rather
+    than tuned quietly: the cost model was wrong by a factor of several in the direction
+    that would have made the benchmark worse.
 
     `lbm.solve`'s own ceiling is four million steps, which is a backstop for a person at
     a terminal and a six-hour hang for a CI job. A configuration that cannot converge is
@@ -295,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     cavity = sub.add_parser("cavity")
     cavity.add_argument("--n", type=int, default=128)
     cavity.add_argument("--re", type=float, default=1000.0)
-    cavity.add_argument("--tolerance", type=float, default=1e-5)
+    cavity.add_argument("--tolerance", type=float, default=1e-6)
     cavity.add_argument("--max-steps", type=int, default=600_000, dest="max_steps")
     cavity.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)

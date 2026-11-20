@@ -161,6 +161,70 @@ def test_still_uniform_fluid_has_no_pressure_force_and_no_density_change(sph):
     assert drho == pytest.approx(0.0, abs=1e-9)
 
 
+def _lattice(sph):
+    pos = sph.block(0.0, 0.0, 0.1, 0.1, 0.01)
+    mass = np.full(pos.shape[0], sph.RHO0 * 0.01**2)
+    h = 1.3 * 0.01
+    return pos, mass, h, sph.candidates(pos, 2.0 * h), np.zeros_like(pos)
+
+
+def test_density_diffusion_flattens_a_bump_and_conserves_the_right_thing(sph):
+    """Two properties, and the second one is not the obvious one.
+
+    The sign first: backwards, this term is an anti-diffusion that sharpens the noise it
+    exists to remove, and the run then blows up for a reason that looks nothing like a
+    sign error. `r_ij . grad_i W` is negative everywhere live, which is why the sum is
+    subtracted.
+
+    Then conservation. The bare sum of the density rates is **not** zero here -- it
+    measures -8.3 on this lattice -- and that is not a defect. The pair term is
+    antisymmetric but it is weighted by the neighbour's volume, so what telescopes is the
+    volume-weighted sum, and that one is zero to round-off (-3e-17 against a scale of
+    0.41). Asserting the bare sum was the first version of this test and it failed
+    correctly.
+    """
+    pos, mass, h, table, still = _lattice(sph)
+    middle = np.argmin(((pos - pos.mean(axis=0)) ** 2).sum(axis=1))
+    rho = np.full(pos.shape[0], sph.RHO0)
+    rho[middle] = sph.RHO0 * 1.002
+
+    _a, with_it = sph.accelerations(pos, still, rho, mass, table, h, 20.0, 0.0, 0.3)
+    _a, without = sph.accelerations(pos, still, rho, mass, table, h, 20.0, 0.0, 0.0)
+    assert without[middle] == pytest.approx(0.0, abs=1e-9), (
+        "nothing is moving, so only the diffusion may change a density here")
+    assert with_it[middle] < 0.0, "the bump is being sharpened, not flattened"
+    volume = mass / rho
+    assert (volume * with_it).sum() == pytest.approx(
+        0.0, abs=1e-9 * volume[middle] * abs(with_it[middle]))
+
+
+def test_density_diffusion_is_second_order_in_a_linear_gradient(sph):
+    """Why the term is safe on the case it is graded on, as a scaling law.
+
+    It is a Laplacian, and a Laplacian annihilates a linear field -- so the hydrostatic
+    density profile, which is linear to within its own curvature at the one percent
+    compression this runs at, survives while the noise on top of it goes. The residual
+    is not exactly zero, because the neighbour's volume in the weight varies along the
+    gradient too, but it is second order: measured here, halving the slope divides the
+    residual by 3.99, 4.00 and 4.00. A first-order residual would mean the diffusion was
+    eating the physical gradient and the hydrostatic grade was measuring the diffusion
+    coefficient.
+    """
+    pos, mass, h, table, still = _lattice(sph)
+    inside = ((pos[:, 0] > 2 * h) & (pos[:, 0] < 0.1 - 2 * h)
+              & (pos[:, 1] > 2 * h) & (pos[:, 1] < 0.1 - 2 * h))
+    assert inside.any()
+    residuals = []
+    for slope in (0.004, 0.002, 0.001):
+        ramp = sph.RHO0 * (1.0 + slope * (0.1 - pos[:, 1]) / 0.1)
+        _a, rate = sph.accelerations(pos, still, ramp, mass, table, h, 20.0, 0.0, 0.3)
+        residuals.append(float(np.abs(rate[inside]).max()))
+    for coarse, fine in zip(residuals, residuals[1:]):
+        assert coarse / fine == pytest.approx(4.0, rel=0.05), (
+            f"residual fell by {coarse / fine:.2f} for half the slope, not by 4: the "
+            "diffusion is first order in the gradient and is eating it")
+
+
 def test_viscosity_damps_approach_and_ignores_separation(sph):
     """Monaghan's artificial viscosity is one-sided on purpose: it is there to stop
     particles interpenetrating, and a two-sided version would damp the free-surface
@@ -182,13 +246,38 @@ def test_viscosity_damps_approach_and_ignores_separation(sph):
     assert away[:, 0] == pytest.approx(0.0, abs=1e-12)
 
 
-def test_tait_is_monotonic_and_zero_at_the_reference_density(sph):
-    rho = np.array([sph.RHO0 * 0.99, sph.RHO0, sph.RHO0 * 1.01])
+def test_tait_is_monotonic_above_the_reference_density(sph):
+    rho = np.array([sph.RHO0, sph.RHO0 * 1.005, sph.RHO0 * 1.01])
     p = sph.pressure(rho, 20.0)
-    assert p[1] == pytest.approx(0.0)
-    assert p[0] < 0.0 < p[2]
+    assert p[0] == pytest.approx(0.0)
+    assert p[0] < p[1] < p[2]
     # The bulk modulus is c0^2*rho0/gamma, so a 1% density rise is about gamma% of it.
     assert p[2] == pytest.approx(20.0**2 * sph.RHO0 / sph.GAMMA * (1.01**sph.GAMMA - 1.0))
+
+
+def test_the_pressure_is_floored_at_zero(sph):
+    """The one line without which this solver blows up. Tait is stiff through rho0, so
+    a tenth of a percent of density noise is hundreds of pascals either way; where it
+    goes negative the pressure term pulls neighbours together instead of pushing them
+    apart, and the clumping has no limit. Measured before the floor existed: the first
+    negative pressure by the hundredth step, -22,366 Pa six hundred steps in, and the
+    fluid outside the tank after 729."""
+    rarefied = np.array([sph.RHO0 * 0.9, sph.RHO0 * 0.999, sph.RHO0])
+    assert (sph.pressure(rarefied, 20.0) == 0.0).all()
+
+
+def test_a_rarefied_particle_is_not_pulled_towards_its_neighbour(sph):
+    """The floor, as a force rather than as a number: two under-dense particles at rest
+    exert nothing on each other. Without it they attract, which is the instability."""
+    pos = np.array([[0.0, 0.0], [0.01, 0.0]])
+    rho = np.full(2, sph.RHO0 * 0.99)
+    mass = np.full(2, sph.RHO0 * 0.01**2)
+    h = 1.3 * 0.01
+    table = sph.candidates(pos, 2.0 * h)
+    acceleration, _ = sph.accelerations(pos, np.zeros_like(pos), rho, mass, table,
+                                        h, 20.0, 0.02)
+    assert acceleration[:, 0] == pytest.approx(0.0, abs=1e-12)
+    assert acceleration[:, 1] == pytest.approx(-sph.G, abs=1e-12)
 
 
 # -- geometry and the integrator ----------------------------------------------------
@@ -238,18 +327,94 @@ def test_the_period_of_a_clean_sine_is_recovered(sph):
     t = np.linspace(0.0, 4.0 * period, 400)
     history = [{"t": float(time), "centroid_x": 0.3 + 0.01 * math.sin(2 * math.pi * time / period)}
                for time in t]
-    measured, crossings = sph._period(history)
-    assert measured == pytest.approx(period, rel=1e-3)
-    assert crossings >= 7
+    measured, cycles = sph._period(history)
+    assert measured == pytest.approx(period, rel=2e-3)
+    assert cycles == pytest.approx(4.0, rel=0.05)
+
+
+def test_noise_does_not_shorten_the_period(sph):
+    """The failure that replaced zero crossings with a periodogram, as a test.
+
+    Counting crossings, every spurious pair of them shortens the mean interval, so the
+    answer comes out short with nothing to show it: a real 3-period run reported 7
+    crossings where 6 were due and a period 8.1% low. A projection onto sin and cos uses
+    all 400 samples, and noise a third of the amplitude moves it by well under a
+    percent -- where a crossing count, on this very signal, is out by more than ten.
+    """
+    period = 1.25
+    rng = np.random.default_rng(11)
+    t = np.linspace(0.0, 3.0 * period, 400)
+    clean = 0.01 * np.sin(2.0 * math.pi * t / period)
+    noisy = clean + 0.0033 * rng.standard_normal(t.size)
+    history = [{"t": float(a), "centroid_x": float(b)} for a, b in zip(t, noisy)]
+    measured, _cycles = sph._period(history)
+    assert measured == pytest.approx(period, rel=0.01)
+
+    # The control: the crossing count this replaced, on the same signal.
+    crossings = np.flatnonzero(np.diff(np.sign(noisy - noisy.mean())) != 0)
+    by_crossings = 2.0 * np.mean(np.diff(t[crossings]))
+    assert abs(by_crossings / period - 1.0) > 0.1, (
+        "the noise is too mild for this test to demonstrate anything")
 
 
 def test_a_signal_with_no_oscillation_reports_no_period(sph):
-    """Better than a number invented from one crossing: the sloshing grade would then be
-    graded against noise and would pass or fail at random."""
+    """Better than a number fitted to the shape of the window: the sloshing grade would
+    then be graded against noise and would pass or fail at random."""
     history = [{"t": float(i) * 0.01, "centroid_x": 0.5} for i in range(50)]
-    measured, crossings = sph._period(history)
+    measured, cycles = sph._period(history)
     assert math.isnan(measured)
-    assert crossings < 3
+    assert cycles == 0.0
+
+
+def test_less_than_two_cycles_is_refused(sph):
+    """A frequency fitted to one cycle is fitted to the window."""
+    t = np.linspace(0.0, 0.9, 200)
+    history = [{"t": float(x), "centroid_x": math.sin(2.0 * math.pi * x)} for x in t]
+    measured, cycles = sph._period(history)
+    assert math.isnan(measured)
+    assert cycles < 1.5
+
+
+# -- the picture ---------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny(sph):
+    """One very short run of each case, shared, because each is thousands of acoustic
+    steps even at an absurd spacing and the drawing path is what is being tested."""
+    return {
+        "hydrostatic": sph.hydrostatic(depth=0.04, dx=0.01, end=0.004, progress=False),
+        "sloshing": sph.sloshing(length=0.4, depth=0.2, dx=0.05, periods=0.02,
+                                 progress=False),
+        "dambreak": sph.dambreak(column=0.04, dx=0.01, end=0.004, progress=False),
+    }
+
+
+@pytest.mark.parametrize("case", ["hydrostatic", "sloshing", "dambreak"])
+def test_each_case_draws_its_figure(sph, tmp_path, tiny, case):
+    """One branch per case in `figure`, and the first version of the hydrostatic branch
+    referred to a key the result did not carry. Nothing caught it, because nothing asked
+    for the picture."""
+    path = tmp_path / f"{case}.png"
+    sph.figure(tiny[case], path)
+    assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", "not a png"
+
+
+@pytest.mark.parametrize("case", ["hydrostatic", "sloshing", "dambreak"])
+def test_each_case_reports_without_raising(sph, tiny, case):
+    text = sph.report(tiny[case])
+    assert tiny[case]["case"] in text
+    assert "steps/s" in text
+
+
+def test_the_dam_break_reports_martin_and_moyce_coordinates(sph, tiny):
+    """Z = x/a against T = t sqrt(2g/a), which is the form the comparison would be made
+    in. It is reported and not graded; `benchmarks/sph/README.md` is why."""
+    front = tiny["dambreak"]["front"]
+    assert front and {"T", "Z", "t", "x"} <= set(front[0])
+    assert front[0]["T"] == 0.0
+    # The column starts a particle's width in from the wall and the front only advances.
+    assert front[-1]["Z"] >= front[0]["Z"] > 0.0
 
 
 # -- the contract the toolbox holds every script to ---------------------------------
