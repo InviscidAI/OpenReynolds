@@ -258,8 +258,16 @@ def forces(root: Path) -> dict[str, Any]:
             notes.append(f"{case.name}/{passed_over} is not compared: "
                          f"{case.name}/{key} was chosen for this case")
         history = results.read_history(grouped[key])
+        # `results.plot_columns` answers "what fits on one axes", which is the right
+        # question for a figure and the wrong one for a comparison: on #143's blade
+        # study it returned Cd, Cl, Cp out of `bladeF/force.dat` and dropped `thrust`,
+        # `drag`, `torque` and `area` -- the answers a wind-turbine run is about --
+        # without a word. The columns it is still right to leave off one plot are
+        # named here instead, because what is not compared is said out loud.
+        compared = results.plot_columns(history["columns"])
+        left_off = [name for name in list(history["columns"])[1:] if name not in compared]
         taken, said = 0, len(notes)
-        for name in results.plot_columns(history["columns"]):
+        for name in compared:
             values = results.column(history, name)
             if not values.size:
                 continue
@@ -277,6 +285,10 @@ def forces(root: Path) -> dict[str, Any]:
                 "series": key,
                 "case": case.name,
             }
+        if taken and left_off:
+            notes.append(f"{case.name}/{key} also holds {', '.join(left_off)}, which is "
+                         "not compared: the columns are ranked for one plot and only the "
+                         f"top group is taken ({', '.join(compared)})")
         if not taken and len(notes) == said:
             # Unless the loop above already said why, column by column.
             notes.append(f"{case.name}/{key} contributed nothing that is compared")

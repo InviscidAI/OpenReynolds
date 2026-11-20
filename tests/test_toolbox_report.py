@@ -345,7 +345,11 @@ def test_a_number_with_no_figure_behind_it_is_not_printed_bare(report, study, tm
     assert coefficients, [row["label"] for row in numbers]
     for row in coefficients:
         assert row["state"] == "unverified"
-        assert "no figure" in row["why"]
+        # Labelled with where it came from, which is what this row knows. It used to
+        # read "no figure is stamped with this number" on every row of every real
+        # study, which spent the line repeating one fact the cover states once.
+        assert row["why"] == f"read from {row['source']}", row["why"]
+        assert row["source"], "an unstamped number still knows which file it is from"
         assert row["figure"] == ""
 
 
@@ -834,12 +838,17 @@ def test_a_steady_runs_time_column_is_called_iterations(report, mirrored, tmp_pa
     assert report.is_steady_solver("simpleFoam") and not report.is_steady_solver("pimpleFoam")
 
 
-def test_the_cover_says_how_many_of_its_numbers_a_stamp_backs(report, mirrored, tmp_path):
-    """The sweep behind #139 and #145 scanned every PNG in `studies/` and
-    `data/qa-runs/` and found not one carrying a `reynolds-claims` stamp: zero of all
-    of them. So on real data `tie_numbers` only ever reaches `unverified`, and a cover
-    page offering three outcomes while always printing the third reads as if it had
-    checked something. When nothing is stamp-backed the page says so."""
+def test_where_nothing_is_stamped_the_cover_says_so_rather_than_counting_zero(
+    report, mirrored, tmp_path
+):
+    """Re-measured for this change: 973 PNGs under `studies/` and `data/qa-runs/`,
+    zero carrying a `reynolds-claims` stamp, because nothing in the pipeline writes
+    one -- `claims.attach` is the only call that stamps and no renderer calls it.
+
+    So `verified` is unreachable on a real study, and the line about it used to read
+    `0 of 22`. A count of zero reads as a check that ran and found nothing, when what
+    is missing is the measurement itself: there was never anything to check against.
+    It says that in words, and offers no tally until there is something to tally."""
     top, _home, _case = mirrored
     side = tmp_path / "went-in.json"
     assert run(report, [str(top), "--out", str(tmp_path / "r.pdf"), "--json", str(side)]) == 0
@@ -847,8 +856,9 @@ def test_the_cover_says_how_many_of_its_numbers_a_stamp_backs(report, mirrored, 
     assert record["numbers"], "there are numbers on this cover"
     assert not [row for row in record["numbers"] if row["state"] == "verified"]
     backing = record["stamp_backing"]
-    assert backing.startswith(f"0 of {len(record['numbers'])}"), backing
-    assert "reynolds-claims" in backing and "nothing on this page is backed" in backing
+    assert "0 of" not in backing, f"a tally of zero is what this removed: {backing}"
+    assert "reynolds-claims" in backing
+    assert "nothing for these numbers to be checked against" in backing, backing
     assert backing in report.render_summary(record)
 
 

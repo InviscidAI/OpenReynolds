@@ -31,18 +31,27 @@ numbers on the cover of this document are not collected from whatever produced t
 and set next to whatever picture looked relevant. Each one is tied to a figure or it is
 not:
 
+- **unverified** -- a number read out of the study's own files (a coefficient's tail
+  mean, a final residual) with no stamped figure behind it. It is printed with the file
+  it was read from, because a number nobody drew is still the answer somebody needs;
+  what it is not is evidence.
 - **verified** -- the value is stamped into a PNG that is still on disk, under the
   `reynolds-claims` keyword, by the same call that drew the annotation on it
   (`claims.caption`). The cover names the figure.
 - **disagrees** -- a measured value and a stamped claim of the same quantity differ by
   more than `claims.DEFAULT_TOL`. Both numbers are printed, with the gap. This is F-36,
   and it is on the cover rather than in a log.
-- **unverified** -- a number read out of the study's own files (a coefficient's tail
-  mean, a final residual) with no stamped figure behind it. It is printed and labelled
-  as having no figure behind it, because a number nobody drew is still the answer
-  somebody needs; what it is not is evidence.
 
 A number whose figure has been deleted since is unverified too, and says so.
+
+In practice every number on a real study is the first of those three. Nothing in this
+pipeline stamps a figure -- `claims.attach` is the only call that writes the chunk and
+no renderer calls it, measured over 973 PNGs under `studies/` and `data/qa-runs/`, of
+which zero carry one. So this page does not offer a verdict it cannot reach: where
+nothing is stamped it says so once, in words rather than as a count of zero, drops the
+per-row state column that would repeat one word down the page, and gives each number
+the file it came from. The two stamped outcomes are kept because `claims.attach` is a
+real call a study can make on purpose, and they come back the moment one does.
 
 what it picks, and what it says about picking
 
@@ -602,7 +611,14 @@ def tie_numbers(
             "figure": "",
             "source": str(row.get("source") or ""),
             "state": "unverified",
-            "why": "no figure is stamped with this number",
+            # What this row knows is where the number was read, so that is what it
+            # says. It used to say "no figure is stamped with this number", which is
+            # true of every row on every real study -- nothing in this pipeline
+            # stamps -- so printing it per row spent twenty-two lines repeating one
+            # fact that `stamp_backing` states once, and spent them in place of the
+            # provenance each number actually has.
+            "why": (f"read from {row['source']}" if row.get("source")
+                    else "read from the study's own files"),
             # Carried, not recomputed: `zero_the_negligible` decided this against the
             # force record's own scale, and the cover orders the page by it.
             "negligible": bool(row.get("negligible")),
@@ -1162,15 +1178,21 @@ def cover_page(
     axes.text(0.07, y, "key numbers", fontsize=11.5, va="top", ha="left", weight="bold")
     y -= 0.026
     axes.text(0.07, y,
-              "Each number is shown with the figure it was drawn from, or with the "
-              "reason there is none.",
+              "Each number is shown with where it came from: the figure it is stamped "
+              "into, or the file it was read out of.",
               fontsize=7.6, va="top", ha="left", color="#55666f")
     y -= 0.016
-    axes.text(0.07, y, stamp_backing(numbers), fontsize=7.6, va="top", ha="left",
-              color="#55666f")
-    y -= 0.022
+    for wrapped in _wrap(stamp_backing(numbers), 118, ""):
+        axes.text(0.07, y, wrapped, fontsize=7.6, va="top", ha="left", color="#55666f")
+        y -= 0.013
+    y -= 0.011
 
     colour = {"verified": "#1b5e20", "disagrees": "#b71c1c", "unverified": "#5c6f7d"}
+    # The state column only earns its width when the states differ. Nothing in this
+    # pipeline stamps a figure, so on a real study every row reads `unverified`: a
+    # column repeating one word down the page reads as a verdict on each number, when
+    # it is one fact about all of them and `stamp_backing` above has already said it.
+    varied = len({row["state"] for row in numbers}) > 1
     if not numbers:
         axes.text(0.07, y, "none: this study has recorded no claim and its files carry "
                            "no coefficient or residual",
@@ -1178,13 +1200,16 @@ def cover_page(
         y -= LINE_PITCH
     for row in numbers:
         state = row["state"]
-        axes.text(0.07, y, f"{state:<11}", fontsize=7.6, va="top", ha="left",
-                  family="monospace", color=colour.get(state, "#5c6f7d"), weight="bold")
-        axes.text(0.185, y, f"{row['label']}: {row['text']}", fontsize=7.6, va="top",
-                  ha="left", family="monospace")
+        if varied:
+            axes.text(0.07, y, f"{state:<11}", fontsize=7.6, va="top", ha="left",
+                      family="monospace", color=colour.get(state, "#5c6f7d"),
+                      weight="bold")
+        axes.text(0.185 if varied else 0.07, y, f"{row['label']}: {row['text']}",
+                  fontsize=7.6, va="top", ha="left", family="monospace")
         y -= LINE_PITCH
         for wrapped in _wrap(row["why"], 82, ""):
-            axes.text(0.195, y, wrapped, fontsize=6.9, va="top", ha="left",
+            axes.text(0.195 if varied else 0.08, y, wrapped, fontsize=6.9,
+                      va="top", ha="left",
                       family="monospace", color="#55666f")
             y -= LINE_PITCH * 0.92
         if y < 0.44:
@@ -1228,23 +1253,28 @@ def cover_page(
 
 
 def stamp_backing(numbers: list[dict[str, Any]]) -> str:
-    """How many of the cover's numbers a stamped figure stands behind.
+    """What this page can and cannot say about where its numbers came from.
 
-    Written because of what the sweep behind #139 and #145 found: not one PNG in
-    `studies/` or `data/qa-runs/` carries a `reynolds-claims` stamp, so on real data
-    `tie_numbers` only ever reaches `unverified` and the `verified` row this cover was
-    designed around is a shape only the tests have seen. A cover page that offers
-    three outcomes and silently always prints the third is a cover page that reads as
-    if it had checked something. So it counts, and when the count is zero it says
-    zero.
+    The sweep behind #139 and #145 found that not one PNG in `studies/` or
+    `data/qa-runs/` carries a `reynolds-claims` stamp -- re-measured over 973 PNGs,
+    still zero -- because nothing that draws a figure writes one. `claims.attach` is
+    the only call that stamps, and no renderer calls it.
+
+    So `verified` is not an outcome this page can reach on a real study, and the first
+    version of this line said so as a count: `0 of 22`. A count of zero reads as a
+    check that was run and found nothing, which is the opposite of the truth -- nothing
+    was ever stamped to check against. It is the measurement that is missing, not the
+    agreement. So where nothing is stamped this says what it knows in words and offers
+    no tally, and the tally comes back only when a stamp does.
     """
     if not numbers:
-        return ("no number reached this page, so none of them is backed by a stamped "
-                "figure")
+        return "no number reached this page"
     backed = sum(1 for row in numbers if row.get("state") == "verified")
     if not backed:
-        return (f"0 of {len(numbers)}: no figure in this study carries a "
-                "reynolds-claims stamp, so nothing on this page is backed by one")
+        return ("no figure here is stamped with a value -- nothing in this pipeline "
+                "writes the reynolds-claims stamp -- so there was nothing for these "
+                "numbers to be checked against. Each one is read out of the study's "
+                "own files and is shown with the file it came from")
     return (f"{backed} of {len(numbers)} are backed by a figure stamped with the "
             "value; the rest are not")
 

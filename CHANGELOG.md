@@ -8,6 +8,26 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **`advise.py`: which solver, and how many ranks, both read out of the case.** The
+  toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
+  that family with what each one is, the condition that makes it the one, and whether it
+  is on `$PATH` on the machine asking. The compressible three and the pick at a given
+  `--mach` come from `compressible.py`, so the comparison and the dictionary writer
+  cannot come to disagree; with no Mach number given, nothing is picked, because a Mach
+  number is not in a case's files. For the rank count it reports cells -- measured off
+  the mesh, or predicted by `cells_estimate.py` before the build -- cells per rank at
+  each count up to the cores there are, and what this case's own solver logs measured,
+  split per run because a restarted case leaves two or three runs in one log file.
+  - No scaling curve is asserted, because there is not one to assert. Across the 103
+    case directories in the local studies, exactly one case had been run at more than
+    one rank count, and in that one (study `20260830-164816-eee0`) the mesh and the
+    schemes changed between the rank counts as well. So a case run at one rank count is
+    told it was run at one rank count and gets no speedup figure.
+  - The one measured claim it does make is the one that datum supports: in that study a
+    1,793,894-cell case was re-decomposed 12 ways on a container whose `nproc` had
+    answered `4`, `mpirun` did not refuse, and the 12-rank run's median 1.45 s/iteration
+    landed at the bottom of the 1.45-1.77 s band its four 4-rank stages had already
+    measured.
 - **Real-site data, and an atmospheric boundary layer inlet built from it.** The
   workspace has no outbound network, so the fetching happens on your machine and the
   workspace reads a file.
