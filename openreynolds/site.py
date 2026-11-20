@@ -309,12 +309,17 @@ def wind_summary(hourly: dict[str, list[Any]]) -> dict[str, Any]:
         if bearing is None:
             continue
         s10 = speed10[index] if index < len(speed10) else None
-        if s10 is None:
+        # A not-a-number is dropped here and not further down, so that this sector's
+        # `hours`, its percentiles and its histogram are all counts of the same set
+        # of hours. `_stats` has always dropped them; when only it did, the hours a
+        # sector reported and the hours its histogram held could differ, and the
+        # exceedance arithmetic divides one by the other.
+        if s10 is None or math.isnan(float(s10)):
             continue
         bucket = buckets[_sector_of(float(bearing))]
         bucket["s10"].append(float(s10))
         s100 = speed100[index] if index < len(speed100) else None
-        if s100 is not None:
+        if s100 is not None and not math.isnan(float(s100)):
             bucket["s100"].append(float(s100))
         counted += 1
 

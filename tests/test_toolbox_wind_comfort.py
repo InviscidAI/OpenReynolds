@@ -102,6 +102,22 @@ def test_every_sector_is_given_the_same_speed_axis(site_module):
     assert widths == {13}, "one axis, long enough for the fastest hour anywhere"
 
 
+def test_one_sectors_hours_percentiles_and_histogram_count_the_same_hours(site_module):
+    """`compose` divides a count of hours taken from the histogram by a count taken
+    from `hours`, so the two have to be counts of the same set. `_stats` has always
+    dropped a not-a-number; when only it did, the three numbers disagreed."""
+    hourly = {
+        "wind_speed_10m": [1.0, float("nan"), 3.0],
+        "wind_speed_100m": [2.0, 2.0, 6.0],
+        "wind_direction_10m": [0.0, 0.0, 0.0],
+    }
+    one = site_module.wind_summary(hourly)["sectors"][0]
+
+    assert one["hours"] == 2
+    assert one["speed_10m"]["hours"] == 2
+    assert sum(one["speed_10m_histogram"]["hours"]) == 2
+
+
 # -- the exceedance ----------------------------------------------------------------
 
 
