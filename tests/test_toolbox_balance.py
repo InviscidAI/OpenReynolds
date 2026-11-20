@@ -455,3 +455,162 @@ def test_the_png_draws_the_split(tmp_path):
     assert balance.main([str(case), "--drop", "inlet", "outlet_a", "--u-ref", "2.5",
                          "--png", str(png)]) == 0
     assert png.stat().st_size > 0
+
+
+# -- the flux the solver conserved, not the one this tool reconstructs -------------------
+
+def face_counts(case: Path) -> dict[str, int]:
+    """Each patch's face count out of the mesh's own boundary file."""
+    text = (case / "constant" / "polyMesh" / "boundary").read_text()
+    return {name: int(count) for name, _, count, _ in PATCH_ENTRY.findall(text)}
+
+
+def write_phi(case: Path, time: str, per_patch: dict[str, list[float]], *,
+              dims: str = "[0 3 -1 0 0 0 0]") -> None:
+    """A `phi` with a flux this test chose on every boundary face.
+
+    Fabricated rather than taken off a real solve on purpose: the exact statement about a
+    converged incompressible solve is that it conserves mass to its own tolerance, and a
+    field whose face fluxes are known by construction pins which quantity the tool read.
+    The internal faces are not written -- nothing here reads them, and a boundary face
+    flux is what a balance is.
+    """
+    counts = face_counts(case)
+    body = []
+    for patch, count in counts.items():
+        values = per_patch.get(patch, [0.0] * count)
+        assert len(values) == count, f"{patch} has {count} faces, not {len(values)}"
+        body.append(f"    {patch} {{ type calculated; value nonuniform List<scalar> "
+                    f"{count}(" + " ".join(f"{v:.12g}" for v in values) + "); }")
+    (case / time).mkdir(parents=True, exist_ok=True)
+    (case / time / "phi").write_text(
+        "FoamFile { version 2.0; format ascii; class surfaceScalarField; object phi; }\n"
+        f"dimensions {dims};\n"
+        "internalField uniform 0;\n"
+        "boundaryField {\n" + "\n".join(body) + "\n}\n")
+
+
+def even(total: float, count: int) -> list[float]:
+    return [total / count] * count
+
+
+def test_the_flux_is_the_case_s_own_phi_and_not_a_reconstruction(tmp_path, capsys):
+    """#172: `U . Sf` over this fixture is 0.21 m^3/s split 14.29/33.33/52.38, and the
+    phi written here is 0.3 split evenly. The two cannot both be read, so whichever comes
+    out names the quantity. On the real backward-facing step the difference was five
+    times the closure error and the other sign."""
+    case = manifold(tmp_path)
+    counts = face_counts(case)
+    write_phi(case, "100", {
+        "inlet": even(-0.3, counts["inlet"]),
+        "outlet_a": even(0.1, counts["outlet_a"]),
+        "outlet_b": even(0.1, counts["outlet_b"]),
+        "outlet_c": even(0.1, counts["outlet_c"]),
+    })
+    report = run(case)
+    rows = by_patch(report)
+    assert rows["inlet"]["volume_flux"] == pytest.approx(-0.3)
+    assert rows["inlet"]["flux_source"] == "phi"
+    for outlet in OUTLETS:
+        assert rows[outlet]["volume_flux"] == pytest.approx(0.1)
+        assert rows[outlet]["share_pct"] == pytest.approx(100 / 3, rel=1e-6)
+    assert report["balance"]["inflow"] == pytest.approx(0.3)
+    assert report["balance"]["closure_error"] == pytest.approx(0.0, abs=1e-12)
+    assert report["balance"]["flux_source"] == "phi"
+    assert "from the case's own phi" in capsys.readouterr().out
+
+
+def test_a_case_with_no_phi_says_the_flux_is_this_tool_s_own_quadrature(tmp_path, capsys):
+    """The fallback is still there and still correct; what it may not do is pass itself
+    off as the solver's continuity (#172)."""
+    report = run(manifold(tmp_path))
+    assert by_patch(report)["inlet"]["flux_source"] == "U . Sf"
+    assert report["balance"]["inflow"] == pytest.approx(INFLOW, rel=1e-4)
+    assert any("no phi at this time" in note for note in report["notes"])
+    assert "U . Sf reconstructed here, not the solver's own phi" in capsys.readouterr().out
+
+
+def test_a_mass_flux_is_phi_s_own_kg_per_second_and_not_the_rho_flag_times_u_sf(tmp_path):
+    """#176: on a buoyant case the density varies over the boundary, so `--rho` times a
+    reconstructed volume flux is out by however far the case's own density is from the
+    flag -- 4.6% at the hot rack rears of the real data-centre case. The measured kg/s is
+    on disk. Here `--rho 1.2` against this `U . Sf` would give 0.252 kg/s and phi says
+    0.36, so the number identifies which was read."""
+    case = manifold(tmp_path)
+    counts = face_counts(case)
+    write_phi(case, "100", {
+        "inlet": even(-0.36, counts["inlet"]),
+        "outlet_a": even(0.12, counts["outlet_a"]),
+        "outlet_b": even(0.12, counts["outlet_b"]),
+        "outlet_c": even(0.12, counts["outlet_c"]),
+    }, dims="[1 0 -1 0 0 0 0]")
+    report = run(case, "--rho", 1.2)
+    assert report["balance"]["flux_quantity"] == "mass"
+    assert report["balance"]["flux_units"] == "kg s^-1"
+    assert report["balance"]["inflow"] == pytest.approx(0.36)
+    assert by_patch(report)["inlet"]["mass_flux"] == pytest.approx(-0.36)
+    assert by_patch(report)["inlet"]["mass_flux"] != pytest.approx(1.2 * -INFLOW)
+    assert any("--rho is used for p_total only" in note for note in report["notes"])
+
+
+def test_a_patch_that_carries_flux_both_ways_reports_both_one_way_sums(tmp_path, capsys):
+    """#177: a recirculating outlet, netted, reads as a smaller outlet. The two one-way
+    sums are what tells it from one."""
+    case = manifold(tmp_path)
+    counts = face_counts(case)
+    write_phi(case, "100", {
+        "inlet": even(-0.3, counts["inlet"]),
+        "outlet_a": [0.2, -0.1],
+        "outlet_b": even(0.1, counts["outlet_b"]),
+        "outlet_c": even(0.1, counts["outlet_c"]),
+    })
+    report = run(case)
+    row = by_patch(report)["outlet_a"]
+    assert row["flux"] == pytest.approx(0.1)
+    assert row["flux_in"] == pytest.approx(-0.1) and row["flux_out"] == pytest.approx(0.2)
+    assert row["two_way"] is True
+    assert by_patch(report)["outlet_b"]["two_way"] is False
+    assert report["balance"]["two_way_patches"] == ["outlet_a"]
+    assert "flux both ways over one patch" in capsys.readouterr().out
+
+
+def test_a_boundary_with_no_outflow_at_all_gets_no_percentage_instead_of_200(tmp_path,
+                                                                            capsys):
+    """#177: the propeller in a farField. One external patch carries 0.3888 m^3/s out and
+    0.3887 in, and `error / throughflow` with an empty outflow total is 200% whatever the
+    residual was. Here the net over the whole boundary is 1e-4 into the domain against a
+    one-way throughflow of 0.5, which is 0.02% and not 200%."""
+    case = manifold(tmp_path)
+    counts = face_counts(case)
+    half = counts["walls"] // 2
+    farfield = ([0.5 / half] * half
+                + [-0.5001 / (counts["walls"] - half)] * (counts["walls"] - half))
+    write_phi(case, "100", {"walls": farfield})
+    report = run(case)
+    closure = report["balance"]
+    assert closure["outflow_patches"] == [] and closure["inflow_patches"] == ["walls"]
+    assert closure["closure_error_relative"] is None, "200% is error/0, not a measurement"
+    assert closure["one_way_in"] == pytest.approx(0.5001)
+    assert closure["one_way_out"] == pytest.approx(0.5)
+    assert closure["closure_error_relative_one_way"] == pytest.approx(1e-4 / 0.50005,
+                                                                     rel=1e-3)
+    printed = capsys.readouterr().out
+    assert "no percentage, because nothing is counted as outflow" in printed
+    assert "200%" not in printed.replace("+/-200% whatever the flux is", "")
+
+
+def test_the_default_patch_table_refuses_a_decomposed_case_as_sections_does(tmp_path):
+    """#166: `patch_surfaces` opens the reader itself, so `probe.open_case`'s guard was
+    never reached and the uniform initial condition came back with a flawless 0% closure
+    while 70 s of solved data sat in `processor*`."""
+    case = manifold(tmp_path)
+    patches = patch_names(case)
+    cells = NX * NY * NZ
+    write_field(case, "0", "p", "volScalarField", KINEMATIC, ["0"] * cells, patches)
+    write_field(case, "0", "U", "volVectorField", "[0 1 -1 0 0 0 0]",
+                ["(0 0 0)"] * cells, patches)
+    shutil.copytree(case / "constant", case / "processor0" / "constant")
+    shutil.move(str(case / "100"), str(case / "processor0" / "100"))
+    with pytest.raises(SystemExit) as err:
+        balance.main([str(case)])
+    assert "reconstructPar" in str(err.value.code)
