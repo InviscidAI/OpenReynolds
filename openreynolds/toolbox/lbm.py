@@ -111,6 +111,17 @@ straight no-slip wall on the link midpoint independently of the viscosity."""
 
 CS2 = 1.0 / 3.0
 
+STIFF_TAU = 0.52
+"""Below this tau_plus a run is reported as too stiff for its lattice rather than left
+to look like a defect.
+
+The number is where the trouble starts and not a cliff: tau_plus = nu/c_s^2 + 1/2, so
+tau_plus -> 1/2 is nu -> 0 and the collision stops relaxing anything. The graded cavity
+sits at 0.538 and converges; a 16-cell cavity at the same Reynolds number sits at 0.5048
+and does not converge at all, which is a configuration that is easy to ask for by
+halving `--n` and hard to diagnose from the output. Nothing is refused -- `solve` runs
+whatever it is given and the residual it reports is the honest answer."""
+
 _AX = (slice(None), None, None)  # broadcast a per-direction vector over the lattice
 
 
@@ -403,10 +414,23 @@ def figure(result: dict[str, Any], path: Path) -> None:
 
 
 def report(result: dict[str, Any]) -> str:
+    tau_plus = 1.0 / result["omega_plus"]
     lines = [f"# {result['case']}",
              f"  scheme:     {result['scheme']}  "
              f"omega_plus {result['omega_plus']:.6f}  "
-             f"omega_minus {result['omega_minus']:.6f}",
+             f"omega_minus {result['omega_minus']:.6f}  "
+             f"tau_plus {tau_plus:.5f}",]
+    if tau_plus < STIFF_TAU:
+        # Stated rather than refused: this is where a run stops converging and starts
+        # looking like a solver bug. nu = u_lid*n/Re, so the way out is a finer lattice
+        # or a larger u_lid, and a case run here is cheap to re-run and expensive to
+        # misread.
+        lines.append(f"  NOTE:       tau_plus is {tau_plus:.5f}, within "
+                     f"{STIFF_TAU - 0.5:g} of the 1/2 where the collision stops "
+                     "relaxing. nu = u_lid*n/Re is too small for this lattice: a run "
+                     "here converges slowly or not at all, and the residual below says "
+                     "which")
+    lines += [
              f"  nu:         {result['nu']:.6g} (lattice units)",
              f"  steps:      {result['steps']:,}"
              f"  ({'converged' if result['converged'] else 'stopped'}, "

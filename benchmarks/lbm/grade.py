@@ -188,11 +188,34 @@ def centreline_profiles(run: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     return np.interp(stations_u, y, u), np.interp(stations_v, y, v)
 
 
-def grade_cavity(n: int = 128, re: float = 1000.0, tolerance: float = 1e-6
-                 ) -> dict[str, Any]:
+def grade_cavity(n: int = 128, re: float = 1000.0, tolerance: float = 1e-5,
+                 max_steps: int = 600_000) -> dict[str, Any]:
+    """The cavity, with a step ceiling, because a grader that cannot finish is worse
+    than one that fails.
+
+    On the tolerance, which is the one number here that decides what the run costs. The
+    stop is on the largest velocity change over `check_every` steps, and the approach to
+    steady state is exponential, so the distance still to travel when it stops is about
+
+        remaining ~ residual * tau / check_every
+
+    with tau the slowest decay time -- viscous, L^2/(pi^2 nu), about 130,000 steps at
+    n = 128 and Re 1000. A tolerance of 1e-5 stops at a residual of 1e-6 in lattice
+    units and so within roughly 0.3% of the lid speed of the steady answer, which is
+    well inside the 2% the agreement is graded on, and its cost is a few hundred
+    thousand steps. Asking for 1e-6 instead buys a tenth of that remaining error, which
+    nothing here can see, for another factor of two in steps.
+
+    `lbm.solve`'s own ceiling is four million steps, which is a backstop for a person at
+    a terminal and a six-hour hang for a CI job. A configuration that cannot converge is
+    easy to reach -- nu = u_lid*n/Re, so halving `--n` at a fixed Reynolds number drives
+    tau_plus towards the 1/2 where the collision stops relaxing -- so the ceiling here is
+    low enough to stop and the `converged` check is what reports having hit it.
+    """
     lbm = solver()
     table_u, table_v = ghia()
-    run = lbm.cavity(n=n, re=re, tolerance=tolerance, check_every=500, progress=False)
+    run = lbm.cavity(n=n, re=re, tolerance=tolerance, check_every=500,
+                     max_steps=max_steps, progress=False)
     u, v = centreline_profiles(run)
     u_ref = np.array([value for _, value in table_u])
     v_ref = np.array([value for _, value in table_v])
@@ -205,7 +228,8 @@ def grade_cavity(n: int = 128, re: float = 1000.0, tolerance: float = 1e-6
                abs(reynolds - re) <= THRESHOLDS["reynolds_rel"] * re),
         _check("converged", run["residual"], f"<= {THRESHOLDS['residual']}",
                bool(run["converged"]) and run["residual"] <= THRESHOLDS["residual"],
-               _cost(run)),
+               _cost(run) + (f", stopped on the {max_steps:,}-step ceiling"
+                             if not run["converged"] else "")),
         _check("u RMS error (vertical centreline)", u_err, f"<= {limit}", u_err <= limit,
                f"max |du| {np.abs(u - u_ref).max():.4f}"),
         _check("v RMS error (horizontal centreline)", v_err, f"<= {limit}", v_err <= limit,
@@ -271,14 +295,16 @@ def main(argv: list[str] | None = None) -> int:
     cavity = sub.add_parser("cavity")
     cavity.add_argument("--n", type=int, default=128)
     cavity.add_argument("--re", type=float, default=1000.0)
-    cavity.add_argument("--tolerance", type=float, default=1e-6)
+    cavity.add_argument("--tolerance", type=float, default=1e-5)
+    cavity.add_argument("--max-steps", type=int, default=600_000, dest="max_steps")
     cavity.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     if args.which == "poiseuille":
         result = grade_poiseuille(n=args.n)
     else:
-        result = grade_cavity(n=args.n, re=args.re, tolerance=args.tolerance)
+        result = grade_cavity(n=args.n, re=args.re, tolerance=args.tolerance,
+                              max_steps=args.max_steps)
     if args.json:
         print(json.dumps(result, indent=2, default=float))
     else:
