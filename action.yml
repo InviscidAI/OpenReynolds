@@ -139,6 +139,11 @@ runs:
         FOAMD_API_KEY: ${{ inputs.service-key }}
       run: |
         set -uo pipefail
+        # `shell: bash` on a runner is `bash --noprofile --norc -eo pipefail {0}`, so
+        # `-e` is already on and a study that exits non-zero would abort this step right
+        # here -- before `status=`, before the outputs are written. A failed study is an
+        # outcome this action reports, not a crash, so `-e` is turned off for the rest.
+        set +e
         # The task is "$OR_TASK" and nothing is added to it: no preamble, no checklist,
         # no "and remember to". docs/design.md section 1, held by tests/test_action.py.
         if [ -n "$OR_HOOK" ]; then

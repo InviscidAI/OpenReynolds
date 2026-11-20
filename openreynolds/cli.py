@@ -1827,7 +1827,6 @@ def serve_cmd(bind: str, port: int, token: str | None, local_here: bool) -> None
     serve_mod.serve(bind=bind, port=port, token=token)
 
 
-<<<<<<< HEAD
 @main.command("capture")
 @click.option("--study", "study_id", default=None,
               help="Which study. Defaults to the newest.")
@@ -1897,7 +1896,9 @@ def capture_cmd(study_id: str | None, dry_run: bool) -> None:
     for line in refused:
         console.print(f"  [yellow]refused[/] {escape(line)}")
     if refused:
-=======
+        raise SystemExit(1)
+
+
 @main.command("webhook")
 @click.argument("urls", nargs=-1, required=True)
 @click.option("--event", "events", multiple=True, metavar="TYPE",
@@ -1938,7 +1939,6 @@ def webhook_cmd(urls: tuple[str, ...], events: tuple[str, ...], every: bool, sha
     print(f"webhook: {tally['sent']} sent, {tally['failed']} failed, "
           f"{tally['lines']} lines read", file=sys.stderr, flush=True)
     if tally["failed"] and not tally["sent"]:
->>>>>>> f156b3a (Four integrations over what was already there, and not one new service)
         raise SystemExit(1)
 
 

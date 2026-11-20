@@ -148,6 +148,16 @@ def test_it_exits_with_the_study_s_own_status(run_block: str):
     assert 'exit "$status"' in run_block
 
 
+def test_a_failed_study_still_writes_its_outputs(run_block: str):
+    """`shell: bash` on a runner is `bash --noprofile --norc -eo pipefail {0}`, so `-e`
+    is already on: without turning it off, a study that exits non-zero aborts the step
+    at the pipeline and the `study-id` and `outcome` outputs are never written -- which
+    is exactly the run somebody needs them for. Found by running this step under `-e`
+    with a fake `openreynolds` that exits 1."""
+    assert "set +e" in run_block
+    assert run_block.index("set +e") < run_block.index("status=${PIPESTATUS[0]}")
+
+
 def test_the_webhook_is_sent_by_the_runner_and_not_by_the_workspace(run_block: str):
     """The workspace has no outbound network at all: `pip` and `apt` inside the image
     are symlinked to a refusal (`docker/workspace/install-guard.sh`). So a notification
