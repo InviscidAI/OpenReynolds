@@ -35,6 +35,9 @@ from typing import Any
 from ..backend.base import WORKSPACE_ROOT
 
 INDEX_REL = ".reynolds/meshes.jsonl"
+"""Where the index is, relative to the workspace root -- which is also how every
+command here names it, with `cwd` at the root. See `_rel`."""
+INDEX_DIR = ".reynolds"
 REQUEST_CHARS = 200
 """Enough of the request to recognise the geometry; the full text is in the study."""
 SHOWN = 5
@@ -97,6 +100,43 @@ def entry(check: Any, case_dir: str, request: str, study_id: str) -> dict[str, A
     }
 
 
+def _rel(case_dir: str, root: str) -> str:
+    r"""A case directory as the index stores it: relative to the workspace root.
+
+    No absolute path goes into a line, and no absolute path goes into a command. Every
+    command here runs with `cwd` at the root, which the backend resolves in Python
+    (`LocalBackend.exec` hands it to `subprocess`), so the shell only ever sees relative
+    POSIX paths.
+
+    A Windows workspace root is why. `C:\Users\...` carries a drive colon, which POSIX
+    `PATH` uses as a separator, and backslashes, which the shell and `re.sub` both read
+    as escapes -- and whether an absolute Windows path resolves at all depends on which
+    bash is on PATH. It did on this developer's machine and did not on the Windows CI
+    runner, where `mkdir -p C:/Users/.../.reynolds` left Python unable to find the
+    directory it had just been told was made: six tests, every one of them "expected a
+    path, got nothing". Relative POSIX paths have none of those traps.
+
+    A case directory outside the root is left absolute. Nothing produces one -- a
+    study's home is inside the root by construction (`cli._home_path`) -- and if
+    something did, it simply never matches the relative existence test and so is never
+    offered, which is the safe direction.
+    """
+    case = _posix(case_dir)
+    base = _posix(root).rstrip("/")
+    if base and (case == base or case.startswith(base + "/")):
+        return case[len(base):].lstrip("/")
+    return case
+
+
+def _abs(case_dir: str, root: str) -> str:
+    """A stored case directory as the session refers to it. The model is handed a path
+    it can copy, so what is read back out of the line is joined onto the root again."""
+    case = _posix(case_dir)
+    if case.startswith("/") or ":" in case.split("/", 1)[0]:
+        return case
+    return f"{_posix(root).rstrip('/')}/{case}"
+
+
 def record(backend: Any, line: dict[str, Any], root: str | None = None) -> bool:
     """Append one entry. One short `>>` append, so two sessions on one workspace
     cannot lose each other's lines the way a read-modify-write would.
@@ -108,13 +148,13 @@ def record(backend: Any, line: dict[str, Any], root: str | None = None) -> bool:
     """
     if not shared(backend):
         return False
-    path = index_path(root if root is not None else backend)
-    folder = path.rsplit("/", 1)[0]
-    text = json.dumps(line, separators=(",", ":"))
+    where = root if root is not None else root_of(backend)
+    stored = {**line, "case_dir": _rel(str(line.get("case_dir") or ""), where)}
+    text = json.dumps(stored, separators=(",", ":"))
     try:
         res = backend.exec(
-            f"mkdir -p {shlex.quote(folder)} && printf '%s\\n' {shlex.quote(text)} >> {shlex.quote(path)}",
-            timeout_s=60,
+            f"mkdir -p {INDEX_DIR} && printf '%s\\n' {shlex.quote(text)} >> {INDEX_REL}",
+            cwd=where, timeout_s=60,
         )
     except Exception:  # noqa: BLE001 - see the module docstring
         return False
@@ -139,14 +179,14 @@ def retire(backend: Any, case_dir: str, root: str | None = None) -> bool:
     """
     if not shared(backend):
         return False
-    path = index_path(root if root is not None else backend)
-    text = json.dumps({"case_dir": _posix(case_dir), "retired": True},
+    where = root if root is not None else root_of(backend)
+    text = json.dumps({"case_dir": _rel(case_dir, where), "retired": True},
                       separators=(",", ":"))
     try:
         backend.exec(
-            f"test -f {shlex.quote(path)} && printf '%s\\n' {shlex.quote(text)} "
-            f">> {shlex.quote(path)} || true",
-            timeout_s=60,
+            f"test -f {INDEX_REL} && printf '%s\\n' {shlex.quote(text)} "
+            f">> {INDEX_REL} || true",
+            cwd=where, timeout_s=60,
         )
     except Exception:  # noqa: BLE001 - see the module docstring
         return False
@@ -165,16 +205,18 @@ tail -n {lines} {path} | while IFS= read -r line; do
 done
 true
 """
-"""Tail the index and test each entry's mesh in one round trip, printing only the lines
+r"""Tail the index and test each entry's mesh in one round trip, printing only the lines
 whose mesh is still on disk.
 
 Two commands before this, and both are charged to the desk's step budget ahead of its
 first model call. The case directory is taken off the front of the line by the shell's
 own prefix stripping rather than parsed, which is sound because this file writes the
-line: `json.dumps` with compact separators, `case_dir` first, and `_posix` so there is
-no escape in it. Not `sed`: `s|\\\\|/|g` is an unterminated expression to the sed in
-Git for Windows, and the escaped form it would have had to undo is the one `_posix`
-means the index never carries.
+line: `json.dumps` with compact separators and `case_dir` first. Not `sed`:
+`s|\\\\|/|g` is an unterminated expression to the sed in Git for Windows.
+
+Every path in it is relative, and it runs with `cwd` at the workspace root, for the
+reason `_rel` gives: an absolute Windows path in command text is resolved by whichever
+bash is on PATH, and the two disagreed.
 
 Either mesh layout counts as present: `constant/polyMesh/faces` for a single-region
 case and `constant/<region>/polyMesh/faces` for the multi-region one that
@@ -194,25 +236,29 @@ def read(backend: Any, root: str | None = None, exclude: str = "") -> list[dict[
     """
     if not shared(backend):
         return []
-    path = shlex.quote(index_path(root if root is not None else backend))
+    where = root if root is not None else root_of(backend)
     try:
-        res = backend.exec(_READ_CMD.format(path=path, lines=READ_LINES), timeout_s=60)
+        res = backend.exec(_READ_CMD.format(path=INDEX_REL, lines=READ_LINES),
+                           cwd=where, timeout_s=60)
     except Exception:  # noqa: BLE001 - see the module docstring
         return []
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
+    left_out = _posix(exclude).rstrip("/")
     for raw in reversed((res.output or "").splitlines()):
         try:
             item = json.loads(raw)
         except ValueError:
             continue
-        case_dir = item.get("case_dir") if isinstance(item, dict) else None
-        if not isinstance(case_dir, str) or not case_dir or case_dir in seen:
+        stored = item.get("case_dir") if isinstance(item, dict) else None
+        if not isinstance(stored, str) or not stored or stored in seen:
             continue
-        seen.add(case_dir)
+        seen.add(stored)
         if item.get("retired"):
             continue
-        left_out = _posix(exclude).rstrip("/")
+        # Stored relative, handed back absolute: the model is given a path it can copy.
+        case_dir = _abs(stored, where)
+        item["case_dir"] = case_dir
         if left_out and (case_dir == left_out or case_dir.startswith(left_out + "/")):
             continue
         out.append(item)

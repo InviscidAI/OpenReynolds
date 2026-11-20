@@ -47,10 +47,12 @@ def _shared(**attrs):
 
         def __init__(self):
             self.execs: list[str] = []
+            self.cwds: list[str | None] = []
             self.result = ExecResult(0, "", False, None)
 
         def exec(self, cmd, cwd=None, timeout_s=120, *, background=False):
             self.execs.append(cmd)
+            self.cwds.append(cwd)
             return self.result
 
     made = Fake()
@@ -168,6 +170,27 @@ def test_the_index_is_read_in_one_round_trip(tmp_path):
     assert len(backend.execs) == 1
 
 
+def test_no_command_carries_an_absolute_path(tmp_path):
+    r"""Whether an absolute Windows path in command text resolves depends on which bash
+    is on PATH. `mkdir -p C:/Users/.../.reynolds` made the directory on the developer's
+    Git bash and not on the Windows CI runner, where six of these tests failed as
+    "expected a path, got nothing" -- including one that could not open the index the
+    shell had just reported creating. Every path in a command is relative now, and the
+    root goes through `cwd`, which the backend resolves in Python.
+    """
+    backend = _shared(workspace_root=str(tmp_path))
+    case = (tmp_path / "20260920-155504-4379/mesh").as_posix()
+    mesh_index.record(backend, _line(case), str(tmp_path))
+    mesh_index.retire(backend, case, str(tmp_path))
+    mesh_index.read(backend, str(tmp_path))
+    assert backend.execs, "nothing ran, so nothing was pinned"
+    for cmd in backend.execs:
+        assert str(tmp_path) not in cmd and tmp_path.as_posix() not in cmd
+        assert ":" not in cmd.split(".reynolds")[0]
+    # The root reached the backend as `cwd`, which is resolved in Python, not by a shell.
+    assert all(c == str(tmp_path) for c in backend.cwds)
+
+
 def test_an_append_that_failed_is_not_reported_as_recorded():
     """A `>>` into a read-only or full volume fails quietly: `exec` does not raise and
     the exit code is the only thing that says so."""
@@ -247,7 +270,8 @@ def test_a_finished_mesh_is_written_to_the_index(backend, store, monkeypatch):
     result = made.run("the text Inviscid AI in a 2D channel", case="mesh")
     assert result.ok
     (cmd,) = _appended(backend)
-    assert "/work/study/mesh" in cmd and '"cells":3750' in cmd and '"study_id":"study"' in cmd
+    assert '"case_dir":"study/mesh"' in cmd and '"cells":3750' in cmd
+    assert '"study_id":"study"' in cmd
     assert '"two_d":true' in cmd and '"patches":["inlet"]' in cmd and '"regions":[""]' in cmd
 
 
@@ -292,7 +316,7 @@ def test_the_case_the_desk_starts_on_is_retired_from_the_index(backend, store, m
     made = desk(backend, store, [DONE], mesher_max_steps=2)
     made.run("a duct", case="mesh")
     (cmd,) = _retired(backend)
-    assert "/work/study/mesh" in cmd
+    assert '"case_dir":"study/mesh"' in cmd
 
 
 def test_the_desk_is_told_what_is_already_built(backend, store, monkeypatch):
