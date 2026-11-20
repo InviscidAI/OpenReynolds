@@ -244,7 +244,7 @@ def alpha_water_field() -> str:
     outward and back in again, which quietly feeds water in through the ceiling once
     a splash reaches it.
     """
-    return (header("volScalarField", "alpha.water", "\"0\"") + """
+    return (header("volScalarField", "alpha.water", "0") + """
 dimensions      [0 0 0 0 0 0 0];
 
 internalField   uniform 0;
@@ -279,7 +279,7 @@ def u_field() -> str:
     (0 0 0)` lid is a closed box with a pressure boundary condition drawn on it, and
     the column cannot collapse without compressing the air it is trapped under.
     """
-    return (header("volVectorField", "U", "\"0\"") + """
+    return (header("volVectorField", "U", "0") + """
 dimensions      [0 1 -1 0 0 0 0];
 
 internalField   uniform (0 0 0);
@@ -315,7 +315,7 @@ def p_rgh_field() -> str:
     the solution. A plain `fixedValue 0` there is a boundary that holds the surface
     flat as it passes, which is exactly the measurement the case exists to make.
     """
-    return (header("volScalarField", "p_rgh", "\"0\"") + """
+    return (header("volScalarField", "p_rgh", "0") + """
 dimensions      [1 -1 -2 0 0 0 0];
 
 internalField   uniform 0;
@@ -350,7 +350,7 @@ def g_file() -> str:
 
     9.81 m/s^2 is standard gravity (9.80665 m/s^2, CGPM 1901) to three figures.
     """
-    return (header("uniformDimensionedVectorField", "g", "\"constant\"") + """
+    return (header("uniformDimensionedVectorField", "g", "constant") + """
 dimensions      [0 1 -2 0 0 0 0];
 value           (0 -9.81 0);
 """)
@@ -374,7 +374,7 @@ def transport_properties() -> str:
     for a 0.146 m column is of order 10^4, so surface tension does nothing to the surge
     front, and the solver still wants the number before it will start.
     """
-    return (header("dictionary", "transportProperties", "\"constant\"") + """
+    return (header("dictionary", "transportProperties", "constant") + """
 phases (water air);
 
 water
@@ -404,7 +404,7 @@ def turbulence_properties() -> str:
     `turbulenceProperties`; the openfoam.org line calls the same thing
     `momentumTransport`.
     """
-    return (header("dictionary", "turbulenceProperties", "\"constant\"") + """
+    return (header("dictionary", "turbulenceProperties", "constant") + """
 simulationType  laminar;
 """)
 
@@ -433,7 +433,7 @@ def control_dict() -> str:
       `writeInterval` below is the amount of work an interruption can destroy.
     """
     end_time = 1.0
-    return (header("dictionary", "controlDict", "\"system\"") + f"""
+    return (header("dictionary", "controlDict", "system") + f"""
 application     interFoam;
 
 startFrom       latestTime;     // an interrupted solve resumes, it does not restart
@@ -473,7 +473,7 @@ def fv_schemes() -> str:
     `linearUpwind grad(U)` on momentum rather than plain `linear`: a dam break's
     momentum field has a shock-like front, and central differencing on it oscillates.
     """
-    return (header("dictionary", "fvSchemes", "\"system\"") + """
+    return (header("dictionary", "fvSchemes", "system") + """
 ddtSchemes
 {
     default         Euler;
@@ -527,7 +527,7 @@ def fv_solution() -> str:
       macro, so a reader sees that only the relative tolerance changes on the last
       corrector.
     """
-    return (header("dictionary", "fvSolution", "\"system\"") + """
+    return (header("dictionary", "fvSolution", "system") + """
 solvers
 {
     "alpha.water.*"
@@ -598,7 +598,7 @@ def set_fields_dict() -> str:
     list means a different one.
     """
     (xa, ya, za), (xb, yb, zb) = water_box()
-    return (header("dictionary", "setFieldsDict", "\"system\"") + f"""
+    return (header("dictionary", "setFieldsDict", "system") + f"""
 defaultFieldValues
 (
     volScalarFieldValue alpha.water 0   // air everywhere, then the column below
