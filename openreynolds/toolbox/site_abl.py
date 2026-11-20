@@ -245,6 +245,16 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             f"refused: Zref = {zref:g}. atmBoundaryLayer::Ustar aborts on a negative "
             f"Zref (`FatalErrorInFunction`), so this stops here instead"
         )
+    if zref == 0:
+        # The class's own Usage example shows `Zref 0.0;` and its only guard is on a
+        # negative Zref, but at zero the denominator is ln((0 + z0)/z0) = ln(1) = 0
+        # and u* divides by it. Named here rather than reached as a ZeroDivisionError
+        # or handed to the solver as an infinity.
+        raise Refused(
+            f"refused: Zref = 0 with z0 = {z0:g}. u* is kappa Uref / ln((Zref + z0)/z0), "
+            f"and at Zref = 0 that logarithm is ln(1) = 0; the reference height has to "
+            f"be a height the reference speed was actually measured at"
+        )
 
     if args.flow_dir:
         flow_dir = parse_vector(args.flow_dir, "--flow-dir")

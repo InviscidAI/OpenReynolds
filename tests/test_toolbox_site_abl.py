@@ -182,6 +182,15 @@ def test_a_negative_reference_height_is_refused_before_the_solver_aborts(abl, ca
     assert "Ustar" in capsys.readouterr().err
 
 
+def test_a_zero_reference_height_is_refused_rather_than_dividing_by_zero(abl, capsys):
+    """`atmBoundaryLayer.H`'s own Usage example shows `Zref 0.0;` and the class only
+    guards `Zref < 0`, but at zero the denominator is ln(1) and u* divides by it.
+    Reaching that as a ZeroDivisionError, or handing the solver an infinity, are both
+    worse than saying so."""
+    assert abl.main(["--uref", "10", "--zref", "0", "--z0", "0.1"]) == 2
+    assert "ln(1) = 0" in capsys.readouterr().err
+
+
 def test_no_reference_wind_at_all_names_both_ways_to_supply_one(abl, capsys):
     assert abl.main(["--z0", "0.1"]) == 2
     text = capsys.readouterr().err
