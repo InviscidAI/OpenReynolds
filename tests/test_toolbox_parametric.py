@@ -261,6 +261,57 @@ def test_mesh_mode_builds_measures_and_scores_without_a_solve(parametric, study,
     assert "ok" in capsys.readouterr().out
 
 
+def test_a_rerun_is_not_scored_on_the_last_runs_results(parametric, study, fake_image):
+    """A candidate directory is reused -- `--mode solve` twice, or a campaign rerunning
+    a point after a rebuild -- and `score.py` reads `postProcessing/`, so last run's
+    rows there were scored as this run's. `case_gen.py` already refuses `startFrom
+    latestTime` on a case holding older times (`case_gen.times_on_disk`, #181), which
+    stops the solve exiting without a step, but it removes nothing (review of #54).
+    """
+    candidate = study["candidate"]
+    assert parametric.main(argv(study, "solve")) == 0
+    stale = candidate / "postProcessing" / "forceCoeffs" / "0" / "stale.dat"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("# rows from the run before\n1 9 9 9\n", encoding="utf-8")
+    (candidate / "500").mkdir(exist_ok=True)
+    (candidate / "500" / "U").write_text("an older run's field\n", encoding="utf-8")
+    (candidate / "0.orig").mkdir(exist_ok=True)
+
+    assert parametric.main(argv(study, "solve")) == 0
+
+    assert not stale.exists(), "the last run's postProcessing is this run's answer"
+    assert not (candidate / "500").exists(), "and so are its time directories"
+    assert (candidate / "0.orig").is_dir(), "0.orig is not an earlier answer"
+    assert (candidate / "constant" / "polyMesh" / "points").exists(), "the mesh is this run's"
+    assert json.loads((candidate / "metrics.json").read_text())["label"] == "ok"
+
+
+def test_each_case_off_one_mesh_is_cleared_too(parametric, valve_lock, valve_image):
+    """`case_off_mesh` copies the mesh in rather than building, so `build_and_mesh`
+    never runs there and the per-case directories need clearing on their own."""
+    candidate = valve_lock["candidate"]
+    assert parametric.main(argv(valve_lock, "solve")) == 0
+    stale = candidate / "forward" / "postProcessing" / "pInlet" / "0" / "stale.dat"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("# the run before\n", encoding="utf-8")
+
+    assert parametric.main(argv(valve_lock, "solve")) == 0
+
+    assert not stale.exists()
+
+
+def test_clear_results_leaves_a_case_that_has_not_run_alone(parametric, tmp_path):
+    """Nothing to clear is not an error, and `0/`, `constant/` and `system/` are this
+    run's own inputs rather than the last run's output."""
+    case = tmp_path / "fresh"
+    for name in ("0", "constant", "system"):
+        (case / name).mkdir(parents=True)
+    parametric.clear_results(case)
+    parametric.clear_results(tmp_path / "nowhere")
+
+    assert sorted(p.name for p in case.iterdir()) == ["0", "constant", "system"]
+
+
 def test_a_build_that_fails_is_mesh_with_the_scripts_last_words(parametric, study, fake_image):
     (study["round"] / "build.py").write_text(
         "from design_constants import *\nraise SystemExit('gmsh: the section self-intersects')\n")

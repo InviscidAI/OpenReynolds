@@ -4,6 +4,16 @@
     python3 parametric.py CANDIDATE_DIR --round ROUND_DIR --lock goal.lock.json --mode mesh
     python3 parametric.py CANDIDATE_DIR --round ROUND_DIR --lock goal.lock.json --mode solve
 
+who calls this
+
+    The agent does, one candidate at a time, from `bash` or `job_start`. Nothing in this
+    package imports it or shells out to it, and that is the point: a build, a mesh
+    measurement, a `case_gen.py` line, a solver run at the right rank count and a
+    scoring pass is a round-trip the agent would otherwise write again per study and get
+    subtly differently each time. Choosing the points is somebody else's job -- a
+    person, a shell loop, an optimizer -- and the only things this agrees with that
+    caller about are `design_constants.py` and the lock.
+
 A design study is the same case built many times with different numbers, and the
 numbers have to arrive somewhere a rebuild script can read without being edited. The
 convention is one file: `CANDIDATE_DIR/design_constants.py`, lines of `NAME = <number>`,
@@ -422,9 +432,40 @@ class Outcome:
         self.detail = detail
 
 
+def clear_results(case: Path) -> None:
+    """Every time directory above 0, and `postProcessing/`, out of a case about to run.
+
+    Candidate and `trim_k` directories are reused -- `--mode solve` twice over the same
+    candidate, a campaign that reruns a point after a rebuild -- and what is left in
+    them is the LAST run's answer. `score.py` reads `postProcessing/forceCoeffs/*/`,
+    `pInlet/`, `pOutlet/` and `yPlus*.dat`, so stale rows there are scored as this
+    run's; the time directories are the fields a solver would restart from.
+
+    `case_gen.py` already refuses `startFrom latestTime` on a case holding an older
+    run's times and says so (`case_gen.times_on_disk`, #181), which stops the solve
+    exiting without computing a step. It removes nothing, and nothing did: a rebuild
+    writes a new `0/` and a new mesh, and the old `postProcessing/` sat beside it.
+    `0/`, `constant/` and `system/` are left alone, because the build and the dressing
+    write those and removing them would be removing this run's own inputs.
+    """
+    for entry in sorted(case.iterdir()) if case.is_dir() else []:
+        if entry.name == "postProcessing" and entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+            continue
+        if not entry.is_dir() or entry.name in ("0", "constant", "system"):
+            continue
+        try:
+            if float(entry.name) == 0.0:
+                continue                  # `0.orig` and the like: not an earlier answer
+        except ValueError:
+            continue                      # not a time directory at all
+        shutil.rmtree(entry, ignore_errors=True)
+
+
 def build_and_mesh(case: Path) -> str:
     """`build.py`, `mesh_look.py` and `checkMesh` in the case; why it is not a mesh, or
     empty."""
+    clear_results(case)
     why = build(case)
     if why:
         return why
@@ -446,6 +487,9 @@ def case_off_mesh(candidate: Path, name: str) -> Path:
     """
     case = candidate / name
     case.mkdir(exist_ok=True)
+    # The mesh is copied in rather than built here, so `build_and_mesh` never runs in
+    # this directory and this is where a reused case directory gets cleared.
+    clear_results(case)
     for script in ("build.py", "hooks.py", "design_constants.py", "look.json"):
         if (candidate / script).is_file():
             shutil.copyfile(candidate / script, case / script)
