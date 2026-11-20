@@ -116,6 +116,10 @@ class FelixFacts:
     warm_start: str | None = None
     status: dict[str, Any] | None = None
     """The final status `felix run` prints on stdout, when the log reached it."""
+    refusal: dict[str, Any] | None = None
+    """foamd's `409 study_paused` refusal, found anywhere in the window rather than
+    only as the final status (`refusal_status`). The study's spending ceiling is the
+    person's question, so it is not allowed to depend on where the object landed."""
     summary: dict[str, Any] | None = None
     """The run summary between ===JSON_START=== and ===JSON_END===, when a raw
     solver's stdout landed in the same log."""
@@ -299,6 +303,36 @@ def _split_json_tail(text: str) -> tuple[str, dict[str, Any] | None]:
 
 _JSON_BLOCK = re.compile(r"===JSON_START===\s*(.*?)\s*===JSON_END===", re.S)
 
+_OBJECT_START = re.compile(r"(?m)^[ \t]*\{")
+_REFUSAL = {"state": "refused", "status": 409, "error": "study_paused"}
+"""foamd's 409 as `felix` prints it. `study_paused` is `ceiling.STUDY_PAUSED`, kept
+literal here so the log parsing does not depend on the policy that reads it.
+
+`state` has to be `refused`. `rejected` is felixd's own word for a solve it turns down
+after creating it, a failed mesh check for instance, and not foamd refusing the study."""
+
+
+def refusal_status(text: str) -> dict[str, Any] | None:
+    """A foamd `409 study_paused` refusal from anywhere in `text`, else None.
+
+    `felix` catches the `FelixError` and prints the refusal as its final status,
+    pretty-printed over several lines (`OpenFoam_Instance image/felix/felix_cli.py`,
+    `main()`), so it is found by parsing objects rather than by a regex over the prose.
+    Neither the end of the log nor the exit code can be relied on to point at it:
+    `felix run cavity; echo done` prints a line after it, and `felix run cavity 2>&1 |
+    tee run.log` without pipefail exits 0.
+    """
+    decoder = json.JSONDecoder()
+    for match in _OBJECT_START.finditer(text or ""):
+        try:
+            value, _end = decoder.raw_decode(text, match.end() - 1)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and all(
+                value.get(key) == want for key, want in _REFUSAL.items()):
+            return value
+    return None
+
 
 def _messages(lines: list[str]) -> list[tuple[str, str]]:
     """(kind, text) per message; `step` for step records. Unprefixed lines continue
@@ -329,6 +363,7 @@ def parse_felix_log(text: str) -> FelixFacts:
     """Facts from a Felix log or the tail of one. Last value wins for the step record;
     every ERROR and WARNING in the window is kept."""
     facts = FelixFacts()
+    facts.refusal = refusal_status(text)
     body, status = _split_json_tail(text or "")
     if status is not None and ("state" in status or "id" in status):
         facts.status = status

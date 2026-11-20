@@ -48,7 +48,7 @@ from . import video as video_mod
 from . import viewer
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
 from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
-from .progress import Tracker
+from .progress import Tracker, felix_job_facts
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, TornRecord, list_studies, new_study_id
 from . import catalog as catalog_mod
@@ -59,8 +59,16 @@ from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
 from .jsonview import JsonReader, JsonView
-from .watch import (NOTHING, LineReader, NullReader, conversation_rows, earlier_conversation,
-                    situation, watch)
+from .watch import (
+    FinishedJob,
+    NOTHING,
+    LineReader,
+    NullReader,
+    conversation_rows,
+    earlier_conversation,
+    situation,
+    watch,
+)
 
 TOOLBOX_SOURCE = Path(__file__).parent / "toolbox"
 TOOLBOX_DEST = f"{WORKSPACE_ROOT}/.toolbox"
@@ -4900,6 +4908,12 @@ def _run_turn(loop: Loop, view: View) -> bool:
     is that distinction, and it is the caller's cue to stop asking until a person
     says something.
     """
+    pending = _pending_finished_felix_jobs(loop, view)
+    if pending is None:
+        return False
+    if pending:
+        loop.tell(pending)
+
     status: int | None = None
     refusal_code = ""
     refusal_body: dict[str, Any] = {}
@@ -4926,14 +4940,7 @@ def _run_turn(loop: Loop, view: View) -> bool:
                 loop.settle()
                 if ceiling.resolve(loop.ctx, pause):
                     continue
-                stopped = loop.ctx.stopped
-                console.print(f"\n[yellow]{stopped}[/]")
-                view.notice(stopped)
-                event = getattr(loop, "event", None)
-                if event is not None:
-                    event(stopped)
-                loop.blocked_reason = stopped
-                view.info("waiting for you - the study is paused at its spending ceiling")
+                _stopped_at_ceiling(loop, view)
                 return False
             status = exc.status_code
             refusal_code = exc.code
@@ -5138,7 +5145,13 @@ def _run_interactive(
                     if wake.kind == "job":
                         loop.inform(wake.text)
                     continue
-                loop.inform(wake.text)
+                report = (_finished_job_wake(loop, view, wake.text, wake.finished)
+                          if wake.kind == "job" else wake.text)
+                if wake.kind == "job" and report is None:
+                    # `_finished_job_wake` has already kept the report, then the
+                    # stop, in that order. Do not append the raw refusal afterwards.
+                    continue
+                loop.inform(report)
             elif wake.kind == "user":
                 # A person speaking is the one thing that can change a refusal:
                 # they have topped the account up, fixed the key, or want to hear
@@ -5308,7 +5321,10 @@ def _run_one_shot(
             return "timeout"
         if wake.kind != "job":
             break
-        loop.inform(wake.text)
+        report = _finished_job_wake(loop, view, wake.text, wake.finished)
+        if report is None:
+            return _not_completed(loop)
+        loop.inform(report)
         if not _run_turn(loop, view):
             return _not_completed(loop)
         if live is not None and not _no_workspace_yet(loop):
@@ -5316,6 +5332,103 @@ def _run_one_shot(
         if loop.needs_refresh:
             loop.refresh(_with_mode(situation(store, backend), loop))
     return "ok"
+
+
+def _stopped_at_ceiling(loop: Any, view: View, *, thread: bool = False) -> None:
+    """Record one spending-ceiling stop in every place a session exposes it.
+
+    `thread` puts the stop in the thread as well (`Loop.tell`), which the watch path
+    wants: `Loop._turns` tells a stop after the turn's results, so a resumed study
+    reads why the turn ended. The model-call path keeps `Loop.event`, which is
+    documented as adding nothing to the thread: the turn it stopped is settled, and a
+    message appended after it would change the cached prefix and what the next request
+    carries.
+    """
+    stopped = loop.ctx.stopped
+    if thread:
+        loop.tell(stopped)
+    else:
+        event = getattr(loop, "event", None)
+        if event is not None:
+            event(stopped)
+    console.print(f"\n[yellow]{stopped}[/]")
+    view.notice(stopped)
+    loop.blocked_reason = stopped
+    view.info("waiting for you - the study is paused at its spending ceiling")
+
+
+def _finished_job_wake(
+    loop: Any,
+    view: View,
+    report: str,
+    finished: tuple[FinishedJob, ...] = (),
+) -> str | None:
+    """The finished-job facts to send to the model, or None after a ceiling stop.
+
+    Only a failed `felix run|continue` job named by this wake can carry a refusal. Its
+    structured final status is checked against the current study row, and each job is
+    accounted for once in the persisted record. A raised ceiling is appended to the
+    same facts the model receives, so it does not read an old 409 as still current.
+    """
+    notes = []
+    for observation in finished:
+        record = observation.record
+        pause = ceiling.handle_finished_felix_job(
+            loop.ctx, record, observation.status, observation.facts
+        )
+        if pause.note:
+            notes.append(f"job {record.job_id}: {pause.note}")
+        if pause.decision is False:
+            # Match an in-turn stop: first preserve all job results and notes, then
+            # put the final stop in the thread. This also keeps notes from earlier
+            # observations when a later job is the one the person declines.
+            facts = "\n".join(filter(None, [report, *notes]))
+            if facts:
+                loop.inform(facts)
+            _stopped_at_ceiling(loop, view, thread=True)
+            return None
+    return "\n".join(filter(None, [report, *notes]))
+
+
+def _pending_finished_felix_jobs(loop: Any, view: View) -> str | None:
+    """Look at Felix solves that ended unwatched, before the next model turn.
+
+    A refusal can end while the session is away, or while another refusal blocks model
+    calls. Finished jobs leave `watch`'s poll, so the persisted `ceiling_pause_handled`
+    flag is what is left to find them by; each is looked at once
+    (`ceiling.handle_finished_felix_job`).
+
+    Only when the turn is known to be able to run. `Loop.run` routes an open solver and
+    then asks `start_refused` before the model (openreynolds/loop.py:395), and a
+    spending question put ahead of that would be asked for a turn that was never going
+    to run -- and in one-shot mode a declined answer would report `failed` where the
+    run was `refused`. A study with no workspace of its own yet has routed nothing, so
+    it has no Felix job either; and a `PendingBackend` whose start has been refused
+    never becomes ready (openreynolds/backend/pending.py:162), so neither reaches the
+    question.
+    """
+    store = getattr(loop, "store", None)
+    ctx = getattr(loop, "ctx", None)
+    backend = getattr(ctx, "backend", None)
+    if store is None or ctx is None or backend is None or _no_workspace_yet(loop):
+        return ""
+    if isinstance(backend, PendingBackend) and (not backend.ready() or backend.failed):
+        return ""
+    observations = []
+    for record in store.session.jobs.values():
+        if not ceiling.pause_check_pending(record):
+            continue
+        try:
+            status = backend.job_status(record.job_id)
+        except BackendError:
+            continue
+        if status.running:
+            continue
+        facts = felix_job_facts(backend, record.cmd, record.job_id, status.log_size)
+        observations.append(FinishedJob(record, status, facts))
+    if not observations:
+        return ""
+    return _finished_job_wake(loop, view, "", tuple(observations))
 
 
 def _not_completed(loop: Any) -> str:

@@ -49,6 +49,7 @@ from . import ceiling, convergence, images
 from . import solvers, trace
 from .progress import (
     case_dir_from_cmd,
+    felix_job_facts,
     felix_job_summary,
     is_felix_solve,
     parse_control_dict,
@@ -887,6 +888,12 @@ def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
     sigpipe = _sigpipe_note(result.exit_code, args["cmd"])
     if sigpipe:
         notes.append(sigpipe)
+    pause = ceiling.output_pause(ctx, args["cmd"], result.output or "")
+    if pause.note:
+        # A `felix run` refused at the study's ceiling answers in seconds, so it
+        # usually finishes inside this window and never becomes a job: the question
+        # has to be put to the person from the command's own output, or not at all.
+        notes.append(pause.note)
     if getattr(result, "stderr", "").strip():
         # The workspace itself, not the command: a working directory that is gone, a
         # capture-sync that failed. Surfaced so a platform failure is legible as one
@@ -1714,10 +1721,14 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
         sigpipe = _sigpipe_note(status.exit_code, record.cmd)
         if sigpipe:
             header += "\n" + sigpipe
+        facts = felix_job_facts(ctx.backend, record.cmd, job_id, status.log_size)
         felix = felix_job_summary(ctx.backend, record.cmd, record.cwd or ctx.home,
-                                  job_id, status.log_size)
+                                  job_id, status.log_size, facts=facts)
         if felix:
             header += "\n" + "\n".join(felix)
+            pause = ceiling.handle_finished_felix_job(ctx, record, status, facts)
+            if pause.note:
+                header += "\n" + pause.note
     header += f"\nlog: bytes {offset}–{next_offset}, eof={eof}"
     if clipped:
         header += f" (this window clipped at {ctx.max_output} bytes; call again from {offset + len(body.encode('utf-8'))})"

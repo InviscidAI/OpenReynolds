@@ -208,6 +208,49 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A GPU solve refused at the study's spending ceiling was told to the model and to
+  nobody else.** `felix run` is itself a workspace job, so when foamd pauses a study at
+  80% of its ceiling the refusal comes back as the job's own output rather than as the
+  `BackendError` that `tools._handled` turns into the person's question
+  (`openreynolds/tools.py:832`). The model read `409 study_paused`, had no way to raise
+  anything, and the study sat there: #79. A finished Felix solve's output is now read
+  for the refusal, and a study the service still reports as paused is put to the person
+  through the same `Approver` every other spending question goes through. Yes raises the
+  ceiling; no stops the study with a plain message, and nothing more is sent to the
+  model until they speak. A ceiling raised meanwhile on the study page is appended to
+  the facts the model receives, so it does not read the old 409 as still current.
+  - **The refusal is read as an object, from anywhere in the output.** `felix` catches
+    the error and prints `{"state": "refused", "status": 409, "error": "study_paused"}`
+    pretty-printed over several lines, and nothing puts it last or makes the exit code
+    say so: `felix run cavity; echo done` prints a line after it, and `felix run cavity
+    2>&1 | tee run.log` without pipefail exits 0. So the whole window is scanned for the
+    object and the exit code is not consulted (`openreynolds/felix_progress.py:315`). A
+    reading of the ERROR prose was tried first and withdrawn: foamd prints the spend
+    rounded to the cent, so 759.6 cents reads back as 760 and the comparison against the
+    live row stopped matching once the spend stopped rising. `state` has to be
+    `refused`, because `rejected` is felixd's own word for a solve it turns down after
+    creating it, a failed mesh check for instance, and not foamd refusing the study.
+  - **`bash` looks at its own output too.** A refusal answers within seconds, so `bash
+    felix run <case>` usually finishes inside the synchronous window and is never
+    promoted to a job, leaving no job record for anything else to look at
+    (`openreynolds/tools.py:891`). Gated on the command being a `felix run|continue`, as
+    the job path is, so a `cat` or a `grep` of an old log cannot ask.
+  - **Each solve is accounted for once, whatever came of it**
+    (`openreynolds/ceiling.py:222`). An earlier version left every failure that was not
+    a refusal eligible for another look, which cost a status call, a 256 KB log read and
+    a study GET before every model turn, once per crashed solve in the study. A pause
+    that could not be confirmed on the one look is not lost by that: the pause belongs
+    to the study, so the next call that meets it asks.
+  - **Studies saved before this change load as already looked at**
+    (`openreynolds/store.py:48`). The flag defaults True and is set False when a job is
+    recorded, so resuming an older study does not re-examine every failed solve in it,
+    and cannot ask about a refusal the person dealt with days ago.
+  - **A one-shot run stopped at a solve's refusal reports `failed`.** The stop broke
+    `_run_one_shot`'s loop and fell through to `return "ok"`, so a scheduled run that
+    stopped without doing the work exited 0, while the same pause met at a model call
+    already reported `failed`. Both go through `_not_completed` now, and
+    `test_one_shot_returns_failed_when_the_person_stops_at_a_job_pause` holds it.
+
 - **A rate limit ended the run that hit it.** `_MAX_ATTEMPTS` is five and the ordinary
   backoff is `min(2**attempt, 30)` seconds (`backend/hosted.py:145`, `_retry_delay`), so
   a 429 that keeps coming back raised `rate_limited` at the caller after about fifteen

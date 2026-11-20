@@ -45,6 +45,16 @@ class JobRecord:
     """Where the command ran. The progress line finds the case's controlDict from it;
     records written before it existed load with it empty and are shown without an end."""
     """How far the model has already read this job's log."""
+    ceiling_pause_handled: bool = True
+    """Whether this job's output has already been looked at for a ceiling refusal
+    (`ceiling.handle_finished_felix_job`).
+
+    Kept with the job rather than in the live loop so reading another log page or
+    resuming the study cannot ask the same spending question again. True by default
+    and set False by `record_job`, so that records written before this field existed
+    load as looked at: the first turn after resuming an older study would otherwise
+    re-examine every failed Felix solve in it and could ask about a refusal the person
+    dealt with days ago."""
 
 
 @dataclass
@@ -366,7 +376,8 @@ class Store:
         return rows
 
     def record_job(self, job_id: str, cmd: str, name: str | None, cwd: str = "") -> JobRecord:
-        record = JobRecord(job_id=job_id, name=name, cmd=cmd, launched_at=_now(), cwd=cwd)
+        record = JobRecord(job_id=job_id, name=name, cmd=cmd, launched_at=_now(), cwd=cwd,
+                           ceiling_pause_handled=False)
         self.session.jobs[job_id] = record
         self.save()
         return record
