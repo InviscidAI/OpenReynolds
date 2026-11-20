@@ -94,7 +94,7 @@ def test_the_closed_form_passes_every_check(tmp_path, grade, plane_stress):
     result = grade.grade_bar(write_case(tmp_path, plane_stress=plane_stress))
     assert all(item["pass"] for item in result["checks"]), [
         item for item in result["checks"] if not item["pass"]]
-    assert len(result["checks"]) == 5, "a check was dropped"
+    assert len(result["checks"]) == 6, "a check was dropped"
 
 
 def test_the_two_states_differ_by_exactly_one_over_one_minus_nu(tmp_path, grade):
@@ -102,20 +102,23 @@ def test_the_two_states_differ_by_exactly_one_over_one_minus_nu(tmp_path, grade)
     -314.2857 MPa for the steel above: 43% apart, far outside any threshold here."""
     stress = grade.grade_bar(write_case(tmp_path, plane_stress=True))
     strain = grade.grade_bar(write_case(tmp_path, plane_stress=False))
-    a = stress["measured"]["sigma_xx_hot_exact_pa"]
-    b = strain["measured"]["sigma_xx_hot_exact_pa"]
+    a = stress["measured"]["sigma_xx_hot_face_exact_pa"]
+    b = strain["measured"]["sigma_xx_hot_face_exact_pa"]
     assert a == pytest.approx(-E_PA * ALPHA * DELTA_T)
     assert a == pytest.approx(-2.2e8)
     assert b / a == pytest.approx(1.0 / (1.0 - NU))
     assert b == pytest.approx(-2.2e8 / 0.7)
 
 
-def test_the_hot_face_stress_is_minus_e_alpha_delta_t(grade, tmp_path):
+def test_the_stress_at_a_temperature_is_minus_e_alpha_t(grade, tmp_path):
     """No elastic constant survives in the plane-stress answer but E, which is the
-    one line of the derivation worth asserting rather than only writing down."""
-    y = grade.np.array([0.0, HEIGHT / 2, HEIGHT])
+    one line of the derivation worth asserting rather than only writing down.
+
+    `exact` takes T and not y, which is what makes the grade a statement about the
+    elasticity rather than about where the sampler put its points."""
+    temperature = grade.np.array([DELTA_T, DELTA_T / 2, 0.0])
     settings = grade.read_case(write_case(tmp_path, plane_stress=True))
-    answer = grade.exact(settings, y)
+    answer = grade.exact(settings, temperature)
     assert answer["sigma_xx"][0] == pytest.approx(-E_PA * ALPHA * DELTA_T)
     assert answer["sigma_xx"][1] == pytest.approx(-E_PA * ALPHA * DELTA_T / 2)
     assert answer["sigma_xx"][2] == pytest.approx(0.0)
@@ -123,6 +126,62 @@ def test_the_hot_face_stress_is_minus_e_alpha_delta_t(grade, tmp_path):
     # would add over a stress check. 1.3 * 1.1e-3 = 1.43e-3 at the hot face.
     assert answer["strain_yy"][0] == pytest.approx((1 + NU) * ALPHA * DELTA_T)
     assert answer["strain_yy"][0] == pytest.approx(1.43e-3)
+
+
+def test_a_staircase_profile_still_passes(tmp_path, grade):
+    """The sampler returns `type uniform` 100 points over 20 cells with cell-value
+    interpolation, so each cell's value comes back about five times and the profile is
+    a staircase about the analytic line. Grading sigma_xx against the analytic line at
+    the sample's own y would read that as a 2.5% error in the physics; grading it
+    against the solver's own T at the same point does not."""
+    case = write_case(tmp_path)
+    path = next((case / "postProcessing").rglob("*.xy"))
+    rows = ["# y T sigmaxx sigmayy sigmaxy"]
+    cells = 20
+    for index in range(100):
+        y = HEIGHT * index / 99
+        cell = min(int(y / (HEIGHT / cells)), cells - 1)
+        y_centre = (cell + 0.5) * HEIGHT / cells          # what `cell` interpolation gives
+        temperature = DELTA_T * (1.0 - y_centre / HEIGHT)
+        rows.append(f"{y:.10g} {temperature:.10g} {-E_PA * ALPHA * temperature:.10g} 0 0")
+    path.write_text("\n".join(rows) + "\n")
+    result = grade.grade_bar(case)
+    assert all(item["pass"] for item in result["checks"]), [
+        item for item in result["checks"] if not item["pass"]]
+
+
+def test_a_conduction_that_never_ran_is_caught(tmp_path, grade):
+    """A constant T fits a straight line perfectly, and `sigma_xx = -E*alpha*T` holds
+    for it too, so the only thing that catches it is the span."""
+    case = write_case(tmp_path)
+    path = next((case / "postProcessing").rglob("*.xy"))
+    rows = ["# y T sigmaxx sigmayy sigmaxy"]
+    for index in range(41):
+        y = HEIGHT * index / 40
+        rows.append(f"{y:.10g} 0 0 0 0")
+    path.write_text("\n".join(rows) + "\n")
+    failed = [item["name"] for item in grade.grade_bar(case)["checks"] if not item["pass"]]
+    assert any("span" in name for name in failed), failed
+
+
+def test_a_temperature_that_is_not_linear_is_caught(tmp_path, grade):
+    """The conduction half on its own: a profile that has not reached a steady state
+    is not a straight line, whatever the stress beside it says."""
+    case = write_case(tmp_path)
+    path = next((case / "postProcessing").rglob("*.xy"))
+    rows = ["# y T sigmaxx sigmayy sigmaxy"]
+    for index in range(41):
+        frac = index / 40
+        temperature = DELTA_T * (1.0 - frac) ** 2        # an unconverged transient
+        rows.append(f"{HEIGHT * frac:.10g} {temperature:.10g} "
+                    f"{-E_PA * ALPHA * temperature:.10g} 0 0")
+    path.write_text("\n".join(rows) + "\n")
+    result = grade.grade_bar(case)
+    failed = [item["name"] for item in result["checks"] if not item["pass"]]
+    assert any("straight line" in name for name in failed), failed
+    # and the elasticity still passes, which is the separation working
+    assert all(item["pass"] for item in result["checks"]
+               if "sigma_xx" in item["name"])
 
 
 # -- and the four wrong answers are rejected ----------------------------------------
@@ -248,5 +307,5 @@ def test_the_json_output_carries_the_numbers(tmp_path, grade, capsys):
     assert grade.main(["bar", str(write_case(tmp_path)), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["settings"]["factor"] == 1.0
-    assert payload["measured"]["sigma_xx_hot_exact_pa"] == pytest.approx(-2.2e8)
-    assert len(payload["checks"]) == 5
+    assert payload["measured"]["sigma_xx_hot_face_exact_pa"] == pytest.approx(-2.2e8)
+    assert len(payload["checks"]) == 6

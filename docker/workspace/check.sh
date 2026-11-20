@@ -105,14 +105,23 @@ PY
 #
 # The case is the constrained bar of benchmarks/thermal_stress/README.md, where the
 # answer is exact: a bar held between frictionless rigid ends, resting on a
-# frictionless floor, free on top, conducting dT across its height. With ex_xx = 0,
-# sigma_yy = 0 and ex_zz = 0 put into the solver's own constitutive law, sigma is
-# diag(s, 0, s) with s = -E*alpha*T, so the solver's own `Max sigmaEq` line --
-# sqrt(1.5*magSqr(dev(sigma))) -- is exactly E*alpha*dT in plane stress and
-# E*alpha*dT/(1-nu) in plane strain. One number per run, no field parsing, and the two
-# runs are 43% apart, so the `planeStress` switch cannot be read the wrong way round
-# and pass. T is written as a RISE: this solver subtracts no reference temperature
-# anywhere, so the stress-free state of the body is T = 0.
+# frictionless floor, free on top. With ex_xx = 0, sigma_yy = 0 and ex_zz = 0 put into
+# the solver's own constitutive law, sigma is diag(s, 0, s) with s = -E*alpha*T, so
+# the solver's own `Max sigmaEq` line -- sqrt(1.5*magSqr(dev(sigma))) -- is exactly
+# |s|. One number per run, no field parsing, and the two runs are 43% apart, so the
+# `planeStress` switch cannot be read the wrong way round and pass. T is written as a
+# RISE: this solver subtracts no reference temperature anywhere, so the stress-free
+# state of the body is T = 0.
+#
+# The T here is UNIFORM, where the benchmark's is linear across the bar, and the
+# difference is deliberate. `Max sigmaEq` is a maximum over CELLS, so on a bar with a
+# linear T it reports the hottest cell's stress and not the hot face's: on a 20-cell
+# mesh that is E*alpha*dT*(1 - 1/40), 2.5% low, and a gate asserting E*alpha*dT would
+# be asserting the mesh. With T uniform the answer is the same in every cell and the
+# number is mesh-independent, which is what a one-line gate needs. The price is that
+# `grad(3*K*alpha*T)` is then zero in the interior and the whole load arrives through
+# `tractionDisplacement`'s thermal term; the graded benchmark runs the linear case for
+# exactly that reason, in the `journey` job.
 echo "== stress analysis: solidDisplacementFoam, on a thermal stress it gets exactly"
 solidDisplacementFoam -help > /dev/null 2>&1
 solidEquilibriumDisplacementFoam -help > /dev/null 2>&1
@@ -156,13 +165,13 @@ FOAM
 cat > 0/T <<'FOAM'
 FoamFile { version 2.0; format ascii; class volScalarField; object T; }
 dimensions [0 0 0 1 0 0 0];
-internalField uniform 0;
+internalField uniform 100;
 boundaryField
 {
     end_left  { type symmetryPlane; }
     end_right { type symmetryPlane; }
-    hot       { type fixedValue; value uniform 100; }
-    cold      { type fixedValue; value uniform 0; }
+    hot       { type zeroGradient; }
+    cold      { type zeroGradient; }
     frontAndBack { type empty; }
 }
 FOAM

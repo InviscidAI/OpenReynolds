@@ -23,6 +23,13 @@ over preCICE's or anyone else's tutorial comparison. What it cannot tell you is
 whether linear small-strain elasticity is the right model for your problem; it tells
 you that this solver solves the model it claims to.
 
+The two halves are graded separately and each against what it is responsible for.
+`sigma_xx` is graded against `-E*alpha*T` at the **solver's own T at the same sample
+point**, which is exact because all three kinematic facts hold cell by cell, so a
+conduction that has not converged cannot be mistaken for an elasticity error (or hide
+one). The conduction is graded as the linearity of T, which is a statement that needs
+neither H nor any knowledge of where the sampler put its 100 points.
+
 Only the solver's own files are read: the two property dictionaries, the `0/T` the
 case was started from, and the `raw` profile `postProcess -func singleGraph` wrote
 under `postProcessing/`. Never the run's own analysis. The bar's height is measured
@@ -45,23 +52,45 @@ from typing import Any
 import numpy as np
 
 THRESHOLDS = {
-    # The exact solution is uniform in x and linear in y, and the discretisation is
-    # exact for both, so what is left is the linear solver's own tolerance and the
-    # sampler's interpolation onto the line. The template asks GAMG for 1e-10 and the
-    # displacement residual for 1e-9. 0.5% of the peak stress is therefore loose by
-    # three orders of magnitude on a converged run and still fails anything that has
-    # the constitutive law, the plane-stress switch or the sign of the thermal term
-    # wrong -- the plane-stress and plane-strain answers here differ by 43%, and
-    # dropping the thermal term altogether gives zero.
-    "sigma_xx_rms_rel": 0.005,
-    "sigma_xx_max_rel": 0.02,
+    # The stress is graded against the temperature the solver itself produced at the
+    # same sample point, not against dT*(1 - y/H) at that point. The algebra holding
+    # sigma_xx = -E*alpha*T*f is per-cell -- ex_xx = 0, sigma_yy = 0 and ex_zz = 0 hold
+    # cell by cell -- so the relation is exact wherever T is read, and grading it this
+    # way measures the elasticity without the conduction error or the sampler's
+    # interpolation onto the line in the way. `setFormat raw` with `type uniform` and
+    # `nPoints 100` over 20 cells returns each cell's value about five times, and a
+    # comparison against the analytic line at the sample's own y would be reading that
+    # staircase as a 2.5% error in the physics. The conduction is graded separately,
+    # as the linearity of T, which is the statement that does not need H.
+    #
+    # What is left in this number is the linear solver's tolerance: the template asks
+    # GAMG for 1e-10 and the displacement residual for 1e-9. 0.5% is loose by orders
+    # of magnitude on a converged run and still fails everything that matters -- the
+    # plane-stress and plane-strain answers are 43% apart, a missing thermal term
+    # gives zero, and a flipped sign gives a tension.
+    "sigma_vs_t_rms_rel": 0.005,
+    "sigma_vs_t_max_rel": 0.02,
     # sigma_yy and sigma_xy are identically zero in the exact solution. They are
     # graded against the peak of sigma_xx, because a "small" stress is only small
     # against the one the case actually produces.
     "traction_free_rel": 0.02,
-    # T is the solution of a Laplace equation between two fixed values, which second
-    # order differencing reproduces exactly; this is the residual and the sampler.
-    "temperature_rel": 0.002,
+    # T solves a Laplace equation between two fixed values, so it is linear in y and
+    # second-order differencing reproduces that exactly. Graded as the residual of a
+    # straight-line fit, which needs neither H nor where the sampler put its points.
+    #
+    # This threshold is set by the sampling and not by the solver, which is the honest
+    # way round. `thermal_stress.py` asks for `type midPoint`, one sample per cell at
+    # the cell centre, where a converged linear field is reproduced to round-off. But
+    # `sampleDict.cfg`'s own default is `type uniform; nPoints 100;`, which over 20
+    # cells returns each cell's value about five times and makes a staircase whose
+    # RMS departure from the line is half a cell step over root three -- 1.44% of dT
+    # on this mesh, measured in `test_a_staircase_profile_still_passes`. 2% admits
+    # either sampling choice. It is still a real check: an unconverged profile is
+    # curved, and a quadratic one departs from its best line by 7.4% of dT.
+    "temperature_linearity_rel": 0.02,
+    # And it has to actually vary, or a solver that never ran the conduction at all
+    # would pass the line fit perfectly with a constant.
+    "temperature_span_min_rel": 0.5,
 }
 
 
@@ -213,26 +242,40 @@ def read_profile(case: Path) -> dict[str, np.ndarray]:
 # -- the closed form ----------------------------------------------------------------
 
 
-def exact(case: dict[str, Any], y: np.ndarray) -> dict[str, np.ndarray]:
-    """T, sigma_xx and ex_yy at the sampled heights, from the case's own constants.
+def exact(case: dict[str, Any], temperature: np.ndarray) -> dict[str, np.ndarray]:
+    """sigma_xx and ex_yy at a given temperature, from the case's own constants.
 
     The derivation is in README.md. In one line: the ends hold ex_xx = 0, the top is
     traction-free so sigma_yy = 0, and the mesh is one cell thick so ex_zz = 0; put
     those into the solver's own constitutive law and every elastic constant cancels
     out of sigma_xx but E.
+
+    Taking T as the argument rather than y is the point: all three of those facts hold
+    cell by cell, so the relation holds wherever T is read, and the grade is then a
+    statement about the elasticity alone. It is also what makes the grading immune to
+    where the sampler put its points.
     """
-    height = float(np.max(y))
-    if height <= 0:
-        raise GradeError("the sampled line has no extent, so there is no profile")
-    temperature = case["delta_t_k"] * (1.0 - y / height)
     thermal = case["E_pa"] * case["alpha_per_k"] * case["factor"]
     return {
-        "height_m": height,
         "T": temperature,
         "sigma_xx": -thermal * temperature,
         "strain_yy": (1.0 + case["nu"]) * case["factor"] * case["alpha_per_k"] * temperature,
         "peak_pa": thermal * case["delta_t_k"],
     }
+
+
+def line_fit_residual(y: np.ndarray, values: np.ndarray) -> float:
+    """RMS departure of `values` from the best straight line through them.
+
+    The conduction check. T between two fixed values with the sides insulated is
+    linear in y, exactly, and a straight-line fit says so without needing the bar's
+    height, the position of the first cell centre, or anything else about where the
+    samples landed.
+    """
+    if y.size < 3:
+        raise GradeError(f"{y.size} sample points is not a profile")
+    slope, intercept = np.polyfit(y, values, 1)
+    return float(np.sqrt(np.mean((values - (slope * y + intercept)) ** 2)))
 
 
 # -- grading ------------------------------------------------------------------------
@@ -246,28 +289,34 @@ def check(name: str, value: float, limit: float, detail: str) -> dict[str, Any]:
 def grade_bar(case_path: Path) -> dict[str, Any]:
     settings = read_case(case_path)
     profile = read_profile(case_path)
-    y = profile["y"]
-    answer = exact(settings, y)
+    y, temperature = profile["y"], profile["T"]
+    answer = exact(settings, temperature)
     peak = answer["peak_pa"]
     if peak <= 0:
         raise GradeError("E, alpha or the temperature rise is zero, so the case has no "
                          "thermal stress in it and there is nothing to grade")
 
-    temperature_error = float(np.max(np.abs(profile["T"] - answer["T"]))) / settings["delta_t_k"]
+    span = float(np.max(temperature) - np.min(temperature))
     residual = profile["sigmaxx"] - answer["sigma_xx"]
+    state = "plane stress" if settings["plane_stress"] else "plane strain"
     checks = [
-        check("temperature profile, max error / dT",
-              temperature_error, THRESHOLDS["temperature_rel"],
-              f"linear between {settings['delta_t_k']:g} K and 0 over "
-              f"{answer['height_m']:.6g} m"),
-        check("sigma_xx, RMS error / peak",
+        check("temperature, departure from a straight line / dT",
+              line_fit_residual(y, temperature) / settings["delta_t_k"],
+              THRESHOLDS["temperature_linearity_rel"],
+              "T solves a Laplace equation between two fixed values, so it is linear "
+              "in y exactly"),
+        check("temperature, dT / span sampled", settings["delta_t_k"] / max(span, 1e-30),
+              1.0 / THRESHOLDS["temperature_span_min_rel"],
+              f"the profile spans {span:.4g} K of the {settings['delta_t_k']:g} K the "
+              f"case was given: a conduction that never ran would fit a line perfectly"),
+        check("sigma_xx against -E*alpha*T, RMS / peak",
               float(np.sqrt(np.mean(residual**2))) / peak,
-              THRESHOLDS["sigma_xx_rms_rel"],
-              f"-E*alpha*T*{settings['factor']:.6g}, peak {peak / 1e6:.4f} MPa "
-              f"({'plane stress' if settings['plane_stress'] else 'plane strain'})"),
-        check("sigma_xx, max error / peak",
-              float(np.max(np.abs(residual))) / peak, THRESHOLDS["sigma_xx_max_rel"],
-              "pointwise, including the hot face where the stress is largest"),
+              THRESHOLDS["sigma_vs_t_rms_rel"],
+              f"-E*alpha*T*{settings['factor']:.6g} at the solver's own T, peak "
+              f"{peak / 1e6:.4f} MPa ({state})"),
+        check("sigma_xx against -E*alpha*T, max / peak",
+              float(np.max(np.abs(residual))) / peak, THRESHOLDS["sigma_vs_t_max_rel"],
+              "pointwise, every sample, including the hot end"),
     ]
     for component in ("sigmayy", "sigmaxy"):
         if component in profile:
@@ -277,11 +326,17 @@ def grade_bar(case_path: Path) -> dict[str, Any]:
                 THRESHOLDS["traction_free_rel"],
                 "zero in the exact solution: the top face carries no traction"))
 
+    hottest = int(np.argmax(temperature))
     measured = {
-        "sigma_xx_hot_pa": float(profile["sigmaxx"][int(np.argmin(y))]),
-        "sigma_xx_hot_exact_pa": float(-peak),
-        "height_m": answer["height_m"],
+        "sigma_xx_hottest_pa": float(profile["sigmaxx"][hottest]),
+        "t_hottest_k": float(temperature[hottest]),
+        # What the hot face itself carries, which is the number README.md quotes. The
+        # hottest sample is a cell centre rather than the face, so this is stated as
+        # the closed form at the case's own dT and the measurement is beside it.
+        "sigma_xx_hot_face_exact_pa": float(-peak),
+        "temperature_span_k": span,
         "points": int(y.size),
+        "sampled_extent_m": float(np.max(y) - np.min(y)),
         "profile": str(profile["_path"]),
     }
     return {"case": str(case_path), "settings": settings, "measured": measured,
@@ -294,10 +349,11 @@ def report(result: dict[str, Any]) -> None:
     print(f"#   {'plane stress' if settings['plane_stress'] else 'plane strain'}, "
           f"E {settings['E_pa']:g} Pa, nu {settings['nu']:g}, "
           f"alpha {settings['alpha_per_k']:g} /K, dT {settings['delta_t_k']:g} K")
-    print(f"#   {measured['points']} points over {measured['height_m']:.6g} m, "
+    print(f"#   {measured['points']} points over {measured['sampled_extent_m']:.6g} m, "
           f"from {measured['profile']}")
-    print(f"#   sigma_xx on the hot face: {measured['sigma_xx_hot_pa'] / 1e6:+.4f} MPa "
-          f"against an exact {measured['sigma_xx_hot_exact_pa'] / 1e6:+.4f} MPa")
+    print(f"#   hottest sample {measured['t_hottest_k']:.4f} K carries "
+          f"{measured['sigma_xx_hottest_pa'] / 1e6:+.4f} MPa; the hot face's closed "
+          f"form is {measured['sigma_xx_hot_face_exact_pa'] / 1e6:+.4f} MPa")
     print()
     for item in result["checks"]:
         verdict = "PASS" if item["pass"] else "FAIL"

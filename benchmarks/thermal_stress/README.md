@@ -92,22 +92,63 @@ identically zero on the y = 0 face, which is why `fixedValue (0 0 0)` can be imp
 there without over-constraining anything and without a boundary layer near it. The
 answer does not depend on the mesh, on the bar's length, or on how long the run took.
 
-**The solver's own `Max sigmaEq` line is also exact.** Here sigma is
-`diag(s, 0, s)` -- the plane-stress `sigma_zz` the solver prints is not the true zero
-of plane stress but `lambda*e - 3*K*alpha*T`, which equals `sigma_xx`; in plane strain
-that same equality is the correct answer. Either way
-`sqrt(1.5*magSqr(dev(sigma)))` works out to exactly `|s|`, so the solver's own
-per-write line should print `E*alpha*dT` (plane stress) or `E*alpha*dT/(1-nu)` (plane
-strain) and nothing else. `docker/workspace/check.sh` gates the image on that single
-number, which is why the gate needs no file parsing at all.
+**The solver's own `Max sigmaEq` line is also exact, with one trap in it.** Here sigma
+is `diag(s, 0, s)` -- the plane-stress `sigma_zz` the solver prints is not the true
+zero of plane stress but `lambda*e - 3*K*alpha*T`, which equals `sigma_xx`; in plane
+strain that same equality is the correct answer. Either way
+`sqrt(1.5*magSqr(dev(sigma)))` works out to exactly `|s|`, so that one line carries the
+whole answer and needs no file parsing.
+
+But `max` is over **cells**, not over faces. On a bar with a linear T the hottest cell
+centre sits half a cell above the hot face, so the line reports
+`E*alpha*dT*f*(1 - dy/(2H))`: 2.5% under the face value on a 20-cell mesh. Asserting
+the face value against that line would be asserting the mesh, and it is the kind of
+2.5% that gets blamed on the solver. So the two uses are split:
+
+* `docker/workspace/check.sh` gates the image on a bar with a **uniform** T, where
+  every cell carries the same stress and the number is mesh-independent and exactly
+  `E*alpha*dT*f`. Cheap, one grep, no geometry.
+* this benchmark runs the **linear** T, where the number is the hottest cell's and the
+  graded quantities are the profile ones below.
+
+## How it is graded, and why not against `-E alpha T(y)` at the sample's own y
+
+`grade.py` grades `sigma_xx` against `-E*alpha*T*f` using **the solver's own T at the
+same sample point**, not against the analytic `-E*alpha*dT*(1 - y/H)*f`. The three
+kinematic facts hold cell by cell, so the relation is exact wherever T is read, and
+grading it this way separates the two halves: a conduction that has not converged
+cannot be mistaken for an elasticity error, or hide one.
+
+It also keeps the grade clear of the sampler. `postProcess -func singleGraph` reads
+`sampleDict.cfg`, whose defaults are `type uniform; nPoints 100;`, and a sampledSet
+interpolates `cell` unless told otherwise: 100 points over 20 cells returns each cell's
+value about five times, a staircase deviating from the analytic line by up to half a
+cell. Compared against the line at the sample's own y that reads as a 2.5% physics
+error; compared against the solver's own T it is exact. The template asks for
+`type midPoint` -- one sample per cell centre -- so a real run has no staircase either,
+but the grader does not depend on that, and
+`test_a_staircase_profile_still_passes` holds it to not depending on it.
+
+The conduction is graded as the **linearity** of T, by the residual of a straight-line
+fit, which needs neither H nor any knowledge of where the samples landed; the span of T
+is graded beside it, because a solver that never ran the conduction at all would fit a
+line perfectly with a constant. That linearity threshold is 2% of dT and is set by the
+sampling rather than by the solver: the `uniform` staircase alone is 1.44% of dT on this
+mesh. An unconverged profile is curved and a quadratic one departs from its best line by
+7.4% of dT, so the check still bites.
 
 For the template's steel (E = 2e11 Pa, nu = 0.3, alpha = 1.1e-5 /K) and dT = 100 K:
 
 | | plane stress | plane strain |
 |---|---|---|
 | sigma_xx on the hot face | **-220.0000 MPa** | **-314.2857 MPa** |
-| max sigmaEq | 220.0000 MPa | 314.2857 MPa |
+| max sigmaEq, uniform T (the gate's case) | 220.0000 MPa | 314.2857 MPa |
+| max sigmaEq, linear T on 20 cells | 214.5000 MPa | 306.4286 MPa |
 | D_y at the free top face, H = 0.02 m | 14.30 um | 20.43 um |
+
+The hot face's value is recovered from a run that never samples the face, by
+extrapolating the sampled `sigma_xx` line back to y = 0; `sigma_xx` is exactly linear
+in y, so that extrapolation is exact too.
 
 ## Why this case and not a tutorial comparison
 

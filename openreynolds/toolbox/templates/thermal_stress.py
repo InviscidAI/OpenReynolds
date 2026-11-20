@@ -193,9 +193,14 @@ def expected() -> dict[str, float]:
     return {
         # sigma_xx on the hot face, where T is DELTA_T_K and the stress is largest
         "sigma_xx_hot_pa": -E_PA * ALPHA_PER_K * DELTA_T_K * factor,
-        # the solver's own `Max sigmaEq` line: sigma is diag(s, 0, s) here, whose von
-        # Mises equivalent sqrt(1.5*magSqr(dev(sigma))) is exactly |s|
-        "sigma_eq_max_pa": E_PA * ALPHA_PER_K * DELTA_T_K * factor,
+        # What the solver's own `Max sigmaEq` line will say, which is NOT the number
+        # above. sigma is diag(s, 0, s) here, so sqrt(1.5*magSqr(dev(sigma))) is
+        # exactly |s| -- but `max` is over CELLS, and the hottest cell centre sits
+        # half a cell above the hot face, so it reports (1 - dy/(2H)) of it: 2.5% low
+        # on 20 cells. Quoting the hot-face value against that line would be reading
+        # the mesh as an error in the physics.
+        "sigma_eq_max_pa": (E_PA * ALPHA_PER_K * DELTA_T_K * factor
+                            * (1.0 - CELL_SIZE_M / (2.0 * BAR_HEIGHT_M))),
         "strain_yy_hot": strain,
         "displacement_y_top_m": strain * BAR_HEIGHT_M / 2.0,
         "diffusion_e_folding_s": BAR_HEIGHT_M**2 / (3.14159265**2 * DIFFUSIVITY),
@@ -517,15 +522,27 @@ stressAnalysis
     # Samples T and the stress components along a line up the middle of the bar, in
     # `raw` format, which is a header comment and then one row per point. The
     # `#includeEtc` lines are the plateHole tutorial's and resolve against $FOAM_ETC.
+    # A quarter of a cell off the mid-plane: the answer is uniform in x, so where the
+    # line sits does not matter, and `BAR_LENGTH_M/2` is exactly the kind of round
+    # number that lands on a face plane, where which cell a sample belongs to is a
+    # tie. A quarter cell is inside one cell on any mesh of this size.
+    line_x = BAR_LENGTH_M / 2.0 + CELL_SIZE_M / 4.0
     foam(case / "system" / "singleGraph", "dictionary", "singleGraph", f"""
-start   ({BAR_LENGTH_M / 2.0:.10g} 0 {THICK_M / 2.0:.10g});
-end     ({BAR_LENGTH_M / 2.0:.10g} {BAR_HEIGHT_M:.10g} {THICK_M / 2.0:.10g});
+start   ({line_x:.10g} 0 {THICK_M / 2.0:.10g});
+end     ({line_x:.10g} {BAR_HEIGHT_M:.10g} {THICK_M / 2.0:.10g});
 fields  (T sigmaxx sigmayy sigmaxy);
 
 #includeEtc "caseDicts/postProcessing/graphs/sampleDict.cfg"
 
+// `sampleDict.cfg` defaults to `type uniform; nPoints 100;`, which over 20 cells
+// returns each cell's value about five times, because a sampledSet interpolates
+// `cell` unless told otherwise: the profile comes out a staircase about the answer,
+// deviating from it by up to half a cell. `midPoint` instead puts one sample at each
+// cell centre along the line, where the cell value is the answer and no
+// interpolation happens at all.
 setConfig
 {{
+    type    midPoint;
     axis    y;
 }}
 
@@ -569,7 +586,8 @@ def main() -> None:
     print("#")
     print("# what it should produce, from the closed form in this file's docstring:")
     print(f"#   sigma_xx on the hot face   {answers['sigma_xx_hot_pa'] / 1e6:+.4f} MPa")
-    print(f"#   the solver's Max sigmaEq   {answers['sigma_eq_max_pa'] / 1e6:.4f} MPa")
+    print(f"#   the solver's Max sigmaEq   {answers['sigma_eq_max_pa'] / 1e6:.4f} MPa "
+          f"(the hottest CELL, half a cell above that face)")
     print(f"#   D_y at the free top face   {answers['displacement_y_top_m'] * 1e6:.4f} um")
     print(f"#   sigma_yy, sigma_xy         0 everywhere")
     print(f"#   conduction e-folding time  {answers['diffusion_e_folding_s']:.2f} s "
