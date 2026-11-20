@@ -514,8 +514,11 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
         rows.append((
             item["study_id"],
             item["state"],
-            item["project"] or "-",
-            ",".join(item["tags"]) or "-",
+            # Capped like the title beside them: `_aligned` pads every column to its
+            # widest cell, so one 500-character tag pushed every column after it off
+            # screen and the table stopped being readable at all (#194).
+            _cell(item["project"]),
+            _cell(",".join(item["tags"])),
             (item["created_at"] or "-")[:16],
             catalog_mod.elapsed(item["runtime_s"]),
             f"{item['total_tokens']:,}" if item["total_tokens"] else "-",
@@ -596,7 +599,10 @@ def label_cmd(study_id: str | None, project: str | None,
                      else "project cleared")
     elif store.session.project:
         lines.append(f"project: {store.session.project}")
-    lines += commands.tag_lines(store, [*add_tags, *(f"-{tag}" for tag in drop_tags)])
+    # Each option says what it does: `--tag -leading` adds a tag called `-leading`
+    # rather than dropping `leading`, which is what funnelling both through the typed
+    # line's in-band `-` did (#193).
+    lines += commands.tag_lines(store, list(add_tags), drop=drop_tags)
     console.print(f"[bold]{escape(chosen)}[/]")
     for line in lines:
         console.print(f"  {escape(line)}")
@@ -672,6 +678,22 @@ def rerun_cmd(study_id: str | None) -> None:
     Nothing is started here and nothing is spent.
     """
     _duplicate(study_id, rerun=True)
+
+
+TABLE_CELL = 40
+"""How wide a free-text table cell is printed. `title` was capped at 40 already."""
+
+
+def _cell(text: str, width: int = TABLE_CELL) -> str:
+    """One table cell, capped and said to have been capped.
+
+    `_aligned` pads every column to its widest cell, so a single long value is not one
+    wide cell: it is every column after it pushed off the screen. A 500-character tag
+    did that to the dashboard (#194), where `title` was already capped at 40 and
+    `project` and `tags` were not.
+    """
+    text = str(text or "")
+    return (text[:width - 3] + "...") if len(text) > width else (text or "-")
 
 
 def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:

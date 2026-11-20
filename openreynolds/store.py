@@ -436,14 +436,20 @@ def list_studies(root: Path, torn: list[str] | None = None) -> list[Session]:
     return [store.session for store in list_stores(root, torn)]
 
 
+TAG_MAX = 60
+"""The longest a tag is recorded at. A tag is a label somebody filters by, and a 500
+character one was stored verbatim and read back into every listing that prints it
+(#194). Long enough for a sentence, short enough to sit in a column."""
+
+
 def tag_name(word: str) -> str:
-    """One tag as it is recorded: trimmed, lower-case, spaces as hyphens.
+    """One tag as it is recorded: trimmed, lower-case, spaces as hyphens, capped.
 
     `Mesh Study`, `mesh-study` and `mesh study ` are one tag, because somebody
     filtering by a tag they typed last week should not have to remember how they
     capitalised it.
     """
-    return "-".join(word.strip().lower().split())
+    return "-".join(word.strip().lower().split())[:TAG_MAX]
 
 
 def _replace(tmp: Path, path: Path, tries: int = 20) -> None:
