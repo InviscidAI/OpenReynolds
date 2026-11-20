@@ -1,0 +1,39 @@
+I want the standard buoyancy benchmark as a check on the buoyant solver: natural
+convection of air in a square cavity at Ra = 1e5 and Pr = 0.71, the case de Vahl Davis
+published as a benchmark numerical solution in 1983. A square cavity of side 0.1 m, the
+two vertical walls held at different fixed temperatures, the top and bottom adiabatic,
+two-dimensional, steady.
+
+Be careful which Nusselt number you are comparing with, because this paper reports
+several and secondary sources collapse them into one. His Table V at Ra = 1e5 gives an
+average Nusselt number of **4.509 on the hot wall** (his Nu_0), and **4.519** for both the
+average through the whole cavity (his Nu) and the average on the vertical mid-plane (his
+Nu_1/2), which coincide to four figures at this Rayleigh number. They are 0.22% apart,
+which matters here because his own estimated accuracy at Ra = 1e5 is 0.3%. I want the
+hot-wall average against 4.509, and I want you to say which definition you computed. If
+you also give me the mid-plane value against 4.519, better: he recommends that one as the
+number to describe heat flow across a cavity with adiabatic ends.
+
+Set the Rayleigh number by choosing the temperature difference rather than by bending a
+property: pick dT so that Ra = g beta dT L^3 / (nu alpha) comes out at 1e5 with air's own
+beta, nu and Pr, and show me that arithmetic including the alpha you used. I would rather
+have an odd-looking dT and honest properties than round numbers and a Rayleigh number
+that is secretly 8e4.
+
+Give me the hot-wall Nusselt number and also the **cold**-wall one. With the top and
+bottom adiabatic and the flow steady, every watt entering through one vertical wall has to
+leave through the other exactly, so the two agreeing is a closed energy balance and the
+two disagreeing means the run has not converged whatever the residuals say. Tell me how
+far apart they are. Say which reference temperature and which length went into
+Nu = h L / k and how you took the wall gradient, because on a graded mesh the stencil
+moves the answer by more than you would like.
+
+If you want two more checks that are free, his Table V also gives the maximum horizontal
+velocity on the vertical mid-plane as 34.73 at height 0.855 and the maximum vertical
+velocity on the horizontal mid-plane as 68.59 at 0.066 from the hot wall, both
+non-dimensionalised on alpha/L and not on nu/L. Getting those two scales mixed up is a
+factor of Pr and it is the usual reason a correct solve appears to fail this benchmark.
+
+Then tell me the local Nusselt number distribution along the hot wall and whether its
+shape is the one this flow should have, how you know the solve reached a steady state
+rather than merely stopping, what mesh you used, and what it cost.

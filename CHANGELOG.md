@@ -40,6 +40,42 @@ All notable changes to this project are recorded here. The format follows
     `layer_report.py`. And the solver's continuity error and `balance.py`'s closure are
     two different quantities, asserted separately -- conflating them is how a reading
     error gets called a continuity failure.
+- **An index of every validated case, three tutorial cases, and two reference values that
+  turned out to be wrong.** `benchmarks/README.md` lists each case in the repository whose
+  answer is known from outside a solver, with its source, the agreement the real run
+  achieved, and where the remaining difference comes from.
+  `benchmarks/tutorials/` adds three cheap cases as runnable prompts: a heated pipe
+  against the exact Graetz value, a buoyant cavity against de Vahl Davis, and a
+  backward-facing step. Every number was recomputed from the run's own final field and
+  mesh rather than copied from its summary, and `tests/test_benchmarks_index.py` holds the
+  prose to the graders' own constants so the two cannot drift.
+  - **de Vahl Davis's 4.519 is his cavity average, not his hot-wall Nusselt number.** The
+    hot-wall value in his Table V is 4.509. The misattribution is near-universal in
+    secondary sources and worth 0.22%, against a paper whose own stated accuracy at
+    Ra 1e5 is 0.3%, and it flatters the result, which is why it survives. The cavity run
+    recomputes to 4.5335, so +0.54% on 4.509 rather than +0.32% on 4.519.
+  - **Gartling's reattachment length of 6.1 is in channel heights, not step heights**, so
+    12.2 step heights. The step case here was built with the step height as the unit
+    length where Gartling uses the channel height: one mistake, two consequences. It ran
+    at Re 1600 where the benchmark is 800, and its 6.42 step heights were compared with
+    6.1 as though the units matched. In one unit it is about 47% short, not 5% long.
+    `openreynolds/toolbox/reattach.py` and `claims.py` still carry the older reading in
+    their docstrings. The case is documented as a units failure rather than as a passing
+    validation, and Gartling (1990) is paywalled and was not read, which is said rather
+    than smoothed over.
+  - **On four of the eleven cases the reference's own uncertainty is larger than the
+    agreement being claimed**, and the index now prints it beside the number. Ghia's
+    Re 1000 centreline extrema sit 1.46% to 2.20% from Botella & Peyret's spectral
+    solution, so agreeing with him to 0.45% is agreeing to inside his error. The 0.164
+    Strouhal reference is the value at Re 100 of Williamson's parallel-shedding fit
+    (Williamson 1989, *JFM* **206**, eq. 6, reproduced as Fig. 7(a) of the 1996 review,
+    where the number itself is never printed), and it is 0.1643, while Roshko (1954) and
+    Williamson & Brown (1998) both give 0.1671 at the same Reynolds number: the
+    correlations disagree by 1.7% against a result reported as 1.31% high. The SUBOFF
+    resistance is located to Liu & Huang (1998) Table 14 p. 23, configuration 1, where
+    the bare hull is 87.4 N and the appended hull at the same speed is 102.3 N, and its
+    total resistance coefficient is marked as derived because that table publishes none.
+
 - **`advise.py`: which solver, and how many ranks, both read out of the case.** The
   toolbox classifies a case (`ladder.classify`) and then lists this image's solvers for
   that family with what each one is, the condition that makes it the one, and whether it

@@ -1,0 +1,36 @@
+I want the reattachment length behind a backward-facing step, on the case Gartling set up
+as a 2D test problem in 1990, and I want the units nailed down before anything is solved,
+because this is the case where everybody gets them wrong.
+
+Gartling's geometry, in his own non-dimensionalisation: the downstream channel runs
+-0.5 <= y <= 0.5, so its height H is 1. The inlet is the upper half of the left boundary
+only, 0 < y <= 0.5, carrying u = 24 y (0.5 - y), whose peak is 1.5 and whose mean over the
+inlet opening is exactly 1. The lower half of the left boundary is the step face, so the
+step height is H/2 = 0.5. The channel is 30H long downstream, the walls are no-slip and
+the outflow is traction-free. Laminar and steady.
+
+His Reynolds number is Re = u_mean H / nu on the **downstream** channel height, not on the
+step height and not on the inlet height, so Re = 800 means nu = 1/800 = 0.00125 with
+u_mean = 1 and H = 1. Note what that implies: because the expansion ratio is exactly 2,
+H is also the hydraulic diameter of the inlet channel, so Re 800 here is the same flow
+rate as Armaly's 1983 experiment at its Re_Dh = 800, and it is Re 400 on the inlet height.
+Please write the Reynolds number you used, the length you put in it and the viscosity that
+follows, and tell me if you think I have any of that wrong.
+
+Then give me the reattachment length on the lower wall from the sign changes of the wall
+shear along it, not by eye off a picture, and give it to me **twice**: in channel heights
+H and in step heights. Gartling's own value is 6.1, and I want to know which of those two
+numbers that 6.1 is comparable to, from your own reading of the normalisation rather than
+from my say-so. A reattachment length compared across those two units is wrong by a
+factor of two while looking plausible.
+
+List every sign change you find, not just the one you pick. The first is the corner eddy
+and is not the answer, and something further downstream may be a secondary bubble on the
+upper wall or may be an artifact. Gartling also reports an upper-wall separation bubble,
+so tell me whether you found one and where it starts and ends.
+
+Last, and I care about this more than the number: tell me whether a steady solution
+exists at this Reynolds number, and what your residuals and your reattachment length
+actually did over the run rather than whether they met a tolerance. If the number is
+still moving when you stop, say so and show me the drift, because a drifting number
+quoted to three figures is worse than no number.
