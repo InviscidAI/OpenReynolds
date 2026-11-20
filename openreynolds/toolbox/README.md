@@ -73,8 +73,10 @@ binaries on PATH, and which tool does a job (PDF is `pdftoppm`, not `fitz`; gifs
 sealed network is stated once rather than met as a surprise.
 
 `templates/` holds the gmsh recipes as working scripts rather than as prose
-to retype: `duct2d.py` for a plane case, `body_in_box.py` for a body in a flow box, and
-`free_surface.py` for a two-phase dam break -- the one of the three that writes a case
+to retype: `duct2d.py` for a plane case, `body_in_box.py` for a body in a flow box,
+`free_surface.py` for a two-phase dam break, `rotating.py` for a frozen-rotor mixer,
+`porous.py` for a Darcy-Forchheimer slab, and `templates/thermal_stress.py` for thermal
+stress in a constrained bar -- the last four write cases
 meant to be solved rather than only meshed,
 each copy-edit-run, each ending in `checkMesh` and a `mesh_look.py` call. They are kept
 for whoever is working in bash. The CAD desk no longer copies and edits them — it works

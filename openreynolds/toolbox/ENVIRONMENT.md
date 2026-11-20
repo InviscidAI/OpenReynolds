@@ -46,7 +46,7 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds five working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds six working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
   `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
   meshed body-fitted with tetrahedra, converted and retyped), `free_surface.py` (a
@@ -60,10 +60,16 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   Darcy-Forchheimer slab across a duct: `d` and `f` derived from a measured pressure-drop
   curve by a Forchheimer plot, or from a particle size and a void fraction by Ergun, with
   the arithmetic and the residual written into `constant/porosityProperties`, run by
-  `porousSimpleFoam`). The last three are the ones whose dictionaries are the real ones
-  rather than stubs for the mesh tools. All five run `checkMesh` and end with a
-  `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
-  top, and run it -- the whole 2D, 3D, two-phase, rotating or porous recipe, gotchas
+  `porousSimpleFoam`), and `thermal_stress.py` (a constrained steel bar conducting heat
+  across itself, written as a complete `solidDisplacementFoam` case with
+  `thermalStress yes`, `constant/mechanicalProperties` and `constant/thermalProperties`:
+  the stress analysis solver OpenFOAM has shipped all along and nothing here used, whose
+  one distribution tutorial has the thermal half switched off. Its T field is a
+  temperature **rise**, because the solver subtracts no reference temperature and an
+  ambient 300 in that field asks for the stress of a 300 K rise). The last four are the
+  ones whose dictionaries are the real ones rather than stubs for the mesh tools. All six
+  run `checkMesh` and end with a `mesh_look.py` call. Copy one into a case directory, edit the two numbers marked at the
+  top, and run it -- the whole 2D, 3D, two-phase, rotating, porous or thermal-stress recipe, gotchas
   included, rather than a page to reconstruct from memory.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.

@@ -152,10 +152,33 @@ FAMILIES: dict[str, tuple[Option, ...]] = {
         Option("chtMultiRegionSimpleFoam", "the steady version of the same",
                "the steady temperature field is the question"),
     ),
+    "stress-analysis": (
+        Option("solidDisplacementFoam",
+               "transient segregated linear-elastic small-strain deformation, with "
+               "optional thermal diffusion and thermal stresses",
+               "the answer is a stress or a deflection in a solid rather than "
+               "anything about a fluid: a thermal stress, a pressure vessel, a "
+               "bracket. `thermalStress yes` in constant/thermalProperties is what "
+               "turns the temperature field on, and T there is a rise above the "
+               "stress-free state because the solver subtracts no reference "
+               "temperature. templates/thermal_stress.py writes a whole case and "
+               "benchmarks/thermal_stress grades it against the closed form"),
+        Option("solidEquilibriumDisplacementFoam",
+               "the same constitutive law solved for steady equilibrium, with a "
+               "steady-state displacement rather than a time loop",
+               "the loading does not change and only the final deflection is "
+               "wanted; small-strain linear elasticity either way"),
+    ),
 }
 """The candidates per family. `heat.py` measures what comes out of the conjugate ones
 and `ladder.CHT_APPLICATIONS` is what recognises them on the way in; the names here are
-the same two."""
+the same two.
+
+`stress-analysis` is the family nothing in this repository used to name, and the two
+solvers in it have been in the image since the day it was first built -- the base is a
+full ESI distribution and they are standard OpenFOAM, at
+`applications/solvers/stressAnalysis/`. A capability this script cannot see is
+invisible to whoever reads it, which is the only reason they were missing."""
 
 
 # Which families a ladder class can reach. A class does not pick a solver on its own:
@@ -167,8 +190,15 @@ CLASS_FAMILIES: dict[str, tuple[str, ...]] = {
     "rotating-machinery": ("incompressible", "compressible"),
     "free-surface-marine": ("free-surface",),
     "conjugate-heat-transfer": ("conjugate-heat-transfer",),
+    # `stress-analysis` reaches a case only through `generic`, and deliberately.
+    # `ladder.classify` recognises a case from its flow signals -- a free stream, an
+    # inlet, a region list -- and a solid body being heated has none of them, so it
+    # comes back `generic`/"unrecognised" (ladder.py:539). That is the right place for
+    # it: the family is offered where nothing else was recognised, which is exactly
+    # the case a solid stress question presents as, and it is not offered beside
+    # `interFoam` on a dam break where it would be noise.
     "generic": ("incompressible", "compressible", "free-surface",
-                "conjugate-heat-transfer"),
+                "conjugate-heat-transfer", "stress-analysis"),
 }
 
 
