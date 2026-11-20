@@ -70,6 +70,10 @@ def exact_shape(eta: np.ndarray, hartmann: float = HARTMANN) -> np.ndarray:
 
 
 def exact_centreline(hartmann: float = HARTMANN) -> float:
+    """Equation (3). The Ha -> 0 limit is 3/2 and is written out, because (3) is 0/0
+    there and divides by zero in floating point rather than tending to it."""
+    if hartmann == 0.0:
+        return 1.5
     cosh_ha = math.cosh(hartmann)
     return (cosh_ha - 1.0) / (cosh_ha - math.sinh(hartmann) / hartmann)
 
@@ -111,16 +115,26 @@ def run_grader(case: Path, hartmann: float = HARTMANN):
 # -- the exact profile ----------------------------------------------------------
 
 
-def test_the_exact_profile_passes_every_check(tmp_path, grade):
-    eta, u = perfect()
+@pytest.mark.parametrize("hartmann", [0.0, 5.0, 20.0])
+def test_the_exact_profile_passes_every_check(hartmann, tmp_path, grade):
+    """All three Hartmann numbers `tests/test_journey_mhd.py` solves, because the bounds
+    are not equally comfortable at each: `flow_rate` reads 1.00099 rather than 1 at
+    every Ha (the sampled line stops a thousandth short of each wall, so the trapezoid
+    spans 1.998 instead of 2), and `parabola_contrast` has a floor the Ha 5 separation
+    of 0.176 clears by only 17%."""
+    eta, u = perfect(hartmann=hartmann)
     write_profile(tmp_path, eta, u)
-    result = run_grader(tmp_path)
+    result = run_grader(tmp_path, hartmann=hartmann)
 
     failed = [check["name"] for check in result["checks"] if check["passed"] is False]
     assert result["passed"], f"the closed form itself failed {failed}"
     by_name = {check["name"]: check for check in result["checks"]}
     assert by_name["shape_rms"]["value"] < 1e-9, "the closed form is not exact to itself"
     assert by_name["symmetry"]["value"] < 1e-9
+    # Ha 0 is the one case where the parabola IS the closed form, so there is no
+    # contrast to measure and the check has to say so rather than divide by zero.
+    contrast = by_name["parabola_contrast"]
+    assert (contrast["passed"] is None) == (hartmann == 0.0)
 
 
 def test_the_centreline_check_is_absolute_and_not_a_fit(tmp_path, grade):
