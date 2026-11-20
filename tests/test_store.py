@@ -207,3 +207,21 @@ def test_a_live_store_does_not_revert_what_another_writer_filed(tmp_path):
     assert (on_disk["project"], on_disk["tags"]) == ("Important", ["keepme"])
     assert (on_disk["model"], on_disk["capture_seq"], list(on_disk["jobs"])) == (
         "claude-opus-5", 4, ["job-1"])
+
+
+def test_a_live_store_mends_a_record_torn_under_it_rather_than_dying_on_it(tmp_path):
+    """`save()` refusing to write over an unparseable file would kill a running
+    session on its next message. It does not have to: `_load` refuses, so a Store
+    that exists holds a complete record, and writing that over the wreckage is a
+    repair rather than #167's loss of one."""
+    root = tmp_path / "studies"
+    live = Store(root, "s1")
+    live.session.model = "claude-opus-5"
+    live.session.capture_seq = 7
+    live.save()
+    record = root / "s1" / "session.json"
+    record.write_text(record.read_text(encoding="utf-8")[:40], encoding="utf-8")
+
+    live.append_message("assistant", "the session carries on")
+    back = Store(root, "s1").session
+    assert (back.model, back.capture_seq) == ("claude-opus-5", 8)

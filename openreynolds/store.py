@@ -239,7 +239,15 @@ class Store:
         """
         mine = asdict(self.session)
         was = self._on_disk
-        payload = dict(self._read())
+        try:
+            payload = dict(self._read())
+        except TornRecord:
+            # Nothing to merge with, so this Store's own record is written whole. That
+            # is a repair and not the loss #167 is about: `_load` refuses, so a Store
+            # that exists either read a real record or found no file, and either way
+            # what is in memory here is complete. A session whose file somebody tore
+            # while it ran mends it on its next message rather than dying on one.
+            payload = {}
         if payload:
             payload.update({k: v for k, v in mine.items() if k not in was or was[k] != v})
         else:
