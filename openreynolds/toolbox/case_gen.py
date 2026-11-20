@@ -2305,7 +2305,12 @@ def turbulence_notes(plan: Plan, flow: Flow, model: str, opts) -> list[str]:
     first = plan.mesh.smallest_cell
     if first and math.isfinite(first):
         y_plus = estimate_y_plus(first, flow)
-        notes.append(f"near wall  first cell {first:.3g} m -> y+ ~ {y_plus:.0f}"
+        # Two significant figures, not `:.0f` (#183): y+ is the number that decides
+        # which wall treatment this mesh is asking for, and `.0f` printed a wall at
+        # 0.0325 as `0` and one at 0.82 as `1` -- the first unreadable, the second
+        # exactly on a target it is 18% below. The same format as the per-wall lines
+        # in `les_notes`, which a421575 corrected and this line was missed by.
+        notes.append(f"near wall  first cell {first:.3g} m -> y+ ~ {y_plus:.2g}"
                      f"   ({nut_wall_function(model)})")
     return [line for line in notes if line]
 
@@ -2366,14 +2371,44 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
     """
     if not is_les(model):
         return []
+    dns = model == "DNS"
+    which = "DNS" if dns else "LES"
+    a_which = "a DNS" if dns else "an LES"
     notes = [
-        "DNS        no subgrid model, simulationType laminar" if model == "DNS"
+        "DNS        no subgrid model, simulationType laminar" if dns
         else f"LES        {model}, delta {delta}",
-        f"           schemes changed for LES: ddt {LES_DDT} and div(phi,U) "
+    ]
+    if plan.mesh.two_d:
+        # #182: written in silence, under a summary line that had just printed "(2D,
+        # one cell thick)". One cell in z between two `empty` faces is a zero spanwise
+        # gradient by construction, so there is no vortex stretching and no cascade to
+        # a subgrid scale: an algebraic model like WALE still returns an eddy viscosity
+        # off the in-plane strain rate, which makes this a laminar run carrying an
+        # extra viscosity rather than a turbulence model. Said rather than refused:
+        # the mesh is the user's and the dictionary is still the one they asked for.
+        notes.append(
+            f"           ON A 2D MESH: this mesh is one cell thick between `empty` "
+            f"patches, so d/dz = 0 everywhere and the three-dimensional cascade "
+            f"{a_which} exists to resolve cannot occur in it. "
+            + ("A subgrid model still returns a nu_t off the in-plane strain rate, so "
+               "what this case computes is a laminar 2D run with an extra viscosity "
+               "in it, not an LES. " if not dns else
+               "There is nothing to resolve in z, so what this computes is a 2D "
+               "laminar run, not a direct simulation of turbulence. ")
+            + "A mesh with cells in the spanwise direction is what makes it one; on "
+              "this mesh a RAS model (--turbulence kOmegaSST) is the honest choice"
+        )
+    notes += [
+        f"           schemes changed for {which}: ddt {LES_DDT} and div(phi,U) "
         f"{LES_DIV_U}, where a RAS transient run gets backward and Gauss linear",
         "           (near-central on purpose: upwind dissipation acts at the grid "
-        "scale, which is exactly where the subgrid model acts, and it is larger -- an "
-        "upwinded LES is a slower RAS. The cost is that a central scheme oscillates on "
+        "scale, which is exactly where "
+        + ("the smallest eddies this mesh can carry are, and it is larger -- an "
+           "upwinded DNS resolves less than its mesh does"
+           if dns else
+           "the subgrid model acts, and it is larger -- an upwinded LES is a slower "
+           "RAS")
+        + ". The cost is that a central scheme oscillates on "
         "a poor mesh: checkMesh's max non-orthogonality and skewness are where to read "
         "whether this one is, and locate.py says where an oscillation became a "
         "divergence)",
@@ -2381,12 +2416,23 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
     cell = plan.mesh.smallest_cell
     if cell and flow.speed > 0:
         courant = float(opts.get("courant") or 0.9) if opts else 0.9
-        which = "the average cell" if plan.mesh.cell_is_estimate else "the smallest cell"
+        where = "the average cell" if plan.mesh.cell_is_estimate else "the smallest cell"
         step = courant * cell / flow.speed
         notes.append(
-            f"           Co {courant:g} on {which} ({cell:.3g} m) at {flow.speed:g} m/s "
+            f"           Co {courant:g} on {where} ({cell:.3g} m) at {flow.speed:g} m/s "
             f"implies deltaT {step:.3g} s; adjustTimeStep holds it there"
         )
+        end = float((opts or {}).get("end_time") or 0.0)
+        if end > 0 and step > 0:
+            # #184: the cell count and the step were both printed and the product of
+            # them -- the number of cell-updates the run is -- was not, though it is
+            # the only one of the three that says whether this finishes. advise.py is
+            # where a wall-clock comes from, because that needs the machine.
+            notes.append(
+                f"           {end:g} s at that step is {math.ceil(end / step):,} steps "
+                f"on {plan.mesh.cells:,} cells; advise.py says how long that is on the "
+                "machine this would run on"
+            )
         if courant > 1:
             notes.append(
                 f"           maxCo {courant:g} is above 1: the resolved scales are then "
@@ -2401,13 +2447,18 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
                 f"           {name}: first cell {low:.3g}-{high:.3g} m -> y+ ~ "
                 f"{y_low:.2g}-{y_high:.2g} a priori (flat plate, Re_x = Re/2)"
             )
-        notes.append(
-            "           (wall-resolved LES wants that y+ of order 1 and a near-isotropic "
-            "cell outside the layer; wall-modelled LES wants the first cell in the log "
+        wants = (
+            "a DNS resolves the wall or it is not a DNS: the first cell centre wants "
+            "y+ below 1, and there is no wall function to fall back on, because there "
+            "is no model" if dns else
+            "wall-resolved LES wants that y+ of order 1 and a near-isotropic cell "
+            "outside the layer; wall-modelled LES wants the first cell in the log "
             "region instead and its own streamwise and spanwise spacing in wall units. "
-            "Which of the two this mesh is, this cannot tell you -- it is a correlation "
-            "on a measured height, and wall.py reads the real y+ off the solution once "
-            "there is one)"
+            "Which of the two this mesh is, this cannot tell you"
+        )
+        notes.append(
+            f"           ({wants} -- it is a correlation on a measured height, and "
+            "wall.py reads the real y+ off the solution once there is one)"
         )
     else:
         notes.append(
@@ -2415,12 +2466,49 @@ def les_notes(case: Path, plan: Plan, flow: Flow, model: str, delta: str,
             "(binary, most likely), so there is no per-wall y+ implication here; "
             "layer_report.py measures them and wall.py measures the real y+ after a run"
         )
+    if dns:
+        notes += dns_resolution(plan, flow)
     notes.append(
         f"           mean from t = {average_from(opts):g} s (fieldAverage timeStart). A "
         "mean that starts before the flow settled is the start-up transient diluted, "
         "not a mean; spectra.py is what decides where settled is, off the force history"
     )
     return notes
+
+
+def dns_resolution(plan: Plan, flow: Flow) -> list[str]:
+    """What the mesh would have to be for the word DNS to be a claim about it.
+
+    #184: the switch printed the cell count and the deltaT and said nothing about
+    whether this mesh resolves anything, which is the one statement that separates DNS
+    the dictionary setting from DNS the claim. The scaling is the one the case file's
+    own comment already states: the Kolmogorov scale is eta = L Re^(-3/4), so a box of
+    side L resolved to it is (L/eta)^3 = Re^(9/4) cells, and that is before the
+    near-wall spacing a bounded flow needs. It is an order of magnitude on an
+    isotropic box, not a mesh count for this geometry -- which is exactly why it is
+    printed as a ratio and not as a target: on the cylinder at Re 4800 it is 1.9e8
+    cells against a mesh of 139,286, three orders short, and nothing in the output
+    said so.
+    """
+    re = max(flow.reynolds, 1.0)
+    wanted = re ** 2.25
+    cells = max(plan.mesh.cells, 1)
+    short = wanted / cells
+    line = (f"           mesh vs DNS: eta = L Re^(-3/4) at Re {re:g} puts a resolved "
+            f"isotropic box of side L at Re^(9/4) ~ {wanted:.2g} cells; this mesh has "
+            f"{plan.mesh.cells:,}")
+    if short > 10:
+        line += (f", which is {short:.2g}x short. What this writes is the DNS "
+                 "dictionary; whether the run is a DNS is the mesh's to answer")
+    else:
+        line += (", which is the same order. The estimate is for an isotropic box, so "
+                 "it is a floor and not a pass: the near-wall and spanwise spacing are "
+                 "the rest of it")
+    out = [line]
+    if plan.mesh.two_d:
+        out.append("           (and that count is for three dimensions, which this "
+                   "mesh has one cell of)")
+    return out
 
 
 def estimate_y_plus(first_cell: float, flow: Flow) -> float:
