@@ -58,6 +58,38 @@ solves both plane states in the image and runs the grader on what came out, and 
 number out of the solver's own log. Nothing was installed for it: `solidDisplacementFoam`
 is standard OpenFOAM and has been in the image since the first build. What was missing
 was that nothing here knew it.
+`mhd/` and `combustion/` are the two added for the multiphysics items, and both were
+chosen for the same reason `thermal_stress/` was: their answer is a formula rather than a
+figure in somebody's paper. `mhd/` is Hartmann flow, where a transverse magnetic field
+makes the Lorentz force on a fully developed flow a **linear drag**, so the profile is a
+constant minus a cosh and `u_c/u_mean = (cosh Ha - 1)/(cosh Ha - sinh Ha/Ha)` -- derived
+in `mhd/README.md` from `mhdFoam`'s own two equations and graded by `mhd/grade.py`.
+`combustion/` is a `chemFoam` well-stirred reactor, where the solver's own `hEqn.H` and
+`solveChemistry.H` conserve the mixture's absolute enthalpy, so the end temperature is one
+scalar equation in one unknown over the case's own JANAF coefficients; it has no `grade.py`
+beside it because that root find already lives in `openreynolds/toolbox/chem0d.py` and a
+second copy would be a second thing to keep agreeing.
+
+Neither has a fixture under `tests/data/`, for the reason `thermal_stress/` has none: both
+need OpenFOAM to produce one and the `benchmarks` job has none. Their graders are held to
+their closed forms by `tests/test_benchmark_mhd.py` and `tests/test_toolbox_chem0d.py` in
+the suite -- the first writes the exact profile at three Hartmann numbers and five wrong
+ones it has to reject at a different check each, the second writes a constant-Cp mixture
+whose adiabatic temperature is one line of algebra -- and the solvers are held to them by
+`tests/test_journey_mhd.py` and `tests/test_journey_chem0d.py` in the `journey` job, which
+mesh, solve and grade inside the workspace image. Nothing was installed for either:
+`mhdFoam` and `chemFoam` are standard OpenFOAM and have been in the image since the first
+build. What was missing, again, was that nothing here knew it.
+
+The combustion case is the one row in this file whose **published** reference is not the
+graded quantity. What is graded is the solver against its own thermodynamics; what is
+compared with a measurement is the thermo data itself, species by species, against NIST's
+Chemistry WebBook gas-phase formation enthalpies. That is deliberate, and
+`combustion/README.md` says why: a single irreversible global step makes no CO, OH, H, O or
+NO, so the temperature it produces is the complete-combustion one and a real flame of the
+same mixture is cooler. How much cooler is **not asserted**, because no primary source for
+it has been read here, which is the same position the dam-break row above is in.
+
 `lbm/`, `sph/` and `particles/` are the three whose graders **solve** rather than reading a
 finished run,
 and the difference is worth stating rather than hiding. The four above grade an OpenFOAM
