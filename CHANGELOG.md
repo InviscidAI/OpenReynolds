@@ -190,6 +190,23 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **A rate limit ended the run that hit it.** `_MAX_ATTEMPTS` is five and the ordinary
+  backoff is `min(2**attempt, 30)` seconds (`backend/hosted.py:145`, `_retry_delay`), so
+  a 429 that keeps coming back raised `rate_limited` at the caller after about fifteen
+  seconds of waiting. That is sized for a burst, not for a sustained overload -- several
+  workspaces polling one account's key is one, and it lasts as long as they are all up.
+  On 2026-09-27 three multi-hour runs ended inside eight minutes of each other that way,
+  on ordinary bookkeeping calls that had no answer to `rate_limited` but to die. A 429
+  now has its own patience (`_THROTTLE_ATTEMPTS`), its own cap on one wait
+  (`_THROTTLE_MAX_DELAY_S`), full jitter rather than a fixed delay several clients would
+  all wake from together, and -- the point -- it does not spend the ordinary attempt
+  budget. 503 and 500/502/504 keep theirs on purpose: a 429 always clears because the
+  window always rolls, while a workspace that cannot boot answers 503 for ever, and
+  waiting that out two hundred times turns a five-attempt failure into a half-hour hang.
+  `BackendError.retry_after` carries the service's `Retry-After` through to the caller,
+  since `extra` carries the error body and the wait only ever arrives in a header. Split
+  out of #54 at review.
+
 - **A study on a local workspace uploaded nothing at all.** Capture is on by default and
   `--no-capture` is how it is turned off, but `cli.session` leaves the workspace
   service's client `None` for a workspace it does not reserve, and the capture block

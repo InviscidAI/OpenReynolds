@@ -169,7 +169,8 @@ class BackendError(Exception):
     """
 
     def __init__(self, message: str, code: str = "backend_error", status: int | None = None,
-                 extra: dict[str, Any] | None = None):
+                 extra: dict[str, Any] | None = None,
+                 retry_after: float | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
@@ -181,6 +182,15 @@ class BackendError(Exception):
         upgrade_to), 409 `study_paused` (study_id, spent_cents, cap_cents, times_normal,
         style) -- and a
         reader branches on these, never on the prose in `message`."""
+        self.retry_after = retry_after
+        """Seconds the service asked the caller to wait, off its `Retry-After` header.
+
+        `extra` above is the error BODY; this is the one fact that only ever arrives in
+        a header, so it has nowhere else to go. It is carried on the error rather than
+        dropped at the client because the client is what gives up: `_retry_delay` and
+        `_throttle_delay` honour the header while they are still retrying, and once the
+        budget is spent the error is all the caller gets. Nothing in this repository
+        reads it yet. `None` means the service did not say."""
 
     def __str__(self) -> str:
         prefix = f"{self.code}"
