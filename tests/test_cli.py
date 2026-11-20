@@ -1206,7 +1206,7 @@ def test_a_detached_job_nobody_in_this_session_started_keeps_the_workspace_up(
     start the instance also owned it and stopped it on the way out. A detached
     rendering job died that way with six of its eight steps done."""
     out = _said(monkeypatch)
-    backend = Busy(rows=[{"id": "job-9", "name": "render", "status": "running"}])
+    backend = Busy(rows=[{"job_id": "job-9", "name": "render", "status": "running"}])
 
     cli._close_down(backend, store)
 
@@ -1218,9 +1218,14 @@ def test_a_detached_job_nobody_in_this_session_started_keeps_the_workspace_up(
 
 def test_this_sessions_own_jobs_do_not_keep_the_workspace_up(store, quiet_console):
     """They have just been stopped, two lines above. Counting them would mean a
-    session that ran a single solve could never put its own instance down."""
+    session that ran a single solve could never put its own instance down.
+
+    The rows are in the service's own shape, `job_id` (`app/jobs.py`, `_view`). These
+    fakes used to say `id`, as the code did, so both agreed with each other and not
+    with the service: in production every row read as somebody else's, and a session
+    whose kill had not got through left its instance up for its own job (#197)."""
     store.record_job("job-1", cmd="simpleFoam", name="solve")
-    backend = Busy(rows=[{"id": "job-1", "name": "solve", "status": "running"}])
+    backend = Busy(rows=[{"job_id": "job-1", "name": "solve", "status": "running"}])
     backend.jobs["job-1"] = JobStatus(job_id="job-1", status="running", name="solve")
 
     cli._close_down(backend, store)
@@ -1433,7 +1438,7 @@ def test_joining_a_workspace_a_neighbour_is_meshing_in_leaves_it_up(store, monke
 def test_joining_a_workspace_with_a_detached_job_on_it_leaves_it_up(store, monkeypatch):
     out = _said(monkeypatch)
     backend = Neighboured(
-        rows=[{"id": "job-9", "name": "render", "status": "running"}],
+        rows=[{"job_id": "job-9", "name": "render", "status": "running"}],
         already_running=True,
     )
 

@@ -26,7 +26,6 @@ on a thirty-step mesh that is the difference the API exists to make.
 
 from __future__ import annotations
 
-import importlib
 import json
 import time
 from typing import Any
@@ -46,6 +45,7 @@ from .base import (
     cannot_see,
     neutral_blocks,
     split_result,
+    transport_errors,
 )
 
 class StreamCut(Exception):
@@ -203,25 +203,9 @@ class ResponsesProvider(Provider):
 
     @staticmethod
     def _transport_errors() -> tuple[type[BaseException], ...]:
-        """The exceptions a stream that dies in the middle actually raises.
-
-        A request that fails before it opens comes back wrapped as
-        `openai.APIConnectionError`. One that dies *during* iteration does not: it raises
-        from inside the SDK's own `with` block, below the layer that does the wrapping, so
-        the raw transport exception escapes. The httpx package is `httpx2` in this
-        environment and plain `httpx` in others, so probe for whichever is installed
-        rather than importing one and failing on the other.
-        """
-        found: list[type[BaseException]] = [openai.APIConnectionError]
-        for name in ("httpx2", "httpx"):
-            try:
-                module = importlib.import_module(name)
-            except ImportError:
-                continue
-            base = getattr(module, "TransportError", None)
-            if isinstance(base, type) and issubclass(base, BaseException):
-                found.append(base)
-        return tuple(found)
+        """The exceptions a stream that dies in the middle actually raises
+        (`transport_errors`): this SDK's connection error and the transport's own."""
+        return transport_errors(openai.APIConnectionError)
 
     def stream(
         self,

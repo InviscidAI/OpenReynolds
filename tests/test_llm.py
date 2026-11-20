@@ -1103,3 +1103,99 @@ def test_reynolds_maps_retired_ids_and_prices_what_it_serves():
                                          "cache_read": 0.20, "cache_write": 5.00}
     assert prices("claude-sonnet-5-5") == {"input": 2.00, "output": 10.00,
                                            "cache_read": 0.20, "cache_write": 2.50}
+
+
+# -- #197: a stream that drops partway, on the Messages and chat APIs ----------------
+
+
+def _peer_closed() -> type[BaseException]:
+    """The exception #197's traceback ended on."""
+    for name in ("httpx2", "httpx"):
+        try:
+            return __import__(name).RemoteProtocolError
+        except ImportError:
+            continue
+    pytest.skip("no httpx installed")
+
+
+class _DroppedMessages:
+    """A Messages stream that prints a few words and then loses its connection, for the
+    first `drops` requests, and answers whole after that."""
+
+    def __init__(self, drops: int):
+        self.drops, self.calls = drops, 0
+
+    def stream(self, **kwargs):
+        self.calls += 1
+        dies = self.calls <= self.drops
+
+        class Stream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __iter__(self):
+                yield SimpleNamespace(type="content_block_delta",
+                                      delta=SimpleNamespace(type="text_delta", text="Starting the "))
+                if dies:
+                    raise _peer_closed()(
+                        "peer closed connection without sending complete message body "
+                        "(incomplete chunked read)")
+
+            def get_final_message(self):
+                return message([text_block("done")])
+
+        return Stream()
+
+
+def test_anthropic_sends_a_stream_that_drops_partway_again(monkeypatch):
+    """#197: the raw transport error escapes the SDK's own `with` block, below the layer
+    that wraps errors, so it went past every handler and ended the session with a
+    traceback. The thread is untouched until a turn returns, so the request goes again."""
+    monkeypatch.setattr("openreynolds.llm.base.time.sleep", lambda _: None)
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=_DroppedMessages(drops=1))
+    said: list[str] = []
+    turn = provider.stream(model="m", system="s", messages=[{"role": "user", "content": "go"}],
+                           tools=[], effort="high", max_tokens=100, listener=Listener(text=said.append))
+    assert provider.client.messages.calls == 2, "the dropped stream was sent again"
+    assert turn.text == "done"
+    assert any("retrying" in s for s in said), "the half-printed reply is owned up to"
+
+
+def test_anthropic_hands_a_connection_that_keeps_dropping_to_the_sessions_waits(monkeypatch):
+    """Three tries, then a ProviderError with no status -- which `transient` reads as
+    worth waiting out, so `cli._run_turn` keeps the session and tries again over minutes,
+    rather than an httpx traceback ending it with its instance up."""
+    monkeypatch.setattr("openreynolds.llm.base.time.sleep", lambda _: None)
+    provider = AnthropicProvider("k")
+    provider.client = SimpleNamespace(messages=_DroppedMessages(drops=99))
+    with pytest.raises(ProviderError, match="connection lost mid-stream") as raised:
+        provider.stream(model="m", system="s", messages=[{"role": "user", "content": "go"}],
+                        tools=[], effort="high", max_tokens=100, listener=Listener())
+    assert provider.client.messages.calls == 3
+    assert raised.value.status_code is None and transient(raised.value)
+
+
+class _DroppedChunks:
+    def __init__(self, dies: bool):
+        self.dies = dies
+
+    def __iter__(self):
+        yield chunk(content="Starting the ")
+        if self.dies:
+            raise _peer_closed()("peer closed connection without sending complete message body")
+        yield chunk(content="run")
+        yield chunk(finish="stop")
+
+
+def test_openai_sends_a_stream_that_drops_partway_again(monkeypatch):
+    """The chat API's adapter had the same gap as the Messages one (#197)."""
+    monkeypatch.setattr("openreynolds.llm.base.time.sleep", lambda _: None)
+    provider = openai_provider([_DroppedChunks(dies=True), _DroppedChunks(dies=False)])
+    turn = provider.stream(model="m", system="s", messages=[{"role": "user", "content": "go"}],
+                           tools=[], effort="", max_tokens=10, listener=Listener())
+    assert len(provider.client.chat.completions.calls) == 2
+    assert turn.text == "Starting the run"
