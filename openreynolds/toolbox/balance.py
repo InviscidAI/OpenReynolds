@@ -513,6 +513,9 @@ def main(argv: list[str] | None = None) -> int:
     notes: list[str] = []
     with contextlib.redirect_stdout(sys.stderr):  # stdout is the report channel
         surfaces, time, reader = patch_surfaces(case, wanted)
+        # `patch_surfaces` opens the reader itself, so `probe.open_case`'s guard is
+        # never reached and a decomposed case reports its initial condition.
+        probe.refuse_decomposed(case, float(time))
         rows = [patch_record(name, surfaces[name], args.rho, case, time, notes)
                 for name in sorted(surfaces)]
     convention, units = pressure_convention(case, time)
