@@ -190,6 +190,18 @@ All notable changes to this project are recorded here. The format follows
     sensitivity map, not an optimisation loop), reports an incomplete case as incomplete
     rather than offering it, and copies one out while saying the mesh lives in the
     tutorials' shared `resources/` and did not come with it.
+  - Where the sensitivity lands is read out of the v2512 source and printed with the
+    rest: `ShapeSensitivitiesBase::write()` writes ordinary OpenFOAM fields into the
+    time directory, `faceSensNormal<suffix>` as a `volScalarField` and
+    `pointSensNormal<suffix>` as a `pointScalarField`, each suffixed with the adjoint
+    solver's own name plus `ESI` or `SI`, with the vector forms and the volume field
+    behind `writeAllSurfaceFiles` and `writeFieldSens`, both defaulting false. And the
+    two keep their numbers in different places, which is the trap a reader has to be
+    told: the face field's `internalField` is zero and its values are in the
+    `boundaryField`, while the point field's patch values are pushed into the
+    `internalField` (the source says why: Paraview will not draw a
+    `fixedValuePointPatchField`). Looking in the wrong one gives a field of zeros and
+    no error.
   - **No sensitivity from this solver has been checked against a finite difference by
     anything here**, which the output states every time it runs.
     `--finite-difference` prints the recipe and the two traps that make an honest

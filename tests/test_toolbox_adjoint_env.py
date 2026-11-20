@@ -442,3 +442,39 @@ def test_the_adjoint_solver_counts_iterations_not_seconds():
     assert "adjointOptimisationFoam" in preflight.STEADY_APPLICATIONS
     assert "adjointShapeOptimizationFoam" in preflight.STEADY_APPLICATIONS
     assert "steadyState" in FV_SCHEMES and "deltaT          1;" in CONTROL_DICT
+
+
+# -- where the sensitivity lands, which is the half a reader needs -----------------
+
+
+def test_the_two_sensitivity_fields_written_by_default_are_named(adjoint_env, tutorials):
+    """`faceSensNormal<suffix>` and `pointSensNormal<suffix>`, both suffixed with the
+    adjoint solver's own name plus `ESI` or `SI`. The vector forms and the volume field
+    are behind `writeAllSurfaceFiles` and `writeFieldSens`, which default false, so a
+    reader that requires them reads nothing on a default run."""
+    found = adjoint_env.probe()
+    text = adjoint_env.report(found)
+
+    assert found["sensitivity_fields"] == ["faceSensNormal", "pointSensNormal"]
+    assert "faceSensNormal<suffix>      volScalarField    always written" in text
+    assert "pointSensNormal<suffix>     pointScalarField  always written" in text
+    assert "writeAllSurfaceFiles true" in text and "DEFAULT FALSE" in text
+
+
+def test_the_face_and_point_fields_keep_their_numbers_in_different_places(adjoint_env,
+                                                                          tutorials):
+    """The trap a reader has to be told about: `constructAndWriteSensitivityField`
+    leaves the face field's internalField zero and fills its boundaryField, while
+    `constructAndWriteSensitivtyPointField` pushes the patch values into the INTERNAL
+    field. Looking in the wrong one gives zeros and no error.
+
+    Both are quoted from `ShapeSensitivitiesBaseTemplates.C` at ref `OpenFOAM-v2512`.
+    """
+    text = adjoint_env.report(adjoint_env.probe())
+
+    assert "internalField zero and puts" in text
+    assert "INTERNAL field" in text
+    assert "field of zeros" in text and "no error" in text
+    # the output is ordinary OpenFOAM fields in the time directory, not a column file
+    assert "ORDINARY OpenFOAM FIELDS into the time" in text
+    assert "mesh_.time().timeName()" in text

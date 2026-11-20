@@ -94,6 +94,40 @@ DICTIONARIES = (
 """The files a sensitivity case is made of. Listed so a case found on disk can be
 reported as complete or as missing one of them, rather than assumed to have them."""
 
+SENSITIVITY_OUTPUT = """\
+Where the sensitivity lands, from the v2512 source rather than from a run:
+`ShapeSensitivitiesBase::write()` writes ORDINARY OpenFOAM FIELDS into the time
+directory -- the IOobject instance is `mesh_.time().timeName()` -- so `foamToVTK` and
+every reader in this toolbox can already open them. Four names, each suffixed with the
+adjoint solver's own name plus `ESI` or `SI`, so `adjS1` in the tutorial gives
+`faceSensNormaladjS1ESI`:
+
+  faceSensNormal<suffix>      volScalarField    always written
+  pointSensNormal<suffix>     pointScalarField  always written
+  faceSensVec, faceSensNormalVec, pointSensVec, pointSensNormalVec
+                              vector versions, only under `writeAllSurfaceFiles true`
+                              in the sensitivity dictionary (DEFAULT FALSE)
+  fieldSens<suffix>           only under `writeFieldSens true` (DEFAULT FALSE)
+
+AND THE TWO HALVES KEEP THEIR NUMBERS IN DIFFERENT PLACES, which is the trap:
+`constructAndWriteSensitivityField` leaves the FACE field's internalField zero and puts
+the values in its boundaryField on the sensitivity patches, while
+`constructAndWriteSensitivtyPointField` does the opposite -- it pushes the patch values
+into the INTERNAL field, with the source's own reason beside it ("Paraview does not
+visualise values on fixedValuePointPatchFields. Only option is to store in
+internalField"). A reader that looks in the wrong one of those gets a field of zeros
+and no error, which is the same silent-wrong-answer shape `claims.py` exists for.
+
+Read from gitlab.com/openfoam/core/openfoam at ref OpenFOAM-v2512:
+src/optimisation/adjointOptimisation/adjoint/optimisation/adjointSensitivity/
+  adjointSensitivity/shape/shapeSensitivityBase/ShapeSensitivitiesBase{.C,Templates.C}
+  sensitivity/sensitivity.C
+"""
+
+SENSITIVITY_FIELDS = ("faceSensNormal", "pointSensNormal")
+"""The two written whatever the dictionary says. The vector forms and the volume field
+are behind `writeAllSurfaceFiles` and `writeFieldSens`, both of which default false."""
+
 ADJOINT_FIELDS = ("Ua", "pa", "nuaTilda", "ma")
 """Adjoint field names to look for in a case's initial-condition directory. Which of
 them a case has depends on its adjoint turbulence model, so the report lists what is
@@ -226,6 +260,7 @@ def probe() -> dict[str, object]:
         "sensitivity_only_cases": [row["case"] for row in single_run],
         "adjoint_turbulence_in_tutorials": sorted(
             {str(row["adjoint_turbulence"]) for row in cases if row["adjoint_turbulence"]}),
+        "sensitivity_fields": list(SENSITIVITY_FIELDS),
         "sensitivity_checked_here": False,
     }
 
@@ -315,6 +350,8 @@ def report(found: dict[str, object]) -> str:
                      + ", ".join(found["adjoint_turbulence_in_tutorials"]))
         lines.append("  which is what the tutorials chose, not a list of what the build "
                      "registers -- a wrong one makes the solver print its own list and stop")
+    lines.append("")
+    lines.append(SENSITIVITY_OUTPUT.rstrip())
     lines.append("")
     lines.append("no sensitivity from this solver has been checked against a finite "
                  "difference by anything in this toolbox: `--finite-difference` says how")
