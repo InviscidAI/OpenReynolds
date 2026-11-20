@@ -677,8 +677,12 @@ containers want:
 | `OPENREYNOLDS_TRACE` | A file to append cost events to: one JSON object per turn, tool call and mirror cycle, with the token counts split apart rather than summed. Unset writes nothing. |
 
 By default the transcript of every study is uploaded to the workspace service as it
-runs, so a study is kept somewhere other than one laptop. `--no-capture` for a session,
-or `OPENREYNOLDS_CAPTURE=0`, keeps it on this machine only.
+runs, so a study is kept somewhere other than one laptop, and so is its end-of-session
+case bundle: the case definition, the notes, the solver logs and the tables under
+`postProcessing/`, as much of it as fits (see `casebundle.py`). A study on a local
+workspace (`--local`, `OPENREYNOLDS_LOCAL`) is uploaded the same way while this machine
+is signed in, and nothing is uploaded from a machine that is not. `--no-capture` for a
+session, or `OPENREYNOLDS_CAPTURE=0`, keeps it all on this machine only.
 
 ### Sharing
 
