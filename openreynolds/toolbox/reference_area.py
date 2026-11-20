@@ -15,13 +15,25 @@ went with it, while meshes started arriving from the CAD desk, cfMesh and hand-w
 blockMesh -- none of which says whether it cut the body. So this reads that off the
 mesh itself, whoever made it:
 
-* **A symmetry patch that shares points with the body patch cuts the body.** Each
-  such plane doubles the body's force when mirrored back. A symmetry plane the body
-  does not reach -- a far-field side, a floor below a car -- cuts nothing and counts
-  for nothing. The count is printed with the plane and the number of shared points,
-  so a reading that is wrong can be seen to be. The one case the mesh cannot tell
-  apart is a double-body waterline, where the plane closes a hull whose upper half
-  never existed: `--not-mirror <patch>` says so.
+* **A symmetry patch that crosses an open edge of the body patch cuts the body.** A
+  cut leaves the body open along it, so the plane shares the rim of that opening.
+  Sharing points is not enough: a car on a slip floor of type `symmetry` touches it
+  at four tyre patches, and those span the wheelbase, so how far the shared points
+  reach cannot tell a contact from a cut. A closed body has no open edge for a plane
+  to cross. Both counts are printed with the plane, so a reading that is wrong can be
+  seen to be. The one case the mesh cannot tell apart is a double-body waterline,
+  where the plane closes a hull whose upper half never existed: `--not-mirror
+  <patch>` says so.
+
+* **Each plane doubles only what survives its own mirror.** Reflecting in a plane of
+  unit normal n sends a force F to RF, and F + RF = 2(F - (n.F) n): a component lying
+  in the plane doubles, the component along n cancels. A moment is a pseudovector,
+  M + M' = 2(n.M) n, so the opposite holds about an axis. On the SUBOFF half model,
+  cut at y = 0, with `case_gen.py`'s `liftDir (0 1 0)` and `pitchAxis (0 0 1)`, drag
+  doubles while the half model's large Cl and its Cm are ZERO on the whole body, not
+  twice what the file says; a plane normal to the drag direction does not double drag
+  either, it cancels it. The factor for each of the three directions is printed with
+  the reason it is that.
 
 * **The areas are measured off the body patch as meshed**, so on a half model they
   are half areas. A force on the meshed part divided by the meshed part's area is
@@ -31,15 +43,19 @@ mesh itself, whoever made it:
   direction, rasterised -- `0.5 * sum(A |n.d|)` overcounts anything with a second
   part behind the first.
 
-* **A total drag coefficient below flat-plate friction is impossible**, not tight,
-  whenever the area it is divided by is no larger than the wetted area -- which
-  frontal and wetted both are. The floor is ITTC-57 for a turbulent case and
-  Blasius, 1.328/sqrt(Re), for a laminar one, which is the lower of the two lines.
+* **A total drag coefficient under the friction line is a reason to check the area**
+  it was divided by, which is no larger than the wetted area whether it is frontal or
+  wetted, so friction alone sits under it. ITTC-57 is a model-ship correlation line
+  rather than a bound, and a laminar or transitional case can be honestly below it,
+  so the reading asks for the area rather than calling the number impossible. The
+  line is ITTC-57 for a turbulent case past transition and Blasius, 1.328/sqrt(Re),
+  below it.
 
 `results.py` and `case_gen.py` import this; run on its own it prints the reading,
-and `--cd X --re R` checks a coefficient against the floor, exiting 1 when it is
-below it, because that is arithmetic rather than judgement. The mesh must be ascii,
-like `layer_report.py`, whose reader this uses.
+and `--cd X --re R` holds a coefficient against the line, exiting 1 when it is below
+it -- the machine-readable form of the flag, since the comparison is arithmetic even
+where whether the line applies is judgement. The mesh must be ascii, like
+`layer_report.py`, whose reader this uses.
 
     python3 reference_area.py <case> --body hull
     python3 reference_area.py <case> --body hull --drag-dir 1 0 0 --json
@@ -72,8 +88,13 @@ MIN_SHARED_POINTS = 3
 """Fewer points in common than this is a body touching a plane, not cut by it."""
 
 MIN_CUT_EXTENT = 0.01
-"""The shared points must span at least this fraction of the body's size: a cut
+"""The rim points must span at least this fraction of the body's size: a cut
 leaves an outline across the plane, a graze leaves a point."""
+
+PARALLEL_TOL = 1e-3
+"""How far a direction may be off a plane's normal, or off the plane itself, and still
+count as along it or in it. A normal averaged over a patch's faces is not exact, and
+`dragDir`, `liftDir` and `pitchAxis` are written to six figures."""
 
 TRANSITION_RE = 5e5
 """Below this a laminar flat plate is the physical floor even for a turbulent model,
@@ -173,6 +194,29 @@ def patch_points(mesh: dict, faces: np.ndarray) -> np.ndarray:
     return np.unique(np.concatenate(pieces))
 
 
+def open_rim_points(mesh: dict, faces: np.ndarray) -> np.ndarray:
+    """The points on edges only one of `faces` uses: where that surface is open.
+
+    A body a plane cut is open along the cut, and its rim is the outline the plane
+    shares. A closed body is open nowhere, so a plane it merely rests on shares no rim
+    point however many ordinary points it shares -- which is the car on a slip floor
+    of type `symmetry`, touching it at four tyre patches whose span is the wheelbase.
+
+    `np.unique` over sorted (p, q) pairs is the count per undirected edge; an edge used
+    once has no face on the other side of it. It walks the same faces `patch_points`
+    does and costs about fifteen times as much -- 0.17 s against 0.011 s over the
+    SUBOFF fixture's 15,264 hull faces -- which is still well under the rasteriser
+    `assess` runs by default on the same patch (0.94 s there).
+    """
+    off, verts = mesh["offsets"], mesh["verts"]
+    if faces.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    rings = [verts[off[f]:off[f + 1]] for f in faces]
+    pairs = np.concatenate([np.stack([r, np.roll(r, -1)], axis=1) for r in rings])
+    edges, counts = np.unique(np.sort(pairs, axis=1), axis=0, return_counts=True)
+    return np.unique(edges[counts == 1])
+
+
 def symmetry_patches(mesh: dict) -> list[str]:
     return [name for name, entry in mesh["boundary"].items()
             if entry["type"] in SYMMETRY_TYPES and entry["nFaces"] > 0]
@@ -189,6 +233,7 @@ def cuts(mesh: dict, bodies: Sequence[str], not_mirror: Sequence[str] = ()) -> l
     otherwise. `why` is the sentence that goes beside the number."""
     body_faces = np.concatenate([patch_faces(mesh, b) for b in bodies])
     body_pts = patch_points(mesh, body_faces)
+    rim_pts = open_rim_points(mesh, body_faces)
     pts = mesh["points"]
     body_size = float(np.ptp(pts[body_pts], axis=0).max()) if body_pts.size else 0.0
     domain = float(np.ptp(pts, axis=0).max()) or 1.0
@@ -212,26 +257,115 @@ def cuts(mesh: dict, bodies: Sequence[str], not_mirror: Sequence[str] = ()) -> l
                             "so nothing is mirrored in it")
             found.append(entry)
             continue
-        shared = np.intersect1d(body_pts, patch_points(mesh, faces), assume_unique=True)
+        plane_pts = patch_points(mesh, faces)
+        shared = np.intersect1d(body_pts, plane_pts, assume_unique=True)
+        rim = np.intersect1d(rim_pts, plane_pts, assume_unique=True)
         entry["shared_points"] = int(shared.size)
-        extent = float(np.ptp(pts[shared], axis=0).max()) if shared.size else 0.0
+        entry["rim_points"] = int(rim.size)
+        extent = float(np.ptp(pts[rim], axis=0).max()) if rim.size else 0.0
         plane = _plane_words(normal, offset)
-        if shared.size < MIN_SHARED_POINTS or extent < MIN_CUT_EXTENT * max(body_size, 1e-30):
-            entry["why"] = f"{name} ({plane}) does not reach the body, so it cuts nothing"
+        if rim.size < MIN_SHARED_POINTS or extent < MIN_CUT_EXTENT * max(body_size, 1e-30):
+            # Shared points without a rim is a closed body resting on the plane. Said
+            # as that rather than as "does not reach", because the four tyre patches
+            # of a car on a slip floor do reach it, right across the wheelbase.
+            entry["why"] = (
+                f"{name} ({plane}) touches the body at {shared.size} points but crosses "
+                "no open edge of it, so it cuts nothing: a closed body resting on a "
+                "plane is not cut by it" if shared.size >= MIN_SHARED_POINTS else
+                f"{name} ({plane}) does not reach the body, so it cuts nothing")
         elif name in not_mirror:
-            entry["why"] = (f"{name} ({plane}) meets the body along {shared.size} points "
-                            "but was named with --not-mirror: the body ends there")
+            entry["why"] = (f"{name} ({plane}) meets the body along {rim.size} open-edge "
+                            "points but was named with --not-mirror: the body ends there")
         else:
             entry["mirrors"] = True
-            entry["why"] = (f"{name} ({plane}) cuts the body: {shared.size} points in common "
-                            "along the cut, so the mesh holds half of what it mirrors")
+            entry["why"] = (f"{name} ({plane}) cuts the body: the body is open along it at "
+                            f"{rim.size} of the {shared.size} points they share, so the mesh "
+                            "holds half of what it mirrors")
         found.append(entry)
     return found
 
 
 def mirror_factor(found: Sequence[dict]) -> int:
-    """2 to the number of planes that cut the body: the meshed part is 1/factor of it."""
+    """2 to the number of planes that cut the body: the meshed part is 1/factor of it.
+
+    This is the AREA factor, and the factor for a force only in the directions the
+    mirror leaves standing. `component_factor` is the one to multiply a force by."""
     return 2 ** sum(1 for c in found if c.get("mirrors"))
+
+
+def component_factor(found: Sequence[dict], direction: Sequence[float], *,
+                     moment: bool = False) -> tuple[int | None, list[str]]:
+    """What the meshed part's force (or moment) along `direction` is multiplied by to
+    be the whole body's, and a sentence per plane saying why.
+
+    Reflecting in a plane of unit normal n sends a force F to RF with R = I - 2nn^T,
+    and F + RF = 2(F - (n.F) n): a component lying in the plane doubles, the component
+    along n cancels. A moment is a pseudovector -- (Ra) x (Rb) = -R(a x b), so
+    M + M' = 2(n.M) n -- and the opposite holds about an axis.
+
+    So 0 is a real answer, not a missing one: on the SUBOFF half model cut at y = 0,
+    `liftDir (0 1 0)` (case_gen.py:1270) is the plane's own normal, so the whole hull
+    carries no lift however large the half model's Cl is, and `pitchAxis (0 0 1)`
+    (case_gen.py:1273) lies in the plane, so its moment cancels too. A plane normal to
+    `dragDir` cancels drag by the same arithmetic rather than doubling it.
+
+    None is for a direction oblique to a plane: the mirror maps it onto a mixture of
+    the others and no single factor is the answer."""
+    u = np.asarray(direction, dtype=float)
+    norm = float(np.linalg.norm(u))
+    if norm == 0.0:
+        return None, ["the direction is (0 0 0), so there is nothing to mirror"]
+    u = u / norm
+    factor = 1
+    notes: list[str] = []
+    for plane in found:
+        if not plane.get("mirrors") or "normal" not in plane:
+            continue
+        name = plane["patch"]
+        along = abs(float(np.dot(np.asarray(plane["normal"], dtype=float), u)))
+        if (along > 1.0 - PARALLEL_TOL) if moment else (along < PARALLEL_TOL):
+            factor *= 2
+            notes.append(f"{name}'s normal is this axis, so the mirrored half's adds"
+                         if moment else f"{name} mirrors it within its own plane")
+        elif (along < PARALLEL_TOL) if moment else (along > 1.0 - PARALLEL_TOL):
+            notes.append(f"this axis lies in {name}, so the mirrored half's is equal and "
+                         "opposite" if moment else
+                         f"{name}'s normal IS this direction, so the mirrored half's is "
+                         "equal and opposite")
+            return 0, notes
+        else:
+            notes.append(f"{name}'s normal is oblique to it, so the mirror sends it to a "
+                         "mixture of the other components")
+            return None, notes
+    return factor, notes
+
+
+MIRRORED = (("drag", "dragDir", False), ("lift", "liftDir", False),
+            ("pitch moment", "pitchAxis", True))
+"""The three directions `forceCoeffs` names, and whether each is a moment."""
+
+
+def component_report(found: Sequence[dict], drag_dir: Sequence[float] = (1, 0, 0),
+                     lift_dir: Sequence[float] = (0, 1, 0),
+                     pitch_axis: Sequence[float] = (0, 0, 1)) -> list[dict[str, Any]]:
+    """`component_factor` for each of `forceCoeffs`' three directions, with its words."""
+    dirs = {"dragDir": drag_dir, "liftDir": lift_dir, "pitchAxis": pitch_axis}
+    out = []
+    for name, field, moment in MIRRORED:
+        direction = dirs[field]
+        factor, notes = component_factor(found, direction, moment=moment)
+        said = "; ".join(notes) if notes else "no plane cuts the body"
+        verdict = (f"no single factor applies -- {said}" if factor is None else
+                   f"zero on the whole body -- {said}" if factor == 0 else
+                   f"x {factor} -- {said}")
+        out.append({"name": name, "field": field,
+                    "direction": [float(c) for c in direction], "factor": factor,
+                    "why": f"{name} ({field} {_vector_words(direction)}): {verdict}"})
+    return out
+
+
+def _vector_words(direction: Sequence[float]) -> str:
+    return "(" + " ".join(f"{float(c):g}" for c in direction) + ")"
 
 
 def _plane_words(normal: np.ndarray, offset: float) -> str:
@@ -330,22 +464,36 @@ def friction_floor(reynolds: float, turbulent: bool = True) -> tuple[float, str]
 
 
 def below_floor(cd: float, reynolds: float, turbulent: bool = True) -> str:
-    """The sentence to print when `cd` is impossible, or "" when it is not."""
+    """The sentence to print when `cd` is under the friction line, or "" when it is not.
+
+    What it does not say is "impossible". ITTC-57 is a model-ship correlation line
+    rather than a bound, so a laminar or transitional case can sit under it honestly,
+    and the sentence asks for the area to be checked instead. The area is where the
+    error was on R01: a half model's 43.74 N over the whole hull's 5.98757 m2 (F-43),
+    which is what a coefficient under the line most often means."""
     floor, name = friction_floor(reynolds, turbulent)
     if cd >= floor:
         return ""
-    return (f"Cd {cd:.5g} is below flat-plate friction alone at Re {reynolds:.3g} "
-            f"({name} Cf = {floor:.5g}). No body with form drag can do that on an area no "
-            "larger than its wetted area: the coefficient is wrong, most often a half "
-            "model's force over the whole body's area.")
+    caveat = (" ITTC-57 is a correlation line rather than a bound, so a transitional case "
+              "can sit under it honestly." if name == "ITTC-57" else "")
+    return (f"below the friction line, check the area: Cd {cd:.5g} is under {name} "
+            f"Cf = {floor:.5g} at Re {reynolds:.3g}, and friction alone sits under any "
+            "total drag divided by an area no larger than the wetted one. A half model's "
+            f"force over the whole body's area is the usual cause (F-43).{caveat}")
 
 
 # ------------------------------------------------------------------ one reading --
 
 
 def assess(case: Path, bodies: Sequence[str], drag_dir: Sequence[float] = (1, 0, 0),
-           not_mirror: Sequence[str] = (), frontal: bool = True) -> dict[str, Any]:
-    """Everything above for one case, as the dict the scripts and `--json` share."""
+           not_mirror: Sequence[str] = (), frontal: bool = True,
+           lift_dir: Sequence[float] = (0, 1, 0),
+           pitch_axis: Sequence[float] = (0, 0, 1)) -> dict[str, Any]:
+    """Everything above for one case, as the dict the scripts and `--json` share.
+
+    `lift_dir` and `pitch_axis` default to what `case_gen.py` writes (case_gen.py:1270,
+    :1273), so the components are reported against the directions the case actually
+    names unless a caller says otherwise."""
     mesh = load_surface(case)
     found = cuts(mesh, bodies, not_mirror)
     factor = mirror_factor(found)
@@ -355,6 +503,7 @@ def assess(case: Path, bodies: Sequence[str], drag_dir: Sequence[float] = (1, 0,
         "bodies": list(bodies),
         "planes": found,
         "mirror_factor": factor,
+        "components": component_report(found, drag_dir, lift_dir, pitch_axis),
         "wetted_meshed_m2": wetted,
         "wetted_body_m2": wetted * factor,
     }
@@ -375,8 +524,10 @@ def lines(found: dict[str, Any]) -> list[str]:
     for plane in planes:
         out.append(f"symmetry   {plane['why']}")
     if factor > 1:
-        out.append(f"mirrored   the mesh holds 1/{factor} of the body. Forces reported on "
-                   f"it are 1/{factor} of the body's: multiply by {factor}.")
+        out.append(f"mirrored   the mesh holds 1/{factor} of the body, and each plane "
+                   "doubles only the components that survive its mirror:")
+        for component in found.get("components", []):
+            out.append(f"           {component['why']}")
     out.append(f"wetted     {found['wetted_meshed_m2']:.6g} m2 as meshed"
                + (f", {found['wetted_body_m2']:.6g} m2 for the whole body" if factor > 1 else ""))
     if "frontal_meshed_m2" in found:
@@ -395,6 +546,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--body", action="append", required=True,
                         help="the patch forces are taken on; repeatable")
     parser.add_argument("--drag-dir", type=float, nargs=3, default=(1.0, 0.0, 0.0))
+    parser.add_argument("--lift-dir", type=float, nargs=3, default=(0.0, 1.0, 0.0),
+                        help="forceCoeffs' liftDir, for the mirror factor of the lift")
+    parser.add_argument("--pitch-axis", type=float, nargs=3, default=(0.0, 0.0, 1.0),
+                        help="forceCoeffs' pitchAxis, for the mirror factor of the moment")
     parser.add_argument("--not-mirror", action="append", default=[],
                         help="a symmetry patch where the body ends rather than is mirrored "
                              "(a double-body waterline)")
@@ -406,7 +561,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        found = assess(args.case, args.body, args.drag_dir, args.not_mirror)
+        found = assess(args.case, args.body, args.drag_dir, args.not_mirror,
+                       lift_dir=args.lift_dir, pitch_axis=args.pitch_axis)
     except MeshError as exc:
         print(f"unmeasured: {exc}")
         return 0
@@ -416,15 +572,15 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--cd needs --re")
         verdict = below_floor(args.cd, args.re, turbulent=not args.laminar)
         floor, name = friction_floor(args.re, turbulent=not args.laminar)
-        found["floor"] = {"cf": floor, "line": name, "cd": args.cd, "impossible": bool(verdict)}
+        found["floor"] = {"cf": floor, "line": name, "cd": args.cd, "below": bool(verdict)}
     if args.json:
         print(json.dumps(found, indent=2))
     else:
         print("\n".join(lines(found)))
         if "floor" in found:
             f = found["floor"]
-            print(verdict or f"floor      Cd {f['cd']:.5g} is above {f['line']} "
-                             f"Cf = {f['cf']:.5g}: possible")
+            print(f"floor      {verdict}" if verdict else
+                  f"floor      Cd {f['cd']:.5g} is above {f['line']} Cf = {f['cf']:.5g}")
     return 1 if verdict else 0
 
 

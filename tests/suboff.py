@@ -111,17 +111,31 @@ def write_half_hull(case: Path, n_theta: int = 48, far: float = 1.5,
         symmetry.append([at(i, 0), top[i], top[i + 1], at(i + 1, 0)])
         symmetry.append([at(i, n_theta), at(i + 1, n_theta), bottom[i + 1], bottom[i]])
 
+    return write_mesh(case, points, [("hull", "wall", hull),
+                                     ("symmetry", symmetry_type, symmetry)])
+
+
+def write_mesh(case: Path, points: list, patches: list[tuple[str, str, list]]) -> Path:
+    """`case/constant/polyMesh` from points and `(name, type, faces)` patches.
+
+    Only `points`, `faces` and `boundary`; nothing that reads a boundary mesh needs
+    cells. Shared by the hull above and by the smaller fixtures that pin what is not
+    a cut, so all of them are written by one reader's worth of code."""
     poly = Path(case) / "constant" / "polyMesh"
     poly.mkdir(parents=True, exist_ok=True)
     (poly / "points").write_text(_file("vectorField", "points", [
         f"({p[0]:.9g} {p[1]:.9g} {p[2]:.9g})" for p in points]), encoding="utf-8")
+    faces = [face for _, _, group in patches for face in group]
     (poly / "faces").write_text(_file("faceList", "faces", [
-        f"{len(f)}({' '.join(map(str, f))})" for f in hull + symmetry]), encoding="utf-8")
-    boundary = (f"2\n(\n    hull\n    {{\n        type wall;\n        nFaces {len(hull)};\n"
-                f"        startFace 0;\n    }}\n    symmetry\n    {{\n        type {symmetry_type};\n"
-                f"        nFaces {len(symmetry)};\n        startFace {len(hull)};\n    }}\n)\n")
-    (poly / "boundary").write_text(_header("polyBoundaryMesh", "boundary") + boundary,
-                                   encoding="utf-8")
+        f"{len(f)}({' '.join(map(str, f))})" for f in faces]), encoding="utf-8")
+    entries, start = [], 0
+    for name, kind, group in patches:
+        entries.append(f"    {name}\n    {{\n        type {kind};\n"
+                       f"        nFaces {len(group)};\n        startFace {start};\n    }}")
+        start += len(group)
+    (poly / "boundary").write_text(
+        _header("polyBoundaryMesh", "boundary")
+        + f"{len(patches)}\n(\n" + "\n".join(entries) + "\n)\n", encoding="utf-8")
     return Path(case)
 
 

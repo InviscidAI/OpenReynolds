@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import suboff
@@ -70,24 +71,164 @@ def test_the_drag_delivered_is_the_towing_tanks(reading):
     assert not reference_area.below_floor(ct, suboff.REYNOLDS)
 
 
-def test_r01s_delivered_answer_is_called_impossible():
+def test_r01s_delivered_answer_is_flagged_against_the_friction_line():
     """Half the force over the whole hull: 0.00158, under ITTC-57's 0.002907."""
     delivered = suboff.HALF_MODEL_FORCE_N / (Q * suboff.R01_AREA_M2)
     assert within(delivered, 0.00158, 0.01)
     floor, name = reference_area.friction_floor(suboff.REYNOLDS)
     assert name == "ITTC-57" and within(floor, 0.002907, 0.001)
-    assert "below flat-plate friction" in reference_area.below_floor(delivered, suboff.REYNOLDS)
+    assert "check the area" in reference_area.below_floor(delivered, suboff.REYNOLDS)
 
 
-def test_the_cli_exits_non_zero_on_the_impossible_number(half_hull, capsys):
+def test_the_line_is_not_called_a_bound_where_it_is_a_correlation():
+    """ITTC-57 is a model-ship correlation line, so a transitional case can be under
+    it honestly and the reading says to check the area rather than "impossible"
+    (review of #61, item 6). Blasius, which is the laminar plate itself, carries no
+    such caveat."""
+    ittc = reference_area.below_floor(1e-4, suboff.REYNOLDS, turbulent=True)
+    assert "correlation line rather than a bound" in ittc
+    assert "impossible" not in ittc.lower()
+    assert "correlation line" not in reference_area.below_floor(1e-4, 1e4, turbulent=False)
+
+
+def test_the_cli_exits_non_zero_below_the_friction_line(half_hull, capsys):
     assert reference_area.main([str(half_hull), "--body", "hull",
                                 "--cd", "0.00158", "--re", "1.2e7"]) == 1
-    assert "below flat-plate friction" in capsys.readouterr().out
+    assert "check the area" in capsys.readouterr().out
     assert reference_area.main([str(half_hull), "--body", "hull",
                                 "--cd", "0.00316", "--re", "1.2e7"]) == 0
 
 
+# -- each plane doubles only what survives it ------------------------------------
+
+
+def test_only_the_components_that_survive_the_mirror_are_doubled(reading):
+    """The SUBOFF fixture is cut at y = 0 and `case_gen.py` writes `liftDir (0 1 0)`
+    and `pitchAxis (0 0 1)` there, so the whole hull carries no lift and no pitching
+    moment however large the half model's Cl is. Doubling every force was the half of
+    F-43 that doubling the area does not fix (review of #61, item 1)."""
+    factors = {c["name"]: c["factor"] for c in reading["components"]}
+
+    assert factors == {"drag": 2, "lift": 0, "pitch moment": 0}
+    lift = next(c for c in reading["components"] if c["name"] == "lift")
+    assert "equal and opposite" in lift["why"] and "zero on the whole body" in lift["why"]
+
+
+def test_a_plane_normal_to_the_drag_direction_does_not_double_drag(half_hull):
+    """The y = 0 plane with `dragDir (0 1 0)`: the mirrored half's drag is equal and
+    opposite, so the whole body's is zero, not twice the file's (item 2)."""
+    found = reference_area.assess(half_hull, ["hull"], drag_dir=(0.0, 1.0, 0.0),
+                                  frontal=False)
+    drag = next(c for c in found["components"] if c["name"] == "drag")
+
+    assert drag["factor"] == 0
+    assert "equal and opposite" in drag["why"]
+
+
+def test_a_moment_about_an_axis_in_the_plane_cancels_and_about_the_normal_doubles():
+    """A moment is a pseudovector: M + M' = 2(n.M)n, the opposite way round from a
+    force. So on the y = 0 plane a yaw moment about y doubles and a pitching moment
+    about z cancels."""
+    planes = [{"patch": "symmetry", "mirrors": True, "normal": [0.0, 1.0, 0.0]}]
+
+    assert reference_area.component_factor(planes, (0, 1, 0), moment=True)[0] == 2
+    assert reference_area.component_factor(planes, (0, 0, 1), moment=True)[0] == 0
+    assert reference_area.component_factor(planes, (0, 1, 0))[0] == 0
+    assert reference_area.component_factor(planes, (0, 0, 1))[0] == 2
+
+
+def test_the_factors_are_what_mirroring_the_half_body_actually_sums_to():
+    """The arithmetic, checked by doing it rather than by asserting the algebra: take a
+    half body's faces with a force on each, reflect positions AND forces in the plane,
+    and sum both halves. `component_factor`'s answer has to be that ratio."""
+    n = np.array([0.0, 1.0, 0.0])
+    reflect = np.eye(3) - 2 * np.outer(n, n)
+    rng = np.random.default_rng(0)
+    arm = np.abs(rng.normal(size=(500, 3))) * np.array([1.0, 1.0, -1.0])
+    arm[:, 1] = np.abs(arm[:, 1]) + 0.1          # the meshed half, on y >= 0
+    force = rng.normal(size=(500, 3))
+    mirrored_arm, mirrored_force = arm @ reflect.T, force @ reflect.T
+    whole_force = force.sum(axis=0) + mirrored_force.sum(axis=0)
+    whole_moment = (np.cross(arm, force).sum(axis=0)
+                    + np.cross(mirrored_arm, mirrored_force).sum(axis=0))
+    half_force, half_moment = force.sum(axis=0), np.cross(arm, force).sum(axis=0)
+    planes = [{"patch": "symmetry", "mirrors": True, "normal": list(n)}]
+
+    # An absolute tolerance, not `within`: the right answer is 0 for two of the six,
+    # and a fraction of 0 admits nothing.
+    for axis in range(3):
+        direction = np.eye(3)[axis]
+        for whole, half, moment in ((whole_force, half_force, False),
+                                    (whole_moment, half_moment, True)):
+            factor = reference_area.component_factor(planes, direction, moment=moment)[0]
+            ratio = (whole @ direction) / (half @ direction)
+            assert abs(ratio - factor) < 1e-9, f"{'xyz'[axis]} moment={moment}: {ratio}"
+
+
+def test_a_direction_oblique_to_the_plane_gets_no_factor_rather_than_a_guess():
+    """The mirror sends it to a mixture of the other components, so no single number
+    is the answer and None says so."""
+    planes = [{"patch": "symmetry", "mirrors": True, "normal": [0.0, 1.0, 0.0]}]
+    factor, (why,) = reference_area.component_factor(planes, (1.0, 1.0, 0.0))
+
+    assert factor is None and "oblique" in why
+
+
 # -- what does not cut the body counts for nothing -------------------------------
+
+
+def _cubes_on_a_floor(case: Path, kind: str = "symmetry") -> Path:
+    """Four closed cubes resting on a plane at z = 0, as one `body` patch.
+
+    The review's case (item 4): a car on a slip floor of type `symmetry` touches it at
+    four tyre patches, and those span the wheelbase, so how far the shared points reach
+    cannot tell this from a cut. Each cube is watertight, so the body is open nowhere
+    and the plane crosses no edge of it. The floor patch is the four contact squares
+    themselves, which is what a coincident contact looks like in a mesh."""
+    points: list[tuple[float, float, float]] = []
+    body, floor = [], []
+    for x0, y0 in ((0.0, 0.0), (2.4, 0.0), (0.0, 1.5), (2.4, 1.5)):
+        base = len(points)
+        for z in (0.0, 0.3):
+            for x, y in ((x0, y0), (x0 + 0.3, y0), (x0 + 0.3, y0 + 0.3), (x0, y0 + 0.3)):
+                points.append((x, y, z))
+        b = [base + i for i in range(4)]
+        t = [base + 4 + i for i in range(4)]
+        body.append([b[0], b[3], b[2], b[1]])                     # the contact square
+        body.append(t)
+        for i in range(4):
+            j = (i + 1) % 4
+            body.append([b[i], b[j], t[j], t[i]])
+        floor.append([b[0], b[1], b[2], b[3]])
+    return suboff.write_mesh(case, points, [("body", "wall", body), ("floor", kind, floor)])
+
+
+def test_a_closed_body_resting_on_a_symmetry_plane_is_not_cut_by_it(tmp_path):
+    """Four tyre patches across the wheelbase, not a cut (review of #61, item 4)."""
+    found = reference_area.assess(_cubes_on_a_floor(tmp_path), ["body"], frontal=False)
+    (plane,) = found["planes"]
+
+    assert found["mirror_factor"] == 1, plane["why"]
+    assert plane["shared_points"] == 16, "the points ARE shared, right across the body"
+    assert plane["rim_points"] == 0 and "crosses no open edge" in plane["why"]
+
+
+def test_a_plane_the_body_is_open_along_is_still_a_cut(tmp_path):
+    """The other side of item 4: the discriminator is the open edge, and a body cut by
+    a plane is open along it, so a half cube on x = 0 still reads as half a body."""
+    points = [(x, y, z) for z in (0.0, 1.0) for x, y in
+              ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))]
+    b, t = [0, 1, 2, 3], [4, 5, 6, 7]
+    body = [[b[0], b[3], b[2], b[1]], t]
+    body += [[b[i], b[(i + 1) % 4], t[(i + 1) % 4], t[i]] for i in (0, 1, 2)]  # no x = 0
+    cut = [[b[3], b[0], t[0], t[3]]]
+    case = suboff.write_mesh(tmp_path, points, [("body", "wall", body),
+                                                ("symmetry", "symmetry", cut)])
+    (plane,) = reference_area.assess(case, ["body"], frontal=False)["planes"]
+
+    assert plane["mirrors"] and plane["rim_points"] == 4, plane["why"]
+
+
 
 
 def test_a_plane_that_is_not_a_symmetry_patch_mirrors_nothing(tmp_path):
@@ -178,7 +319,45 @@ def test_results_flags_r01_as_delivered(tmp_path):
     notes = results.body_checks(case, _history(case, "coeff"))
 
     assert "whole body's wetted area" in notes["AREA WRONG"]
-    assert notes["friction floor"].startswith("IMPOSSIBLE")
+    assert notes["friction floor"].startswith("below the friction line, check the area")
+
+
+def test_results_flags_the_whole_bodys_frontal_area_too(tmp_path, reading):
+    """Only wetted area was compared, and the whole body's FRONTAL area is smaller than
+    the meshed wetted area, so a half force over it cleared both checks and the friction
+    line as well (review of #61, item 5)."""
+    whole = reading["frontal_body_m2"]
+    case = _forces_case(suboff.write_half_hull(tmp_path), aref=whole,
+                        cd=suboff.HALF_MODEL_FORCE_N / (Q * whole))
+    notes = results.body_checks(case, _history(case, "coeff"))
+
+    assert "whole body's frontal area" in notes["AREA WRONG"], notes
+    assert "friction line" not in notes["friction floor"], "which is why wetted missed it"
+
+
+def test_results_takes_not_mirror_as_the_script_does(tmp_path, reading):
+    """`body_checks` called `cuts()` without it, so a double-body waterline was reported
+    as half a hull on the one path a study reports through (review of #61, item 3)."""
+    case = _forces_case(suboff.write_half_hull(tmp_path), aref=reading["wetted_meshed_m2"],
+                        cd=0.003)
+    history = _history(case, "coeff")
+
+    assert "mirrored" in results.body_checks(case, history)
+    waterline = results.body_checks(case, history, not_mirror=["symmetry"])
+    assert "mirrored" not in waterline and "AREA WRONG" not in waterline
+    assert not [key for key in waterline if key.startswith(("cut ", "mirror "))]
+
+
+def test_results_says_the_lift_and_moment_are_not_doubled(tmp_path, reading):
+    """What the half model reports as a large Cl, the whole hull does not carry at all
+    (review of #61, item 1), said on the series the study reads."""
+    case = _forces_case(suboff.write_half_hull(tmp_path), aref=reading["wetted_meshed_m2"],
+                        cd=0.003)
+    notes = results.body_checks(case, _history(case, "coeff"))
+
+    assert "x 2" in notes["mirror drag"]
+    assert "zero on the whole body" in notes["mirror lift"]
+    assert "zero on the whole body" in notes["mirror pitch moment"]
 
 
 def test_results_says_when_it_could_not_check(tmp_path):

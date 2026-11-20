@@ -670,19 +670,28 @@ AREA_MATCH = 0.03
 """How close Aref must be to the whole body's measured area to be read as that area."""
 
 
-def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.25) -> dict[str, str]:
+def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.25,
+                not_mirror: Sequence[str] = ()) -> dict[str, str]:
     """Whether the force here is the whole body's, and whether its Cd can be true.
 
     R01 (F-43): a half model's 43.74 N over the whole hull's area delivered half the
     drag, below the flat-plate friction the agent had itself computed. Three readings
     off the case, none of which needs the model to have remembered anything:
 
-    - a symmetry plane that cuts the body (`reference_area.py`) makes every force in
-      the file 1/factor of the body's, and the whole-body drag is said as a number;
-    - an Aref that is the whole body's area on a mesh holding part of it makes every
-      coefficient 1/factor of the body's -- as does any Aref larger than all the
-      surface the body has as meshed;
-    - a Cd below flat-plate friction at the case's Reynolds number is impossible.
+    - a symmetry plane that cuts the body (`reference_area.py`) makes the force in the
+      file 1/factor of the body's in the directions its mirror leaves standing, and
+      zero in the ones it cancels -- lift and pitch on a hull cut at y = 0 -- and the
+      whole-body drag is said as a number;
+    - an Aref that is the whole body's wetted OR frontal area on a mesh holding part
+      of it makes every coefficient 1/factor of the body's -- as does any Aref larger
+      than all the surface the body has as meshed;
+    - a Cd under the friction line at the case's Reynolds number is a reason to check
+      the area, ITTC-57 being a correlation line rather than a bound.
+
+    `not_mirror` is `reference_area.py`'s flag for a double-body waterline, where the
+    plane closes the hull rather than mirroring it. Without it here, such a case was
+    flagged as half a body on the one path a study reports through, while the script
+    itself could be told (review of #61, item 3).
 
     A reading that cannot be made -- no patches named, a binary mesh, no viscosity --
     says so rather than passing silently: an all-clear nothing checked is not one.
@@ -697,7 +706,7 @@ def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.2
             notes["body check"] = ("not made: no forces object names a patch that is in "
                                    "the mesh, so whether this is the whole body is unknown")
             return notes
-        planes = reference_area.cuts(mesh, bodies)
+        planes = reference_area.cuts(mesh, bodies, not_mirror)
         factor = reference_area.mirror_factor(planes)
         wetted = reference_area.wetted_area(mesh, bodies)
     except reference_area.MeshError as exc:
@@ -706,22 +715,47 @@ def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.2
 
     for plane in planes:
         if plane.get("mirrors"):
-            notes[f"mirror {plane['patch']}"] = plane["why"]
-    axis = _drag_axis(obj.get("dragDir", ""))
+            notes[f"cut {plane['patch']}"] = plane["why"]
+    drag_dir = _vector(obj.get("dragDir", ""), (1.0, 0.0, 0.0))
+    axis = int(np.argmax(np.abs(drag_dir)))
     meta = history.get("meta", {})
     aref = preflight.as_float(meta.get("Aref")) or obj.get("Aref")
+    drag_factor: int | None = 1
+    if factor > 1:
+        # A mirror does not double everything it touches: the component along a plane's
+        # normal cancels, and so does a moment about an axis lying in the plane. On the
+        # SUBOFF fixture, cut at y = 0, that is case_gen's `liftDir (0 1 0)` and
+        # `pitchAxis (0 0 1)` -- the half model reports a large Cl that the whole hull
+        # does not carry at all, so doubling every number was itself wrong
+        # (reference_area.component_factor, review of #61, items 1 and 2).
+        components = reference_area.component_report(
+            planes, drag_dir,
+            _vector(obj.get("liftDir", ""), (0.0, 1.0, 0.0)),
+            _vector(obj.get("pitchAxis", ""), (0.0, 0.0, 1.0)))
+        drag_factor = next(c["factor"] for c in components if c["name"] == "drag")
+        for component in components:
+            notes[f"mirror {component['name']}"] = component["why"]
     if factor > 1 and "Cd" in history.get("columns", []):
         notes["mirrored"] = (f"the mesh holds 1/{factor} of the body: a coefficient here is "
                              f"the whole body's when Aref ({aref or 'unread'}) is an area of "
                              f"the part meshed -- its wetted area is {wetted:.6g} m2")
     elif factor > 1:
-        notes["mirrored"] = (f"the mesh holds 1/{factor} of the body: every force in this "
-                             f"file is 1/{factor} of the whole body's")
+        notes["mirrored"] = f"the mesh holds 1/{factor} of the body"
         drag = _drag_series(history, axis)
         if drag is not None and drag.size:
             meshed = tail_mean(drag, fraction)
-            notes["whole-body drag"] = (f"{factor} x {meshed:.5g} = {factor * meshed:.5g} "
-                                        f"(tail mean of the {'xyz'[axis]} force, mirrored)")
+            if drag_factor:
+                notes["whole-body drag"] = (
+                    f"{drag_factor} x {meshed:.5g} = {drag_factor * meshed:.5g} (tail mean "
+                    f"of the {'xyz'[axis]} force, mirrored)")
+            else:
+                notes["whole-body drag"] = (
+                    f"the tail mean of the {'xyz'[axis]} force is {meshed:.5g} on the part "
+                    "meshed, and " + ("the mirror cancels it, so the whole body's drag is "
+                                      "zero: check dragDir against the plane it is mirrored "
+                                      "in" if drag_factor == 0 else
+                                      "no single mirror factor applies to it, so it is not "
+                                      "mirrored here"))
 
     if aref:
         whole = wetted * factor
@@ -734,6 +768,20 @@ def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.2
             notes["AREA WRONG"] = (f"Aref {aref:.6g} m2 is more than all the surface the body "
                                    f"has as meshed ({wetted:.6g} m2): coefficients are divided "
                                    "by area that is not there")
+        elif factor > 1:
+            # Only wetted area was compared, so a half model's force over the WHOLE
+            # body's FRONTAL area -- which is smaller than the meshed wetted area, so
+            # neither check above sees it -- went unflagged (review of #61, item 5).
+            try:
+                frontal = reference_area.frontal_area(mesh, bodies, drag_dir)
+            except reference_area.MeshError:
+                frontal = 0.0
+            if frontal and abs(aref - frontal * factor) <= AREA_MATCH * frontal * factor:
+                notes["AREA WRONG"] = (
+                    f"Aref {aref:.6g} m2 is the whole body's frontal area along "
+                    f"{tuple(drag_dir)}, but the mesh holds 1/{factor} of it: every "
+                    f"coefficient here is 1/{factor} of the body's. Aref should be the "
+                    f"as-meshed {frontal:.6g} m2")
 
     if "Cd" in history.get("columns", []):
         u = preflight.as_float(meta.get("magUInf")) or obj.get("magUInf")
@@ -748,7 +796,7 @@ def body_checks(case: Path | str, history: dict[str, Any], fraction: float = 0.2
             turbulent = case_is_turbulent(case)
             floor, name = reference_area.friction_floor(reynolds, turbulent)
             verdict = reference_area.below_floor(cd, reynolds, turbulent)
-            notes["friction floor"] = ("IMPOSSIBLE: " + verdict) if verdict else (
+            notes["friction floor"] = verdict or (
                 f"Cd {cd:.5g} is above {name} Cf = {floor:.5g} at Re {reynolds:.3g}")
     return notes
 
@@ -767,11 +815,12 @@ def _resolve_patches(names: Sequence[str], boundary: dict) -> list[str]:
     return found
 
 
-def _drag_axis(drag_dir: str) -> int:
-    values = [preflight.as_float(v) for v in drag_dir.replace("(", " ").replace(")", " ").split()]
-    if len(values) == 3 and all(v is not None for v in values):
-        return int(np.argmax(np.abs(values)))
-    return 0
+def _vector(text: str, default: tuple[float, float, float]) -> tuple[float, ...]:
+    """An OpenFOAM `(a b c)` entry, or `default` when the case does not name it."""
+    values = [preflight.as_float(v) for v in text.replace("(", " ").replace(")", " ").split()]
+    if len(values) == 3 and all(v is not None for v in values) and any(values):
+        return tuple(float(v) for v in values)  # type: ignore[arg-type]
+    return default
 
 
 def _drag_series(history: dict[str, Any], axis: int) -> np.ndarray | None:
@@ -1369,7 +1418,7 @@ def produce_forces(ctx, spec: Output):
     notes.update(force_headline(history, columns))
     if history["superseded"]:
         notes["superseded"] = "; ".join(history["superseded"])
-    notes.update(body_checks(ctx.case, history))
+    notes.update(body_checks(ctx.case, history, not_mirror=ctx.not_mirror))
     if history["ignored"]:
         notes["ignored"] = "; ".join(history["ignored"])
     return out, notes
@@ -1546,8 +1595,11 @@ class Context:
 
     def __init__(self, case: Path, out_dir: Path, *, normal: str = "z",
                  requested_time: str | float | None = "latest", log: Path | None = None,
-                 root: Path | None = None):
+                 root: Path | None = None, not_mirror: Sequence[str] = ()):
         self.case = Path(case)
+        self.not_mirror = tuple(not_mirror)
+        """Symmetry patches where the body ends rather than is mirrored, for
+        `body_checks`: a double-body waterline is otherwise read as half a hull."""
         self.out_dir = Path(out_dir)
         self.normal = normal
         self.requested_time = requested_time
@@ -1614,6 +1666,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--normal", default="z", choices=sorted(NORMALS), help="slice normal")
     parser.add_argument("--log", type=Path, default=None, help="solver log, if it is not in the case")
     parser.add_argument("--only", nargs="+", default=None, help="run only these outputs of the preset")
+    parser.add_argument("--not-mirror", action="append", default=[], dest="not_mirror",
+                        help="a symmetry patch where the body ends rather than is mirrored "
+                             "-- a double-body waterline; repeatable")
     parser.add_argument("--no-state", action="store_true",
                         help="do not touch the study manifest or phase table")
     args = parser.parse_args(argv)
@@ -1645,7 +1700,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = args.out or args.case / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
     context = Context(
-        args.case, out_dir, normal=args.normal, requested_time=args.time, log=args.log
+        args.case, out_dir, normal=args.normal, requested_time=args.time, log=args.log,
+        not_mirror=args.not_mirror
     )
     if args.no_state:
         context.record = lambda *a, **k: None  # type: ignore[assignment]
