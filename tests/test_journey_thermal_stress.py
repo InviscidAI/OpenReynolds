@@ -29,9 +29,8 @@ Both plane states are run, because the plane-stress answer contains E and alpha 
 as their product and so cannot distinguish a wrong nu, while the plane-strain answer
 carries 1/(1-nu) and the two are 43% apart. Each solve is 800 cells and 100 steps.
 
-The cheap half of this is `docker/workspace/check.sh`, which gates the image on the
-same closed form using a bar with a UNIFORM temperature, where every cell carries
-the same stress and the number is mesh-independent.
+The cheap half of this is `docker/workspace/check.sh`, which gates the image on that
+same one number, without any of the file reading below.
 
 what is asserted at each seam, and not at the end
 
@@ -41,9 +40,9 @@ what is asserted at each seam, and not at the end
 * `thermalStress` really is `yes` in what the template wrote, which is the switch the
   distribution's own tutorial ships as `no`;
 * the solver ran to `End` and its own per-write `Max sigmaEq` line is the closed form
-  at the hottest CELL, which is half a cell above the hot face and so 2.5% under the
-  face value on this mesh -- the one number that needs no file read, and a reminder
-  that a max over cells is not a boundary value;
+  at the hot FACE, 220.0000 MPa, because `Foam::max` of a GeometricField ranges over
+  the boundary field too -- the one number that needs no file read, and not the
+  hottest cell's value, which is 2.5% lower on this mesh;
 * the ratio of the two plane states is 1/(1-nu), which needs no geometry at all;
 * `components(sigma)` and `singleGraph` wrote a profile, in that order, because
   `sigma` is a symmetric tensor and the sampler wants scalars;
@@ -127,22 +126,43 @@ def run(cmd: list[str], cwd: Path, label: str = "") -> str:
     return proc.stdout
 
 
-def build_and_solve(case: Path, plane_stress: bool) -> str:
-    """The template, run as a person runs it, then the solver and the two samplers.
+def edited_copy(root: Path, plane_stress: bool) -> Path:
+    """The template with `PLANE_STRESS` edited, in a directory shaped like the toolbox.
 
-    `PLANE_STRESS` is edited in the copy rather than passed in, because editing a
-    constant at the top of a copied template and re-running it is the whole interface
-    a template has, and a test that bypassed it would not be testing that.
+    Editing a constant at the top of the template and re-running it is the whole
+    interface a template has, so the test does that rather than importing it and
+    passing an argument. But the copy cannot go just anywhere: `find_mesh_look` looks
+    at `/work/.toolbox/mesh_look.py`, which exists only on the deployed instance, and
+    falls back to `Path(__file__).parent.parent / "mesh_look.py"` -- its sibling in
+    the toolbox. `test_journey_duct.py:232` sidesteps that by running the template
+    from its real path; here the file has to change, so the layout is reproduced
+    instead, with `mesh_look.py` beside it. It imports nothing but the standard
+    library, so one file is the whole of what it needs.
+
+    The first run of this test copied the template into the case directory and
+    `mesh_look.py` was then two directories above a tmpdir, which is the one stage of
+    the chain that had nothing standing in for it.
     """
-    case.mkdir(parents=True)
+    toolbox = root / ("toolbox_plane_stress" if plane_stress else "toolbox_plane_strain")
+    (toolbox / "templates").mkdir(parents=True)
+    shutil.copy(ROOT / "openreynolds" / "toolbox" / "mesh_look.py",
+                toolbox / "mesh_look.py")
     text = TEMPLATE.read_text(encoding="utf-8")
     assert "PLANE_STRESS = True" in text, "the template's switch has been renamed"
     if not plane_stress:
         text = text.replace("PLANE_STRESS = True", "PLANE_STRESS = False", 1)
-    (case / "thermal_stress.py").write_text(text, encoding="utf-8")
+    script = toolbox / "templates" / "thermal_stress.py"
+    script.write_text(text, encoding="utf-8")
+    return script
+
+
+def build_and_solve(case: Path, plane_stress: bool) -> str:
+    """The template, run as a person runs it, then the solver and the two samplers."""
+    case.mkdir(parents=True)
+    script = edited_copy(case.parent, plane_stress)
 
     print(f"\n[{'plane stress' if plane_stress else 'plane strain'}] {case}")
-    run([sys.executable, "thermal_stress.py"], case, "template")
+    run([sys.executable, str(script)], case, "template")
     solve = run(["solidDisplacementFoam"], case, "solidDisplacementFoam")
     run(["postProcess", "-func", "components(sigma)", "-noZero"], case, "components")
     run(["postProcess", "-func", "singleGraph", "-noZero"], case, "singleGraph")
@@ -192,27 +212,32 @@ def test_the_template_wrote_a_two_dimensional_case_with_the_ends_constrained(
 
 
 @pytest.mark.parametrize("plane_stress", [True, False])
-def test_the_solvers_own_max_sigma_eq_line_is_the_hottest_cells_stress(
+def test_the_solvers_own_max_sigma_eq_line_is_the_closed_form(
         plane_stress, plane_stress_run, plane_strain_run):
     """One number, out of the solver's own stdout, with no file read: here sigma is
-    diag(s, 0, s), whose von Mises equivalent sqrt(1.5*magSqr(dev(sigma))) is |s|.
+    diag(s, 0, s), whose von Mises equivalent sqrt(1.5*magSqr(dev(sigma))) is |s|, so
+    the line reports E*alpha*dT*f -- the HOT FACE's value, 220.0000 MPa.
 
-    And `max` is over CELLS, so it reports the hottest cell centre's stress, half a
-    cell above the hot face: (1 - dy/(2H)) of the face value, 2.5% low on the
-    template's 20 cells. Asserting the face value against this line would be
-    asserting the mesh, which is why `docker/workspace/check.sh` gates on a bar with
-    a UNIFORM T, where every cell carries the same stress and the number is
-    mesh-independent.
+    Which is worth saying, because the hottest cell centre sits half a cell above that
+    face and carries only (1 - dy/(2H)) of it, 2.5% less on this mesh. The face wins
+    because `Foam::max` of a GeometricField ranges over the boundary field as well as
+    the internal one, and T on the hot patch is a `fixedValue`.
+
+    Measured, not assumed. This assertion was first written for the hottest cell, on
+    the reasoning that a max over cells cannot see a boundary value; the image job
+    (run 44689824346) then printed 220.0000 MPa against an exact 220.0000 MPa, 0.00%,
+    for both plane states, which settled it the other way.
     """
     _, log = plane_stress_run if plane_stress else plane_strain_run
-    face = PEAK_PLANE_STRESS_PA if plane_stress else PEAK_PLANE_STRAIN_PA
-    expected = face * (1.0 - CELL_SIZE_M / (2.0 * BAR_HEIGHT_M))
+    expected = PEAK_PLANE_STRESS_PA if plane_stress else PEAK_PLANE_STRAIN_PA
+    hottest_cell = expected * (1.0 - CELL_SIZE_M / (2.0 * BAR_HEIGHT_M))
     lines = [line for line in log.splitlines() if "Max sigmaEq" in line]
     assert lines, "the solver printed no `Max sigmaEq` line, so it wrote no stress"
     assert "End" in log
     got = float(lines[-1].split("=")[1])
-    print(f"  max sigmaEq {got / 1e6:.4f} MPa against the hottest cell's exact "
-          f"{expected / 1e6:.4f} MPa, hot face {face / 1e6:.4f} MPa")
+    print(f"  max sigmaEq {got / 1e6:.4f} MPa against the hot face's exact "
+          f"{expected / 1e6:.4f} MPa ({abs(got - expected) / expected:.3%}); the "
+          f"hottest CELL would be {hottest_cell / 1e6:.4f} MPa")
     assert got == pytest.approx(expected, rel=5e-3)
 
 

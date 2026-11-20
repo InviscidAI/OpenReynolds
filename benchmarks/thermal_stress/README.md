@@ -99,17 +99,19 @@ strain that same equality is the correct answer. Either way
 `sqrt(1.5*magSqr(dev(sigma)))` works out to exactly `|s|`, so that one line carries the
 whole answer and needs no file parsing.
 
-But `max` is over **cells**, not over faces. On a bar with a linear T the hottest cell
-centre sits half a cell above the hot face, so the line reports
-`E*alpha*dT*f*(1 - dy/(2H))`: 2.5% under the face value on a 20-cell mesh. Asserting
-the face value against that line would be asserting the mesh, and it is the kind of
-2.5% that gets blamed on the solver. So the two uses are split:
+The trap is *which* maximum. On a bar with a linear T the hottest **cell** centre sits
+half a cell above the hot face and carries only `E*alpha*dT*f*(1 - dy/(2H))`, 2.5% less
+on a 20-cell mesh -- the sort of 2.5% that gets blamed on a solver. The line reports the
+hot **face**'s value, the full `E*alpha*dT*f`, because `Foam::max` of a GeometricField
+ranges over its boundary field as well as its internal one and T on the hot patch is a
+`fixedValue`.
 
-* `docker/workspace/check.sh` gates the image on a bar with a **uniform** T, where
-  every cell carries the same stress and the number is mesh-independent and exactly
-  `E*alpha*dT*f`. Cheap, one grep, no geometry.
-* this benchmark runs the **linear** T, where the number is the hottest cell's and the
-  graded quantities are the profile ones below.
+That is measured and not reasoned, and the reasoning had it the other way round first:
+this README and `docker/workspace/check.sh` were briefly rewritten around the
+hottest-cell value, on the argument that a maximum over cells cannot see a boundary
+value, before the image job printed 220.0000 MPa against an exact 220.0000 MPa, 0.00%,
+for both plane states (run 44689824346). `docker/workspace/check.sh` gates the image on
+that one number.
 
 ## How it is graded, and why not against `-E alpha T(y)` at the sample's own y
 
@@ -142,8 +144,8 @@ For the template's steel (E = 2e11 Pa, nu = 0.3, alpha = 1.1e-5 /K) and dT = 100
 | | plane stress | plane strain |
 |---|---|---|
 | sigma_xx on the hot face | **-220.0000 MPa** | **-314.2857 MPa** |
-| max sigmaEq, uniform T (the gate's case) | 220.0000 MPa | 314.2857 MPa |
-| max sigmaEq, linear T on 20 cells | 214.5000 MPa | 306.4286 MPa |
+| max sigmaEq (the hot face; **measured** 220.0000 / 314.2857) | 220.0000 MPa | 314.2857 MPa |
+| what the hottest CELL carries, on 20 cells | 214.5000 MPa | 306.4286 MPa |
 | D_y at the free top face, H = 0.02 m | 14.30 um | 20.43 um |
 
 The hot face's value is recovered from a run that never samples the face, by

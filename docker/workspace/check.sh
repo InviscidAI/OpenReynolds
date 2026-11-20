@@ -113,15 +113,17 @@ PY
 # RISE: this solver subtracts no reference temperature anywhere, so the stress-free
 # state of the body is T = 0.
 #
-# The T here is UNIFORM, where the benchmark's is linear across the bar, and the
-# difference is deliberate. `Max sigmaEq` is a maximum over CELLS, so on a bar with a
-# linear T it reports the hottest cell's stress and not the hot face's: on a 20-cell
-# mesh that is E*alpha*dT*(1 - 1/40), 2.5% low, and a gate asserting E*alpha*dT would
-# be asserting the mesh. With T uniform the answer is the same in every cell and the
-# number is mesh-independent, which is what a one-line gate needs. The price is that
-# `grad(3*K*alpha*T)` is then zero in the interior and the whole load arrives through
-# `tractionDisplacement`'s thermal term; the graded benchmark runs the linear case for
-# exactly that reason, in the `journey` job.
+# That `Max sigmaEq` reports the HOT FACE's value and not the hottest cell's is
+# measured rather than reasoned. T is linear across this bar, so the hottest cell
+# centre sits half a cell above the hot face and carries 2.5% less of it on 20 cells;
+# the first version of this gate was rewritten around that, on the reasoning that a
+# maximum over cells cannot see a boundary value, and the image job then printed
+# 220.0000 MPa against an exact 220.0000 MPa (0.00%) for both plane states
+# (run 44689824346). `Foam::max` of a GeometricField ranges over its boundary field
+# too, and T on the hot patch is a `fixedValue`. So the linear T stays: it is the case
+# in which `grad(3*K*alpha*T)` is non-zero in every interior cell and is cancelled by
+# the gradient of `div(sigmaD)`, rather than one where the whole load arrives through
+# `tractionDisplacement`'s boundary term, and it costs the gate nothing to run it.
 echo "== stress analysis: solidDisplacementFoam, on a thermal stress it gets exactly"
 solidDisplacementFoam -help > /dev/null 2>&1
 solidEquilibriumDisplacementFoam -help > /dev/null 2>&1
@@ -165,13 +167,13 @@ FOAM
 cat > 0/T <<'FOAM'
 FoamFile { version 2.0; format ascii; class volScalarField; object T; }
 dimensions [0 0 0 1 0 0 0];
-internalField uniform 100;
+internalField uniform 0;
 boundaryField
 {
     end_left  { type symmetryPlane; }
     end_right { type symmetryPlane; }
-    hot       { type zeroGradient; }
-    cold      { type zeroGradient; }
+    hot       { type fixedValue; value uniform 100; }
+    cold      { type fixedValue; value uniform 0; }
     frontAndBack { type empty; }
 }
 FOAM

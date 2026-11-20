@@ -193,14 +193,16 @@ def expected() -> dict[str, float]:
     return {
         # sigma_xx on the hot face, where T is DELTA_T_K and the stress is largest
         "sigma_xx_hot_pa": -E_PA * ALPHA_PER_K * DELTA_T_K * factor,
-        # What the solver's own `Max sigmaEq` line will say, which is NOT the number
-        # above. sigma is diag(s, 0, s) here, so sqrt(1.5*magSqr(dev(sigma))) is
-        # exactly |s| -- but `max` is over CELLS, and the hottest cell centre sits
-        # half a cell above the hot face, so it reports (1 - dy/(2H)) of it: 2.5% low
-        # on 20 cells. Quoting the hot-face value against that line would be reading
-        # the mesh as an error in the physics.
-        "sigma_eq_max_pa": (E_PA * ALPHA_PER_K * DELTA_T_K * factor
-                            * (1.0 - CELL_SIZE_M / (2.0 * BAR_HEIGHT_M))),
+        # The solver's own `Max sigmaEq` line: sigma is diag(s, 0, s) here, so
+        # sqrt(1.5*magSqr(dev(sigma))) is exactly |s|, and the maximum is the hot
+        # FACE's value rather than the hottest cell's -- `Foam::max` of a
+        # GeometricField ranges over its boundary field too. Worth knowing which,
+        # because the hottest cell centre sits half a cell above that face and carries
+        # 2.5% less of it on this mesh, printed below so the difference is visible
+        # rather than mistakable for a solver error.
+        "sigma_eq_max_pa": E_PA * ALPHA_PER_K * DELTA_T_K * factor,
+        "sigma_eq_hottest_cell_pa": (E_PA * ALPHA_PER_K * DELTA_T_K * factor
+                                     * (1.0 - CELL_SIZE_M / (2.0 * BAR_HEIGHT_M))),
         "strain_yy_hot": strain,
         "displacement_y_top_m": strain * BAR_HEIGHT_M / 2.0,
         "diffusion_e_folding_s": BAR_HEIGHT_M**2 / (3.14159265**2 * DIFFUSIVITY),
@@ -587,7 +589,8 @@ def main() -> None:
     print("# what it should produce, from the closed form in this file's docstring:")
     print(f"#   sigma_xx on the hot face   {answers['sigma_xx_hot_pa'] / 1e6:+.4f} MPa")
     print(f"#   the solver's Max sigmaEq   {answers['sigma_eq_max_pa'] / 1e6:.4f} MPa "
-          f"(the hottest CELL, half a cell above that face)")
+          f"(the hot face: max ranges over the boundary field too, and the hottest "
+          f"CELL would be {answers['sigma_eq_hottest_cell_pa'] / 1e6:.4f} MPa)")
     print(f"#   D_y at the free top face   {answers['displacement_y_top_m'] * 1e6:.4f} um")
     print(f"#   sigma_yy, sigma_xy         0 everywhere")
     print(f"#   conduction e-folding time  {answers['diffusion_e_folding_s']:.2f} s "
