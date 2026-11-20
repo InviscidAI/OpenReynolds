@@ -49,7 +49,7 @@ from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line,
 from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
 from .progress import Tracker
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
-from .store import Store, list_studies, new_study_id
+from .store import Store, UnreadableRecord, list_studies, new_study_id
 from . import catalog as catalog_mod
 from .terminal import tolerant_stdout
 from . import serve as serve_mod
@@ -175,7 +175,17 @@ def _terminal_json(outcome: str, error: str, study_id: str = "") -> None:
     )
 
 
-@click.group(invoke_without_command=True)
+class _Group(click.Group):
+    """Reports an unreadable study record as an error message, not a traceback."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return super().invoke(ctx)
+        except UnreadableRecord as exc:
+            raise click.ClickException(str(exc)) from exc
+
+
+@click.group(cls=_Group, invoke_without_command=True)
 @click.version_option(__version__, "-V", "--version")
 @click.option("-p", "--prompt", "one_shot", help="Run non-interactively and exit.")
 @click.option("--study", "study_id", help="Resume a local study by id.")

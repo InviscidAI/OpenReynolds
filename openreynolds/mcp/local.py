@@ -30,7 +30,7 @@ from .. import sharing as sharing_mod
 from ..backend.base import WORKSPACE_ROOT, BackendError
 from ..config import Config
 from ..mirror import OutsideMirror, local_for
-from ..store import Store, list_studies
+from ..store import Store, UnreadableRecord, list_studies
 from ..study_style import normalize_style, preferences_for
 from ..transcript import TranscriptTail, read_items
 from ..uploads import place_upload, safe_filename
@@ -602,7 +602,10 @@ class LocalHost(HostDefaults):
         root = self._studies_dir()
         if not (_STUDY_ID.match(study_id or "") and (root / study_id / "session.json").is_file()):
             raise McpError(f"no study {study_id} on this machine (list_studies names them)")
-        return Store(root, study_id)
+        try:
+            return Store(root, study_id)
+        except UnreadableRecord as exc:
+            raise McpError(str(exc)) from exc
 
     def studies(self) -> dict[str, Any]:
         cards = [{"study_id": s.study_id, "title": s.title, "created_at": s.created_at}

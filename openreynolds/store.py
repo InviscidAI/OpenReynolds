@@ -8,11 +8,29 @@ resumed session cannot tell the model what is still running.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+# Windows briefly refuses to replace a file another process has open, or to open one
+# being replaced, so both are retried for about a second.
+_ATTEMPTS = 20
+_PAUSE = 0.05
+
+
+class UnreadableRecord(ValueError):
+    """`session.json` exists but cannot be read; raised so nothing saves over it."""
+
+    def __init__(self, path: Path, reason: str):
+        self.path = path
+        super().__init__(
+            f"{path} cannot be read ({reason}). Nothing has been written to it. "
+            "Repair it by hand or restore it from a copy.")
 
 
 def new_study_id() -> str:
@@ -136,13 +154,30 @@ class Store:
         return self.dir / "messages.jsonl"
 
     def _load(self) -> None:
-        if not self._session_path.exists():
+        path = self._session_path
+        if not path.exists():
             return
+        data = b""
+        for attempt in range(_ATTEMPTS):
+            try:
+                data = path.read_bytes()
+                break
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                if attempt == _ATTEMPTS - 1:
+                    raise UnreadableRecord(path, str(exc)) from exc
+                time.sleep(_PAUSE)
         try:
-            raw = json.loads(self._session_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        jobs = {jid: JobRecord(**rec) for jid, rec in (raw.pop("jobs", {}) or {}).items()}
+            raw = json.loads(data.decode("utf-8-sig"))
+        except ValueError as exc:  # JSONDecodeError, or UnicodeDecodeError from a cut-off character
+            raise UnreadableRecord(path, f"not valid JSON: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise UnreadableRecord(path, f"a JSON {type(raw).__name__}, not an object")
+        try:
+            jobs = {jid: JobRecord(**rec) for jid, rec in (raw.pop("jobs", {}) or {}).items()}
+        except (TypeError, AttributeError) as exc:
+            raise UnreadableRecord(path, f"its jobs are malformed: {exc}") from exc
         self._solver_on_record = "solver" in raw
         known = {f.name for f in Session.__dataclass_fields__.values()}
         # A null on disk is dropped as an unknown key is, so the field's own default
@@ -175,8 +210,21 @@ class Store:
         self.save()
 
     def save(self) -> None:
-        payload = asdict(self.session)
-        self._session_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        """Write to a temp file and `os.replace` it in, so no reader sees half a record."""
+        path = self._session_path
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(json.dumps(asdict(self.session), indent=2) + "\n", encoding="utf-8")
+            for attempt in range(_ATTEMPTS):
+                try:
+                    os.replace(tmp, path)
+                    return
+                except PermissionError:
+                    if attempt == _ATTEMPTS - 1:
+                        raise
+                    time.sleep(_PAUSE)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     # -- messages --------------------------------------------------------------
 
@@ -262,12 +310,20 @@ def list_stores(root: Path) -> list[Store]:
     Ids are timestamp-prefixed, so reverse name order is newest first. The Store
     rather than the record, because a caller that then wants the study's own
     directory, its `recorded_solver` or its transcript would otherwise build a second
-    one for each study it has just been handed.
+    one for each study it has just been handed. A study whose record cannot be read
+    is skipped with a note on stderr.
     """
     if not root.exists():
         return []
-    return [Store(root, child.name) for child in sorted(root.iterdir(), reverse=True)
-            if (child / "session.json").is_file()]
+    stores = []
+    for child in sorted(root.iterdir(), reverse=True):
+        if not (child / "session.json").is_file():
+            continue
+        try:
+            stores.append(Store(root, child.name))
+        except UnreadableRecord as exc:
+            print(f"openreynolds: skipping study {child.name}: {exc}", file=sys.stderr)
+    return stores
 
 
 def list_studies(root: Path) -> list[Session]:
