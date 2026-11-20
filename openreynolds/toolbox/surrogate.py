@@ -480,8 +480,9 @@ def plot(found: dict[str, Any], target: Path) -> Path:
         right.set_xticks(degrees)
     refused = [row["degree"] for row in found["degrees"] if "refused" in row]
     if refused:
-        right.set_title(f"degrees {', '.join(str(d) for d in refused)} refused: "
-                        f"too few points", fontsize=9)
+        right.set_title(f"degree{'s' if len(refused) > 1 else ''} "
+                        f"{', '.join(str(d) for d in refused)} refused: too few points",
+                        fontsize=9)
     right.set_xlabel("polynomial degree")
     right.set_ylabel("RMSE")
     right.legend(fontsize=8)
