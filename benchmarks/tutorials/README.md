@@ -43,9 +43,12 @@ this work", because the answers are exact and the whole chain is in this reposit
 
 [`templates.md`](templates.md) is the page for these: the seven recipes in
 `openreynolds/toolbox/templates/`, each one copied into an empty directory and run, what
-each builds, and **what is known about the answer before the solver starts**. Two of the
-seven end in an exact comparison that CI runs on every pull request; the other five are
-honest about having no reference, which is a different thing from having no value.
+each builds, and **what is known about the answer before the solver starts**. Three of
+the seven end in an exact comparison that CI runs on every pull request; the other four
+are honest about having no reference, which is a different thing from having no value.
+`chem0d.py` is in the row below them and is not a template: it is a toolbox script,
+because a one-cell reactor has no mesh to look at and nothing for `mesh_look.py` to
+draw.
 
 | case | run it | the answer, and what it is normalised on | what is measured today |
 |---|---|---|---|
@@ -55,6 +58,9 @@ honest about having no reference, which is a different thing from having no valu
 | a sphere in a flow box, `body_in_box.py` | `python3 body_in_box.py` | no reference is shipped and **none is claimed**. The template's job is the body-fitted mesh, and `checkMesh` is the only verdict it offers | the mesh, by `checkMesh` and `mesh_look.py`. Stokes drag `Cd = 24/Re` is exact below Re about 1 and would make this a graded case; the shipped box is not sized or dressed for that regime, so it is listed as a gap rather than quoted as a check |
 | a two-phase dam break, `free_surface.py` -> `interFoam` | `python3 free_surface.py`, then `interFoam` | the same Martin & Moyce (1952) the SPH row above declines to quote, for the same reason. What **is** exact and free before release: the hydrostatic pressure at the base of the undisturbed column, `p_rgh = rho g h`, and total water volume conserved to the VOF solver's own `alpha` bounds | `setFields` writing a real interface, and `checkMesh`. **No solved result exists in this repository**, so no agreement is quoted |
 | a frozen-rotor bladed mixer, `rotating.py` -> `simpleFoam` + MRF | `python3 rotating.py`, then `simpleFoam` | no closed form for a six-bladed vessel, and a frozen rotor is one blade angle rather than an average. Two statements are still exact: in a steady state with no through-flow the **torque on the impeller and the torque on the vessel wall are equal and opposite exactly**, by conservation of angular momentum, and **power = torque x omega**. `omega` is 104.719755 rad/s for the shipped 1000 rpm, a factor 9.5493 from the nameplate units | the mesh and its two cell zones. The torque balance is the check [`../moving_mesh/`](../moving_mesh/) found teeth in: a `cyclicAMI` interface held its *area* to 43 ppm while the two wall torques disagreed by **0.911%**, so the check every rotating case runs passed one whose torque was a per cent wrong. Nothing has run it on this template yet |
+
+| Hartmann flow, a conducting liquid across a magnetic field, `mhd_hartmann.py` -> `mhdFoam` | `python3 mhd_hartmann.py`, then `mhdFoam`, then `postProcess -func sample`, then `python benchmarks/mhd/grade.py hartmann . --hartmann 20 --mean-velocity 1 --half-height 1` | a transverse field makes the Lorentz force on a fully developed flow a **linear drag**, so the profile is a constant minus a cosh and both forms are **exact**: `u(y)/u_c = (cosh Ha - cosh(Ha y/L))/(cosh Ha - 1)`, normalised on the run's **own** centreline speed so no pressure gradient, flow rate or unit enters the comparison, and `u_c/u_mean = (cosh Ha - 1)/(cosh Ha - sinh Ha/Ha)`, normalised on the **inlet plug** speed, which is 1.052632 at Ha 20 against Poiseuille's 1.5. Derived in [`../mhd/README.md`](../mhd/) from `mhdFoam`'s own two equations, so there is no paper to misquote | the grader, against the closed form and against five wrong profiles, on every pull request. The solve is **not graded on this page**: it runs in the `journey` job and no number is quoted here until that has run |
+| a reacting 0-D reactor, `chem0d.py` -> `chemFoam` | `python3 chem0d.py write`, then `chemFoam`, then `python3 chem0d.py grade` | **not a flame temperature.** `chemFoam` conserves the mixture's absolute enthalpy at constant pressure, so `sum Y_i(end) Ha_i(T_end) = sum Y_i(0) Ha_i(T0)` is one equation in one unknown over the case's **own** JANAF coefficients, normalised on nothing and exact. The published reference is the thermo **data**, not the temperature: `Ha_i(298.15 K)` is a formation enthalpy, checked species by species against NIST's Chemistry WebBook gas-phase values with their uncertainties. One irreversible step makes no CO, OH, H, O or NO, so the graded value is the complete-combustion one and a real flame is cooler **by an amount this repository does not assert** | the thermo data against NIST, and the arithmetic against a constant-Cp closed form, on every pull request. The solve is **not graded on this page**: it runs in the `journey` job |
 
 ## Tier 3: a prompt, answered by an agent in a workspace
 

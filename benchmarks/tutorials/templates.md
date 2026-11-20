@@ -31,6 +31,7 @@ saying so is the point rather than the omission.
 | `rotating.py` | `VESSEL_RADIUS_M`, `ROTOR_RPM` | a solvable `simpleFoam` + MRF case | two exact conservation statements | the mesh only |
 | `porous.py` | `SLAB_THICKNESS_M`, `PRESSURE_DROP_CURVE` | a solvable `porousSimpleFoam` case | **exact by construction** | the coefficients, not the solve |
 | `thermal_stress.py` | `BAR_HEIGHT_M`, `DELTA_T_K` | a solvable `solidDisplacementFoam` case | **exact**, closed form | **yes, in CI** |
+| `mhd_hartmann.py` | `HARTMANN_NUMBER`, `HALF_HEIGHT_M` | a solvable `mhdFoam` case | **exact**, closed form | the grader in CI, the solve in the `journey` job |
 
 The stub/solvable split matters and is the first thing to know. `duct2d.py` and
 `body_in_box.py` write a `controlDict`, `fvSchemes` and `fvSolution` that are just enough
