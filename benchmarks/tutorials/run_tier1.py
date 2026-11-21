@@ -82,6 +82,13 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a tracer orbit in solid-body rotation",
      ("benchmarks/particles/grade.py", "tracer"),
      "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("turbulent pipe friction and the law of the wall",
+     ("openreynolds/toolbox/pipe_friction.py", "--check"),
+     "one exact branch (f = 64/Re) and two fits to Nikuradse, so what is graded"
+     " is the arithmetic and the agreement between correlations: Colebrook"
+     " satisfying its own implicit equation, Haaland within its claimed 2% of"
+     " it, and the wall law crossing inside wall.py own buffer band",
+     False, True),
     ("conjugate heat transfer, the two-region reference",
      ("openreynolds/toolbox/conjugate.py", "--check"),
      "steady series conduction, exact, and the two continuities a conjugate"
