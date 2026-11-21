@@ -63,13 +63,25 @@ def patch_average(case: Path, field: str, patch: str) -> float:
 
     Read out of the file postProcess writes rather than scraped from its stdout, because
     the stdout format is a convenience and the file is the output.
+
+    The directory is named and addressed exactly. An earlier version of this helper
+    globbed `*{patch}*/**/*.dat` under postProcessing and took the last match, which is
+    wrong here for a reason worth recording: the template runs its own postProcessing
+    before the test does, so the glob picked up a file this function never wrote and the
+    inlet and the outlet came back as the same number -- a drop of exactly 0.0 against a
+    solve that was correct all along (the template's own log read 392.491 and 0). A
+    "measurement" that reads whatever file sorts last is not a measurement.
     """
-    shell(["postProcess", "-func",
-           f"patchAverage(name={patch},fields=({field}))", "-latestTime"], cwd=case)
-    found = sorted((case / "postProcessing").rglob(f"*{patch}*/**/*.dat"))
-    assert found, (
-        f"postProcess wrote no patchAverage file for {patch}. Under postProcessing: "
-        + ", ".join(str(p.relative_to(case)) for p in (case / "postProcessing").rglob("*")))
+    func = f"patchAverage(name={patch},fields=({field}))"
+    shell(["postProcess", "-func", func, "-latestTime"], cwd=case)
+
+    root = case / "postProcessing" / func
+    assert root.is_dir(), (
+        f"postProcess wrote no {func} directory. Under postProcessing: "
+        + ", ".join(sorted(str(p.relative_to(case))
+                           for p in (case / "postProcessing").rglob("*"))))
+    found = sorted(root.rglob("*.dat"))
+    assert found, f"{root} holds no .dat file"
     rows = [l for l in found[-1].read_text(encoding="utf-8").splitlines()
             if l.strip() and not l.startswith("#")]
     assert rows, f"{found[-1]} holds no rows"
@@ -111,6 +123,10 @@ def test_the_drop_matches_the_coefficients_that_were_written(solved):
     inlet = patch_average(case, "p", "inlet")
     outlet = patch_average(case, "p", "outlet")
     drop_kinematic = inlet - outlet
+    assert drop_kinematic > 1e-6, (
+        f"the slab reported no drop at all: inlet {inlet}, outlet {outlet}. A porous "
+        "zone that resists nothing means the sink was not applied or the wrong file was "
+        "read -- either way it is a broken measurement, not a small answer")
     drop_pa = drop_kinematic * porous.RHO_KG_M3
 
     speed = porous.design_velocity_m_s()
@@ -138,6 +154,7 @@ def test_the_unit_is_the_point_and_the_wrong_one_fails(solved):
     """
     case, porous = solved
     drop_kinematic = patch_average(case, "p", "inlet") - patch_average(case, "p", "outlet")
+    assert drop_kinematic > 1e-6, f"no drop to take a ratio of: {drop_kinematic}"
     speed = porous.design_velocity_m_s()
     darcy, forchheimer = porous.coefficients_from_curve()[:2]
     expected_pa = porous.predicted_drop_pa(speed, darcy, forchheimer)
