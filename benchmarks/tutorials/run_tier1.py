@@ -74,6 +74,19 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a year of wind composed, exceedance",
      ("openreynolds/toolbox/wind_comfort.py", "--check"),
      "the fraction of the year above the threshold, exact", False, True),
+    ("particle relaxation and two terminal velocities",
+     ("benchmarks/particles/grade.py", "drag"),
+     "v(t) = U(1 - exp(-t/tau_p)) and w_t = tau_p g (1 - rho_f/rho_p), both exact under\n"
+     "      Stokes drag; and the Schiller-Naumann terminal against its implicit root,\n"
+     "      where Re_p = 42.8 makes Stokes the wrong law", False, True),
+    ("a tracer orbit in solid-body rotation",
+     ("benchmarks/particles/grade.py", "tracer"),
+     "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("critical Stokes number for capture on a cylinder",
+     ("benchmarks/particles/grade.py", "capture"),
+     "1/8 in the St = tau_p U_inf / R convention. Robinson et al.\n"
+     "      (arXiv:2310.03474v2) III.3 states 1/4 for St = m U/(l_y xi) with U = 2 U_inf\n"
+     "      at the stagnation point, the same result a factor of two apart", True, True),
 )
 
 VERDICT = re.compile(r"\b(PASS|PASSED|FAIL|FAILED|DISAGREES|agrees)\b")

@@ -66,13 +66,50 @@ def flat(text: str) -> str:
 # -- every runnable case is findable ---------------------------------------------------
 
 
-@pytest.mark.parametrize("family", ["lbm", "sph", "felix", "moving_mesh", "thermal_stress"])
+NOT_A_CASE_FAMILY = {
+    "tutorials": "this directory: the index itself, and the tier 3 prompts",
+    "deliverables": "a model-behaviour eval -- it plays a transcript to the configured "
+                    "model and has a judge bin the reply, so it grades the agent and not "
+                    "a solver, costs a model turn, and has no reference value in it",
+}
+"""Directories under `benchmarks/` that are not case families, each with why.
+
+Named rather than derived, because "is this a case family" is a judgement and a silent
+rule would let a real family be skipped by accident -- which is the failure this test
+exists for, one level up."""
+
+
+def families() -> list[str]:
+    """Every case family, from the directory rather than from a list.
+
+    This was five literals, written when there were five families. Three more arrived
+    (`mhd/`, `combustion/`, `particles/`) and the test that exists to catch an unlisted
+    family could not see them: `particles/` held three graded cases, two of them exact
+    closed forms runnable in numpy on a laptop, and the tutorial index named none of
+    them. A guard whose coverage is a literal goes stale exactly when the thing it
+    guards grows, which is the only time it matters.
+    """
+    found = sorted(p.name for p in BENCHMARKS.iterdir()
+                   if p.is_dir() and not p.name.startswith((".", "_"))
+                   and p.name not in NOT_A_CASE_FAMILY)
+    assert len(found) >= 8, f"only {found} under benchmarks/ -- the glob is wrong"
+    return found
+
+
+@pytest.mark.parametrize("family", families())
 def test_the_tutorial_index_names_every_benchmark_family(family):
     """A case family under `benchmarks/` that the tutorial index does not name is a case
     nobody reading the tutorials can find. `benchmarks/README.md` has its own version of
-    this check; this one is about the index a reader is sent to first."""
+    this check; this one is about the index a reader is sent to first.
+
+    The name is matched **with its slash**, because the bare word is not evidence: the
+    index says "complete-combustion" and "boundary particles" in prose, so grepping
+    `combustion` and `particles` passed while `combustion/` and `particles/` appeared
+    nowhere. A check that a word occurs somewhere on a long page is close to vacuous.
+    """
     assert f"{family}/" in index(), (
-        f"benchmarks/{family}/ holds runnable cases and the tutorial index does not name it")
+        f"benchmarks/{family}/ holds runnable cases and the tutorial index does not name "
+        f"it (as `{family}/` -- a bare mention in prose is not a link to its account)")
 
 
 @pytest.mark.parametrize("template", sorted(p.name for p in TEMPLATES.glob("*.py")))
@@ -131,7 +168,12 @@ def test_the_index_states_a_normalisation_for_every_case_row():
     scales = ("exact", "channel height", "step height", "diameter", "cavity side",
               "lattice units", "chord", "superficial", "depth", "tank length",
               "hydraulic diameter", "lid speed", "mixed mean", "pascals",
-              "thickness", "closed form", "could not be read", "no reference")
+              "thickness", "closed form", "could not be read", "no reference",
+              # A length and a velocity scale the list lacked until a row needed them:
+              # the capture threshold is normalised on the cylinder radius and the
+              # freestream speed, and that row exists because one published value is
+              # in circulation in two conventions a factor of two apart.
+              "radius", "freestream")
     rows = case_rows()
     assert len(rows) >= 18, f"the index lists only {len(rows)} cases across its tiers"
     for row in rows:
