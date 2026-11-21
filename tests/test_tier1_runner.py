@@ -85,7 +85,9 @@ def test_the_slow_cases_are_the_ones_quick_skips_and_they_are_named():
     """--quick has to say what it left out, or a green run means less than it looks."""
     module = runner()
     slow = [name for name, _c, _a, is_slow, _g in module.CASES if is_slow]
-    assert len(slow) == 3, f"slow cases are {slow}"
+    # The cavity at n = 128, the sloshing tank, the SPH dam break and the capture
+    # threshold, which bisects over 91 samples and takes 71 s on one laptop.
+    assert len(slow) == 4, f"slow cases are {slow}"
     done = subprocess.run([sys.executable, "-X", "utf8", str(RUNNER), "--list", "--quick"],
                           capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stdout + done.stderr
@@ -126,7 +128,7 @@ def test_a_missing_flag_is_reported_as_absent_rather_than_as_no_verdict():
     assert "--definitely-not-a-flag" in found["headline"]
 
 
-@pytest.mark.parametrize("case", ["lbm/", "sph/"])
+@pytest.mark.parametrize("case", ["lbm/", "sph/", "particles/"])
 def test_the_graders_the_table_calls_are_the_ones_the_index_lists(case):
     """The runner and the index have to agree about which families are tier 1."""
     module = runner()
