@@ -230,13 +230,21 @@ def copy_region_properties(case: Path) -> dict[str, list[str]]:
                 f"refused: {directory} is not there. It is a stock OpenFOAM tutorial "
                 f"directory; what is beside it: {', '.join(beside) or 'nothing'}. "
                 f"`ls $FOAM_TUTORIALS/{TUTORIAL_SOURCE}/constant` will say where it went.")
-        target = case / "constant" / ours
-        target.mkdir(parents=True, exist_ok=True)
         names = []
-        for item in sorted(directory.iterdir()):
-            if item.is_file():
-                shutil.copyfile(item, target / item.name)
-                names.append(item.name)
+        # `constant/` is the properties and `system/` is the per-region schemes and
+        # solvers. Both are the solver's vocabulary rather than this case's geometry, so
+        # both come off the image. `system/` is optional only because a tutorial that
+        # keeps its schemes at the case root is still a usable source for `constant/`.
+        for where in ("constant", "system"):
+            source_dir = tutorials_root() / TUTORIAL_SOURCE / where / theirs
+            if not source_dir.is_dir():
+                continue
+            into = case / where / ours
+            into.mkdir(parents=True, exist_ok=True)
+            for item in sorted(source_dir.iterdir()):
+                if item.is_file():
+                    shutil.copyfile(item, into / item.name)
+                    names.append(f"{where}/{item.name}")
         if not names:
             raise SystemExit(f"refused: {directory} holds no files to copy")
         copied[ours] = names
@@ -433,6 +441,26 @@ writeFormat     ascii;
 writePrecision  8;
 timeFormat      general;
 runTimeModifiable true;
+""", location="system")
+
+    # `splitMeshRegions` reads these before it will touch the mesh, which is how CI
+    # found them missing: blockMesh built both zones (80 fluid cells, 40 solid) and the
+    # split then stopped with `cannot find file "system/fvSchemes"`. The T8 artifact
+    # wrote them too, with an empty `solvers {}`, and that part of its recipe was the
+    # part not copied. They are the mesh utilities' requirement rather than the
+    # solver's: the per-region schemes the solver uses come off the image beside the
+    # properties.
+    foam(case / "system" / "fvSchemes", "dictionary", "fvSchemes", """\
+ddtSchemes      { default steadyState; }
+gradSchemes     { default Gauss linear; }
+divSchemes      { default none; }
+laplacianSchemes { default Gauss linear corrected; }
+interpolationSchemes { default linear; }
+snGradSchemes   { default corrected; }
+""", location="system")
+
+    foam(case / "system" / "fvSolution", "dictionary", "fvSolution", """\
+solvers {}
 """, location="system")
 
     # Gravity off, and visible. A fluid layer with a side-to-side temperature
