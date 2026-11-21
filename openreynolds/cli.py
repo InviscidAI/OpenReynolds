@@ -602,6 +602,55 @@ def label_cmd(study_id: str | None, project: str | None,
         console.print(f"  {escape(line)}")
 
 
+@main.command("history")
+@click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def history_cmd(ctx: click.Context, study_id: str | None, as_json: bool) -> None:
+    """What was changed about one study's setup, and where it came from.
+
+    `session.json` is rewritten on every save, so the record on disk has only ever
+    said what a study is NOW. A study whose model was swapped mid-run, whose solver was
+    settled on after the first mesh, or that was filed under a project and then
+    refiled, kept none of that -- and one token total with two models behind it cannot
+    be split back apart afterwards. Each such change is now appended to the study's own
+    `revisions.jsonl` as it happens, and this prints them with both values.
+
+    It also walks `cloned_from`, which `clone` and `rerun` have always written and
+    nothing read, so a study three reruns deep can say what it is a rerun of.
+
+    What it does not do is compare two studies' answers: `openreynolds compare` does
+    that. No session, no workspace, no model -- it reads `./studies`.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cfg = Config.load()
+    chosen = _the_study(cfg, study_id)
+    found = catalog_mod.history(cfg.studies_dir, chosen)
+    if as_json:
+        sys.stdout.write(json.dumps(found, default=str) + "\n")
+        return
+    console.print(f"[bold]{escape(chosen)}[/]  created {escape(found['created_at'])}")
+    chain = found["lineage"]
+    if len(chain) > 1:
+        console.print("  cloned from " + escape(" -> ".join(chain[:-1])))
+    said = "  ".join(f"{role}={count}" for role, count in sorted(found["messages"].items()))
+    console.print(f"  transcript: {escape(said) if said else 'nothing on this machine'}")
+    if not found["revisions"]:
+        console.print("\n  nothing about its setup has been changed since it was made")
+        console.print("[dim]  a study made before revisions were recorded has no log, "
+                      "which is not the same as having changed nothing[/]")
+        return
+    console.print("")
+    for row in found["revisions"]:
+        for field, change in sorted(row["changes"].items()):
+            was = change["from"]
+            now = change["to"]
+            console.print(
+                f"  {escape(str(row['at']))}  {escape(field)}: "
+                f"{escape(str(was) if was not in (None, '', []) else '(unset)')} "
+                f"-> {escape(str(now) if now not in (None, '', []) else '(unset)')}")
+
+
 def _duplicate(study_id: str | None, rerun: bool) -> None:
     """`clone` and `rerun`: one operation, with and without the opening request."""
     cfg = Config.load()

@@ -128,6 +128,19 @@ class Session:
     jobs: dict[str, JobRecord] = field(default_factory=dict)
 
 
+REVISED = (
+    "model", "provider", "base_url", "mode", "solver", "title", "project", "tags",
+    "instance_id", "remote_study_id", "home", "cloned_from",
+)
+"""The record's fields whose earlier values are worth keeping: what the study was set
+up as, and nothing that is accounting. `tokens`, `runtime_s`, `capture_seq`, `jobs`
+and `checkpoint` change on nearly every save, so logging them would be a second and
+worse copy of the transcript. `ended_at` is out for the same reason once measured:
+`record_accounting` rewrites it every time it is called, and a row reading
+`ended_at: one timestamp -> another` says nothing a session count does not
+(`tests/test_store_revisions.py::test_the_accounting_fields_do_not_fill_the_log`)."""
+
+
 class Store:
     """One study directory on the user's machine."""
 
@@ -158,6 +171,10 @@ class Store:
     @property
     def _messages_path(self) -> Path:
         return self.dir / "messages.jsonl"
+
+    @property
+    def _revisions_path(self) -> Path:
+        return self.dir / "revisions.jsonl"
 
     def _read(self) -> dict[str, Any]:
         """The record as it is on disk this instant, or `{}` when there is no record.
@@ -303,8 +320,74 @@ class Store:
             _replace(tmp, self._session_path)
         finally:
             tmp.unlink(missing_ok=True)
+        self._record_revision(was, mine)
         self._adopt(payload, mine)
         self._mark()
+
+    def _record_revision(self, was: dict[str, Any], mine: dict[str, Any]) -> None:
+        """Append what THIS writer just changed about the record, with both values.
+
+        `session.json` is rewritten on every save, so until this existed the record
+        held only its latest state and every earlier one was gone: a study that ran
+        forty turns on one model and a hundred on another looked, afterwards, like a
+        study that had only ever used the second, and `tokens` is one total with no
+        way to split it back. The transcript is append-only (`messages.jsonl`) and so
+        is this, and between them nothing about a study is now written over in place.
+
+        Only `REVISED` fields, which is the setup rather than the accounting. Tokens,
+        the job table and the capture sequence change on almost every save, and their
+        history is the transcript's rather than a second copy of it here.
+
+        Only what this Store itself changed, which is `was != mine` rather than
+        `was != payload`. The merge in `save()` means a field another process changed
+        comes back in `payload` to a Store that never touched it -- recording that
+        would write the same change twice, once from each process, and attribute it to
+        both. The writer that made the change is the one that has it in `mine`.
+
+        Best-effort on purpose: a record of what changed is worth less than the change
+        itself, so an unwritable log is dropped rather than failing the save that
+        carries the real update. The same reasoning as `_read`'s refusal to swallow a
+        torn record, pointed the other way -- this file is a convenience, that one is
+        the study.
+        """
+        if not was:
+            return  # the study's first save is its creation, not a revision of it
+        changes = {
+            field: {"from": was.get(field), "to": mine[field]}
+            for field in REVISED
+            if field in mine and was.get(field) != mine[field]
+        }
+        if not changes:
+            return
+        row = {"at": _now(), "changes": changes}
+        try:
+            with self._revisions_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, default=str) + "\n")
+        except OSError:
+            pass
+
+    def revisions(self) -> list[dict[str, Any]]:
+        """Every recorded change to this study's record, oldest first.
+
+        Empty for a study nobody changed and for every study made before this was
+        recorded, which is not distinguished: a study with no log is a study whose
+        earlier states were never kept, and inventing one from `created_at` would be
+        inventing history. A half-written final line is dropped, as the transcript
+        reader does, since this is read while a session is appending to it.
+        """
+        rows: list[dict[str, Any]] = []
+        try:
+            text = self._revisions_path.read_text(encoding="utf-8")
+        except OSError:
+            return rows
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
 
     def _adopt(self, payload: dict[str, Any], mine: dict[str, Any]) -> None:
         """Take on the fields somebody else changed, in the record just written.
