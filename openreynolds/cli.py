@@ -2155,8 +2155,12 @@ def _check_native_foam() -> tuple[str, bool, str]:
         if local_backend._numpy_here(backend):
             return "local solvers (native)", True, (
                 "no OpenFOAM here, so its meshers and solvers will fail. The toolbox's "
-                "own solvers do not need it: lbm.py (lattice Boltzmann) and sph.py "
-                "both run in numpy, and advise.py says which suits a case. For "
+                "own solvers do not need it: lbm.py (lattice Boltzmann), sph.py, "
+                "tracks.py (particles) and panel.py (potential flow) all solve in "
+                "numpy, and acoustics.py and wind_comfort.py need no solve at all. "
+                "benchmarks/tutorials/README.md's tier 1 lists every case and what it "
+                "is measured against; run_tier1.py runs them. advise.py says which "
+                "suits a case. For "
                 "OpenFOAM, set OPENREYNOLDS_FOAM_BASHRC to an installation's "
                 "etc/bashrc, or use the Docker workspace (--local)")
         return "local solvers (native)", False, (

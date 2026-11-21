@@ -131,13 +131,20 @@ def test_the_tier_two_page_names_nothing_that_is_not_a_template():
 
 
 def test_the_numpy_solvers_are_findable_without_an_openfoam():
-    """The two cheapest cases in the repository and the only ones that need no OpenFOAM,
-    no workspace, no model and no account. They are also the two whose graders *solve*
-    rather than reading a finished run, so they are the only cases a reader can re-derive
-    from nothing but this package."""
+    """The cheapest cases in the repository: no OpenFOAM, no workspace, no model, no
+    account. These three graders *solve* rather than reading a finished run, which is
+    what lets a reader re-derive the answer from nothing but this package.
+
+    The docstring here used to say "the two cheapest cases ... and the only ones",
+    written when `lbm/` and `sph/` were the whole of it. `particles/` solves too, and
+    `panel.py`, `acoustics.py` and `wind_comfort.py` need no OpenFOAM either, so "the
+    only ones" was wrong in the direction of underselling the product -- which is still
+    wrong, and in the one place a reader checks what a laptop can do.
+    """
     text = flat(index())
     for command in ("python benchmarks/lbm/grade.py poiseuille",
-                    "python benchmarks/sph/grade.py sloshing"):
+                    "python benchmarks/sph/grade.py sloshing",
+                    "python benchmarks/particles/grade.py tracer"):
         assert command in text, f"the index does not show how to run {command}"
     assert "numpy only" in text.lower(), (
         "the index does not say that a tier of these cases needs nothing installed")
