@@ -488,12 +488,88 @@ def parse_runs(values: list[str]) -> dict[float, Path]:
     return runs
 
 
+def synthetic_site(hours_by_sector: dict[float, list[float]]) -> dict[str, Any]:
+    """A site file with the hours stated rather than fetched, for `--check`.
+
+    Twelve 30-degree sectors, because that is what `site.py` writes and what
+    `nearest_sector` expects to be able to divide 360 by. A sector absent from
+    `hours_by_sector` is a real thing -- a direction the wind never blew from -- and
+    carries a histogram of zeros rather than no histogram, which is what the file
+    would hold for it.
+    """
+    sectors = []
+    total = sum(sum(v) for v in hours_by_sector.values())
+    for index in range(12):
+        centre = index * 30.0
+        bins = hours_by_sector.get(centre, [])
+        counted = sum(bins)
+        sectors.append({
+            "centre_deg": centre,
+            "hours": counted,
+            "frequency": (counted / total) if total else 0.0,
+            "speed_10m_histogram": {"hours": list(bins) or [0.0],
+                                    "bin_width_ms": 1.0},
+        })
+    return {"weather": {"hours": total, "sector_width_deg": 30.0, "sectors": sectors}}
+
+
+def formula_check(threshold: float = 5.0) -> int:
+    """Compose a known year and compare with the closed form.
+
+    The year: 600 hours from 240 degrees and 400 from 270, spread over 1 m/s bins as
+    100 hours in each of 0-1 ... 5-6 for the first and 100 in each of 2-3 ... 5-6 for
+    the second. Nothing is fitted and nothing is read.
+
+    At K = 1 and a 5 m/s threshold the answer is arithmetic: only the 5-6 bin is
+    entirely above 5, so 100 + 100 = 200 of 1000 hours, exactly 0.2.
+
+    At K = 2 the required 10 m speed is 2.5, so the 2-3 bin contributes its upper
+    half: sector one gives 50 + 100 + 100 + 100 = 350 and sector two 50 + 100 + 100 +
+    100 = 350, which is 700 of 1000, exactly 0.7. That is the half-bin spreading as
+    well as the amplification, and a step at the bin centre would give 0.6 or 0.8.
+
+    Exits 1 on any disagreement beyond 1e-12, because both targets are exact.
+    """
+    one = [100.0] * 6                      # 0-1 .. 5-6 m/s, 600 hours from 240
+    two = [0.0, 0.0] + [100.0] * 4         # 2-3 .. 5-6 m/s, 400 hours from 270
+    site = synthetic_site({240.0: one, 270.0: two})
+    sectors = sectors_of(site)
+
+    bad = False
+    for k_value, want in ((1.0, 0.2), (2.0, 0.7)):
+        k = np.full((3, 3), k_value, dtype=float)
+        found = compose({240.0: k, 270.0: k}, sectors, threshold)
+        got = float(np.asarray(found["probability"]).ravel()[0])
+        spread = float(np.ptp(np.asarray(found["probability"])))
+        off = got - want
+        print(f"  K = {k_value:g}: exceedance {got:.12f}, exact {want:.12f} "
+              f"({off:+.2e}), uniform across the grid to {spread:.2e}")
+        bad = bad or abs(off) > 1e-12 or spread > 1e-12
+        if abs(found["sector_coverage"] - 1.0) > 1e-12:
+            print(f"  sector coverage {found['sector_coverage']} and not 1")
+            bad = True
+
+    # A point not in the flow stays not in the flow: NaN must not read as calm.
+    k = np.full((3, 3), 1.0)
+    k[1, 1] = np.nan
+    found = compose({240.0: k, 270.0: k}, sectors, threshold)
+    centre = float(np.asarray(found["probability"])[1, 1])
+    print(f"  a NaN point reads {centre} (not 0, which would paint it the calmest)")
+    bad = bad or not math.isnan(centre)
+
+    print("DISAGREES" if bad else "agrees")
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="A wind rose, and a pedestrian comfort exceedance map from "
                     "per-direction runs.")
     parser.add_argument("--site", type=Path, default=Path("site.json"),
                         help="The file `openreynolds site` wrote. Default site.json.")
+    parser.add_argument("--check", action="store_true",
+                        help="compose a year whose answer is known and print it beside "
+                             "the closed form; needs no site file and no runs")
     parser.add_argument("--rose", type=Path, help="Draw the wind rose here.")
     parser.add_argument("--run", action="append", default=[], metavar="BEARING=CASE",
                         help="A solved case and the bearing the wind blew FROM in it. "
@@ -521,6 +597,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--csv", type=Path, help="Write the grid as x,y,percent here.")
     parser.add_argument("--json", action="store_true", help="Print the findings as JSON.")
     args = parser.parse_args(argv)
+
+    if args.check:
+        print('composing a year whose answer is known: 600 h from 240 deg, 400 h from 270,')
+        print('1 m/s bins, threshold 5 m/s, amplification uniform.')
+        return formula_check()
 
     try:
         site = site_abl.load_site(args.site)
