@@ -85,38 +85,17 @@ import numpy as np
 import pytest
 
 
-# --------------------------------------------------------------------------------------
-# SKIPPED: the case does not solve, and that is recorded rather than worked around.
+# The case diverged at dy 0.025 and the skip here recorded that. The mesh is now the ESI
+# tutorial's own cell height, dy 0.05, which is the one size mhdFoam is known to be stable
+# at -- the tutorial runs to endTime 2 there, and it is stable BECAUSE it does not resolve
+# the Hartmann layer (L/Ha is exactly one cell at its Ha of 20). At this template's Ha of 5
+# the layer is 0.2, so four cells still fall inside it: resolved, at a cell the scheme
+# tolerates. dt is the tutorial's 0.005 and the magnetic Courant number 0.5 against its
+# stable 2.0.
 #
-# `mhdFoam` dies with SIGFPE (exit -8) inside `smoothSolver` on the vector equation, and
-# it is divergence rather than a startup transient. Measured on run 44825570959's
-# `journey` job, after the uniform mesh and the measured dt bracket of commit b08f8fd:
-#
-#     Time = 0.27    Courant Number mean: 0.8399093481  max: 15.13680198
-#     Time = 0.275   Courant Number mean: 1.802194416   max: 38.91722904
-#     #1 Foam::sigFpe::sigHandler ... #4 Foam::smoothSolver::solve
-#
-# The magnetic flux divergence error stays exactly 0 throughout, so the projection is
-# sound; a field is growing. `mhdFoam.C`'s own Description says its two magnetic normal
-# stresses do not cancel discretely and both are `fvc::` rather than `fvm::`, so the
-# surviving explicit force is not stabilised by a smaller step alone.
-#
-# What IS verified and stays: the closed form and the grader, by
-# `tests/test_benchmark_mhd.py` (14 tests, laptop-runnable), which holds the exact
-# profile at three Hartmann numbers and rejects five wrong ones at a different check
-# each. `benchmarks/mhd/README.md` records the failure and `benchmarks/README.md`'s MHD
-# rows are deliberately empty, because a measured failure is a measurement and not an
-# agreement.
-#
-# These tests are kept rather than deleted: they are the harness that will grade the case
-# the moment it solves, and deleting them would lose the only description of what the run
-# has to produce.
-# --------------------------------------------------------------------------------------
-pytestmark = pytest.mark.skip(
-    reason="mhdFoam diverges on this case: Courant max 15.1 at t=0.27 and 38.9 at "
-           "t=0.275, then SIGFPE in the vector solve. The closed form and the grader "
-           "are verified by tests/test_benchmark_mhd.py; benchmarks/README.md's MHD "
-           "rows are deliberately empty. See the comment above and issue #249.")
+# So the skip is lifted and this job is the test of that, which is what it is for. If it
+# diverges again, the next thing to try is Ha 4 at the same dy (five cells in the layer),
+# and issue #249 carries the arithmetic.
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[0]

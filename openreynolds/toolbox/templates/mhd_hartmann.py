@@ -192,6 +192,21 @@ magnetic Courant number, the two data points are:
 
     dy 0.05 (ESI tutorial, uniform)     c_A*dt/dy = 2.0    runs
     dy 0.00633 (graded, this template)  c_A*dt/dy = 15.8   diverges
+    dy 0.025 (uniform, 80 across)       c_A*dt/dy = 0.5    DIVERGES ANYWAY
+
+**That third line is the one that matters, and it says the bracket is the wrong
+invariant.** The tutorial is stable at 2.0 and this case diverged at 0.5, so `c_A*dt/dy`
+is not what governs stability here. What does is `dy` on its own: the surviving explicit
+force from the two `fvc::` magnetic stresses is of order `B0^2/(mu*rho*dy)` and contains
+no `dt` at all, so no reduction of the step can reach it.
+
+And the tutorial's `dy` of 0.05 is not incidental. At its Ha of 20 the Hartmann layer
+`L/Ha` is 0.05, which is **exactly one cell**: the tutorial is stable precisely because
+it does NOT resolve the layer. Resolving it, which this template set out to do and which
+is right as physics, is what breaks the solver. So the mesh here is now the tutorial's
+cell height and the Hartmann number is low enough that four cells still fall inside the
+layer -- resolved, at a cell size the scheme tolerates, rather than resolved finely at
+one it does not.
 
 so the limit is somewhere between 2 and 15.8 and nothing here knows where. `delta_t_s()`
 asks for 0.5, which is inside the one stable datum by a factor of four, and prints what
@@ -249,7 +264,14 @@ LENGTH_RATIO = 20.0      # channel length in half-heights
 SAMPLE_AT_RATIO = 15.0   # where the profile is sampled, in half-heights
 
 CELLS_ALONG = 100        # cells along the channel
-CELLS_ACROSS = 80        # cells across it, uniform: see the docstring for why not graded
+CELLS_ACROSS = 40        # cells across it, uniform -- dy 0.05, the ESI tutorial's
+#                          own cell height, which is the one size mhdFoam is known
+#                          to be stable at. 80 gave dy 0.025 and diverged at
+#                          t ~= 0.27 with the Courant number running 15 -> 39. The
+#                          time step was not the knob: the spurious explicit force
+#                          from the two fvc:: magnetic stresses is of order
+#                          B0^2/(mu*rho*dy) and does not contain dt, which is why
+#                          two reductions of dt did not help. See the docstring.
 
 CELLS_PER_LAYER = 4      # below this many cells inside L/Ha the summary warns
 
