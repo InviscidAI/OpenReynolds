@@ -1446,7 +1446,7 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") 
     """
     entries: list[str] = []
     entries += force_coeffs(plan, flow, opts)
-    entries += wall_fields(plan, study)
+    entries += wall_fields(plan, study, model)
     entries += field_average(opts, model)
     if opts.get("tracer"):
         entries += scalar_transport(str(opts["tracer"]), opts.get("schmidt"))
@@ -1455,7 +1455,7 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") 
     return "\n" + "\n".join(["functions", "{", *entries, "}"])
 
 
-def wall_fields(plan: Plan, study: str) -> list[str]:
+def wall_fields(plan: Plan, study: str, model: str = "laminar") -> list[str]:
     """`wallShearStress` as a written field, where the case has a wall.
 
     Three readers in this toolbox want these two fields and no case generated here
@@ -1495,8 +1495,17 @@ def wall_fields(plan: Plan, study: str) -> list[str]:
         return []
     if not any(entry.get("type") == "wall" for entry in plan.mesh.patches):
         return []
+    # y+ decides whether a wall TREATMENT is valid, and a laminar case has no wall
+    # treatment, so it decides nothing there -- which is why #234's contract (a bare
+    # walled case gets no y+) is kept for laminar and relaxed for turbulent. On a
+    # turbulent run it is the number that says whether the answer means anything:
+    # `wall.py` exists because a generated O-grid landed at y+ about 1200 under a form
+    # written for 300. `--yplus` still forces it whatever the model, which is what
+    # `score.py` uses to hold a design study inside a band.
+    turbulent = str(model or "laminar").lower() != "laminar"
+    wanted = ("wallShearStress", "yPlus") if turbulent else ("wallShearStress",)
     lines: list[str] = []
-    for name in ("wallShearStress",):
+    for name in wanted:
         lines += [f"    {name}", "    {",
                   f"        type            {name};",
                   "        libs            (fieldFunctionObjects);",
