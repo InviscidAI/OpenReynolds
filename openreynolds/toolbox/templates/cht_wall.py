@@ -189,9 +189,14 @@ carries both a fluid region and a solid one. Its region names are the tutorial's
 so a differently named tutorial is one edit.
 """
 
-TUTORIAL_FLUID = "bottomAir"
+TUTORIAL_FLUID = "bottomWater"
 TUTORIAL_SOLID = "heater"
-"""The tutorial's own region names, which are not this case's."""
+"""The tutorial's own region names, which are not this case's.
+
+Read off the image rather than remembered: the first attempt said 'bottomAir' and the
+refusal printed what was actually beside it, which is bottomWater, g, heater, leftSolid,
+regionProperties, rightSolid, topAir. bottomWater is the liquid region, which is what this
+case wants: its fluid is water-like at rho 1000 and Cp 4181."""
 
 COUPLED_PATCH = re.compile(r"^\s*(\w+_to_\w+)$", re.M)
 """A region-to-region patch name in a tutorial field file, which is what `splitMeshRegions`
