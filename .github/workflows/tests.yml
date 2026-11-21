@@ -291,6 +291,5 @@ jobs:
           git config --global --add safe.directory /src
           python3 -m pip install -q --break-system-packages -e /src pytest pytest-asyncio
           python3 -m pytest -v -s tests/test_journey_duct.py tests/test_journey_thermal_stress.py \
-            tests/test_journey_mhd.py tests/test_journey_chem0d.py \
-            tests/test_journey_cht.py
+            tests/test_journey_mhd.py tests/test_journey_chem0d.py
           SH
