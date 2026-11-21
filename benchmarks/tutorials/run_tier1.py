@@ -82,6 +82,12 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a tracer orbit in solid-body rotation",
      ("benchmarks/particles/grade.py", "tracer"),
      "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("quasi-1D compressible relations",
+     ("openreynolds/toolbox/nozzle.py", "--check"),
+     "exact closed forms, and three identities: A/A* = 1 at the throat,"
+     " the Prandtl relation M1* M2* = 1 derived independently of the jump"
+     " relations it checks, and total pressure falling through every shock",
+     False, True),
     ("the laminar flat plate, Blasius",
      ("openreynolds/toolbox/blasius.py", "--check"),
      "the Blasius similarity solution, exact: the published f''(0) ="
