@@ -35,6 +35,22 @@ studies are steady and a still picture of a steady field is where the story usua
 - `--orbit N`     N frames of the camera swinging around the subject. The flow is fixed;
                   the eye moves. This is what makes a 3D result legible as 3D.
 - `--sweep N`     N frames of a slice plane travelling through the domain.
+- `--flythrough N`  the same N frames of a scene, on a camera path rather than a circle,
+                  behind a title card. An orbit is one shot at one distance from one
+                  height: it reads as a turntable. This establishes the subject wide and
+                  high, descends and closes on it, passes it, and climbs back out, with
+                  the timing eased so the camera starts and stops at rest. The path is
+                  `flight_path`, which is a list of camera stations and nothing else, so
+                  what the camera does is readable and checkable without rendering a
+                  frame.
+
+There is no soundtrack, and `--flythrough` does not offer one. The image carries no
+audio beyond the encoder imageio bundles, nothing in a finished case is a sound, and
+the one thing here that does write a `.wav` -- `acoustics.py`, from a real pressure
+history -- is a measurement rather than a score. Adding a dependency to generate music
+is the wrong trade for a repository whose rendering stack is deliberately this small,
+and a synthesised drone over a flow field would be invented content in a file whose
+whole point is that the picture carries the data. So: camera path and titles, no audio.
 
 Frames land in `<out>/<name>_frames/` with a `frames.json` beside them, which is the
 contract `openreynolds video` and the harness's `Gallery` already read -- so the encoding
@@ -46,6 +62,7 @@ one. Nothing here imports imageio or shells out to ffmpeg.
     python3 showcase.py /work/case --scene streamlines --seed-plane inlet
     python3 showcase.py /work/case --scene surface --patch hull
     python3 showcase.py /work/case --scene surface --surface-field wallShearStress
+    python3 showcase.py /work/case --scene section --flythrough 160 --fps 24
     python3 showcase.py /work/case --all            # one of each, plus an orbit
 
 It degrades rather than fails: a scene that cannot be built says why and the others still
@@ -454,7 +471,8 @@ def add_body(plotter, context) -> None:
 
 def scene_vortices(mesh, out: Path, title: str, percentile: float = 99.0,
                    frames: int = 0, fps: float = 20.0, sweep: int = 0,
-                   context=None, refine: int = 0, smooth: int = 24) -> list[Path]:
+                   context=None, refine: int = 0, smooth: int = 24,
+                   fly: int = 0, card: tuple[str, str] = ("", "")) -> list[Path]:
     """Q-criterion isosurface, coloured by speed, with the body behind it."""
     note = ""
     if q_field(mesh) is None:
@@ -495,11 +513,13 @@ def scene_vortices(mesh, out: Path, title: str, percentile: float = 99.0,
     # Framed on the body, not the isosurface: at a high percentile the surface is a few
     # scattered fragments and framing on those points the camera at empty space.
     return _still_or_frames(draw, context if context is not None else surface,
-                            out, "vortices", frames, fps, sweep, mesh)
+                            out, "vortices", frames, fps, sweep, mesh,
+                            fly=fly, card=card)
 
 
 def scene_streamlines(mesh, out: Path, title: str, count: int = 900,
-                      frames: int = 0, fps: float = 20.0, context=None) -> list[Path]:
+                      frames: int = 0, fps: float = 20.0, context=None,
+                      fly: int = 0, card: tuple[str, str] = ("", "")) -> list[Path]:
     """Streamtubes seeded across the inflow, coloured by speed."""
     speed = speed_of(mesh)
     vectors = "U" if "U" in mesh.point_data else ("u" if "u" in mesh.point_data else "")
@@ -557,12 +577,14 @@ def scene_streamlines(mesh, out: Path, title: str, count: int = 900,
         caption(plotter, title, f"{count} streamlines seeded across the inflow")
 
     return _still_or_frames(draw, context if context is not None else tubes,
-                            out, "streamlines", frames, fps, 0, mesh)
+                            out, "streamlines", frames, fps, 0, mesh,
+                            fly=fly, card=card)
 
 
 def scene_surface(block, out: Path, title: str, patch: str | None,
                   frames: int = 0, fps: float = 20.0,
-                  surface_field: str = "p") -> list[Path]:
+                  surface_field: str = "p",
+                  fly: int = 0, card: tuple[str, str] = ("", "")) -> list[Path]:
     """The body under a surface field -- its pressure by default, or its wall shear.
 
     The field was `p`, written in three places and settable from nowhere, on a script
@@ -586,7 +608,8 @@ def scene_surface(block, out: Path, title: str, patch: str | None,
                  **({} if field else {"color": "#c3ccd6"}))
         caption(plotter, title, f"patch '{name}', {surface.n_cells:,} faces")
 
-    return _still_or_frames(draw, surface, out, "surface", frames, fps, 0, None)
+    return _still_or_frames(draw, surface, out, "surface", frames, fps, 0, None,
+                            fly=fly, card=card)
 
 
 def _around(bounds, pad: float):
@@ -614,7 +637,8 @@ def _trimmed(values, low: float = 1.0, high: float = 99.0):
 def scene_section(block, mesh, out: Path, title: str, *, patch: str | None = None,
                   surface_field: str = "p", field: str = "speed", normal: str = "y",
                   cmap: str = "", surface_cmap: str = "", pad: float = 0.45,
-                  frames: int = 0, fps: float = 20.0) -> list[Path]:
+                  frames: int = 0, fps: float = 20.0,
+                  fly: int = 0, card: tuple[str, str] = ("", "")) -> list[Path]:
     """The body under a surface field, cut by one plane through the flow around it.
 
     The two scenes either side of this one each answer half a question. `surface` shows
@@ -686,11 +710,13 @@ def scene_section(block, mesh, out: Path, title: str, *, patch: str | None = Non
 
     # Framed on the body rather than the cut: the plane spans the whole tunnel and
     # framing on it puts the subject in the middle distance.
-    return _still_or_frames(draw, body, out, f"section_{scalars}", frames, fps, 0, None)
+    return _still_or_frames(draw, body, out, f"section_{scalars}", frames, fps, 0, None,
+                            fly=fly, card=card)
 
 
 def scene_slice(mesh, out: Path, title: str, field: str, normal: str,
-                frames: int = 0, fps: float = 20.0, sweep: int = 0) -> list[Path]:
+                frames: int = 0, fps: float = 20.0, sweep: int = 0,
+                fly: int = 0, card: tuple[str, str] = ("", "")) -> list[Path]:
     """A cut plane, styled like the rest."""
     speed = speed_of(mesh)
     scalars = speed if field in ("speed", "U", "u") else field
@@ -707,6 +733,7 @@ def scene_slice(mesh, out: Path, title: str, field: str, normal: str,
         caption(plotter, title, f"{normal}-normal cut")
 
     return _still_or_frames(draw, cut, out, f"slice_{scalars}", frames, fps, sweep, mesh,
+                            fly=fly, card=card,
                             sweep_axis=axis, sweep_scalars=scalars, sweep_cmap=cmap,
                             face_axis=axis)
 
@@ -727,6 +754,77 @@ def _camera(plotter, target, angle: float, elevation: float = 22.0, zoom: float 
         tuple(centre),
         (0, 0, 1),
     ]
+
+
+FLIGHT_SWING = 300.0
+FLIGHT_HIGH = 42.0
+FLIGHT_LOW = 14.0
+FLIGHT_WIDE = 0.42
+FLIGHT_CLOSE = 1.15
+TITLE_SECONDS = 1.6
+"""The flight, as five numbers. Everything else about it follows from the subject's own
+bounding box, because that is the only scale a case hands over.
+
+`FLIGHT_SWING` is less than a full turn on purpose: 360 degrees ends the shot on the
+frame it opened with, which is the thing that makes an orbit read as a turntable rather
+than as a move. `FLIGHT_HIGH` to `FLIGHT_LOW` is the descent -- a three-quarter
+establishing height down to nearly the subject's own level at the pass, which is the
+angle a body in a flow is recognisable from. `FLIGHT_WIDE` and `FLIGHT_CLOSE` are the
+zoom at the ends and at the pass; `_camera` divides its viewing radius by the zoom, so
+below one is further out. They are a ratio rather than a distance because the distance
+is the subject's own diagonal, which is the only length in the picture that means
+anything. `TITLE_SECONDS` is how long the card holds before anything moves."""
+
+
+def flight_path(frames: int) -> list[tuple[float, float, float]]:
+    """`(azimuth, elevation, zoom)` per frame: the camera path, as data.
+
+    Separated from the rendering so that what the camera does can be checked by
+    arithmetic rather than by watching a video -- the only way a motion defect in a
+    sequence of a hundred and sixty renders gets caught without a person's eye on it,
+    and the same reason `frames.json` exists.
+
+    Time is eased rather than linear: `s = (1 - cos(pi*u))/2`, whose derivative is zero
+    at both ends, so the camera accelerates out of the title card and settles at the
+    last frame instead of stopping dead. A constant-rate move that begins and ends at
+    full speed is the single thing that makes a rendered flythrough look mechanical, and
+    it costs one line to fix.
+
+    Elevation and closeness both follow `sin(pi*s)`, so they are at their extreme at the
+    middle of the swing and back where they started at the end: one continuous descent
+    and climb rather than a set of keyframes with joins to get wrong. Closeness is
+    raised to 1.5 so the approach holds wide a little longer and the pass is quicker,
+    which is where the subject is largest and the eye has least time.
+    """
+    if frames <= 0:
+        return []
+    if frames == 1:
+        return [(235.0, FLIGHT_HIGH, FLIGHT_WIDE)]
+    out: list[tuple[float, float, float]] = []
+    for index in range(frames):
+        u = index / (frames - 1)
+        s = (1.0 - math.cos(math.pi * u)) / 2.0
+        arc = math.sin(math.pi * s)
+        out.append((
+            235.0 + FLIGHT_SWING * s,
+            FLIGHT_HIGH - (FLIGHT_HIGH - FLIGHT_LOW) * arc,
+            FLIGHT_WIDE + (FLIGHT_CLOSE - FLIGHT_WIDE) * arc ** 1.5,
+        ))
+    return out
+
+
+def title_card(plotter, text: str, sub: str = "") -> None:
+    """The opening title, large and across the middle, instead of the corner caption.
+
+    Centred by character count rather than by measuring the rendered string: VTK will
+    not give a text actor's width before it is on screen, and a title two characters off
+    centre is not a defect worth a second render pass to remove. The constant is the
+    advance width of this font at this size, measured on the frames this writes."""
+    plotter.add_text(text, position=(max(0.02, 0.5 - 0.0092 * len(text)), 0.53),
+                     viewport=True, font_size=30, color="#f2f6f9")
+    if sub:
+        plotter.add_text(sub, position=(max(0.02, 0.5 - 0.0045 * len(sub)), 0.47),
+                         viewport=True, font_size=13, color="#8fa0ad")
 
 
 def _sidecar(directory: Path, name: str, fps: float, count: int, expected: int) -> None:
@@ -769,7 +867,12 @@ def _face_on(plotter, subject, axis) -> None:
 
 def _still_or_frames(draw, subject, out: Path, name: str, frames: int, fps: float,
                      sweep: int, mesh, sweep_axis=None, sweep_scalars=None,
-                     sweep_cmap=None, face_axis=None) -> list[Path]:
+                     sweep_cmap=None, face_axis=None, fly: int = 0,
+                     card: tuple[str, str] = ("", "")) -> list[Path]:
+    if fly:
+        head, sub = card
+        return _flythrough(draw, subject, out, name, fly, fps,
+                           head or name.replace("_", " "), sub)
     if sweep and mesh is not None and sweep_axis is not None:
         return _sweep(out, name, sweep, fps, mesh, sweep_axis, sweep_scalars, sweep_cmap)
     if frames:
@@ -781,6 +884,82 @@ def _still_or_frames(draw, subject, out: Path, name: str, frames: int, fps: floa
     else:
         _camera(plotter, subject, 235.0)
     return [save(plotter, out / f"{name}.png")]
+
+
+def _write_frame(plotter, target: Path) -> Path:
+    """One frame, written whole or not at all, then closed.
+
+    The temp name keeps the `.png` on the end -- `.frame_0007.part.png`, not
+    `.frame_0007.png.part`. The second form is what this file used in all three of its
+    frame loops, and pyvista validates the extension it is handed:
+
+        ValueError: Unsupported extension .part
+        Must be one of the following: ['.png', '.jpeg', '.jpg', '.bmp', '.tif', '.tiff']
+
+    So on pyvista 0.48.4 every `--orbit` and every `--sweep` frame raised, the scene's
+    own `except Exception` swallowed it, and the command printed one line and exited 1
+    with an empty frames directory. Measured by running `showcase.py --scene slice
+    --orbit 3` on `studies/20260906-091113-f9cf/.../cylRe100` (139,286 cells) against
+    `origin/main`: three frames asked for, none written. `animate.py:761` has had the
+    right form all along, which is where this one came from.
+
+    The dotted prefix and the rename are the part that was right: a half-written PNG
+    under a name the mirror matches is a frame that arrives home truncated, and a
+    sequence is read by whatever is on disk when it is read."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(f".{target.stem}.part{target.suffix}")
+    plotter.screenshot(str(part))
+    plotter.close()
+    part.replace(target)
+    return target
+
+
+def _flythrough(draw, subject, out: Path, name: str, frames: int, fps: float,
+                title: str, sub: str = "") -> list[Path]:
+    """The title card, then the flight. Written frame by frame, like the orbit.
+
+    The card is the scene's own first frame with the caption replaced by a title across
+    the middle, rather than a black slate: a hold on the opening composition reads as a
+    title *of this*, and a slate reads as a file that has not loaded. It is rendered
+    once and copied, because thirty identical renders of a static frame is thirty times
+    the cost of one for a frame nobody can tell apart.
+
+    One directory and one `frames.json` for card and flight together, so the encoder on
+    the user's machine assembles the whole thing from the contract it already reads
+    (`encode.py`, `openreynolds video`) with nothing new to learn."""
+    directory = out / f"{name}_flythrough_frames"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = flight_path(frames)
+    held = max(1, int(round(TITLE_SECONDS * max(fps, 1e-6))))
+    total = held + len(path)
+    written: list[Path] = []
+
+    plotter = stage(FRAME_WINDOW)
+    draw(plotter)
+    title_card(plotter, title, sub)
+    angle, elevation, zoom = path[0]
+    _camera(plotter, subject, angle, elevation, zoom)
+    first = _write_frame(plotter, directory / "frame_0000.png")
+    written.append(first)
+    card = first.read_bytes()
+    for index in range(1, held):
+        target = directory / f"frame_{index:04d}.png"
+        part = target.with_name(f".{target.stem}.part{target.suffix}")
+        part.write_bytes(card)
+        part.replace(target)
+        written.append(target)
+        _sidecar(directory, f"{name}_flythrough", fps, len(written), total)
+    print(f"  {name} title card, {held} frames", flush=True)
+
+    for step, (angle, elevation, zoom) in enumerate(path):
+        plotter = stage(FRAME_WINDOW)
+        draw(plotter)
+        _camera(plotter, subject, angle, elevation, zoom)
+        written.append(_write_frame(plotter,
+                                    directory / f"frame_{held + step:04d}.png"))
+        _sidecar(directory, f"{name}_flythrough", fps, len(written), total)
+        print(f"  {name} flythrough {step + 1}/{len(path)}", flush=True)
+    return written
 
 
 def _orbit(draw, subject, out: Path, name: str, frames: int, fps: float) -> list[Path]:
@@ -796,12 +975,7 @@ def _orbit(draw, subject, out: Path, name: str, frames: int, fps: float) -> list
         plotter = stage(FRAME_WINDOW)
         draw(plotter)
         _camera(plotter, subject, 360.0 * index / frames)
-        target = directory / f"frame_{index:04d}.png"
-        part = directory / f".{target.name}.part"
-        plotter.screenshot(str(part))
-        plotter.close()
-        part.replace(target)
-        written.append(target)
+        written.append(_write_frame(plotter, directory / f"frame_{index:04d}.png"))
         _sidecar(directory, name, fps, len(written), frames)
         print(f"  {name} frame {index + 1}/{frames}", flush=True)
     return written
@@ -828,12 +1002,7 @@ def _sweep(out: Path, name: str, frames: int, fps: float, mesh, axis,
                      clim=[float(np.nanmin(mesh[scalars])), float(np.nanmax(mesh[scalars]))])
         caption(plotter, name.replace("_", " "), f"station {station:.3g} m")
         _face_on(plotter, mesh, axis)
-        target = directory / f"frame_{index:04d}.png"
-        part = directory / f".{target.name}.part"
-        plotter.screenshot(str(part))
-        plotter.close()
-        part.replace(target)
-        written.append(target)
+        written.append(_write_frame(plotter, directory / f"frame_{index:04d}.png"))
         _sidecar(directory, f"{name}_sweep", fps, len(written), frames)
         print(f"  {name} sweep {index + 1}/{frames}", flush=True)
     return written
@@ -866,6 +1035,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="streamline seeds. A few hundred reads as flow; a few thousand reads as a curtain.")
     ap.add_argument("--orbit", type=int, default=0, metavar="N", help="N frames, camera going round")
     ap.add_argument("--sweep", type=int, default=0, metavar="N", help="N frames, plane travelling")
+    ap.add_argument("--flythrough", type=int, default=0, metavar="N",
+                    help="N frames on a camera path -- wide and high, down and in past "
+                         "the subject, back out -- behind a title card. No audio; see "
+                         "the note at the top of this file for why not.")
     ap.add_argument("--fps", type=float, default=20.0)
     ap.add_argument("--title", default="", help="what to caption the pictures with")
     ap.add_argument("--refine", type=int, default=0, metavar="POINTS",
@@ -894,26 +1067,33 @@ def main(argv: list[str] | None = None) -> int:
     for scene in scenes:
         label = f"{title}  |  {scene}"
         orbit = args.orbit if (not args.all or scene == "vortices") else 0
+        fly = args.flythrough if (not args.all or scene == "vortices") else 0
+        card = (title, f"{scene}, {sub}, {mesh.n_cells:,} cells")
         try:
             if scene == "vortices":
                 written += scene_vortices(mesh, out, label, args.percentile, orbit,
                                           args.fps, args.sweep, context=context,
-                                          refine=args.refine, smooth=args.smooth)
+                                          refine=args.refine, smooth=args.smooth,
+                                          fly=fly, card=card)
             elif scene == "streamlines":
                 written += scene_streamlines(mesh, out, label, args.seeds, orbit,
-                                             args.fps, context=context)
+                                             args.fps, context=context,
+                                             fly=fly, card=card)
             elif scene == "surface":
                 written += scene_surface(block, out, label, args.patch, orbit, args.fps,
-                                         surface_field=args.surface_field)
+                                         surface_field=args.surface_field,
+                                         fly=fly, card=card)
             elif scene == "section":
                 written += scene_section(block, mesh, out, label, patch=args.patch,
                                          surface_field=args.surface_field,
                                          field=args.field, normal=args.normal,
                                          cmap=args.cmap, surface_cmap=args.surface_cmap,
-                                         frames=orbit, fps=args.fps)
+                                         frames=orbit, fps=args.fps,
+                                         fly=fly, card=card)
             else:
                 written += scene_slice(mesh, out, label, args.field, args.normal,
-                                       orbit, args.fps, args.sweep)
+                                       orbit, args.fps, args.sweep,
+                                       fly=fly, card=card)
         except SystemExit:
             raise
         except Exception as exc:  # noqa: BLE001 - one scene failing is not the gallery failing

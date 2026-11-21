@@ -1416,13 +1416,14 @@ SOLVERS = {"steady": "simpleFoam", "transient": "pimpleFoam", "mesh": ""}
 
 
 def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") -> str:
-    """`forceCoeffs`, a residual log, and -- for an LES -- the time average.
+    """`forceCoeffs`, a residual log, the two wall fields, and -- for an LES -- the
+    time average.
 
-    Three objects and three reasons, which is why they are assembled rather than
-    written as one block: a case with no body takes no forces, and a case that is not
-    resolving eddies has no mean to take. A block with nothing in it is left out
-    entirely, because an empty `functions {}` reads as something that was meant to be
-    filled in.
+    Four objects and four reasons, which is why they are assembled rather than
+    written as one block: a case with no body takes no forces, a case with no wall has
+    no wall quantities, and a case that is not resolving eddies has no mean to take. A
+    block with nothing in it is left out entirely, because an empty `functions {}`
+    reads as something that was meant to be filled in.
 
     controlDict had no `functions` block at all, while `preflight.py` warns when a
     forceCoeffs object is missing and `results.py` reads `forceCoeffs.dat` -- both ends
@@ -1445,12 +1446,72 @@ def function_objects(plan: Plan, flow: Flow, opts, study: str, model: str = "") 
     """
     entries: list[str] = []
     entries += force_coeffs(plan, flow, opts)
+    entries += wall_fields(plan, study, model)
     entries += field_average(opts, model)
     if opts.get("tracer"):
         entries += scalar_transport(str(opts["tracer"]), opts.get("schmidt"))
     if not entries:
         return ""
     return "\n" + "\n".join(["functions", "{", *entries, "}"])
+
+
+def wall_fields(plan: Plan, study: str, model: str = "laminar") -> list[str]:
+    """`wallShearStress` as a written field, where the case has a wall.
+
+    Three readers in this toolbox want these two fields and no case generated here
+    ever produced them. `showcase.py --scene surface --surface-field wallShearStress`
+    draws the skin-friction map a drag number should be read beside
+    (`showcase.py:563-590`); `wall.py` derives the achieved y+ from the shear where the
+    function object is absent (`wall.py:807`); `reattach.py` reads the sign changes
+    along a wall and refuses without it, telling the person to "add the wallShearStress
+    function object and re-run" (`reattach.py:384-385`). All three end at the same
+    place: a reader built, a map drawn, and nothing upstream writing the field.
+
+    `tests/test_journey_duct.py:247-254` is the measurement. It runs the real pipeline
+    in CI and has to post-process the solved case itself, with the comment
+    "`case_gen.py` writes no functions block for a case with no body patch, so these
+    are asked for afterwards" -- and through the *solver*, because the generic
+    `postProcess` builds no momentum-transport model and these two objects need one.
+    That is the cost being removed: the two fields land in each written time directory
+    of a run that has a wall, written at the point where the transport model exists.
+
+    No `patches` entry. The object defaults to every wall patch in the mesh, which is
+    what is wanted here, and a hand-written list is a second place for a patch name to
+    be wrong. Skipped for `--study mesh`, which writes no solver and so has nothing for
+    it to ask the velocity gradient from.
+
+    **`yPlus` is deliberately not here, and `--yplus` remains the way to ask for it.**
+    None of the three readers above needs it: `reattach.py` does not mention y+ at all,
+    `showcase.py` draws the shear, and `wall.py`'s `from_wall_shear` exists precisely
+    for "a run that wrote the shear and never asked for y+". What does want the function
+    object is `score.py`, which reads `postProcessing/yPlus/` to hold a design study
+    inside a wall-treatment band, and that is a design study asking rather than every
+    case paying. Writing both by default would also contradict
+    `test_forces_are_computed_only_where_there_is_a_body_to_take_them`, which asserts a
+    walled case with no flag gets no y+ -- a contract worth keeping rather than quietly
+    inverting.
+    """
+    if not SOLVERS.get(study):
+        return []
+    if not any(entry.get("type") == "wall" for entry in plan.mesh.patches):
+        return []
+    # y+ decides whether a wall TREATMENT is valid, and a laminar case has no wall
+    # treatment, so it decides nothing there -- which is why #234's contract (a bare
+    # walled case gets no y+) is kept for laminar and relaxed for turbulent. On a
+    # turbulent run it is the number that says whether the answer means anything:
+    # `wall.py` exists because a generated O-grid landed at y+ about 1200 under a form
+    # written for 300. `--yplus` still forces it whatever the model, which is what
+    # `score.py` uses to hold a design study inside a band.
+    turbulent = str(model or "laminar").lower() != "laminar"
+    wanted = ("wallShearStress", "yPlus") if turbulent else ("wallShearStress",)
+    lines: list[str] = []
+    for name in wanted:
+        lines += [f"    {name}", "    {",
+                  f"        type            {name};",
+                  "        libs            (fieldFunctionObjects);",
+                  "        writeControl    writeTime;",
+                  "    }"]
+    return lines
 
 
 def average_from(opts) -> float:

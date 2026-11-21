@@ -245,10 +245,12 @@ def journey(tmp_path_factory) -> dict:
     log = case / "log.simpleFoam"
     log.write_text(solve.stdout, encoding="utf-8")
 
-    # 4. the two wall fields the post-processors look for. `case_gen.py` writes no
-    #    functions block for a case with no body patch, so these are asked for
-    #    afterwards -- through the solver, because the generic `postProcess` builds no
-    #    momentum-transport model and these two function objects need one.
+    # 4. the two wall fields the post-processors look for. `case_gen.wall_fields` now
+    #    writes both function objects for any case with a wall, so a run of this chain
+    #    produces them itself; this step stays because it is also the route a case
+    #    generated before that change takes, and because it is idempotent -- the same
+    #    field written twice at the same time is the same field. Through the solver and
+    #    not the generic `postProcess`, which builds no momentum-transport model.
     for func in ("yPlus", "wallShearStress"):
         run(f"post: simpleFoam -postProcess -func {func}",
             ["simpleFoam", "-case", case, "-postProcess", "-func", func, "-latestTime"],

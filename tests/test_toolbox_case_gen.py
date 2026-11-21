@@ -493,6 +493,67 @@ def test_dp_on_a_case_with_no_outlet_writes_the_inlet_probe_alone(case_gen, duct
     assert "    pInlet\n" in text and "pOutlet" not in text
 
 
+def test_the_wall_shear_is_written_where_the_case_has_a_wall(case_gen, tmp_path):
+    """The gap this closes. Three readers in the toolbox want `wallShearStress`
+    as a field and no case generated here ever produced it, so every one of
+    them ended at a refusal telling the person to post-process and re-run:
+    `showcase.py` draws the wall map (`showcase.py:563-590`), `wall.py` derives the
+    achieved y+ from the shear (`wall.py:807`), `reattach.py` refuses outright
+    (`reattach.py:384-385`). `tests/test_journey_duct.py:247-254` is the measurement --
+    it runs the real pipeline and post-processes the solved case itself, through the
+    solver, because the generic `postProcess` builds no momentum-transport model."""
+    walled = mesh_only(tmp_path, "walled")
+    rename_patches(walled, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
+    run(case_gen, walled, "--length", "0.1")
+    text = (walled / "system" / "controlDict").read_text()
+    assert "type            wallShearStress;" in text
+    # y+ is NOT here. None of the three readers needs it -- `reattach.py` does not
+    # mention it, `showcase.py` draws the shear, and `wall.py`'s `from_wall_shear` is
+    # written for "a run that wrote the shear and never asked for y+" -- and
+    # `test_forces_are_computed_only_where_there_is_a_body_to_take_them` asserts a
+    # walled case with no flag gets none. `--yplus` is how a design study asks.
+    assert "type            yPlus;" not in text
+    # Into each written time directory, which is where every reader looks for a field.
+    assert "writeControl    writeTime;" in text
+    # No patch list: both objects default to every wall in the mesh, and a hand-written
+    # list is a second place for a patch name to be wrong.
+    block = text.split("wallShearStress", 1)[1].split("}", 1)[0]
+    assert "patches" not in block
+
+
+def test_a_case_with_no_wall_gets_no_wall_quantities_and_no_empty_block(case_gen,
+                                                                       tmp_path):
+    """Two rules, and this is now the case that exercises both.
+
+    A `functions` block computing a wall shear on a case with no wall is a dictionary
+    that fails at start-up, and an entry nobody can read is not a feature. And a block
+    with nothing in it is left out entirely, because an empty `functions {}` reads as
+    something that was meant to be filled in.
+
+    The second rule used to be checked in `test_toolbox_les.py` on a case that had a
+    wall, which came out blockless only because `force_coeffs` returns nothing without
+    a patch named `body`. `wall_fields` gives that case two entries, so it no longer
+    demonstrates the rule and this one does: no wall, no body, not an LES, so there is
+    genuinely nothing to put anywhere."""
+    open_case = mesh_only(tmp_path, "nowall")
+    rename_patches(open_case, {"movingWall": ("inlet", "patch"),
+                               "fixedWalls": ("outlet", "patch")})
+    run(case_gen, open_case, "--length", "0.1")
+    text = (open_case / "system" / "controlDict").read_text()
+    assert "wallShearStress" not in text and "yPlus" not in text
+    assert "functions" not in text, "nothing to put in it, so no empty block"
+
+
+def test_a_mesh_only_study_asks_for_no_wall_quantities(case_gen, tmp_path):
+    """`--study mesh` writes no solver, so there is no momentum-transport model for
+    either object to ask the velocity gradient from."""
+    case = mesh_only(tmp_path, "meshonly")
+    rename_patches(case, {"movingWall": ("inlet", "patch"), "fixedWalls": ("walls", "wall")})
+    run(case_gen, case, "--length", "0.1", "--study", "mesh")
+    text = (case / "system" / "controlDict").read_text()
+    assert "wallShearStress" not in text and "yPlus" not in text
+
+
 def test_writing_over_a_case_needs_force(case_gen, duct):
     run(case_gen, duct, "--length", "0.1")
     with pytest.raises(SystemExit) as raised:

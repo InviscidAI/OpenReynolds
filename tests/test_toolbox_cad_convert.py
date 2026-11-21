@@ -142,14 +142,31 @@ def test_a_bad_unit_name_refuses_rather_than_being_ignored(cad, tmp_path):
 
 # -- the five readers no longer treat CAD as an unreadable surface -------------------
 
-SUFFIXES = (".step", ".stp", ".iges", ".igs")
+SUFFIXES = (".step", ".stp", ".iges", ".igs", ".brep")
 
 
-def test_every_reader_knows_the_four_suffixes():
+def test_every_reader_knows_the_cad_suffixes():
     for name in ("geometry_view", "first_look", "study_run", "preflight", "ladder"):
         module = load(name)
         known = tuple(s.lower() for s in module.CAD_SUFFIXES)
         assert set(SUFFIXES) <= set(known), name
+
+
+def test_a_brep_declares_no_unit_and_is_refused_without_one(cad, tmp_path):
+    """Not a gap in the reading: a BREP file has no unit field. OpenCASCADE writes the
+    raw coordinates and whatever wrote them knows what they were, so `--unit` is not a
+    fallback here but the only statement there is -- and the factor of 1000 between
+    millimetres and metres is invisible in every number downstream of it."""
+    path = tmp_path / "part.brep"
+    path.write_text("DBRep_DrawableShape\n", encoding="utf-8")
+    found = cad.declared_unit(path)
+    assert found["unit"] is None
+    assert "carries no unit" in found["evidence"]
+    with pytest.raises(cad.Refused) as raised:
+        cad.convert(path, tmp_path / "out.stl", clmax=0.001)
+    message = str(raised.value)
+    assert "declares no length unit" in message and "--unit" in message
+    assert "carries no unit" in message
 
 
 def test_geometry_view_gathers_cad_out_of_a_directory(tmp_path):
