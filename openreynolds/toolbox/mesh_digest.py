@@ -154,11 +154,35 @@ def report(data: dict) -> str:
     return "\n".join(lines)
 
 
+def _as_log(path: Path, kind: str) -> Path:
+    """`path` if it is a readable file, otherwise a refusal that names a way forward.
+
+    A case directory is the guess worth answering well: several toolbox scripts take
+    one and find the file themselves, so a session holding a case will try it here.
+    Opening a directory raises `IsADirectoryError` on POSIX and `PermissionError` on
+    Windows, so without this the failure is a traceback whose text depends on the
+    platform. The logs the directory does hold are listed, because that is the
+    information the caller needed and it is already in the argument they got wrong.
+    """
+    if path.is_dir():
+        logs = sorted(p.name for p in path.glob("log.*") if p.is_file())
+        found = ", ".join(logs[:8]) + ("" if len(logs) <= 8 else f" and {len(logs) - 8} more")
+        raise SystemExit(
+            f"refused: {path} is a directory, and this reads one {kind} log."
+            + (f" That directory holds {found}." if logs
+               else " No `log.*` file in it either.")
+            + " Name the log itself.")
+    if not path.is_file():
+        raise SystemExit(f"refused: no such file: {path}")
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("log", help="checkMesh log, or - for stdin")
     args = parser.parse_args()
-    text = sys.stdin.read() if args.log == "-" else Path(args.log).read_text(errors="replace")
+    text = (sys.stdin.read() if args.log == "-"
+            else _as_log(Path(args.log), "checkMesh").read_text(errors="replace"))
     print(report(parse(text)))
 
 
