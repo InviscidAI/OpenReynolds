@@ -132,7 +132,11 @@ def test_a_long_outage_is_counted_by_kind_rather_than_listed():
         capture.message(seq, "assistant", "x")
     capture.close(timeout=5)
 
-    said = warnings[0]
+    # The dropped line, found by what it says rather than by its position: `close`
+    # now says what it is about to send before it waits, so a session with a long
+    # transcript and a slow link does not look like it has hung on exit, and that
+    # notice is warnings[0].
+    said = next(w for w in warnings if "dropped" in w)
     assert "dropped 20 item(s)" in said
     assert "20 message(s)" in said
     assert "first was message seq 0 (assistant)" in said
@@ -345,3 +349,238 @@ def test_a_row_that_never_opens_is_said_rather_than_waited_for(monkeypatch):
     assert elapsed < 1.0, "an exit is not held for a service that is not answering"
     assert any("stays on this machine" in w for w in warnings), warnings
     hold.set()
+
+
+# -- what never went, and why -------------------------------------------------
+#
+# These came out of one real local study, 20261121-033555-a8ea, run on a laptop with no
+# OpenFOAM. The local mirror held 18 messages; production held 10, the eight absent
+# being seqs 0, 1, 3, 4, 5, 6, 8 and 16; and the session printed `capture dropped 8
+# item(s): 8 message(s)`. So the COUNT was right and nothing was lost in silence there
+# -- what was missing was the reason, and posting two of those rows again by hand
+# succeeded at once, which is the difference between a transient failure and a refusal
+# and is the whole of what a person needs to know.
+#
+# `_unposted` is a second hole, found by reading `close` rather than by watching it: a
+# queue still unfinished when the join timeout expires was abandoned without appearing
+# in the number. The test below holds it. No production run has been seen to hit it,
+# and this comment says so rather than borrowing the study above as evidence for it.
+
+
+def test_items_still_queued_when_the_budget_runs_out_are_counted(monkeypatch):
+    """They used to be lost in silence. `close` reported `_dropped`, which counts
+    exceptions, so a queue abandoned at the join timeout did not appear in the number
+    at all -- and that is the LOCAL study's normal case, not an edge case: its row is
+    opened on a thread at session start, every message waits on that, and a short
+    session reaches `close` with its whole transcript still queued."""
+    warnings: list[str] = []
+    held = threading.Event()
+    capture = Capture(FakeClient(block=held), "remote-1", warn=warnings.append)
+    monkeypatch.setattr(capture_mod, "_DRAIN_PER_ITEM_S", 0.0)
+    for seq in range(5):
+        capture.message(seq, "assistant", "x")
+
+    capture.close(timeout=0.2)        # the worker is stuck on the first post
+    held.set()
+
+    said = next(w for w in warnings if "dropped" in w)
+    assert "still queued when the session ended" in said
+    assert "openreynolds capture" in said, "and what to do about it"
+    counted = int(said.split("dropped ")[1].split(" item")[0])
+    assert counted >= 4, f"only {counted} of 5 accounted for: {said}"
+
+
+def test_the_first_failures_reason_is_said_not_only_counted():
+    """`capture dropped 8 item(s): 8 message(s)` cannot tell a refusal from a dropped
+    connection, and that is the first thing anyone debugging a gap needs."""
+    warnings: list[str] = []
+    capture = Capture(FakeClient(fail_times=99), "remote-1", warn=warnings.append)
+    capture.message(0, "assistant", "x")
+    capture.close(timeout=5)
+
+    said = next(w for w in warnings if "dropped" in w)
+    assert "first failure was RuntimeError: platform unreachable" in said
+
+
+def test_the_drain_budget_grows_with_what_is_queued():
+    """One item is one POST and the worker is serial, so a flat budget is a budget for
+    a queue of a known size, and there is no such thing. 18 messages did not fit in
+    the old flat 10 s and 16 of them were lost."""
+    warnings: list[str] = []
+    slow = FakeClient()
+    capture = Capture(slow, "remote-1", warn=warnings.append)
+    for seq in range(30):
+        capture.message(seq, "assistant", "x")
+    capture.close(timeout=1.0)
+
+    assert len(slow.messages) == 30, "a full queue drained inside its own budget"
+    assert not [w for w in warnings if "dropped" in w]
+    said = next(w for w in warnings if "sending" in w)
+    assert "sending 30 item(s)" in said, said
+
+
+def test_the_budget_is_still_bounded_however_much_is_queued(monkeypatch):
+    """The module's first promise is that nothing here can delay or fail a study, so
+    an unreachable service must not hang an exit no matter how long the transcript."""
+    monkeypatch.setattr(capture_mod, "_DRAIN_CEILING_S", 0.5)
+    held = threading.Event()
+    capture = Capture(FakeClient(block=held), "remote-1", warn=lambda _: None)
+    for seq in range(500):
+        capture.message(seq, "assistant", "x")
+
+    began = time.monotonic()
+    capture.close(timeout=0.1)
+    waited = time.monotonic() - began
+    held.set()
+
+    assert waited < 5, f"close waited {waited:.1f}s against a 0.5s ceiling"
+
+
+# -- sending again, by asking first -------------------------------------------
+
+
+class _Holding:
+    """A service that already has some seqs, and records what else it is given."""
+
+    def __init__(self, held, refuse=()):
+        self._held = sorted(held)
+        self._refuse = set(refuse)
+        self.posted: list[int] = []
+
+    def list_messages(self, study_id, after=-1, limit=999, newest=False):
+        rows = [{"seq": s, "role": "assistant"} for s in self._held if s > after]
+        return {"messages": rows[:limit], "more": len(rows) > limit}
+
+    def post_messages(self, study_id, messages):
+        for m in messages:
+            if m["seq"] in self._refuse:
+                raise RuntimeError(f"seq {m['seq']} refused")
+            self.posted.append(m["seq"])
+            self._held.append(m["seq"])
+
+    def close(self):
+        pass
+
+
+def _rows_for(seqs):
+    return [{"seq": s, "role": "assistant", "content": "x", "at": "t"} for s in seqs]
+
+
+def test_only_the_seqs_the_service_says_it_lacks_are_sent():
+    """Which is what makes sending them safe at all. Capture never retries, because
+    the service indexes `(study_id, seq)` without making it unique and a repeat of a
+    post whose outcome is unknown appends the row twice. A reconciliation does not
+    share that problem: it asks first."""
+    client = _Holding(held=[0, 2, 7])
+    local = _rows_for(range(8))
+
+    gap = capture_mod.missing_from_service(client, "remote-1", local)
+
+    assert [row["seq"] for row in gap] == [1, 3, 4, 5, 6]
+    sent, refused = capture_mod.resend(client, "remote-1", gap)
+    assert (sent, refused) == (5, [])
+    assert client.posted == [1, 3, 4, 5, 6], "and nothing it already had"
+
+
+def test_a_study_the_service_has_whole_sends_nothing():
+    client = _Holding(held=range(5))
+    gap = capture_mod.missing_from_service(client, "remote-1", _rows_for(range(5)))
+    assert gap == []
+    assert capture_mod.resend(client, "remote-1", gap) == (0, [])
+    assert client.posted == []
+
+
+def test_one_refused_row_does_not_take_the_rest_of_the_gap_with_it():
+    """Posted one at a time for this reason -- the opposite trade from the live path,
+    where a burst is what matters."""
+    client = _Holding(held=[], refuse={2})
+    gap = _rows_for(range(4))
+
+    sent, refused = capture_mod.resend(client, "remote-1", gap)
+
+    assert sent == 3
+    assert client.posted == [0, 1, 3]
+    assert refused == ["seq 2: RuntimeError: seq 2 refused"]
+
+
+def test_a_long_transcript_is_asked_for_page_by_page():
+    """`list_messages` caps at 999 and says `more`, so a transcript past one page has
+    to be walked or the gap is computed against a truncated answer and rows the
+    service already has get posted again -- the duplicate this is built to avoid."""
+    client = _Holding(held=range(2500))
+    seen = capture_mod.missing_from_service(client, "remote-1", _rows_for(range(2500)))
+    assert seen == []
+
+
+# -- the command ---------------------------------------------------------------
+
+
+def _wired(monkeypatch, tmp_path, client, *, remote="remote-1", signed_in=True):
+    """`openreynolds capture` against a study on disk and a stand-in service."""
+    from click.testing import CliRunner
+
+    from openreynolds import cli
+    from openreynolds.store import Store
+
+    store = Store(tmp_path / "studies", "20260101-000000-aaaa")
+    store.session.remote_study_id = remote
+    store.save()
+    for seq in range(5):
+        store.append_message("assistant", f"row {seq}")
+
+    class _Cfg:
+        studies_dir = tmp_path / "studies"
+        foamd_url = "https://example.invalid" if signed_in else ""
+        foamd_api_key = "key" if signed_in else ""
+
+    monkeypatch.setattr(cli.Config, "load", classmethod(lambda cls: _Cfg()))
+    monkeypatch.setattr(cli, "_the_study", lambda cfg, chosen: "20260101-000000-aaaa")
+    monkeypatch.setattr(cli.hosted, "FoamdClient", lambda *a, **k: client)
+    return CliRunner().invoke(cli.main, ["capture", "--study", "20260101-000000-aaaa"])
+
+
+def test_the_command_sends_only_the_gap_and_says_what_it_sent(monkeypatch, tmp_path):
+    client = _Holding(held=[0, 3])
+    result = _wired(monkeypatch, tmp_path, client)
+
+    assert result.exit_code == 0, result.output
+    assert "5 row(s) here, 2 on the service" in result.output
+    assert "missing seq: 1, 2, 4" in result.output
+    assert "sent 3" in result.output
+    assert client.posted == [1, 2, 4]
+
+
+def test_the_command_sends_nothing_with_dry_run(monkeypatch, tmp_path):
+    from click.testing import CliRunner
+
+    from openreynolds import cli
+
+    client = _Holding(held=[0])
+    _wired(monkeypatch, tmp_path, client)          # wires Config and the client
+    # ...and sent the gap, so the service now holds everything. Put it back to one
+    # row, which is the state a dry run is for.
+    client._held = [0]
+    client.posted.clear()
+    result = CliRunner().invoke(cli.main, ["capture", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "missing seq" in result.output
+    assert client.posted == [], "--dry-run named the gap and sent it"
+
+
+def test_a_study_with_no_row_on_the_service_is_refused_not_opened(monkeypatch, tmp_path):
+    """Nothing here can open a row: the id is the service's to accept at creation, so
+    a study that ran with capture off has nothing to reconcile against."""
+    client = _Holding(held=[])
+    result = _wired(monkeypatch, tmp_path, client, remote="")
+
+    assert result.exit_code == 1
+    assert "no row on the service" in result.output
+    assert client.posted == []
+
+
+def test_a_machine_that_is_not_signed_in_is_told_so(monkeypatch, tmp_path):
+    result = _wired(monkeypatch, tmp_path, _Holding(held=[]), signed_in=False)
+
+    assert result.exit_code == 1
+    assert "not signed in" in result.output

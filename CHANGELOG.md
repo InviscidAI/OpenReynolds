@@ -25,6 +25,17 @@ All notable changes to this project are recorded here. The format follows
   the ones already there (`case_gen.force_coeffs`), so a case with no body, no drop and
   no y+ still gets no empty `functions {}`. Split out of #54 at review; the consumers of
   `periodic.json` and the two pressure records arrive with `score.py` in that PR.
+- **`openreynolds capture --study <id>`: send the service the transcript rows it is
+  missing.** Capture never retries a post, because the service indexes
+  `(study_id, seq)` without making it unique and a repeat of a post whose outcome is
+  unknown appends the same row twice. That left a transient failure as a permanent
+  gap with nothing to close it. Measured on a real local study run on a laptop with no
+  OpenFOAM: the local mirror held 18 rows and production held 10, the eight absent
+  being seqs 0, 1, 3, 4, 5, 6, 8 and 16, and posting two of them again by hand
+  succeeded at once -- so they were transient, not refused. The command asks the
+  service which seqs it holds and posts only the absent ones, so it cannot duplicate
+  anything, which is why it is safe where a blind retry is not. Run against that study
+  it brought production to 18 rows and 18 distinct seqs. `--dry-run` names the gap.
 
 - **Every case this repository can run is in the tutorial index, with the scale each
   reference is normalised on.** The index listed three of them. `benchmarks/tutorials/`
@@ -350,6 +361,22 @@ All notable changes to this project are recorded here. The format follows
   `BackendError.retry_after` carries the service's `Retry-After` through to the caller,
   since `extra` carries the error body and the wait only ever arrives in a header. Split
   out of #54 at review.
+- **A local study's case bundle read the wrong directory, so its case tier was always
+  empty.** `_capture_the_case` built the bundle from the local mirror, which is filled
+  by the close-down sync pulling files down from an instance; a local workspace has no
+  instance and nothing to pull, so the mirror stayed empty while the files sat in the
+  workspace. On the study above, `studies/<id>/files/` held 0 files and the session
+  printed "nothing to bundle: no case files reached this machine" with six real ones
+  on the same disk.
+- **A dropped capture item said that it was dropped and never why.** The worker
+  swallowed the exception, so `capture dropped 8 item(s): 8 message(s)` could not tell
+  a refusal from a dropped connection, which is the first thing anyone debugging a gap
+  needs. The first failure's text is now in the warning.
+- **`close`'s drain budget was flat, and a queue it abandoned was not counted.** One
+  item is one POST and the worker is serial, so a flat 10 s is a budget for a queue of
+  a known size; the budget now grows with what is queued, up to a bounded ceiling, and
+  says what it is sending rather than appearing to hang. Items still queued when it
+  expires are counted and reported instead of abandoned in silence.
 
 - **A study on a local workspace uploaded nothing at all.** Capture is on by default and
   `--no-capture` is how it is turned off, but `cli.session` leaves the workspace
