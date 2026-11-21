@@ -1521,6 +1521,57 @@ def stop_cmd(study_id: str | None, force: bool) -> None:
     raise SystemExit(0 if report.clean else 1)
 
 
+def _studys_own_workspace(cfg: Config, store: Store, study_id: str) -> None:
+    """Find the workspace a study this machine has no record of is on (#215).
+
+    `files`, `pull` and `push` take `--study <id>` for any study of the account, and a
+    study started in the browser, or on another machine, has no `session.json` here, so
+    no workspace on record. `hosted.acquire` with none attaches to the account's newest
+    workspace, and since every study has its own (#91) that is usually another
+    study's: the pull came back with somebody else's files, or nothing, and started a
+    workspace that was not this study's. So the platform's row is asked first, and its
+    workspace and home are what the command works on.
+
+    The same goes for a study recorded here with no workspace: one quit before its
+    first message settled where it runs, or one refused at the cap.
+
+    A study with a workspace on record keeps it, as before. One the platform has no
+    workspace for, or cannot be asked about, is refused rather than guessed at.
+    Nothing is saved: the row is read again next time, and a later resume reads it for
+    itself."""
+    if store.session.instance_id:
+        return
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        row = client.get_study(study_id)
+    except BackendError as exc:
+        _drop_if_empty(store)
+        if getattr(exc, "status", None) == 404:
+            console.print(f"[red]No study {study_id} here or on your account.[/]")
+        else:
+            console.print(f"[red]Could not ask the workspace service about {study_id}:[/] {exc}")
+        raise SystemExit(1) from exc
+    finally:
+        client.close()
+    _adopt_study_row(store, row)
+    if not store.session.instance_id:
+        _drop_if_empty(store)
+        console.print(
+            f"[red]Study {study_id} has no workspace any more, so there is nothing to "
+            "reach.[/] A workspace is released once its study has been idle for a few days."
+        )
+        raise SystemExit(1)
+
+
+def _drop_if_empty(store: Store) -> None:
+    """Take back the directory `Store` made for a study that turned out not to be
+    reachable, so a refused `--study` leaves nothing behind."""
+    try:
+        store.dir.rmdir()
+    except OSError:
+        pass
+
+
 @main.command("files")
 @click.argument("path", default="")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
@@ -1542,8 +1593,8 @@ def files_cmd(
     involved and is not told.
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
@@ -1552,14 +1603,12 @@ def files_cmd(
     if open_dir:
         _open_folder(store.dir, ConsoleView(console))
         return
+    _studys_own_workspace(cfg, store, chosen)
 
     path = workspace_path(path)
     cat_path = workspace_path(cat_path) if cat_path else None
     pull_path = workspace_path(pull_path) if pull_path else None
 
-    # No instance recorded is not a reason to refuse to show anything: the workspace
-    # is a volume that outlives instances, and someone asking to see their files does
-    # not want a lecture about bookkeeping. Reuse whatever is already up.
     try:
         backend, _client, instance = hosted.acquire(
             cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
@@ -1621,12 +1670,13 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     brings only what can be read).
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
     store = Store(cfg.studies_dir, chosen)
+    _studys_own_workspace(cfg, store, chosen)
 
     try:
         backend, _client, instance = hosted.acquire(
@@ -1670,12 +1720,13 @@ def push_cmd(local: Path, dest: str | None, study_id: str | None) -> None:
     spends no tokens.
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
     store = Store(cfg.studies_dir, chosen)
+    _studys_own_workspace(cfg, store, chosen)
     home = store.session.home or f"{WORKSPACE_ROOT}/{chosen}"
 
     # A --to is a workspace path (undo any Git-Bash mangling); a bare name hangs off
@@ -3476,6 +3527,13 @@ def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
         row = client.get_study(study_id)
     except Exception:  # noqa: BLE001 - an older service, or none reachable
         return
+    _adopt_study_row(store, row)
+
+
+def _adopt_study_row(store: Store, row: Any) -> None:
+    """What the platform's row says about a study this machine does not know: its id
+    there, its home, its workspace, its title and its solver. Nothing already known
+    here is overwritten."""
     if not isinstance(row, dict) or not row.get("id"):
         return
     store.session.remote_study_id = str(row["id"])
