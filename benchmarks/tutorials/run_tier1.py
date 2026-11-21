@@ -82,6 +82,12 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a tracer orbit in solid-body rotation",
      ("benchmarks/particles/grade.py", "tracer"),
      "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("the laminar flat plate, Blasius",
+     ("openreynolds/toolbox/blasius.py", "--check"),
+     "the Blasius similarity solution, exact: the published f''(0) ="
+     " 0.3320573362151963, and reference_area.py's typed 1.328 held to 4 f''(0)."
+     " Both conventions printed, since 0.4696 is the same answer sqrt(2) away",
+     False, True),
     ("critical Stokes number for capture on a cylinder",
      ("benchmarks/particles/grade.py", "capture"),
      "1/8 in the St = tau_p U_inf / R convention. Robinson et al.\n"
