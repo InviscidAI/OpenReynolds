@@ -86,6 +86,11 @@ import sys
 from pathlib import Path
 
 # -- the wall ----------------------------------------------------------------------
+#
+# EDIT THESE TWO: the two layer thicknesses. Everything else follows -- the mesh is
+# sized from them, and `expected()` recomputes the flux and the interface temperature,
+# so a copy of this template with different thicknesses still prints the answer its own
+# case owes. Changing a conductivity works too, and moves Pr with it.
 
 FLUID_THICK_M = 0.02      # the conducting fluid layer, x
 SOLID_THICK_M = 0.01      # the solid layer, x
@@ -486,6 +491,14 @@ def find_file(directory: Path, *candidates: str) -> Path:
         "something else, and this template does not guess property file names.")
 
 
+def find_mesh_look() -> Path:
+    """The deployed toolbox first, then this file's own siblings for local testing."""
+    deployed = Path("/work/.toolbox/mesh_look.py")
+    if deployed.exists():
+        return deployed
+    return Path(__file__).resolve().parent.parent / "mesh_look.py"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build the two-region mesh a conjugate case needs, and say what it owes.")
@@ -534,6 +547,11 @@ def main() -> None:
         stale.unlink()
         print("  removed constant/cellToRegion: a field of neither region")
     run(["checkMesh", "-allRegions"])
+    # One picture per region: a two-region mesh is the one kind where "it meshed" and
+    # "it meshed as two things that touch" look identical in a log.
+    for region in ("fluid", "solid"):
+        run([sys.executable, str(find_mesh_look()), ".", "--region", region,
+             "--out", f"look-{region}.png"])
 
     print()
     print("The two-region mesh is built and checked, and `constant/regionProperties` "
