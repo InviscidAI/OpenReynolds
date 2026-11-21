@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -446,3 +447,76 @@ def test_no_memory_reading_means_no_memory_claim(tmp_path, advise, monkeypatch):
     report = advise.render(data)
     assert "not established" in report
     assert "GiB at that rate is about" not in report
+
+
+# -- what advise.py offers is what this repository actually ships ----------------------
+#
+# The defect these two are for: `advise.py` recommended 17 solvers across 7 families and
+# knew none of the multi-physics this repository ships. The templates name eight
+# OpenFOAM solvers; mhdFoam, porousSimpleFoam and chemFoam were in no family at all, so
+# a session asked about a conducting duct, a packed bed or a reacting mixture got a list
+# that omitted the capability -- with a template and a grader sitting behind it.
+#
+# Both checks DERIVE their expectation. A literal list is what went stale three times in
+# one day in this repository: two index guards and this advisor.
+
+TEMPLATES_DIR = TOOLBOX / "templates"
+
+# Not preceded by `/`, because a path is not an invocation: chem0d.py copies thermo
+# data out of `$FOAM_TUTORIALS/combustion/reactingFoam/laminar/...`, and the first
+# version of this check read that path as "the template runs reactingFoam". And not
+# `*ToFoam`, which is OpenFOAM's own naming for a converter: `chemkinToFoam` and
+# `gmshToFoam` are utilities a template legitimately runs, not solvers to recommend.
+FOAM_SOLVER = re.compile(r"(?<![/\w])([a-z][A-Za-z]*Foam)\b")
+
+
+def is_a_solver(name: str) -> bool:
+    return not name.endswith("ToFoam")
+
+
+def solvers_the_templates_name() -> set[str]:
+    """Every `*Foam` application the shipped templates and chem0d actually invoke.
+
+    Read from the files rather than listed, because a template is added by writing one
+    and nobody adds a row to a test while doing it.
+    """
+    found: set[str] = set()
+    for path in sorted(TEMPLATES_DIR.glob("*.py")) + [TOOLBOX / "chem0d.py"]:
+        found |= {name for name in FOAM_SOLVER.findall(path.read_text(encoding="utf-8"))
+                  if is_a_solver(name)}
+    assert len(found) >= 6, f"only {found} -- the regex or the directory is wrong"
+    return found
+
+
+def test_advise_knows_every_solver_a_shipped_template_runs(advise):
+    """A solver this repository writes a case for, and grades, that `advise.py` cannot
+    offer is a capability the product has and cannot recommend.
+
+    This failed for mhdFoam, porousSimpleFoam and chemFoam when it was written.
+    """
+    known = {option["name"] for options in advise.FAMILIES.values() for option in options}
+    for solver in sorted(solvers_the_templates_name()):
+        assert solver in known, (
+            f"{solver} is run by a shipped template and advise.py offers no family "
+            f"containing it, so nothing will ever recommend it")
+
+
+def test_every_family_is_reachable_from_some_problem_class(advise):
+    """A family in FAMILIES that no class offers is dead code that reads as coverage.
+
+    `advise` chooses by class, so a family absent from every `CLASS_FAMILIES` value can
+    never be printed however right it is.
+    """
+    offered = {family for families in advise.CLASS_FAMILIES.values() for family in families}
+    for family in advise.FAMILIES:
+        assert family in offered, (
+            f"the {family!r} family is in FAMILIES and no problem class offers it")
+
+
+def test_every_class_offers_only_families_that_exist(advise):
+    """The other direction: a class naming a family that is not there would raise at the
+    moment somebody asked, which is the worst time to find out."""
+    for problem_class, families in advise.CLASS_FAMILIES.items():
+        for family in families:
+            assert family in advise.FAMILIES, (
+                f"class {problem_class!r} offers {family!r}, which is not in FAMILIES")
