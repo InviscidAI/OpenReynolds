@@ -17,13 +17,12 @@ that deliberately has **no** verdict -- the dam break, whose reference could not
 -- is run, reported, and not counted either way, because inventing a pass for it is the
 thing `benchmarks/README.md` refuses to do.
 
-One case is listed as having no verdict for a reason worth naming: `panel.py` prints
-the four exact statements the index quotes it against -- pressure drag exactly zero by
-d'Alembert, a symmetric section's zero-lift angle and quarter-chord moment exactly
-zero, an elliptically loaded wing's induced drag exactly Cl^2/(pi AR) -- and **grades
-none of them**. The index reads as though it does. A `--check` of the kind
-`acoustics.py` and `wind_comfort.py` carry would make it a graded case; until then this
-runner reports what it prints and counts it neither way.
+`panel.py --check` grades the three statements that need no new arithmetic --
+d'Alembert, a symmetric section, and elliptic loading against the value
+`lifting_line` already reports -- plus mode convergence. The fourth, a cambered
+section's zero-lift angle against the closed-form thin-aerofoil integral, stays in
+`tests/test_toolbox_panel.py`, because a second copy of that integral would be a
+second thing to keep agreeing. `--check` names the test rather than duplicating it.
 
 The commands are the ones the index documents, character for character, so the numbers
 printed here are the numbers quoted there. Where that is slow it is slow. Measured on one
@@ -65,10 +64,10 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
      ("benchmarks/sph/grade.py", "dambreak"),
      "Martin & Moyce (1952), UNREAD. Containment and weak compressibility are\n      graded; the surge front is printed and NOT graded", True, False),
     ("aerofoil and wing, panel method",
-     ("openreynolds/toolbox/panel.py", "--naca", "2412", "--alpha", "5"),
-     "d'Alembert, thin-aerofoil and elliptic-loading, all exact -- but the "
-     "script PRINTS these and grades none of them, so there is no verdict "
-     "to collect", False, False),
+     ("openreynolds/toolbox/panel.py", "--check"),
+     "d'Alembert (pressure drag exactly 0), a symmetric section (zero-lift angle and "
+     "quarter-chord moment exactly 0), elliptic loading, and mode convergence", False,
+     True),
     ("a pure tone, acoustics",
      ("openreynolds/toolbox/acoustics.py", "--tone"),
      "SPL = 20 log10(p_rms / 20 uPa), exact", False, True),

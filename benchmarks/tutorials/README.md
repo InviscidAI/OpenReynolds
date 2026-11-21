@@ -121,8 +121,11 @@ It exits non-zero if a case that has a verdict reports a failure, so it is a che
 not only a demonstration. Measured on one laptop: the cavity at n = 128 is about 100 s,
 the sloshing tank 240 s and the SPH dam break 480 s, which is most of the total, so
 `--quick` leaves those three out and says which. Two cases carry no verdict and are
-counted neither way: the dam break, whose reference could not be read, and the panel
-method, which prints the four exact statements quoted above and grades none of them.
+counted neither way: the dam break, whose reference could not be read. `panel.py
+--check` grades the three statements that need no new arithmetic (d'Alembert, a
+symmetric section, elliptic loading) plus mode convergence; the cambered zero-lift
+angle stays in `tests/test_toolbox_panel.py`, because a second copy of that integral
+would be a second thing to keep agreeing.
 
 Or one at a time:
 
