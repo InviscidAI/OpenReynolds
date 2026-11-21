@@ -9,15 +9,31 @@ nothing graded. `openreynolds/toolbox/conjugate.py` supplied the reference half.
 builds **the two-region mesh with its interface**, which is what such a case cannot
 start without, and prints the exact answer the eventual solve owes.
 
-**It deliberately writes no solver dictionaries.** The per-region thermophysical files
-and the coupled thermal boundary condition differ between the ESI and Foundation builds
-of OpenFOAM -- `thermophysicalProperties` against `physicalProperties`,
-`turbulenceProperties` against `momentumTransport` -- and nothing in this repository has
-run `chtMultiRegionSimpleFoam` to establish which spelling this image takes. Writing
-three hundred lines of guessed dictionaries would produce a case nobody has run while
-looking like one that works, which is the failure this repository spends its time
-catching. The journey test that solves this mesh is what settles them, and it is the next
-item.
+**It does not invent the solver dictionaries: it copies them off the image.** The
+per-region thermophysical files and the coupled thermal boundary condition are spelled
+differently in the ESI and Foundation builds -- `thermophysicalProperties` against
+`physicalProperties`, `turbulenceProperties` against `momentumTransport` -- and nothing
+here had run `chtMultiRegionSimpleFoam` to establish which this image takes. Guessing
+them would produce a case nobody has run that reads like one that works.
+
+So they are taken from the image's own tutorial, which is `chem0d.py`'s pattern and for
+`chem0d.py`'s reason: it copies `constant/reactions` and `constant/thermo` out of
+`$FOAM_TUTORIALS` so the data is the image's own file byte for byte, and off the image it
+says which path it wanted instead of inventing coefficients. Here:
+
+* every file in the tutorial's fluid-region and solid-region `constant/` directories is
+  copied -- **without enumerating their names**, because the names are the thing not
+  known; whatever this image's tutorial carries, the case gets;
+* the **coupled thermal boundary condition is read out of the tutorial's own `T` field**,
+  by finding the entry on its region-to-region patch and keeping that type block verbatim.
+  That is the one entry a guess would most likely get wrong, and it is now the image's
+  answer rather than mine;
+* the fluid's `Pr` and the solid's `kappa` are then patched to this case's values with
+  asserted replacements, so a tutorial that does not carry those entries is **refused by
+  name** rather than silently solved with the tutorial's properties.
+
+If the tutorial has moved, the refusal says which path it wanted and lists what is beside
+it, so one run on the image is enough to find the new one.
 
 **What is verified and what is not.** The mesh recipe here is not invented: it follows
 `docs/cad-acceptance/artifacts/desk/T8/build.py`, a recorded run against this image that
@@ -33,9 +49,10 @@ built a two-region mesh and checked it. From that artifact --
   reading the base mesh afterwards is reading the wrong mesh;
 * `checkMesh -allRegions` is the verdict.
 
-**No solved result exists in this repository**, which is the state `rotating.py` and
+**No solved result exists in this repository yet**, which is the state `rotating.py` and
 `free_surface.py` are also in and say so. What is claimed here is the mesh, checked by
-`checkMesh -allRegions`, and the arithmetic -- nothing about an answer.
+`checkMesh -allRegions`, the arithmetic, and that the properties are the image's own --
+nothing about an answer.
 
 The answer it owes, when something does solve it
 ------------------------------------------------
@@ -61,6 +78,8 @@ specified is how the wrong conductivity gets solved with nobody noticing.
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -155,6 +174,106 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
         print(proc.stderr[-4000:], file=sys.stderr)
         raise SystemExit(f"{cmd[0]} failed (exit {proc.returncode})")
     return proc
+
+TUTORIAL_SOURCE = "heatTransfer/chtMultiRegionFoam/multiRegionHeater"
+"""Where the per-region properties are copied from, under `$FOAM_TUTORIALS`.
+
+A stock OpenFOAM tutorial, chosen because it is the long-standing conjugate case and
+carries both a fluid region and a solid one. Its region names are the tutorial's own --
+`bottomAir` and `heater` below -- and nothing here depends on them beyond this constant,
+so a differently named tutorial is one edit.
+"""
+
+TUTORIAL_FLUID = "bottomAir"
+TUTORIAL_SOLID = "heater"
+"""The tutorial's own region names, which are not this case's."""
+
+COUPLED_PATCH = re.compile(r"^\s*(\w+_to_\w+)$", re.M)
+"""A region-to-region patch name in a tutorial field file, which is what `splitMeshRegions`
+produces and therefore what carries the coupled thermal condition."""
+
+
+def tutorials_root() -> Path:
+    """`$FOAM_TUTORIALS`, or a refusal that says what to set."""
+    where = os.environ.get("FOAM_TUTORIALS")
+    if not where:
+        raise SystemExit(
+            "refused: FOAM_TUTORIALS is not set, so the per-region properties cannot be "
+            "copied off the image. This template does not invent them -- see its "
+            "docstring. Source an OpenFOAM environment (OPENREYNOLDS_FOAM_BASHRC names "
+            "one) or run with --no-properties to stop after the mesh.")
+    root = Path(where)
+    if not root.is_dir():
+        raise SystemExit(f"refused: FOAM_TUTORIALS is {where}, which is not a directory")
+    return root
+
+
+def copy_region_properties(case: Path) -> dict[str, list[str]]:
+    """Copy both regions' `constant/` files out of the tutorial, names unenumerated.
+
+    The names are the thing not known, so they are not listed: whatever this image's
+    tutorial carries is what the case gets. A missing tutorial is refused with the path
+    and a listing beside it, which is `chem0d.py`'s refusal and for the same reason.
+    """
+    source = tutorials_root() / TUTORIAL_SOURCE / "constant"
+    copied: dict[str, list[str]] = {}
+    for ours, theirs in (("fluid", TUTORIAL_FLUID), ("solid", TUTORIAL_SOLID)):
+        directory = source / theirs
+        if not directory.is_dir():
+            beside = sorted(p.name for p in source.iterdir()) if source.is_dir() else []
+            raise SystemExit(
+                f"refused: {directory} is not there. It is a stock OpenFOAM tutorial "
+                f"directory; what is beside it: {', '.join(beside) or 'nothing'}. "
+                f"`ls $FOAM_TUTORIALS/{TUTORIAL_SOURCE}/constant` will say where it went.")
+        target = case / "constant" / ours
+        target.mkdir(parents=True, exist_ok=True)
+        names = []
+        for item in sorted(directory.iterdir()):
+            if item.is_file():
+                shutil.copyfile(item, target / item.name)
+                names.append(item.name)
+        if not names:
+            raise SystemExit(f"refused: {directory} holds no files to copy")
+        copied[ours] = names
+    return copied
+
+
+def coupled_condition() -> tuple[str, str]:
+    """The coupled thermal condition's entry, lifted verbatim from the tutorial's `T`.
+
+    Returns (the patch name it was found on, the body between its braces). This is the
+    one entry a guess would most likely get wrong -- the type name differs across builds
+    and releases -- so it is read out of the image instead of written here.
+    """
+    source = tutorials_root() / TUTORIAL_SOURCE
+    for where in (source / "0" / TUTORIAL_FLUID / "T",
+                  source / "0.orig" / TUTORIAL_FLUID / "T"):
+        if where.is_file():
+            text = where.read_text(encoding="utf-8")
+            break
+    else:
+        raise SystemExit(
+            f"refused: no T field for the {TUTORIAL_FLUID} region under {source}/0 or "
+            f"{source}/0.orig. `find {source} -name T` will say where it is.")
+    found = COUPLED_PATCH.search(text)
+    if not found:
+        raise SystemExit(
+            f"refused: {where} names no `<region>_to_<region>` patch, so the coupled "
+            "thermal condition cannot be read off it. The patch naming that "
+            "splitMeshRegions produces may have changed.")
+    patch = found.group(1)
+    start = text.index("{", found.end())
+    depth, index = 0, start
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    return patch, text[start + 1:index].strip(chr(10))
+
 
 HEADER = """\
 /*--------------------------------*- C++ -*----------------------------------*\\
@@ -330,11 +449,51 @@ regions
     return answer
 
 
+def set_entry(path: Path, key: str, value: str) -> None:
+    """Replace a single `key  value;` entry, or refuse by name.
+
+    Asserted rather than best-effort: a property that silently keeps the tutorial's value
+    is a case solved for somebody else's fluid, and the answer would be wrong while the
+    run converged. `t.replace()` without a count check is a mistake this repository has
+    already paid for.
+    """
+    text = path.read_text(encoding="utf-8")
+    found = re.findall(rf"^(\s*){re.escape(key)}(\s+)([^;]+);", text, re.M)
+    if len(found) != 1:
+        raise SystemExit(
+            f"refused: {path} has {len(found)} `{key}` entries, expected exactly one. "
+            "This file came from the image's own tutorial, so its shape is the image's; "
+            f"open it and see what carries {key} instead of guessing.")
+    text = re.sub(rf"^(\s*){re.escape(key)}(\s+)([^;]+);",
+                  lambda m: f"{m.group(1)}{key}{m.group(2)}{value};", text, count=1,
+                  flags=re.M)
+    path.write_text(text, encoding="utf-8", newline=chr(10))
+
+
+def find_file(directory: Path, *candidates: str) -> Path:
+    """The first of `candidates` that is actually there, or a refusal listing the rest.
+
+    The ESI and Foundation builds disagree about these names, which is the whole reason
+    the files are copied rather than written, so the lookup disagrees politely too.
+    """
+    for name in candidates:
+        if (directory / name).is_file():
+            return directory / name
+    present = sorted(p.name for p in directory.iterdir()) if directory.is_dir() else []
+    raise SystemExit(
+        f"refused: none of {', '.join(candidates)} is in {directory}. What is: "
+        f"{', '.join(present) or 'nothing'}. The tutorial this was copied from names it "
+        "something else, and this template does not guess property file names.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build the two-region mesh a conjugate case needs, and say what it owes.")
     parser.add_argument("--no-mesh", action="store_true",
                         help="write the files and stop: no OpenFOAM needed")
+    parser.add_argument("--no-properties", action="store_true",
+                        help="build the mesh but do not copy the per-region properties "
+                             "off the image")
     args = parser.parse_args()
 
     case = Path.cwd()
@@ -379,9 +538,44 @@ def main() -> None:
     print()
     print("The two-region mesh is built and checked, and `constant/regionProperties` "
           "names both.")
-    print("No solver dictionaries are written: see this file's docstring for why, and "
-          "for what")
-    print("the solve owes when something runs it.")
+
+    if args.no_properties:
+        print("--no-properties: stopping before the per-region properties.")
+        return
+
+    copied = copy_region_properties(case)
+    for region, names in copied.items():
+        print(f"  {region}/: copied {len(names)} file(s) from "
+              f"$FOAM_TUTORIALS/{TUTORIAL_SOURCE}/constant -- {', '.join(names)}")
+
+    # Only what this case must change, and each refused by name if it is not there.
+    fluid_thermo = find_file(case / "constant" / "fluid",
+                             "thermophysicalProperties", "physicalProperties")
+    set_entry(fluid_thermo, "Pr", f"{prandtl():.6f}")
+    print(f"  fluid: Pr set to {prandtl():.6f} in {fluid_thermo.name}, which is where "
+          "kappa is specified")
+
+    solid_thermo = find_file(case / "constant" / "solid",
+                             "thermophysicalProperties", "physicalProperties")
+    set_entry(solid_thermo, "kappa", f"{SOLID_K:g}")
+    print(f"  solid: kappa set to {SOLID_K:g} in {solid_thermo.name}")
+
+    patch, body = coupled_condition()
+    interface = case / "constant" / "coupled-condition.from-tutorial"
+    note = (
+        "// Read verbatim from $FOAM_TUTORIALS/" + TUTORIAL_SOURCE
+        + ", patch " + patch + "." + chr(10)
+        + "// This is the entry a guess would most likely get wrong, so it is the"
+        + " image's own" + chr(10)
+        + "// rather than this template's. The journey test applies it to"
+        + " fluid_to_solid." + chr(10) + body + chr(10))
+    interface.write_text(note, encoding="utf-8", newline=chr(10))
+    print(f"  the coupled thermal condition was read off the tutorial's {patch} patch "
+          f"and kept in {interface.name}")
+
+    print()
+    print("No solver has been run on this case in this repository, so no agreement is")
+    print("quoted. What the solve owes is printed above and graded by conjugate.py.")
 
 
 if __name__ == "__main__":

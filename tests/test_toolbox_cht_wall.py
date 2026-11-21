@@ -116,15 +116,82 @@ def test_both_regions_are_declared(written):
     assert "solid       (solid)" in text
 
 
-def test_it_writes_no_solver_dictionaries_and_says_so(written, cht):
-    """The deliberate omission. The per-region thermophysical spellings differ between
-    the ESI and Foundation builds and nothing here has run the solver to settle which, so
-    guessing them would ship a case nobody has run that reads like one that works."""
+def test_write_case_invents_no_per_region_properties(written):
+    """`write_case` writes the mesh and the shared files only. The per-region properties
+    are the image's own, copied in `main`, so they cannot appear here."""
     assert not (written / "constant" / "fluid").exists()
     assert not (written / "constant" / "solid").exists()
+
+
+def test_the_properties_are_copied_off_the_image_rather_than_invented(cht):
+    """The design that replaced guessing them. The ESI and Foundation builds spell these
+    files differently and nothing here had run the solver to settle which, so they come
+    from `$FOAM_TUTORIALS` -- `chem0d.py`'s pattern, for `chem0d.py`'s reason."""
     text = TEMPLATE.read_text(encoding="utf-8")
-    assert "writes no solver dictionaries" in text
-    assert "No solved result exists in this repository" in text
+    assert "does not invent the solver dictionaries" in text
+    assert "No solved result exists in this repository yet" in text
+    assert cht.TUTORIAL_SOURCE.startswith("heatTransfer/chtMultiRegionFoam/")
+    # The file names are deliberately NOT enumerated: that is the thing not known.
+    source = TEMPLATE.read_text(encoding="utf-8")
+    assert "without enumerating their names" in source
+
+
+def test_a_missing_image_is_refused_with_the_path_it_wanted(cht, monkeypatch):
+    """Off the image this cannot work, and it must say so rather than write a case with
+    no properties that looks complete."""
+    monkeypatch.delenv("FOAM_TUTORIALS", raising=False)
+    with pytest.raises(SystemExit) as refused:
+        cht.tutorials_root()
+    assert "FOAM_TUTORIALS is not set" in str(refused.value)
+    assert "does not invent them" in str(refused.value)
+    monkeypatch.setenv("FOAM_TUTORIALS", "/nowhere/at/all")
+    with pytest.raises(SystemExit) as missing:
+        cht.tutorials_root()
+    assert "not a directory" in str(missing.value)
+
+
+def test_setting_a_property_that_is_not_there_is_refused(cht, tmp_path):
+    """The failure this repository has already paid for: `t.replace()` with no count
+    check. A property silently keeping the tutorial's value is a case solved for
+    somebody else's fluid, with the run converging and the answer wrong."""
+    good = tmp_path / "props"
+    good.write_text("thermoType { type heRhoThermo; }" + chr(10)
+                    + "Pr              0.7;" + chr(10),
+                    encoding="utf-8")
+    cht.set_entry(good, "Pr", "6.968333")
+    assert "Pr              6.968333;" in good.read_text(encoding="utf-8")
+
+    absent = tmp_path / "nopr"
+    absent.write_text("thermoType { type heRhoThermo; }" + chr(10),
+                      encoding="utf-8")
+    with pytest.raises(SystemExit) as refused:
+        cht.set_entry(absent, "Pr", "6.968333")
+    assert "0 `Pr` entries" in str(refused.value)
+
+    twice = tmp_path / "twopr"
+    twice.write_text("Pr 0.7;" + chr(10) + "Pr 0.9;" + chr(10),
+                     encoding="utf-8")
+    with pytest.raises(SystemExit) as doubled:
+        cht.set_entry(twice, "Pr", "6.968333")
+    assert "2 `Pr` entries" in str(doubled.value)
+
+
+def test_a_property_file_under_either_name_is_found_and_neither_is_guessed(cht, tmp_path):
+    """ESI says `thermophysicalProperties`, the Foundation build says
+    `physicalProperties`. The lookup takes whichever is there and refuses with a listing
+    when neither is, rather than picking one and writing it."""
+    where = tmp_path / "fluid"
+    where.mkdir()
+    (where / "physicalProperties").write_text("Pr 0.7;" + chr(10),
+                                              encoding="utf-8")
+    found = cht.find_file(where, "thermophysicalProperties", "physicalProperties")
+    assert found.name == "physicalProperties"
+
+    empty = tmp_path / "solid"
+    empty.mkdir()
+    with pytest.raises(SystemExit) as refused:
+        cht.find_file(empty, "thermophysicalProperties", "physicalProperties")
+    assert "does not guess property file names" in str(refused.value)
 
 
 def test_no_mesh_writes_the_files_and_runs_no_openfoam():
