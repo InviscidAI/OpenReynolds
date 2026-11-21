@@ -57,6 +57,7 @@ from . import catalog as catalog_mod
 from .terminal import tolerant_stdout
 from . import serve as serve_mod
 from . import sharing as sharing_mod
+from . import webhooks as webhooks_mod
 from . import trace
 from .tools import CORES_PROBE, ToolContext, cad_text, refuse_input as tools_refuse_input
 from .view import ConsoleView, View, plain_console
@@ -1944,6 +1945,49 @@ def capture_cmd(study_id: str | None, dry_run: bool) -> None:
     for line in refused:
         console.print(f"  [yellow]refused[/] {escape(line)}")
     if refused:
+        raise SystemExit(1)
+
+
+@main.command("webhook")
+@click.argument("urls", nargs=-1, required=True)
+@click.option("--event", "events", multiple=True, metavar="TYPE",
+              help="An event type to send, repeatable. Default: "
+                   + ", ".join(webhooks_mod.DEFAULT_EVENTS) + ".")
+@click.option("--all", "every", is_flag=True,
+              help="Send every event on the stream, not just the few worth a notification.")
+@click.option("--format", "shape", type=click.Choice(["json", "slack", "discord"]),
+              default="json", show_default=True,
+              help="json posts the event itself; slack and discord post a sentence in "
+                   "the field each of them reads, with the event beside it.")
+@click.option("--secret", default=None,
+              help="Sign each body with HMAC-SHA256 under this key, in "
+                   + webhooks_mod.SIGNATURE_HEADER + ". "
+                   + webhooks_mod.SECRET_ENV + " sets it too.")
+@click.option("--quiet", is_flag=True, help="Do not pass the stream through to stdout.")
+def webhook_cmd(urls: tuple[str, ...], events: tuple[str, ...], every: bool, shape: str,
+                secret: str | None, quiet: bool) -> None:
+    """POST a study's events to a URL as they happen, reading the stream on stdin.
+
+    A filter: every line read is written back out unchanged, so it sits in a pipe
+    without taking the stream away from you.
+
+        openreynolds -p "drag on a sphere at Re=1000" --output-format stream-json |
+          openreynolds webhook https://hooks.example/... --format slack
+
+    One attempt per event, no retries and no queue: a failure is a line on stderr and
+    the stream carries on. A receiver that must not miss an event reads the stream.
+    """
+    tally = webhooks_mod.relay(
+        iter(sys.stdin),
+        list(urls),
+        out=None if quiet else sys.stdout,
+        events=None if every else (list(events) or list(webhooks_mod.DEFAULT_EVENTS)),
+        shape=shape,
+        secret=secret or os.environ.get(webhooks_mod.SECRET_ENV, ""),
+    )
+    print(f"webhook: {tally['sent']} sent, {tally['failed']} failed, "
+          f"{tally['lines']} lines read", file=sys.stderr, flush=True)
+    if tally["failed"] and not tally["sent"]:
         raise SystemExit(1)
 
 

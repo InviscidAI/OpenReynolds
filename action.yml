@@ -1,0 +1,174 @@
+# A CFD study run from CI, as a GitHub Action.
+#
+#     - uses: InviscidAI/OpenReynolds@v0.4.2
+#       with:
+#         task: drag coefficient of this hull at 6 knots, SI units
+#         api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+#         service-key: ${{ secrets.FOAMD_API_KEY }}
+#
+# It is packaging, not new behaviour. `--output-format stream-json` already emits one
+# JSON object per line with a documented schema and a single `session_end` carrying the
+# outcome (`openreynolds/jsonview.py:160-169`), and `ONE_SHOT_EXIT_CODES`
+# (`openreynolds/cli.py:2985`) already maps that outcome to an exit code. What was
+# missing was the twenty lines of YAML between a workflow and those two facts.
+#
+# ## It passes the task through and adds nothing
+#
+# `docs/design.md` section 1 is a contract: the harness may not inject step-by-step
+# instructions, checklists or mandated workflows "in the system prompt, in wake
+# messages, or in any file the agent is required to obey". A CI wrapper is the obvious
+# place for that to leak in -- a line of "remember to validate the mesh first" bolted
+# onto the prompt is exactly the thing the contract forbids -- so the task reaches the
+# agent as the bytes the workflow wrote and nothing else. `tests/test_action.py` holds
+# that: it reads this file and fails if the command line wraps the task in anything.
+#
+# The task travels in the environment rather than interpolated into the shell. A `with:`
+# value is attacker-controlled on a `pull_request_target` workflow, and `-p "${{
+# inputs.task }}"` would be a shell injection; `"$OR_TASK"` is a string.
+#
+# ## What it costs
+#
+# A study starts a real workspace and makes real model calls, both metered. This action
+# runs one per invocation and nothing here retries, so a failed run is one study, not a
+# loop. There is no concurrency control: that is the workflow's `concurrency:` key,
+# which exists and does it better than an input here would.
+
+name: OpenReynolds CFD study
+description: Run a CFD study with the OpenReynolds agent and keep the event stream it wrote.
+author: InviscidAI
+
+branding:
+  icon: wind
+  color: blue
+
+inputs:
+  task:
+    description: >
+      What to simulate and what you want to know -- geometry, units, flow conditions,
+      quantities of interest. Passed to the agent exactly as written.
+    required: true
+  api-key:
+    description: >
+      The model API key, read as OPENREYNOLDS_LLM_API_KEY. A vendor's own variable
+      (ANTHROPIC_API_KEY, OPENAI_API_KEY) already in the job's env works too and this
+      input is then not needed.
+    required: false
+    default: ""
+  service-url:
+    description: The workspace service (FOAMD_URL). Left empty, the packaged default is used.
+    required: false
+    default: ""
+  service-key:
+    description: The workspace service API key (FOAMD_API_KEY).
+    required: false
+    default: ""
+  depth:
+    description: quick or full.
+    required: false
+    default: quick
+  args:
+    description: >
+      Any further flags, as one string -- `--model`, `--solver`, `--mode`, `--notes`,
+      `--local`. One input rather than one per flag, because every flag the CLI grows
+      would otherwise have to be added here too.
+    required: false
+    default: ""
+  events-file:
+    description: Where to write the NDJSON event stream.
+    required: false
+    default: openreynolds-events.ndjson
+  webhook-url:
+    description: >
+      POST the run's events here as they happen, through `openreynolds webhook`. The
+      sending is done by this job, on this runner; nothing is sent from the workspace,
+      which has no outbound network at all.
+    required: false
+    default: ""
+  webhook-format:
+    description: json, slack or discord.
+    required: false
+    default: json
+  webhook-secret:
+    description: Sign each webhook body with HMAC-SHA256 under this key.
+    required: false
+    default: ""
+  python:
+    description: The interpreter to build the virtualenv with.
+    required: false
+    default: python3
+
+outputs:
+  study-id:
+    description: The study id, from the stream's `session_start`. Resume it with `--study`.
+    value: ${{ steps.study.outputs.study-id }}
+  outcome:
+    description: ok, failed, timeout, crashed or refused, from `session_end`.
+    value: ${{ steps.study.outputs.outcome }}
+  events-file:
+    description: The NDJSON file the stream was written to.
+    value: ${{ steps.study.outputs.events-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install OpenReynolds from this action's own checkout
+      shell: bash
+      run: |
+        set -euo pipefail
+        # $GITHUB_ACTION_PATH is this repository at the ref the workflow pinned, so the
+        # agent that runs is the one the `uses:` line names. Installing from PyPI by
+        # version instead would let the two drift apart silently.
+        "${{ inputs.python }}" -m venv "$RUNNER_TEMP/openreynolds-venv"
+        "$RUNNER_TEMP/openreynolds-venv/bin/python" -m pip install --quiet --upgrade pip
+        "$RUNNER_TEMP/openreynolds-venv/bin/python" -m pip install --quiet "$GITHUB_ACTION_PATH"
+        echo "$RUNNER_TEMP/openreynolds-venv/bin" >> "$GITHUB_PATH"
+
+    - name: Run the study
+      id: study
+      shell: bash
+      env:
+        OR_TASK: ${{ inputs.task }}
+        OR_ARGS: ${{ inputs.args }}
+        OR_DEPTH: ${{ inputs.depth }}
+        OR_EVENTS: ${{ inputs.events-file }}
+        OR_HOOK: ${{ inputs.webhook-url }}
+        OR_HOOK_FORMAT: ${{ inputs.webhook-format }}
+        OPENREYNOLDS_WEBHOOK_SECRET: ${{ inputs.webhook-secret }}
+        OPENREYNOLDS_LLM_API_KEY: ${{ inputs.api-key }}
+        FOAMD_URL: ${{ inputs.service-url }}
+        FOAMD_API_KEY: ${{ inputs.service-key }}
+      run: |
+        set -uo pipefail
+        # `shell: bash` on a runner is `bash --noprofile --norc -eo pipefail {0}`, so
+        # `-e` is already on and a study that exits non-zero would abort this step right
+        # here -- before `status=`, before the outputs are written. A failed study is an
+        # outcome this action reports, not a crash, so `-e` is turned off for the rest.
+        set +e
+        # The task is "$OR_TASK" and nothing is added to it: no preamble, no checklist,
+        # no "and remember to". docs/design.md section 1, held by tests/test_action.py.
+        if [ -n "$OR_HOOK" ]; then
+          relay=(openreynolds webhook "$OR_HOOK" --format "$OR_HOOK_FORMAT" --quiet)
+        else
+          relay=(cat)
+        fi
+        openreynolds -p "$OR_TASK" --depth "$OR_DEPTH" $OR_ARGS \
+          --output-format stream-json \
+          | tee "$OR_EVENTS" | "${relay[@]}" > /dev/null
+        status=${PIPESTATUS[0]}
+        python - "$OR_EVENTS" <<'PY' >> "$GITHUB_OUTPUT"
+        import json, sys
+        study = outcome = ""
+        with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                study = event.get("study") or event.get("study_id") or study
+                if event.get("type") == "session_end":
+                    outcome = event.get("outcome") or ""
+        print(f"study-id={study}")
+        print(f"outcome={outcome}")
+        print(f"events-file={sys.argv[1]}")
+        PY
+        exit "$status"

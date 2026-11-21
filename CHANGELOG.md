@@ -359,6 +359,60 @@ All notable changes to this project are recorded here. The format follows
   re-read (HAL and the publisher both refuse an automated request) and is now marked as
   carried over unverified rather than reading as a checked figure. Nothing is graded
   against either, which is the only reason the first error cost nothing.
+- **A study run from CI, with a notification when it ends, and the case opened in
+  ParaView with the study's own camera and colours.** Four integrations, all of them
+  packaging over what the repository already had rather than new machinery.
+  - **A GitHub Action.** `action.yml` at the root: `uses: InviscidAI/OpenReynolds@<ref>`
+    with a `task`, and it outputs `study-id`, `outcome` and `events-file`.
+    `--output-format stream-json` already emitted one JSON object per line with a single
+    `session_end` carrying the outcome (`openreynolds/jsonview.py:160-169`) and
+    `ONE_SHOT_EXIT_CODES` already mapped that to an exit code (`cli.py:2985`), so the
+    action is the YAML between a workflow and those two facts. It installs from
+    `$GITHUB_ACTION_PATH` -- this repository at the ref the `uses:` line names -- so the
+    agent that runs cannot drift from the action that named it, and it exits with the
+    study's own status through `PIPESTATUS[0]` rather than the pipeline's last.
+  - The task reaches the agent **as written**: no preamble, no checklist, no mandated
+    order and no mode chosen on the user's behalf. That is `docs/design.md` section 1,
+    and `tests/test_action.py` holds it by reading `action.yml` -- a CI wrapper being
+    exactly where a helpful line of workflow leaks in. The task also travels in the
+    environment rather than interpolated into the shell, because a `with:` value is
+    attacker-controlled on a `pull_request_target` workflow.
+  - **`openreynolds webhook <url>`**: a filter over the same stream, so it composes
+    (`openreynolds -p ... --output-format stream-json | openreynolds webhook ...`) and
+    every line read is written back out. `--format json|slack|discord`, `--event TYPE`
+    or `--all`, and `--secret` signs each body with HMAC-SHA256 over the bytes actually
+    delivered, in `X-OpenReynolds-Signature`: a webhook URL is itself the credential and
+    a receiver has no other way to tell this sender from anyone who has read a CI log.
+    The default is the four events worth waking somebody for -- `session_start`,
+    `session_end`, `approval`, `workspace_failed` -- because `text` fires per 240
+    characters and `jobs` on every poll, and a channel carrying narration is a channel
+    nobody reads.
+  - It sends from the user's machine, necessarily: the workspace has no outbound network
+    at all (`docker/workspace/install-guard.sh`), so a notification raised there could
+    not leave it. And it is a sender, not a service -- one attempt per event, a failure
+    on stderr, the stream carried on. A durable queue with redelivery is not this
+    package's job; a receiver that must not miss an event reads the stream, which is
+    still on stdout.
+  - **Jupyter**: `openreynolds.follow(study)` and `openreynolds.show(study)`, two names
+    on the existing library surface. The SDK already drove a study from Python, so what
+    was missing was a cell that is rewritten as the run proceeds instead of appending a
+    status line per poll, and the study's figures in the output instead of a dict of
+    paths to open by hand. IPython is not a dependency and does not become one: both
+    fall back to printing when it is absent.
+  - **`toolbox/paraview_export.py`**: the case opened in ParaView on the user's machine,
+    on the camera and the colour limits the study's figures were drawn with. ParaView and
+    pvpython are not in the image, so nothing is converted and nothing is run here: it
+    writes one Python file that ParaView there executes. The numbers were already pinned
+    and already measured -- `render.py:487-498` writes one `clim` over both runs and the
+    camera as a view vector and view-up, `animate.py:405-444` writes a sequence's single
+    colour range, `showcase.py:717-729` is the 235/22/1.15 orbit -- but only into this
+    repository's own sidecars, where a user's ParaView could not read them.
+  - The empty `.foam` marker ParaView must be pointed at is created by the generated
+    script rather than exported, so the mirror's policy is untouched: it drops `.foam`
+    and the VTK formats as "written for a viewer that is not here"
+    (`mirror.py:195-197`), which is right, the marker being an empty file whose contents
+    the reader ignores. With no sidecar the manifest says ParaView will rescale to the
+    data range instead of inventing a limit.
 
 - **Learn mode and beginner mode, as a depth the person chooses.** `study_style.py` gains
   `learn` and `beginner` beside `quick` and `full`, and `openreynolds --depth` makes all

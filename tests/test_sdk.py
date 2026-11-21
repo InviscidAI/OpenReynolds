@@ -23,9 +23,13 @@ from openreynolds.mcp import core
 from openreynolds.mcp.local import LocalHost
 from test_mcp_local import Cfg, Studies
 
-SURFACE = {"Study", "__version__", "fetch", "results", "shutdown", "start", "studies", "upload"}
+SURFACE = {"Study", "__version__", "fetch", "follow", "results", "show", "shutdown",
+           "start", "studies", "upload"}
 """What `import openreynolds` promises. Adding to this is a decision; it is a published
-surface, and the rest of the package is wiring that moves."""
+surface, and the rest of the package is wiring that moves.
+
+`show` and `follow` come from `notebook.py` rather than `sdk.py` -- the notebook's two
+conveniences, on the same surface because a notebook imports the package once."""
 
 
 @pytest.fixture

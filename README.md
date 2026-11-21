@@ -551,6 +551,7 @@ down to **0.567**.
 | `openreynolds stop` | Stop this study's jobs and confirm they stopped. `--force` also kills solver processes that outlived their job. |
 | `openreynolds mcp` | Serve Reynolds to Claude Code or any MCP client over stdio. `--local` runs its studies on this machine's Docker. See *Using it from Claude Code (MCP)*. |
 | `openreynolds serve` | Serve this machine's own studies over HTTP, for a program that would rather speak REST than MCP: `--bind`, `--port`, `--token`, `--local`. A local control surface, not the hosted API. See *Driving it from a program*. |
+| `openreynolds webhook <url>...` | POST a study's events to a URL as they happen, reading `--output-format stream-json` on stdin and writing every line back out. `--format json\|slack\|discord`, `--event TYPE` (repeatable), `--all`, `--secret`, `--quiet`. One attempt per event, no retries and no queue. See *Driving it from a program*. |
 | `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
@@ -681,13 +682,32 @@ print(study.results()["final_message"])
 print(study.file(f"/work/{study.study_id}/results.json").read_text())
 ```
 
-`start`, `studies`, `results`, `fetch`, `upload`, `shutdown` and `Study` are the whole
-surface, and `openreynolds.__all__` is the promise. The import itself is cheap -- the
+`start`, `studies`, `results`, `fetch`, `upload`, `shutdown`, `show`, `follow` and
+`Study` are the whole surface, and `openreynolds.__all__` is the promise. The import itself is cheap -- the
 names are fetched on first use, so reading `__version__` does not load the TUI or a
 model client. Studies run in your process, one thread each, with the configuration and
 the workspace a terminal session would use; `shutdown()` ends every live one as `End`
 does, and it runs at interpreter exit too, because a study left running holds a
 workspace that is being paid for.
+
+**Jupyter** is that library in a notebook, plus the two things a cell wants and a script
+does not. `openreynolds.follow(study)` watches a run in **one** cell, rewritten as it
+goes, instead of appending a status line per poll until a forty-minute study is hundreds
+of scrolled lines; `openreynolds.show(study)` puts the answer and the study's figures in
+the cell's output and returns the same dict `study.results()` does.
+
+```python
+import openreynolds
+
+study = openreynolds.start("natural convection in this enclosure, Ra = 1e6")
+openreynolds.follow(study)      # one cell, rewritten; returns when it wants you
+openreynolds.show(study)        # the answer, with its figures inline
+```
+
+IPython is **not** a dependency and is not going to be: both functions fall back to
+printing when it is absent, so the same notebook code works in a script. Interrupting a
+followed cell leaves the study running -- `study.end()` or `openreynolds.shutdown()` is
+what stops paying for the workspace, and neither of these calls it for you.
 
 **HTTP.** `openreynolds serve` puts the same capabilities on a local port:
 
@@ -720,6 +740,50 @@ on localhost; a `--bind` that is not a loopback address is warned about, loudly.
 **MCP.** `openreynolds mcp` is the third face, for a calling agent rather than a
 program. See *Using it from Claude Code (MCP)*: the tools are these capabilities with
 the same arguments and the same answers.
+
+### In CI, and telling something else it finished
+
+A study runs from a GitHub workflow with the action in this repository. It is packaging
+and nothing more: `--output-format stream-json` already carries the outcome and
+`ONE_SHOT_EXIT_CODES` already maps it to an exit code, and the action is the YAML
+between a workflow and those two facts.
+
+```yaml
+- uses: InviscidAI/OpenReynolds@v0.4.2
+  with:
+    task: drag coefficient of this hull at 6 knots, SI units
+    api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    service-key: ${{ secrets.FOAMD_API_KEY }}
+    webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+    webhook-format: slack
+- uses: actions/upload-artifact@v4
+  with: { path: openreynolds-events.ndjson }
+```
+
+It outputs `study-id` (resume it with `--study`), `outcome` and `events-file`, installs
+from the ref the `uses:` line names so the agent cannot drift from the action, and
+passes your `task` to the agent **as written** -- no preamble, no checklist, no mandated
+order. That is the repository's rule, not a convention: `tests/test_action.py` reads
+`action.yml` and fails if anything is wrapped around the task or a mode is imposed.
+
+**Webhooks** are a filter over the same stream, so they work in CI or on your laptop:
+
+    openreynolds -p "mesh and solve the elbow" --output-format stream-json |
+      openreynolds webhook https://hooks.slack.com/... --format slack
+
+Every line read is written back out, so it sits in a pipe without taking the stream away
+from you. `--format json|slack|discord`, `--event TYPE` (repeatable) or `--all` for the
+whole stream, and `--secret`/`OPENREYNOLDS_WEBHOOK_SECRET` signs each body with
+HMAC-SHA256 in `X-OpenReynolds-Signature` -- a webhook URL is itself a credential and a
+receiver has no other way to tell this sender from anyone who has seen it in a CI log.
+By default it sends the four events worth waking somebody for: `session_start`,
+`session_end`, `approval` and `workspace_failed`.
+
+It sends from **your** machine. The workspace has no outbound network at all (`pip` and
+`apt` in the image are symlinked to a refusal, `docker/workspace/install-guard.sh`), so
+a notification raised there could not leave. And it is deliberately not a delivery
+service: one attempt per event, a failure on stderr, the stream carried on. A receiver
+that must not miss an event reads the stream, which is still on stdout.
 
 ## Configuration
 
