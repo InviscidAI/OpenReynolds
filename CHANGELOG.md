@@ -159,6 +159,83 @@ All notable changes to this project are recorded here. The format follows
   carried over unverified rather than reading as a checked figure. Nothing is graded
   against either, which is the only reason the first error cost nothing.
 
+- **Learn mode and beginner mode, as a depth the person chooses.** `study_style.py` gains
+  `learn` and `beginner` beside `quick` and `full`, and `openreynolds --depth` makes all
+  four reachable from the terminal, where only the MCP servers and the hosted app could
+  ask for one before. Both new styles are built on `quick`'s scope -- a run somebody is
+  reading along with is a run they want to see the whole of -- with the telling added on
+  top: `learn` asks for the reasoning behind each choice as the work goes, `beginner` for
+  plain language, the terms spelled out, and what the answer does not support.
+  - Shape first, because this is the roadmap item most easily built wrong. A teaching
+    mode that injected a checklist into the prompt, demanded an explanation before each
+    tool call or held the solve until the person answered would be the workflow injection
+    `docs/design.md` section 1 forbids. These are text in the person's voice, relayed
+    verbatim by the briefing like any standing note, and they gate nothing: `modes.py`
+    stays the only thing in the repository that holds a tool call.
+  - Each note ends by saying not to wait. A request to be taught reads as an invitation
+    to stop and check understanding, and a turn that ends on a question ends the work --
+    the failure `modes.AUTO_NO_QUESTIONS` was written for after a full-auto session opened
+    with a numbered list of questions and then meshed for seven minutes while the list sat
+    there (study 20260920-161908-c7ef).
+  - Nothing about billing changes. The service sets a study's ceiling from a style of its
+    own and reports it back (`ceiling.style_of` only ever sees `extra["style"]` from the
+    service), so the two new words are not a third billing vocabulary and
+    `ceiling.NORMAL_CENTS` keeps the service's two.
+- **`toolbox/amr.py`: adaptive mesh refinement, which on this image is a dictionary.**
+  OpenFOAM refines a running mesh through `dynamicRefineFvMesh` named in
+  `constant/dynamicMeshDict`, and nothing here wrote one: `case_gen.py` dresses a mesh and
+  stops there. `write` writes it; `check` reads a case back. Every fact in the script was
+  read from the OpenFOAM v2512 tag on 2026-11-21 rather than from a tutorial copy.
+  - The nine entries that have no default are the deliverable. `correctFluxes` and
+    `dumpLevel` are read in `readDict()`, and `refineInterval`, `field`,
+    `lowerRefineLevel`, `upperRefineLevel`, `nBufferLayers`, `maxRefinement` and
+    `maxCells` in `updateTopology()`, each with `get<>`, so a dictionary short of one
+    fatals at the first update. Only `unrefineLevel` has a default (`GREAT`, which never
+    unrefines), so left out the mesh only grows, and the dictionary says so where it is
+    left out. `correctFluxes` being mandatory is the one nobody expects.
+  - Refused here rather than at the first update: the three fatal ranges
+    (`refineInterval` >= 1, `maxCells` > 0, `maxRefinement` > 0, whose own FatalError
+    misnames itself as `maxCells` and is quoted with that correction), and
+    `lowerRefineLevel >= upperRefineLevel`, which OpenFOAM accepts -- the band is empty,
+    nothing is ever marked, and the run pays for the topology machinery and refines
+    nothing.
+  - `check` also reports `maxCells` against the mesh's own cell count where a polyMesh
+    header carries one, and every `surfaceScalarField` on disk that `correctFluxes` does
+    not name, each of which gets `WarningInFunction "Cannot find surfaceScalarField"` and
+    an unmapped flux at exit 0.
+  - **No accuracy and no saving is claimed.** The honest check on refinement is
+    self-consistency -- a refined run agreeing with a uniformly fine one, for fewer cells
+    -- and no such pair has been run on this image, so the script names the instruments
+    that would make the measurement (`grid.py`, `mesh_digest.py`) and states that nobody
+    has. `preflight.py`'s reading of `dynamicRefineFvMesh` as `ran=False` is unchanged.
+  - Two limits are stated rather than checked: non-hex cells are protected from
+    refinement by `hexRef8` (`bitSet protectedCell_`, "Protected cells (usually since not
+    hexes)"), so AMR refines the hexes in a mesh and leaves the rest; and whether the type
+    is registered in the build stays `preflight.py --only probe`'s question.
+- **Polyhedral meshing, as the same dictionary and a different binary.** `cfmesh.py case`
+  takes `--mesher pMesh`. `pMesh` builds a `voronoiMeshGenerator`, whose own description
+  is "takes a triangulated surface and generates a body-fitted polyhedral mesh", and it
+  reads `IOobject("meshDict", runTime_.system(), ..., MUST_READ)` -- the same
+  `system/meshDict` this script already wrote, handed to the same `checkMeshDict`,
+  `meshOctreeCreator`, `refineBoundaryLayers` and `renameBoundaryPatches`. So the
+  dictionary needed no change and only the printed route's mesher and log name do. It had
+  been probed by `where` and unreachable since the script was written.
+  - What is not claimed: no polyhedral mesh has been run on this image and measured, so
+    the Wigley hull's 100.0% layer coverage and 1.21 mm first cell stay attached to
+    `cartesianMesh`, and the new note says they do not transfer.
+  - The other route is recorded beside it: `polyDualMesh <featureAngle>` takes the dual of
+    a mesh that exists, one cell per point, which also means the boundary layer you had is
+    gone. It is in the ESI v2512 tree at
+    `applications/utilities/mesh/manipulation/polyDualMesh/polyDualMeshApp.C`.
+- **`toolbox/scratch.py resume`: which time an interrupted run can restart from.** The
+  promise the script already made -- "a preempted run resumes from `latestTime` with
+  nothing lost" -- has one silent hole: `checkpoint` completes a mid-write time directory
+  on the next pass, and a preemption is the pass that never comes, so the newest time on
+  the Volume is whatever `rsync` had reached and `startFrom latestTime` resolves to it by
+  name. `resume` compares that directory with the one before it, checks every file for the
+  end divider OpenFOAM writes last, counts a time only where every rank has it, and names
+  the newest time that is whole plus the directory to move aside. It reads and prints; the
+  two edits it names are left to whoever is reading.
 - **The journey a user takes, solved in CI and checked against Poiseuille.** Every test
   in the repository was either a unit test against a fixture or a tool run against a
   study somebody had already finished, so a seam between two stages was invisible to all
@@ -444,6 +521,15 @@ All notable changes to this project are recorded here. The format follows
     time, as the other earlier-time skips do. `bytes_pulled` counts a time only once it
     is in the mirror, and a failed earlier-time batch is no longer taken apart to find
     the file it failed on -- that copy is being dropped either way.
+
+- **A steady solver with a refining mesh is no longer failed as a motion case.**
+  `preflight.py`'s moving-mesh check answered `simpleFoam` plus any `dynamicFvMesh` with
+  "a motion solver attached to one has nothing to integrate" and sent the reader to
+  `pimpleFoam`. Refinement is a topology change and not motion -- no point moves -- and
+  `simpleFoam` at v2512 includes `createDynamicFvMesh.H` and calls
+  `mesh.controlledUpdate()` once per `simple.loop()`, read from the tag on 2026-11-21. So
+  a steady solve whose mesh refines as its residuals fall is reported as the legitimate
+  pairing it is, and `case_gen.py`'s steady case can carry AMR with no change of solver.
 - **The backward-facing step was never 4% from Gartling's benchmark, and the toolbox
   said it was in four places.** `reattach.py`, `claims.py`,
   `toolbox/notes/openfoam-field-notes.md` and `tests/test_toolbox_reattach.py` all told

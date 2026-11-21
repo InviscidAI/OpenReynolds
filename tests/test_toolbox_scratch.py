@@ -159,3 +159,124 @@ def test_reconstruct_passes_its_scope_through(scratch, monkeypatch):
     monkeypatch.setattr(scratch, "reconstruct", fake)
     scratch.main(["reconstruct", "/work/s/case", "--latest", "--fields", "U p"])
     assert seen == {"case": "/work/s/case", "latest": True, "time_range": None, "fields": "U p"}
+
+
+# -- resume: what an interrupted run left on disk -------------------------------
+#
+# The hole in "a preempted run resumes from latestTime with nothing lost" is the
+# checkpoint that never comes: the last rsync into the Volume was mid-write, so the
+# newest time directory there is short, `latestTime` resolves to it by name, and the
+# restart reads it. These tests build the three shapes on disk and hold what `resume`
+# says about each: whole, short, and short in one rank only.
+
+FOAM_END = "// ************************************************************************* //"
+
+
+def _field(path: Path, name: str, finished: bool = True) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    body = f"FoamFile {{ version 2.0; format ascii; object {name}; }}\ninternalField uniform 0;\n"
+    (path / name).write_text(body + (FOAM_END + "\n" if finished else ""), encoding="utf-8")
+
+
+def _write(home: Path, time: str, names=("U", "p"), finished=True) -> None:
+    for name in names:
+        _field(home / time, name, finished=finished)
+
+
+def test_a_file_without_the_end_divider_was_not_finished(scratch):
+    assert scratch.ends_whole(b"...\n" + FOAM_END.encode() + b"\n")
+    assert not scratch.ends_whole(b"internalField uniform (1 0 0\n")
+
+
+def test_what_the_newest_time_is_short_of_is_measured_against_the_one_before_it(scratch):
+    assert scratch.short_of({"U", "p", "phi", "uniform"}, {"U", "p"}) == ["phi", "uniform"]
+    assert scratch.short_of({"U", "p"}, {"U", "p", "nut"}) == [], "an extra field is not a gap"
+
+
+def test_an_undecomposed_case_has_one_home_and_it_is_the_case(scratch, tmp_path):
+    (tmp_path / "0").mkdir()
+    assert scratch.time_homes(str(tmp_path)) == [str(tmp_path)]
+
+
+def test_the_collated_layout_has_one_home_and_the_decomposed_one_per_rank(scratch, tmp_path):
+    for name in ("processors8", "processor0", "processor1"):
+        (tmp_path / name).mkdir()
+    assert scratch.time_homes(str(tmp_path)) == [str(tmp_path / "processors8")], (
+        "the collated directory is the one the handler writes; the processorN dirs beside "
+        "it are an earlier run's"
+    )
+    (tmp_path / "processors8").rmdir()
+    assert scratch.time_homes(str(tmp_path)) == [
+        str(tmp_path / "processor0"), str(tmp_path / "processor1")]
+
+
+def test_a_run_that_stopped_between_writes_resumes_from_its_newest_time(scratch, tmp_path, capsys):
+    home = tmp_path / "processors4"
+    _write(home, "0")
+    _write(home, "0.5")
+    _write(home, "1")
+
+    assert scratch.resume(str(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "resume from 1" in out
+    assert "startFrom latestTime" in out
+
+
+def test_a_newest_time_missing_a_field_sends_the_restart_to_the_one_before(scratch, tmp_path, capsys):
+    home = tmp_path / "processors4"
+    _write(home, "0.5", names=("U", "p", "phi"))
+    _write(home, "1", names=("U",))
+
+    assert scratch.resume(str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "short of 0.5/ by: p, phi" in out
+    assert "resume from 0.5" in out
+    assert "move 1 aside" in out, "latestTime resolves by name, so it has to be moved"
+
+
+def test_a_newest_time_whose_file_was_cut_off_is_not_a_restart_point(scratch, tmp_path, capsys):
+    home = tmp_path / "processors4"
+    _write(home, "0.5")
+    _write(home, "1", finished=False)
+
+    assert scratch.resume(str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "no end divider" in out
+    assert "resume from 0.5" in out
+
+
+def test_a_time_one_rank_reached_and_another_did_not_is_not_a_restart_point(scratch, tmp_path, capsys):
+    _write(tmp_path / "processor0", "0.5")
+    _write(tmp_path / "processor0", "1")
+    _write(tmp_path / "processor1", "0.5")
+
+    assert scratch.resume(str(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "1/ is in processor0 and not in all the others" in out
+    assert "resume from 0.5" in out
+
+
+def test_one_time_and_nothing_else_leaves_nothing_to_resume_from(scratch, tmp_path, capsys):
+    _write(tmp_path / "processors4", "2", finished=False)
+
+    assert scratch.resume(str(tmp_path)) == 1
+    assert "nothing whole to resume from" in capsys.readouterr().out
+
+
+def test_resume_is_reachable_from_the_command_line(scratch, tmp_path, capsys):
+    _write(tmp_path / "processors4", "0")
+    _write(tmp_path / "processors4", "1")
+    assert scratch.main(["resume", str(tmp_path)]) == 0
+    assert "resume from 1" in capsys.readouterr().out
+
+
+def test_resume_writes_nothing(scratch, tmp_path):
+    """It is a reading. Whether to move a directory is the reader's call."""
+    home = tmp_path / "processors4"
+    _write(home, "0.5")
+    _write(home, "1", names=("U",))
+    before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
+
+    scratch.resume(str(tmp_path))
+
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == before

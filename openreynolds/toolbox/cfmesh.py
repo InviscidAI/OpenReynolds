@@ -75,6 +75,19 @@ point a velocity at. Name the faces the case needs with `--patch xMin:patch`
 (repeatable) or `--symmetry yMin`; whatever is left unnamed still merges, and
 `case` prints which faces those are.
 
+**Polyhedral cells are the same dictionary and a different binary.** `pMesh` builds a
+`voronoiMeshGenerator`, whose own application description is "takes a triangulated
+surface and generates a body-fitted polyhedral mesh", and it reads
+`IOobject("meshDict", runTime_.system(), ..., MUST_READ)` -- the same `system/meshDict`
+`case` writes here, handed to the same `checkMeshDict`, `meshOctreeCreator`,
+`refineBoundaryLayers` and `renameBoundaryPatches`. So `case --mesher pMesh` writes the
+dictionary it always wrote and prints a route whose mesher line is `pMesh`. What is NOT
+claimed: no polyhedral mesh has been run on this image and measured, so every number in
+`COSTS` below belongs to `cartesianMesh` on the Wigley hull and none of it transfers --
+`POLYHEDRAL` says so where it would otherwise be assumed. The other route to polyhedra
+needs no dictionary at all: `polyDualMesh <featureAngle>` takes the dual of a mesh that
+exists, one cell per point, which also means the boundary layer you had is gone.
+
 This is offered, not imposed. `where` and `check` read and print. `box` and `case`
 write the two files they are asked for and refuse to overwrite. `prepare` prints its
 repairs and applies them only with `--write`.
@@ -85,6 +98,8 @@ repairs and applies them only with `--write`.
     python3 cfmesh.py case . --surface hull_box.stl --wall hull \\
                             --max-cell 0.15 --wall-cell 0.009375 --layers 3 \\
                             --patch xMin:patch --patch xMax:patch --symmetry yMin
+    python3 cfmesh.py case . --surface hull_box.stl --wall hull --max-cell 0.15 \\
+                            --mesher pMesh      # polyhedral, same dictionary
     python3 cfmesh.py prepare <case>            # a snappy mesh made readable
     python3 cfmesh.py check <case> --wall hull --log log.cartesianMesh
     python3 cfmesh.py check <case> --wall hull --ref <the same case, no layers>
@@ -673,8 +688,18 @@ def meshdict(
     return "".join(body)
 
 
-def route(surface: str, wall: str | None, feature_angle: float = 45.0) -> list[str]:
+def route(surface: str, wall: str | None, feature_angle: float = 45.0,
+          mesher: str = "cartesianMesh") -> list[str]:
     """The commands, in the order that works, with the reason each one is there.
+
+    `mesher` is the binary that reads the dictionary. `cartesianMesh` and `pMesh` read
+    the SAME `system/meshDict` -- `voronoiMeshGenerator`, which is what `pMesh` builds,
+    constructs it as `IOobject("meshDict", runTime_.system(), ..., MUST_READ)` and hands
+    that dictionary to the same `checkMeshDict`, `meshOctreeCreator`,
+    `refineBoundaryLayers` and `renameBoundaryPatches` that the cartesian route uses
+    (read 2026-11-21 from cfMesh's own
+    `meshLibrary/voronoiMesh/voronoiMeshGenerator/voronoiMeshGenerator.C`), so the
+    dictionary this script writes serves either and only this line changes.
 
     A surface that is ALREADY a `.ftr` gets no `surfaceFeatureEdges` line. It used to
     get one, and it read `surfaceFeatureEdges -angle 45 domain.ftr domain.ftr`, which
@@ -701,14 +726,14 @@ def route(surface: str, wall: str | None, feature_angle: float = 45.0) -> list[s
             "   # .ftr, not .fms -- trap 2, and only .ftr indexes the patches"
         )
     lines += [
-        "cartesianMesh                                # reads system/meshDict",
+        f"{mesher}{' ' * max(1, 29 - len(mesher))}# reads system/meshDict",
         "checkMesh -allGeometry",
     ]
     if wall:
         here = Path(__file__).resolve().parent
         lines.append(
             f"python3 {(here / 'cfmesh.py').as_posix()} check . --wall {wall}"
-            " --log log.cartesianMesh"
+            f" --log log.{mesher}"
         )
         lines.append(
             f"python3 {(here / 'layer_report.py').as_posix()} . --patch {wall}"
@@ -743,6 +768,46 @@ What this mesher will not do, said here rather than found later:
   * Both meshes failed 6 of `checkMesh -allGeometry`'s checks. cfMesh's were milder
     (max non-orthogonality 72.1 against 85.3, max aspect ratio 34.9 against 72.3),
     which is a reading of one hull and not a general claim.
+"""
+
+POLYHEDRAL = """\
+Polyhedral, and what is known about it here:
+  * `pMesh` is the polyhedral mesher. Its application says it "takes a triangulated
+    surface and generates a body-fitted polyhedral mesh", and what it constructs is a
+    `voronoiMeshGenerator` -- so the cells are the dual of the octree's points, not
+    split hexes.
+  * It reads the SAME system/meshDict this script writes, as
+    `IOobject("meshDict", runTime_.system(), ..., MUST_READ)`, and passes it to the same
+    `checkMeshDict`, `meshOctreeCreator`, `refineBoundaryLayers` and
+    `renameBoundaryPatches` the cartesian route uses. `maxCellSize`, `localRefinement`
+    and `renameBoundary` therefore mean what they mean above, and a missing
+    `surfaceFile` is its one fatal: "surfaceFile is not present in meshDict".
+  * It does grow boundary layers: `addLayerForAllPatches` for a global `nLayers`,
+    `addLayerForPatch` per patch, then `refineLayers`. The global-vs-per-patch
+    `nLayers 1` trap above is the same trap here, in the same library code.
+  * NO polyhedral mesh has been run on this image and measured. Every number in the
+    section above -- 100.0% layer coverage, the 1.21 mm first cell, the checkMesh
+    spread -- is from `cartesianMesh` on the Wigley hull of 2026-08-31 and none of it
+    transfers. `layer_report.py` measures the coverage and the first-cell height on
+    whatever comes out, which is how a pMesh run earns its own numbers.
+  * The source above was read from cfMesh upstream
+    (`meshLibrary/voronoiMesh/voronoiMeshGenerator/voronoiMeshGenerator.C` and
+    `executables/pMesh/pMesh.C`, 2026-11-21), not from this image's v2512 copy, which
+    refused the request. `where` says whether the binary is on this instance, which is
+    the fact that decides whether to try.
+
+The other polyhedral route, which is not this script's and needs no dictionary:
+  * `polyDualMesh <featureAngle>` builds the dual of a mesh that already exists, one
+    cell per point, "adhering to all the feature and patch edges"; the angle is in
+    degrees [0-180] and detects the boundary edges that get multiple boundary faces.
+    `-overwrite`, `-splitAllFaces`, `-concaveMultiCells` and `-doNotPreserveFaceZones`
+    are its options; faceZones are preserved by default and the only warning it has is
+    about dropping them. It is in the ESI v2512 tree at
+    `applications/utilities/mesh/manipulation/polyDualMesh/polyDualMeshApp.C` (read
+    2026-11-21); whether the binary is on this instance is `which polyDualMesh`.
+    It states no requirement on its input, and it is a mesh operation rather than a
+    mesher: the boundary layer you had is one cell per point afterwards, so
+    `layer_report.py` before and after is the measurement that matters.
 """
 
 
@@ -1804,8 +1869,10 @@ def _cmd_case(args) -> int:
         print("     carrying just these solids the mesh gets exactly the patches named"
               " above. Any OTHER solid in the surface still merges into"
               f" `{args.default_name}`.")
-    print("\n" + "\n".join(route(args.surface, args.wall, args.angle)))
+    print("\n" + "\n".join(route(args.surface, args.wall, args.angle, args.mesher)))
     print("\n" + COSTS)
+    if args.mesher == "pMesh":
+        print(POLYHEDRAL)
     return 0
 
 
@@ -1852,9 +1919,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=_cmd_box)
 
-    p = sub.add_parser("case", help="write system/meshDict for a cartesianMesh run")
+    p = sub.add_parser("case", help="write system/meshDict for a cartesianMesh or pMesh run")
     p.add_argument("case", type=Path)
     p.add_argument("--surface", required=True, help="the closed surface, .stl or .ftr")
+    p.add_argument("--mesher", choices=("cartesianMesh", "pMesh"), default="cartesianMesh",
+                   help="which binary the printed route runs; both read this same "
+                        "system/meshDict, and pMesh makes the mesh polyhedral "
+                        "(default %(default)s)")
     p.add_argument("--max-cell", type=float, required=True)
     p.add_argument("--wall", default=None, help="the solid name the layers go on")
     p.add_argument("--wall-cell", type=float, default=None)
