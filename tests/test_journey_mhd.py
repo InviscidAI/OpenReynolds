@@ -425,8 +425,12 @@ def test_the_centreline_speed_is_the_closed_form_absolutely(hartmann, runs):
     y, ux = read_profile(case, f"{END_TIME_S:g}")
     centre = float(np.interp(0.0, y, ux))
     expected = MEAN_VELOCITY * centreline_over_mean(hartmann)
+    # Signed, not `abs`. A magnitude printed with a leading `+` reads as "high" when
+    # the value is low, and the sign is diagnostic here the same way it is for the SPH
+    # sloshing mode: a centreline below the closed form means the profile is flatter
+    # than the Hartmann number asks for, which is what too few cells in the layer does.
     print(f"  Ha {hartmann:g}: u_c {centre:.6f} m/s against an exact {expected:.8f} "
-          f"({abs(centre - expected) / expected:+.3%})")
+          f"({(centre - expected) / expected:+.3%})")
     assert centre == pytest.approx(expected, rel=2e-2)
 
 

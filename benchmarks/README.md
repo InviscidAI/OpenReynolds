@@ -95,12 +95,32 @@ a size the scheme tolerates. Measured in the `journey` job:
 | magnetic flux divergence error | 0 throughout |
 | the fourteen journey tests | all pass, graders included |
 
-**The graded profile agreement is not quoted here**, and that is deliberate: pytest
-captures a passing test's output, so the log carries the fact that `grade.py`'s bounds
-were met and not the numbers. The bounds are `shape_rms < 1.5e-2` and
-`shape_max < 5.0e-2` of the centreline speed, and they are discretisation bounds rather
-than reference uncertainties, because the profile is exact. A per-cent figure will go here
-when a run prints one.
+**The graded agreement, from the `journey` job's own output** (which runs `-v -s`, so
+nothing is captured):
+
+| | Ha 5 | Ha 0 |
+|---|---|---|
+| centreline `u_c` | 1.228773 m/s against an exact **1.23312791** | 1.498127 against an exact **1.5** |
+| signed difference | **-0.353%** | **-0.125%** |
+| shape RMS, own closed form | **0.001360** | **0.000454** |
+| shape RMS against the WRONG profile | **0.175542** (the Ha 0 parabola) | -- |
+| samples | 401 at t = 2 | 401 at t = 2 |
+
+The bounds are `shape_rms < 1.5e-2` and `shape_max < 5.0e-2` of the centreline speed, and
+they are discretisation bounds rather than reference uncertainties because the profile is
+exact. So the measured 0.001360 is **eleven times inside** the bound.
+
+**The last row is the one that makes this evidence.** 0.001360 from its own closed form
+against 0.175542 from the wrong one is a separation of **129**, and the wrong profile
+misses the bound by a factor of twelve. A number this side of the bound cannot be reached
+by the wrong physics, which is what distinguishes a graded case from a solver agreeing
+with itself.
+
+Both signs are **negative**: the centreline sits below the closed form at both Hartmann
+numbers, which is the profile being slightly flatter than the field asks for -- what too
+few cells in the `L/Ha` layer does, and this mesh has four. The journey test used to print
+that difference through `abs()` with a leading `+`, so it read as high when it is low; it
+is signed now, for the reason the sloshing row gives about its own sign.
 
 Neither has a fixture under `tests/data/`, for the reason `thermal_stress/` has none: both
 need OpenFOAM to produce one and the `benchmarks` job has none. Their graders are held to
