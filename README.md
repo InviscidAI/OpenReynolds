@@ -66,7 +66,10 @@ connection is waited through; only a refusal or the code expiring ends it.
 
 `--native` runs the workspace here rather than in a container: no Docker, no image to
 pull, no sandbox. With the toolbox extra it solves without OpenFOAM at all, because
-`lbm.py` and `sph.py` are solvers in numpy rather than wrappers around one.
+several of the toolbox's scripts are solvers in numpy rather than wrappers around
+one. [Tier 1 of the tutorial index](benchmarks/tutorials/README.md) is the list --
+every case that needs nothing installed, with the reference it is measured against
+and the agreement a run really got -- and `run_tier1.py` runs all of them at once.
 
 ```bash
 pip install 'openreynolds[toolbox]'
@@ -402,9 +405,11 @@ ESI v2512, so another version or fork will differ in places.
 pip install 'openreynolds[toolbox]'
 ```
 
-`lbm.py` and `sph.py` in the toolbox are a lattice-Boltzmann and an SPH solver written
-in numpy, so they need no image and no OpenFOAM; `advise.py` lists them beside the
-OpenFOAM applications and marks which are actually here. The `[toolbox]` extra is what
+`lbm.py`, `sph.py`, `tracks.py` and `panel.py` in the toolbox are a lattice-Boltzmann,
+an SPH, a particle and a potential-flow solver written in numpy, so they need no
+image and no OpenFOAM, and `acoustics.py` and `wind_comfort.py` are exact
+instruments that need no solve at all; `advise.py` lists them beside the OpenFOAM
+applications and marks which are actually here. The `[toolbox]` extra is what
 puts numpy and the rest on your own machine, where the image would otherwise have
 provided them -- a plain `pip install openreynolds` ships both solvers and nothing they
 import, so they exit on `ModuleNotFoundError: No module named 'numpy'`. Measured on a
