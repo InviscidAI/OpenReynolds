@@ -109,6 +109,23 @@ that configuration exists to report a result from.
 
 ## Running one from each tier
 
+All of tier 1 at once, which is the only way anybody checks eight cases:
+
+```sh
+python benchmarks/tutorials/run_tier1.py            # every one, with what each agreed with
+python benchmarks/tutorials/run_tier1.py --quick    # skips the three slow ones, by name
+python benchmarks/tutorials/run_tier1.py --list     # what it would run
+```
+
+It exits non-zero if a case that has a verdict reports a failure, so it is a check and
+not only a demonstration. Measured on one laptop: the cavity at n = 128 is about 100 s,
+the sloshing tank 240 s and the SPH dam break 480 s, which is most of the total, so
+`--quick` leaves those three out and says which. Two cases carry no verdict and are
+counted neither way: the dam break, whose reference could not be read, and the panel
+method, which prints the four exact statements quoted above and grades none of them.
+
+Or one at a time:
+
 ```sh
 # tier 1: nothing but this package. exact answers, no workspace, no model, nothing billed
 python benchmarks/lbm/grade.py poiseuille
