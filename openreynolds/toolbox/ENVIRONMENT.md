@@ -46,7 +46,7 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
 - `mesh_look.py` in the toolbox draws any meshed case with one colour per patch and prints
   its cells, bounds, patch areas and normals and checkMesh's verdict — the fastest way to
   see whether a mesh is the shape that was meant and whether the inlet is the end you think.
-- `templates/` in the toolbox holds seven working scripts, not snippets: `duct2d.py` (a
+- `templates/` in the toolbox holds working scripts, not snippets: `duct2d.py` (a
   closed planar outline meshed in quads, extruded one cell into hexahedra, converted with
   `gmshToFoam` and retyped), `body_in_box.py` (an OCC primitive cut out of a flow box,
   meshed body-fitted with tetrahedra, converted and retyped), `free_surface.py` (a
@@ -96,7 +96,7 @@ One interpreter, and `python3` in a shell is it — the one the renderers use. I
   session start, so they travel with the package and cost the image nothing. Neither has
   a turbulence model, both are explicit and second order, and what each was measured
   against is in `benchmarks/lbm/` and `benchmarks/sph/`. `advise.py` lists them beside
-  the image's applications for the class of case it reads.
+  the image's applications for the class of case it reads. `cht_wall.py` is the newest and the one with no solved result yet: a two-region conjugate wall, two `blockMesh` blocks carrying the cell-zone names `fluid` and `solid`, `splitMeshRegions -cellZones -overwrite`, `checkMesh -allRegions` and a picture per region, with the per-region properties copied off `$FOAM_TUTORIALS` rather than invented and the exact series-conduction answer printed for whatever runs it.
 
 Not installed: **scipy**, **PyMuPDF/`fitz`**. For PDFs use the poppler tools below, not `fitz`.
 

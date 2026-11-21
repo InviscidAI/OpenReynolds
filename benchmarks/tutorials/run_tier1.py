@@ -82,6 +82,25 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a tracer orbit in solid-body rotation",
      ("benchmarks/particles/grade.py", "tracer"),
      "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("turbulent pipe friction and the law of the wall",
+     ("openreynolds/toolbox/pipe_friction.py", "--check"),
+     "one exact branch (f = 64/Re) and two fits to Nikuradse, so what is graded"
+     " is the arithmetic and the agreement between correlations: Colebrook"
+     " satisfying its own implicit equation, Haaland within its claimed 2% of"
+     " it, and the wall law crossing inside wall.py own buffer band",
+     False, True),
+    ("conjugate heat transfer, the two-region reference",
+     ("openreynolds/toolbox/conjugate.py", "--check"),
+     "steady series conduction, exact, and the two continuities a conjugate"
+     " interface owes at once; plus the shell-versus-slab factor, graded"
+     " against its own algebra rather than a printed per cent",
+     False, True),
+    ("quasi-1D compressible relations",
+     ("openreynolds/toolbox/nozzle.py", "--check"),
+     "exact closed forms, and three identities: A/A* = 1 at the throat,"
+     " the Prandtl relation M1* M2* = 1 derived independently of the jump"
+     " relations it checks, and total pressure falling through every shock",
+     False, True),
     ("the laminar flat plate, Blasius",
      ("openreynolds/toolbox/blasius.py", "--check"),
      "the Blasius similarity solution, exact: the published f''(0) ="

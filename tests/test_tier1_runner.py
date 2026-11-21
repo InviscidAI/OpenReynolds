@@ -135,3 +135,28 @@ def test_the_graders_the_table_calls_are_the_ones_the_index_lists(case):
     called = {cmd[0] for _n, cmd, _a, _s, _g in module.CASES}
     assert any(case in path for path in called), f"no tier 1 case calls {case}"
     assert case in INDEX.read_text(encoding="utf-8")
+
+
+def test_every_script_the_table_calls_starts_under_isolated_mode():
+    """`run_one` invokes with `-I`, which removes the script's own directory from
+    sys.path -- so a toolbox script that imports a sibling the ordinary way starts fine
+    by hand and dies here.
+
+    The failure this is for, found while adding `nozzle.py`: it imported `compressible`
+    for a cross-check, exited 1 in 0.078 s under `-I`, and the runner reported "no
+    verdict in its output" -- a graded case reading as ungraded, which is precisely the
+    distinction `run_tier1.py` exists to keep. The fix is `advise.py:91-94`'s pattern, a
+    `sys.path.insert` of the script's own parent before the sibling import.
+
+    `--help` rather than the real flags: argparse exits 0 after printing usage, so this
+    costs a tenth of a second a script and still fails on any import that cannot be
+    satisfied in isolation.
+    """
+    module = runner()
+    for name, cmd, _against, _slow, _graded in module.CASES:
+        done = subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / cmd[0]),
+                               "--help"],
+                              capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, (
+            f"{name}: {cmd[0]} cannot start under -I, which is how run_one calls it.\n"
+            f"{(done.stderr or done.stdout)[-400:]}")
