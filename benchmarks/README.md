@@ -73,6 +73,35 @@ scalar equation in one unknown over the case's own JANAF coefficients; it has no
 beside it because that root find already lives in `openreynolds/toolbox/chem0d.py` and a
 second copy would be a second thing to keep agreeing.
 
+**The Hartmann case solves, as of 2026-11-21.** It did not for two rounds: `mhdFoam`
+exited -8 on a SIGFPE inside the vector solve, with the Courant number running 15.1 at
+t = 0.27 and 38.9 one step later. The cause was the mesh, not the time step. `mhdFoam`'s
+two magnetic normal stresses are both `fvc::` and do not cancel discretely, so the
+surviving explicit force is of order `B0^2/(mu*rho*dy)` and **contains no `dt`** -- which
+is why two reductions of the step did not reach it. The ESI tutorial is stable at a
+magnetic Courant number of 2.0 where this case diverged at 0.5, so that ratio is not the
+governing quantity either.
+
+What governs it is `dy`, and the tutorial's own `dy` of 0.05 is the one value `mhdFoam` is
+known to be stable at -- stable **because** at its Ha of 20 the Hartmann layer `L/Ha` is
+exactly one cell, so the tutorial does not resolve the layer at all. This template now
+uses that cell height at Ha 5, where four cells still fall inside the layer: resolved, at
+a size the scheme tolerates. Measured in the `journey` job:
+
+| | |
+|---|---|
+| magnetic Courant `c_A*dt/dy` | **0.5000** at Ha 5, against the tutorial's stable 2.0 |
+| flow Courant, max over 400 reported steps | **0.0589** at Ha 5, **0.0618** at Ha 0 |
+| magnetic flux divergence error | 0 throughout |
+| the fourteen journey tests | all pass, graders included |
+
+**The graded profile agreement is not quoted here**, and that is deliberate: pytest
+captures a passing test's output, so the log carries the fact that `grade.py`'s bounds
+were met and not the numbers. The bounds are `shape_rms < 1.5e-2` and
+`shape_max < 5.0e-2` of the centreline speed, and they are discretisation bounds rather
+than reference uncertainties, because the profile is exact. A per-cent figure will go here
+when a run prints one.
+
 Neither has a fixture under `tests/data/`, for the reason `thermal_stress/` has none: both
 need OpenFOAM to produce one and the `benchmarks` job has none. Their graders are held to
 their closed forms by `tests/test_benchmark_mhd.py` and `tests/test_toolbox_chem0d.py` in

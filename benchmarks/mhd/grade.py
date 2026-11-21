@@ -73,11 +73,14 @@ import numpy as np
 
 THRESHOLDS = {
     # Of the centreline speed. The profile is exact, so this is a discretisation bound
-    # and not a reference uncertainty: at Ha 20 the template's mesh puts seven cells
-    # inside the L/Ha Hartmann layer and the scheme is second order, so the error is
-    # expected well inside this. It is set where it is because the Ha = 0 parabola sits
-    # 0.366 RMS from the Ha = 20 profile -- twenty-four times this bound -- so a number
-    # this side of it cannot be reached by the wrong physics.
+    # and not a reference uncertainty: the template's mesh is uniform at the ESI
+    # tutorial's own dy of 0.05, which puts four cells inside the L/Ha Hartmann layer at
+    # the default Ha of 5, and the scheme is second order. (An earlier version of this
+    # comment said seven cells, which described the GRADED mesh -- the one that diverged,
+    # because mhdFoam's explicit magnetic stresses grow as the cell shrinks.) The bound
+    # is set where it is because the Ha = 0 parabola sits 0.366 RMS from the Ha = 20
+    # profile -- twenty-four times this bound -- so a number this side of it cannot be
+    # reached by the wrong physics.
     "shape_rms": 1.5e-2,
     "shape_max": 5.0e-2,
     # u_c/u_mean against (3), relative.
