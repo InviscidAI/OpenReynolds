@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import families
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
@@ -64,36 +65,6 @@ def flat(text: str) -> str:
 
 
 # -- every runnable case is findable ---------------------------------------------------
-
-
-NOT_A_CASE_FAMILY = {
-    "tutorials": "this directory: the index itself, and the tier 3 prompts",
-    "deliverables": "a model-behaviour eval -- it plays a transcript to the configured "
-                    "model and has a judge bin the reply, so it grades the agent and not "
-                    "a solver, costs a model turn, and has no reference value in it",
-}
-"""Directories under `benchmarks/` that are not case families, each with why.
-
-Named rather than derived, because "is this a case family" is a judgement and a silent
-rule would let a real family be skipped by accident -- which is the failure this test
-exists for, one level up."""
-
-
-def families() -> list[str]:
-    """Every case family, from the directory rather than from a list.
-
-    This was five literals, written when there were five families. Three more arrived
-    (`mhd/`, `combustion/`, `particles/`) and the test that exists to catch an unlisted
-    family could not see them: `particles/` held three graded cases, two of them exact
-    closed forms runnable in numpy on a laptop, and the tutorial index named none of
-    them. A guard whose coverage is a literal goes stale exactly when the thing it
-    guards grows, which is the only time it matters.
-    """
-    found = sorted(p.name for p in BENCHMARKS.iterdir()
-                   if p.is_dir() and not p.name.startswith((".", "_"))
-                   and p.name not in NOT_A_CASE_FAMILY)
-    assert len(found) >= 8, f"only {found} under benchmarks/ -- the glob is wrong"
-    return found
 
 
 @pytest.mark.parametrize("family", families())

@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import families
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
@@ -198,10 +199,22 @@ def test_an_unread_primary_source_is_flagged_as_unread():
     assert "no primary access" in text or "was not read" in text or "paywall" in text
 
 
-@pytest.mark.parametrize("case", ["felix", "moving_mesh", "tutorials", "lbm", "sph"])
+@pytest.mark.parametrize("case", families())
 def test_the_index_names_every_family_beside_it(case):
-    """A family added under benchmarks/ and not added to the index is invisible."""
-    assert f"{case}/" in INDEX.read_text(encoding="utf-8")
+    """A family added under benchmarks/ and not added to the index is invisible.
+
+    This was the same five literals `test_tutorials_index.py` carried, and the same
+    bug: `mhd/`, `combustion/`, `particles/` and `thermal_stress/` were not among them,
+    so the guard could not have reported them missing. The list is shared now
+    (`conftest.families`), because two globs would be two things to keep agreeing.
+
+    Matched **with the slash**, which is not pedantry: the bare word "particles" occurs
+    in this index's prose about boundary particles, so a check for the word alone passes
+    while the family is unnamed.
+    """
+    assert f"{case}/" in INDEX.read_text(encoding="utf-8"), (
+        f"benchmarks/{case}/ holds runnable cases and benchmarks/README.md does not "
+        f"name it as `{case}/`")
 
 
 def test_the_index_states_an_agreement_for_every_case_it_lists():
