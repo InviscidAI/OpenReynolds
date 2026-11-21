@@ -198,7 +198,7 @@ refusal printed what was actually beside it, which is bottomWater, g, heater, le
 regionProperties, rightSolid, topAir. bottomWater is the liquid region, which is what this
 case wants: its fluid is water-like at rho 1000 and Cp 4181."""
 
-COUPLED_PATCH = re.compile(r"^\s*(\w+_to_\w+)$", re.M)
+COUPLED_PATCH = re.compile(r'^\s*"?(\w+_to_[\w.*]+)"?\s*$', re.M)
 """A region-to-region patch name in a tutorial field file, which is what `splitMeshRegions`
 produces and therefore what carries the coupled thermal condition."""
 
@@ -264,15 +264,23 @@ def coupled_condition() -> tuple[str, str]:
     and releases -- so it is read out of the image instead of written here.
     """
     source = tutorials_root() / TUTORIAL_SOURCE
-    for where in (source / "0" / TUTORIAL_FLUID / "T",
-                  source / "0.orig" / TUTORIAL_FLUID / "T"):
+    # Three places, because tutorials differ about where a region's initial fields live
+    # and CI found this one out. `multiRegionHeater` has no `0/<region>/T` at all: it
+    # writes its boundary conditions through `system/<region>/changeDictionaryDict`,
+    # which is already copied beside the properties. The order is most-direct first.
+    candidates = (source / "0" / TUTORIAL_FLUID / "T",
+                  source / "0.orig" / TUTORIAL_FLUID / "T",
+                  source / "system" / TUTORIAL_FLUID / "changeDictionaryDict")
+    for where in candidates:
         if where.is_file():
             text = where.read_text(encoding="utf-8")
             break
     else:
+        tried = ", ".join(str(c.relative_to(source)) for c in candidates)
         raise SystemExit(
-            f"refused: no T field for the {TUTORIAL_FLUID} region under {source}/0 or "
-            f"{source}/0.orig. `find {source} -name T` will say where it is.")
+            f"refused: the {TUTORIAL_FLUID} region's thermal boundary conditions are in "
+            f"none of {tried} under {source}. `grep -rl _to_ {source}` will say which "
+            "file carries them.")
     found = COUPLED_PATCH.search(text)
     if not found:
         raise SystemExit(
