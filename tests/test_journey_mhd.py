@@ -473,11 +473,16 @@ def test_the_grader_rejects_each_run_graded_as_the_other(runs):
     be measuring nothing, and this is the cheapest way to show it does not -- the two
     cases differ only in one number at the top of the template."""
     for solved, graded_as in ((0.0, 5.0), (5.0, 0.0)):
+        # Bound to a name rather than indexed inside the f-string: nesting the same
+        # quote character inside an f-string expression is legal from Python 3.12
+        # (PEP 701) and a SyntaxError before it, and this repository's matrix runs
+        # 3.10 through 3.13. The first version of this line collected on 3.12 and 3.13
+        # and failed collection on 3.10 and 3.11 -- exactly those four jobs.
+        case = runs[solved]["case"]
         proc = subprocess.run(
-            [sys.executable, str(GRADER), "hartmann", str(runs[solved]["case"]),
+            [sys.executable, str(GRADER), "hartmann", str(case),
              "--hartmann", f"{graded_as:g}", "--mean-velocity", f"{MEAN_VELOCITY:g}",
-             "--half-height",
-             f"{half_height(runs[solved]["case"]):g}"],
+             "--half-height", f"{half_height(case):g}"],
             text=True, capture_output=True)
         print(f"  Ha {solved:g} graded as Ha {graded_as:g}: exit {proc.returncode}")
         assert proc.returncode == 1, proc.stdout
