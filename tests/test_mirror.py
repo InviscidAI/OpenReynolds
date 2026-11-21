@@ -21,6 +21,7 @@ from openreynolds.loop import Loop
 from openreynolds.tools import ToolContext
 from openreynolds.backend.base import BackendError, ExecResult
 from openreynolds.browse import MAX_ENTRIES, Browser
+from openreynolds.store import Store
 
 HOME = "/work/study-test"
 
@@ -605,6 +606,7 @@ def as_the_only_study(monkeypatch, backend, store):
     )
     monkeypatch.setattr(cli.hosted, "acquire", lambda *a, **k: (backend, None, "instance-1"))
     store.session.home = HOME
+    store.session.instance_id = "instance-1"
     store.save()
 
 
@@ -668,6 +670,150 @@ def test_pull_fails_loudly_when_it_could_not_reach_the_workspace(backend, store,
 
     assert result.exit_code == 1
     assert "instance is gone" in result.output
+
+
+# -- a study this machine has no record of (#215) ------------------------------
+
+
+class StudyRows:
+    """The platform's `GET /v1/studies/{id}`, as `FoamdClient` asks it."""
+
+    def __init__(self, rows: dict[str, dict] | None = None, error: BackendError | None = None):
+        self.rows, self.error, self.asked = rows or {}, error, []
+
+    def __call__(self, url, key):
+        return self
+
+    def get_study(self, study_id):
+        self.asked.append(study_id)
+        if self.error:
+            raise self.error
+        if study_id not in self.rows:
+            raise BackendError("no such study", code="not_found", status=404)
+        return self.rows[study_id]
+
+    def close(self):
+        pass
+
+
+def from_the_browser(monkeypatch, tmp_path, backend, rows: StudyRows) -> list:
+    """No study on this machine; the platform's rows are `rows`; `acquire` records
+    which workspace it was asked for."""
+    monkeypatch.setattr(
+        Config, "load", classmethod(lambda cls: Config(studies_dir=tmp_path / "studies"))
+    )
+    monkeypatch.setattr(cli.hosted, "FoamdClient", rows)
+    asked: list = []
+
+    def acquire(url, key, instance_id=None):
+        asked.append(instance_id)
+        return backend, None, instance_id or "the-newest-workspace"
+
+    monkeypatch.setattr(cli.hosted, "acquire", acquire)
+    return asked
+
+
+WEB_ROW = {"id": "web-study", "home": "/work/web-study", "instance_id": "its-own"}
+
+
+def test_a_study_started_in_the_browser_is_pulled_from_its_own_workspace(backend, tmp_path, monkeypatch):
+    """#215: with no record here, `acquire` took the account's newest workspace,
+    usually another study's, and started it. The platform's row names the study's own."""
+    wide_console(monkeypatch)
+    asked = from_the_browser(monkeypatch, tmp_path, backend, StudyRows({"web-study": WEB_ROW}))
+    run_here = Store(tmp_path / "studies", "run-here")   # another study, on its own workspace
+    run_here.session.instance_id = "another-studys"
+    run_here.save()
+    workspace(backend, ("/work/web-study/notes.md", 40), ("/work/web-study/case/VTK/a.vtu", 40))
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "web-study"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["its-own"]
+    files = tmp_path / "studies" / "web-study" / "files" / "web-study"
+    assert (files / "notes.md").is_file() and (files / "case" / "VTK" / "a.vtu").is_file()
+    assert backend.last_exec[0].startswith("find -H /work/web-study"), "its home, not all of /work"
+    assert not (tmp_path / "studies" / "web-study" / "session.json").exists(), "nothing recorded"
+
+
+def test_files_and_push_go_to_a_browser_studys_own_workspace(backend, tmp_path, monkeypatch):
+    wide_console(monkeypatch)
+    asked = from_the_browser(monkeypatch, tmp_path, backend, StudyRows({"web-study": WEB_ROW}))
+    workspace(backend, ("/work/web-study/notes.md", 40))
+    geometry = tmp_path / "body.stl"
+    geometry.write_text("solid body\nendsolid body\n")
+
+    listed = CliRunner().invoke(cli.main, ["files", "--study", "web-study"])
+    pushed = CliRunner().invoke(cli.main, ["push", str(geometry), "--study", "web-study"])
+
+    assert listed.exit_code == 0, listed.output
+    assert pushed.exit_code == 0, pushed.output
+    assert asked == ["its-own", "its-own"]
+    assert "/work/web-study/body.stl" in backend.files
+
+
+def test_a_study_neither_here_nor_on_the_account_is_refused(backend, tmp_path, monkeypatch):
+    wide_console(monkeypatch)
+    asked = from_the_browser(monkeypatch, tmp_path, backend, StudyRows())
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "no-such-study"])
+
+    assert result.exit_code == 1
+    assert "No study no-such-study" in result.output
+    assert asked == [], "no workspace was started for it"
+    assert not (tmp_path / "studies" / "no-such-study").exists(), "and nothing left behind"
+
+
+def test_a_browser_study_whose_workspace_was_released_is_refused(backend, tmp_path, monkeypatch):
+    wide_console(monkeypatch)
+    released = {"id": "web-study", "home": "/work/web-study", "instance_id": None}
+    asked = from_the_browser(monkeypatch, tmp_path, backend, StudyRows({"web-study": released}))
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "web-study"])
+
+    assert result.exit_code == 1
+    assert "no workspace any more" in result.output
+    assert asked == []
+
+
+def test_a_service_that_cannot_be_asked_is_not_a_guess(backend, tmp_path, monkeypatch):
+    wide_console(monkeypatch)
+    down = StudyRows(error=BackendError("connection refused", code="unreachable"))
+    asked = from_the_browser(monkeypatch, tmp_path, backend, down)
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "web-study"])
+
+    assert result.exit_code == 1
+    assert "Could not ask the workspace service" in result.output
+    assert asked == []
+
+
+def test_a_study_recorded_here_with_no_workspace_asks_the_platform(backend, tmp_path, monkeypatch):
+    """A study quit before its first message settled where it runs has a record here
+    and no workspace in it; the newest workspace is still not its."""
+    wide_console(monkeypatch)
+    asked = from_the_browser(monkeypatch, tmp_path, backend, StudyRows({"web-study": WEB_ROW}))
+    Store(tmp_path / "studies", "web-study").save()
+    workspace(backend, ("/work/web-study/notes.md", 40))
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "web-study"])
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["its-own"]
+
+
+def test_a_study_run_here_keeps_the_workspace_it_has_on_record(backend, store, monkeypatch):
+    """Only a study unknown here asks the platform."""
+    wide_console(monkeypatch)
+    as_the_only_study(monkeypatch, backend, store)
+    rows = StudyRows()
+    monkeypatch.setattr(cli.hosted, "FoamdClient", rows)
+    workspace(backend, (f"{HOME}/notes.md", 40))
+
+    result = CliRunner().invoke(cli.main, ["pull", "--study", "study-test"])
+
+    assert result.exit_code == 0, result.output
+    assert rows.asked == []
 
 
 # -- what a live run found -----------------------------------------------------
