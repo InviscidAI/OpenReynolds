@@ -279,6 +279,20 @@ def locate(given: Path | str) -> dict[str, Any]:
     all, which is the one case where nothing may be written.
     """
     given = Path(given)
+    if not given.exists():
+        # #186: every path below treats a missing directory as an empty one, so a
+        # mistyped study wrote a 4-page document saying "no case directory under the
+        # study home" and exited 0 -- or, pointed at a name with nothing above it,
+        # came out of `choose_case`'s `study.iterdir()` as a traceback and exit 1.
+        # Neither is an answer about a run. A path that is not there is refused by
+        # name, the way a --template that is not there already is.
+        raise Refused(
+            f"refused: nothing at {given}.\n\n"
+            "A document is written about a study on this disk. There is no directory "
+            "of that name here, so there is nothing to read and nothing to say about "
+            "it: a document written anyway would carry the house default template "
+            "under the name of a study nobody can open."
+        )
     notes: list[str] = []
     state = study_state.STATE_DIR
     up = study_state.find_root(given)
@@ -371,6 +385,17 @@ def manifest_rows(
 # -- the case the methods section is about -------------------------------------------
 
 
+def _offered(cases: list[Path]) -> str:
+    """The case names a refused `--case` could have had, for the refusal to name."""
+    if not cases:
+        return ("No case directory was found under the study either, so there is no "
+                "name to offer: `--case` with none of them there would describe "
+                "nothing.")
+    return ("The case(s) under this study: "
+            + ", ".join(sorted(case.name for case in cases))
+            + ". Leaving --case off takes the first of them.")
+
+
 def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[str]]:
     """The case directory the methods are read from, the rule, and the ones not used.
 
@@ -398,15 +423,27 @@ def choose_case(study: Path, wanted: str = "") -> tuple[Path | None, str, list[s
         if _PROCESSOR.match(wanted):
             # #145 noted this would be honoured: a rank's slice described as the
             # study's methods is a methods section about a quarter of a mesh.
-            return None, (f"--case {wanted} names one rank of a decomposed case, not "
-                          "a case; the case is the directory the processor* ones sit "
-                          "in"), [case.name for case in cases]
+            raise Refused(
+                f"refused: --case {wanted} names one rank of a decomposed case, not a "
+                "case; the case is the directory the processor* ones sit in.\n\n"
+                + _offered(cases)
+            )
         for case in cases:
             if case.name == wanted:
                 return case, f"--case {wanted}", [c.name for c in cases if c != case]
         if (study / wanted).is_dir():
             return (study / wanted), f"--case {wanted}", [c.name for c in cases]
-        return None, f"--case {wanted} names no directory under the study", [c.name for c in cases]
+        # #186: this used to be a rule printed on the page, so a mistyped --case
+        # wrote a whole document with no methods and no numbers in it and exited 0 --
+        # while `--template nothere.json` was refused with exit 2 on the same study.
+        # A case name that was typed and is wrong is the same mistake as a template
+        # name that was typed and is wrong, and the asymmetry decided nothing: a
+        # document that silently came out in the house default is a document that
+        # gets sent.
+        raise Refused(
+            f"refused: --case {wanted} names no directory under {study}.\n\n"
+            + _offered(cases)
+        )
     if not cases:
         return None, "no case directory under the study home", []
     if len(cases) == 1:
@@ -763,24 +800,55 @@ def turbulence(case: Path | None) -> tuple[str, str, str]:
     return "", "", ""
 
 
-def boundary_types(case: Path | None, field: str) -> list[tuple[str, str]]:
-    """`(patch, type)` out of one `0/` field's `boundaryField`.
+_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:\-]*$")
+"""An OpenFOAM word, which is what a patch name and a boundary-condition type both
+are. Used to tell one from a chunk of a binary payload (#185)."""
+
+
+def boundary_types(case: Path | None, field: str) -> tuple[list[tuple[str, str]], str]:
+    """`(patch, type)` out of one `0/` field's `boundaryField`, and a note if any of
+    it would not read.
 
     The boundary conditions are the case, far more than the solver name is: the same
     mesh with `fixedValue` and with `zeroGradient` on the outlet are two different
     problems with two different answers, and nothing else in the document would say
     which was solved.
+
+    This is #185. `field_shape` beside it was hardened for #139 and this was not: a
+    `format binary` field writes its nonuniform patch values as raw IEEE-754 bytes
+    inside the `boundaryField` block, and those bytes contain braces and semicolons,
+    so the text parser walked out of one patch entry and reported two more. On
+    `20260830-050338-cfd5`'s `0/thickness` -- 6 patches in
+    `constant/polyMesh/boundary` -- it returned 8, the last two named
+    `Yu?J\\xef\\xbf\\xbdNQu?` and the like, and both reached page 5 of the PDF with 11
+    control characters in them (matplotlib: "Glyph 6 missing from font"). `_capped`
+    caps how much of such a name is printed, not whether it is a name. A patch name
+    and a type are both OpenFOAM words; a slice of a double is not, so what cannot be
+    a patch is counted and named as unread rather than printed as one.
     """
     text = read_dict(case, f"0/{field}")
     if not text:
-        return []
+        return [], ""
     body = preflight.block_body(text, "boundaryField")
     rows = []
+    unread = 0
     for name, inner in preflight.block_entries(body):
         if not name:
             continue
-        rows.append((name, preflight.entry_values(inner).get("type", "?")))
-    return rows
+        kind = preflight.entry_values(inner).get("type", "?")
+        if not _WORD.match(name) or not (kind == "?" or _WORD.match(kind)):
+            unread += 1
+            continue
+        rows.append((name, kind))
+    if not unread:
+        return rows, ""
+    fmt = preflight.entry_values(preflight.block_body(text, "FoamFile")).get("format", "")
+    why = (f"the file is `format {fmt}`, whose patch values are raw bytes to a text "
+           "parser" if fmt and fmt != "ascii"
+           else "its text did not parse as a dictionary")
+    return rows, (f"{unread} more entr{'y' if unread == 1 else 'ies'} in this "
+                  f"boundaryField did not read as a patch ({why}); "
+                  "constant/polyMesh/boundary is the list of patches this mesh has")
 
 
 _NONUNIFORM = re.compile(r"List<(\w+)>\s*(\d+)?")
@@ -943,8 +1011,11 @@ def methods_lines(
         lines.append(f"initial and boundary conditions (0/: {', '.join(fields)})")
         for field in fields:
             lines.append(f"  {field}  {field_shape(read_dict(case, f'0/{field}'))}")
-            for patch, patch_type in boundary_types(case, field):
+            patches, unread = boundary_types(case, field)
+            for patch, patch_type in patches:
                 lines.append(f"    {patch:<22} {patch_type}")
+            if unread:
+                lines.append(f"    {'(not read)':<22} {unread}")
     else:
         lines.append("initial and boundary conditions: no 0/ directory in the case")
     lines.append("")
@@ -1589,17 +1660,19 @@ def main(argv: list[str] | None = None) -> int:
                              " polyMesh")
     args = parser.parse_args(argv)
 
+    # One handler for every `Refused`, not just the template's (#186): a `--case` that
+    # names nothing and a `root` that is not there are the same kind of mistake, and
+    # the exit code a caller checks should not depend on which argument was wrong.
     try:
         template, template_notes = load_template(args.template)
+        record = write_report(
+            args.root, args.out or study_state.find_root(args.root) / PDF_NAME,
+            template=template, case=args.case, hero=args.hero, logo=args.logo,
+            layers=args.layers,
+        )
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return 2
-
-    record = write_report(
-        args.root, args.out or study_state.find_root(args.root) / PDF_NAME,
-        template=template, case=args.case, hero=args.hero, logo=args.logo,
-        layers=args.layers,
-    )
     record["template"] = str(args.template) if args.template else "(built in)"
     record["notes"] = template_notes + record["notes"]
 

@@ -333,7 +333,7 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
     if open_approvals(picture):
         return "waiting_for_approval"
     running = [j for j in picture.get("jobs") or [] if str(j.get("status") or "") in ("running", "starting", "queued")]
-    if picture.get("turn") == "user" and not running and not unanswered(picture):
+    if picture.get("turn") == "user" and not running and answered(picture):
         return "waiting_for_input"
     return "working"
 
@@ -343,17 +343,34 @@ ANSWERING_KINDS = frozenset({"user", "assistant", "turn_failed"})
 request that ended the agent's turn."""
 
 
-def unanswered(picture: dict[str, Any] | None) -> bool:
-    """Whether the person spoke last: their message is in the transcript and nothing of
-    the agent's, or a failure that ended its turn, has followed it.
+def answered(picture: dict[str, Any] | None) -> bool:
+    """Whether the agent's finished turn is in the transcript this same picture holds.
 
-    The turn can say "user" while that is so -- the session's idle prompt sets it, and a
-    line already waiting is read a moment later -- and a caller told `waiting_for_input`
-    then is told the agent finished a turn it has not begun. A person's message nobody
-    has answered is work in hand, whatever the turn flag says."""
-    last = next((i for i in reversed((picture or {}).get("items") or [])
-                 if isinstance(i, dict) and i.get("kind") in ANSWERING_KINDS), None)
-    return bool(last) and last.get("kind") == "user"
+    `waiting_for_input` is read off `picture["turn"]`, which the session thread sets in
+    `LocalView.prompt`, and the transcript and its cursor are built from
+    `picture["items"]`, which `LocalView.refresh` fills from the transcript tail. Two
+    fields, two threads, two moments, and the state is only true if both agree.
+
+    Both directions of that disagreement are the same bug, and only one was covered.
+    Where `items` is *ahead* of `turn` -- the idle prompt sets the turn and a line
+    already waiting is read a moment later -- a caller told `waiting_for_input` is told
+    the agent finished a turn it has not begun; a person's message nobody has answered
+    is work in hand, whatever the turn flag says. Where `items` is *behind* `turn`, the
+    answer the state says to read is not in the transcript the same call returns, and
+    `transcript_since` leaves the cursor at `after_seq` when its slice is empty -- so
+    the next poll is handed the whole transcript again as if it were new. Measured 1 in
+    40 on `test_a_second_message_and_the_cursor` (#188).
+
+    So an empty picture is not `waiting_for_input`: a transcript with nothing in it
+    holds no message to read and no seq to move the cursor to. A picture that has items
+    and none of them of either side's -- events only -- is left as it was, because the
+    cursor does move over those, so the next poll starts after them rather than at the
+    beginning again."""
+    items = [i for i in ((picture or {}).get("items") or []) if isinstance(i, dict)]
+    if not items:
+        return False
+    last = next((i for i in reversed(items) if i.get("kind") in ANSWERING_KINDS), None)
+    return last is None or last.get("kind") != "user"
 
 
 CEILING_ANSWERS = ("approve continues the study (its limit is doubled); decline stops it here. "

@@ -379,6 +379,9 @@ def from_dat(case: Path, requested: str | None = None,
 _NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 _FORMAT = re.compile(r"\bformat\s+(\w+)\s*;")
 _ARCH = re.compile(r'\barch\s+"([^"]*)"')
+_DATA_CLASS = re.compile(r"\bdata\.class\s+(\w+)\s*;")
+"""What a collated `decomposedBlockData` file says it is carrying. The header's own
+`class` is the container (#194)."""
 _LIST_HEAD = re.compile(r"(\d+)\s*\(")
 _LIST_OF = re.compile(r"List<(\w+)>")
 _PAYLOAD = re.compile(r"@payload (\d+)@")
@@ -428,6 +431,25 @@ def decode_binary(path: Path) -> tuple[str, list[np.ndarray]]:
     fobj = locate.foam_file(path)
     if fobj is None:
         raise WallError(f"{path.name} declares format binary and could not be read")
+    if fobj.cls == "decomposedBlockData":
+        # #194: this was refused, correctly, by the payload-offset check below -- and
+        # the message it gave blamed the data ("its payload of 1098 items does not end
+        # where the header's widths say it should") and prescribed foamFormatConvert,
+        # which rewrites the same container as ascii and changes nothing. The cause is
+        # in the header: a collated write is one file holding every rank's blocks, with
+        # the field's own class in `data.class`, and this reader unpacks the field and
+        # not the container. 36 such files in
+        # `studies/20260912-193750-3024/.../processors8/`.
+        inner = _DATA_CLASS.search(fobj.text[:4096])
+        raise WallError(
+            f"{path.parent.name}/{path.name} is a collated decomposed write -- "
+            f"`class decomposedBlockData`"
+            + (f", holding a {inner.group(1)}" if inner else "")
+            + " -- which is one file carrying every rank's block rather than a field, "
+            "and this reads fields. `reconstructPar` writes the whole-domain field, or "
+            "the solver run again with `-fileHandler uncollated` writes one file per "
+            "rank; foamFormatConvert would only rewrite the same container as ascii"
+        )
     arch = _ARCH.search(fobj.text[:4096])
     if arch is None:
         raise WallError(
@@ -1291,6 +1313,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--png", default=None, metavar="PATH",
                         help="a per-patch y+ range plot")
     args = parser.parse_args(argv)
+
+    if not Path(args.case).is_dir():
+        # #194: every reader below treats a missing directory as a case with nothing in
+        # it, so a typo printed the ordinary "no y+ anywhere in this case" report and
+        # exited 0 -- a finding about a run, for a path that is not there.
+        print(f"there is no directory at {Path(args.case).as_posix()}; this reads the y+ "
+              "a run left behind, so it wants the case directory that holds the run",
+              file=sys.stderr)
+        return 2
 
     try:
         found = measure(args.case, time=args.time, nu=args.nu)

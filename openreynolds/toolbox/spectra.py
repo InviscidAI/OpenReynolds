@@ -120,6 +120,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -897,6 +898,24 @@ def scatter_growth(values: np.ndarray) -> float:
     return late / early
 
 
+def _declared(meta: dict, key: str) -> tuple[float | None, str]:
+    """A reference value the case wrote into its own `.dat` header, and where from.
+
+    `# magUInf : 1.00000000e-02` and `# lRef : 1.00000000e-02` are what a coefficient
+    means (`results.py::parse_dat` keeps them for that reason), so they are read rather
+    than asked for again. Anything that is not a finite positive number is not read
+    (#194).
+    """
+    raw = str(meta.get(key, "")).strip()
+    try:
+        value = float(raw.split()[0]) if raw else None
+    except ValueError:
+        return None, ""
+    if value is None or not math.isfinite(value) or value <= 0:
+        return None, ""
+    return value, f"the record's own header ({key} {raw})"
+
+
 def analyse(source: Path, column: str = "", segments: int = 4,
             length: float | None = None, speed: float | None = None,
             start: float | None = None, expect: float | None = None) -> dict[str, Any]:
@@ -949,6 +968,25 @@ def analyse(source: Path, column: str = "", segments: int = 4,
         request = {"strouhal": expect, "frequency": wanted, "nyquist": nyquist,
                    "resolvable": bool(wanted <= nyquist)}
 
+    # #194 item 8: without `--length/--speed` this printed "No length scale or
+    # free-stream speed is assumed here" over a `coefficient.dat` whose own header
+    # carries `# magUInf :` and `# lRef :` -- the case's declared reference speed and
+    # length, already parsed into `meta` (`results.py::parse_dat`) and already carried
+    # in the dict this reports from. Reading a value the case declared is not assuming
+    # one, which is the argument this script's own time-axis section makes; so the
+    # effect was that the advertised `python3 spectra.py /work/case` never produced a
+    # Strouhal number on any real forces case. Flags still win, and where the header
+    # is what was used the line says so: `lRef` is whatever the case declared it to be,
+    # and a St quoted on a chord when the reader wanted a thickness is a different
+    # number.
+    meta = history.get("meta", {})
+    length_from = "--length" if length is not None else ""
+    speed_from = "--speed" if speed is not None else ""
+    if length is None:
+        length, length_from = _declared(meta, "lRef")
+    if speed is None:
+        speed, speed_from = _declared(meta, "magUInf")
+
     strouhal = None
     if length is not None and speed is not None:
         if speed == 0.0:
@@ -966,6 +1004,7 @@ def analyse(source: Path, column: str = "", segments: int = 4,
             quotient = peak["frequency"] * length / speed
             strouhal = {"value": quotient if verdict == "periodic" else None,
                         "length": length, "speed": speed,
+                        "length_from": length_from, "speed_from": speed_from,
                         "verdict": verdict,
                         "quotient": quotient,
                         "refused": "" if verdict == "periodic" else basis}
@@ -1065,6 +1104,15 @@ def report(found: dict[str, Any]) -> str:
         lines += ["",
                   f"strouhal: St = {st['value']:.6g}  "
                   f"(f = {peak['frequency']:.6g}, L = {st['length']:g}, U = {st['speed']:g})"]
+        read = [f"{what} from {where}" for what, where in
+                (("L", st.get("length_from")), ("U", st.get("speed_from")))
+                if where and not str(where).startswith("--")]
+        if read:
+            # Where the number came from the case rather than from the caller, because
+            # `lRef` is whatever that case declared it to be: a St on a chord is not a
+            # St on a thickness, and the reader is the one who knows which was wanted.
+            lines.append("          " + "; ".join(read)
+                         + " -- what the case declared, not what was asked for here")
     elif st is not None:
         # The refusal names the number it did not print, because a reader who sees no St
         # line concludes the script is broken and does the division themselves.
@@ -1088,7 +1136,8 @@ def report(found: dict[str, Any]) -> str:
                   "iteration count, not about the flow."]
     else:
         lines += ["",
-                  "strouhal: not computed -- give both --length and --speed. No length scale "
+                  "strouhal: not computed -- give both --length and --speed, or write a "
+                  "record whose header declares them (lRef, magUInf). No length scale "
                   "or free-stream speed is assumed here."]
 
     requested = found.get("requested")

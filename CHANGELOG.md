@@ -744,6 +744,53 @@ All notable changes to this project are recorded here. The format follows
   thousand SIMPLE iterations. Quoted in `tests/test_toolbox_adjoint_env.py` from the
   release tag rather than from a secondary source.
 
+- **`report.py` wrote a complete, empty-looking document for a `--case` that named
+  nothing, and exited 0.** A typo in a case name produced a 4-page PDF reading `key
+  numbers: none`, with the reason only on the page, while `--template nothere.json` on
+  the same study was refused with exit 2 and wrote nothing; a path that did not exist at
+  all came out of `choose_case`'s `study.iterdir()` as a traceback. All three are
+  argument mistakes and all three are now refused by name before anything is written,
+  because a typo that produces a success nobody checks is worse than a crash. One rank
+  of a decomposed case (`--case processor2`) is refused with them. (#186)
+- **`report.py` printed a binary field's raw IEEE-754 bytes onto the methods page as
+  boundary patches.** `field_shape` was hardened for #139 and `boundary_types` one line
+  above it was not: an unmatched `}` inside a payload closes the patch entry a text
+  parser thinks it is inside, so a 6-patch case reported 8 and two names of control
+  characters reached page 5 of the PDF. A patch name and a type are OpenFOAM words; what
+  cannot be one is counted as unread, with the `format` the header states as the reason.
+  (#185)
+- **`case_gen.py` wrote an LES or a DNS on a one-cell-thick mesh in silence,** having
+  just printed `(2D, one cell thick)`. With one cell in z between two `empty` faces
+  there is no cascade for a subgrid model to be a subgrid to, and an algebraic model
+  still returns an eddy viscosity off the in-plane strain rate, so the case is a 2D
+  laminar run carrying an extra viscosity. Said, not refused: the mesh is the user's.
+  (#182)
+- **The DNS switch printed the LES notes verbatim** on a case with no subgrid model, and
+  said nothing about whether the mesh resolves the DNS it had just written. Each line now
+  reads for the case it is about, and the mesh is compared against the scaling the
+  written case file's own comment already carries (eta = L Re^(-3/4), so Re^(9/4) cells
+  for a resolved box of side L) as a ratio rather than a target. The step count the run
+  is comes out beside the step. (#184)
+- **The a priori y+ was printed with no decimals** in `turbulence_notes`, the line every
+  RAS case prints, so a wall at 0.85 read as exactly the 1 it is 15% below. (#183)
+- **`study_status` could report `waiting_for_input` with a cursor that had not moved,**
+  so the next poll was handed the whole transcript again as if it were new. The state is
+  read off one field of the picture and the transcript off another, filled by another
+  thread; the state is now reported only where the turn it tells the caller to read is in
+  the transcript the same call returns. Measured 1 in 40 before, 0 in 40 after. (#188)
+- **`openreynolds label --tag -foo` performed an untag.** An add option's value went
+  through the in-band `-` parser that belongs to the typed `/tag <words>` line. (#193)
+- Twelve small defects found against the real studies: a negative Darcy friction factor
+  now carries the caveat K already had and a patch with no flux has no flux-weighted mean
+  however small its round-off (`balance.py`); `wall.py` and `heat.py` refuse a directory
+  that is not there instead of reporting it as a measured absence; `wall.py` names a
+  collated `decomposedBlockData` file for what it is, with `reconstructPar` rather than
+  `foamFormatConvert`; `spectra.py` reads the `lRef` and `magUInf` the record's own header
+  declares instead of refusing a Strouhal number whose inputs it is holding, and says it
+  read them; `compressible.py` names the incompressible `transportProperties` a converted
+  case still has beside it; `serve` no longer names its own filesystem in a 400; `clone`
+  says that an old run's pictures are not carried; and one 500-character tag no longer
+  pushes every dashboard column off the screen. (#194)
 - **A study on a local workspace uploaded nothing at all.** Capture is on by default and
   `--no-capture` is how it is turned off, but `cli.session` leaves the workspace
   service's client `None` for a workspace it does not reserve, and the capture block

@@ -18,6 +18,7 @@ y+ lines under test is that the script says so with numbers instead of assuming.
 from __future__ import annotations
 
 import importlib.util
+import math
 import re
 from pathlib import Path
 
@@ -381,3 +382,132 @@ def test_every_model_the_flag_offers_is_one_the_tables_know(case_gen):
             continue
         assert model in case_gen.TURBULENCE_FIELDS or model in case_gen.LES_FIELDS
     assert set(case_gen.LES_DELTAS) == set(case_gen.DELTA_COEFFS)
+
+
+# -- what the mesh it was handed can actually resolve --------------------------------
+
+
+def test_an_les_on_a_one_cell_thick_mesh_says_it_is_not_one(case_gen, box, capsys):
+    """#182. The cavity is 2D -- one cell in z between two `empty` patches -- so
+    d/dz = 0 by construction and the three-dimensional cascade a subgrid model stands
+    for cannot occur in it. WALE still returns a nu_t off the in-plane strain rate, so
+    the case computes a laminar 2D run with an extra viscosity in it, and the summary
+    said nothing while printing "(2D, one cell thick)" four lines above. Said rather
+    than refused: the mesh is the user's, and the dictionary is the one they asked
+    for."""
+    les(case_gen, box, "--turbulence", "WALE", "--dry-run")
+    printed = capsys.readouterr().out
+    assert "(2D, one cell thick)" in printed, "the fixture is the 2D mesh this is about"
+    assert "ON A 2D MESH" in printed
+    assert "d/dz = 0" in printed
+    assert "not an LES" in printed
+    assert "kOmegaSST" in printed, "and what the honest choice on this mesh would be"
+
+
+def test_a_dns_on_a_one_cell_thick_mesh_says_so_in_its_own_words(case_gen, box, capsys):
+    """The same mesh with no subgrid model: there is nothing to resolve in z either,
+    and a DNS has no model to blame it on."""
+    les(case_gen, box, "--turbulence", "DNS", "--dry-run")
+    printed = capsys.readouterr().out
+    assert "ON A 2D MESH" in printed
+    assert "not a direct simulation" in printed
+    assert "not an LES" not in printed, "this case has no subgrid model to talk about"
+
+
+def test_a_three_dimensional_mesh_gets_no_such_note(case_gen, box, capsys, monkeypatch):
+    """The note is about the mesh in hand, so it is keyed on the measurement and not on
+    LES: the same mesh read as a volume must not carry it. (`tests/data/cavity` is the
+    only mesh here and it is one cell thick, so what is swapped is the reading.)"""
+    real = case_gen.read_mesh
+
+    def as_a_volume(case):
+        mesh = real(case)
+        mesh.two_d = False
+        return mesh
+
+    monkeypatch.setattr(case_gen, "read_mesh", as_a_volume)
+    les(case_gen, box, "--turbulence", "WALE", "--dry-run")
+    printed = capsys.readouterr().out
+    assert "(2D, one cell thick)" not in printed, "the reading was swapped"
+    assert "ON A 2D MESH" not in printed
+    assert "LES        WALE" in printed, "and the rest of the notes are still printed"
+
+
+def test_the_dns_notes_are_about_a_dns_and_not_about_a_subgrid_model(case_gen, box,
+                                                                    capsys):
+    """#184. The header was right -- `DNS  no subgrid model, simulationType laminar` --
+    and every line under it talked about LES on a case that has none: "schemes changed
+    for LES", "exactly where the subgrid model acts", "an upwinded LES is a slower
+    RAS", "wall-resolved LES wants that y+ of order 1"."""
+    les(case_gen, box, "--turbulence", "DNS", "--dry-run")
+    printed = capsys.readouterr().out
+    assert "DNS        no subgrid model" in printed
+    assert "schemes changed for DNS" in printed
+    assert "schemes changed for LES" not in printed
+    assert "the subgrid model acts" not in printed
+    assert "an upwinded LES is a slower RAS" not in printed
+    assert "upwinded DNS resolves less than its mesh does" in printed
+    assert "wall-resolved LES wants" not in printed
+    assert "a DNS resolves the wall or it is not a DNS" in printed
+    # and an LES still says all of it, because for an LES all of it is true
+    les(case_gen, box, "--turbulence", "WALE", "--dry-run")
+    for_les = capsys.readouterr().out
+    assert "schemes changed for LES" in for_les
+    assert "the subgrid model acts" in for_les
+    assert "wall-resolved LES wants that y+ of order 1" in for_les
+
+
+def test_a_dns_says_how_far_short_of_resolving_itself_the_mesh_is(case_gen, box, capsys):
+    """#184. The switch printed the cell count and the deltaT and nothing about whether
+    this mesh resolves anything, which is the one statement that separates DNS the
+    dictionary setting from DNS the claim. The scaling is the one the case file's own
+    comment states: eta = L Re^(-3/4), so a resolved isotropic box of side L is
+    (L/eta)^3 = Re^(9/4) cells. At Re 50000 that is 7.5e10 against this mesh's 400."""
+    les(case_gen, box, "--turbulence", "DNS", "--dry-run")
+    printed = capsys.readouterr().out
+    assert "eta = L Re^(-3/4)" in printed
+    assert "Re^(9/4)" in printed
+    assert "short" in printed
+    assert f"{50000 ** 2.25:.2g}" in printed, "the number is computed, not asserted"
+    # The estimate is for three dimensions, which this mesh has one cell of.
+    assert "that count is for three dimensions" in printed
+    # And an LES, which has a model for what it does not resolve, does not claim it.
+    les(case_gen, box, "--turbulence", "WALE", "--dry-run")
+    assert "Re^(9/4)" not in capsys.readouterr().out
+
+
+def test_the_step_count_the_run_is_comes_out_with_the_step(case_gen, box, capsys):
+    """#184. deltaT and the cell count were both printed; the product of them with the
+    end time -- the number of cell-updates this run is -- was not, and it is the one
+    that says whether it finishes."""
+    les(case_gen, box, "--turbulence", "WALE", "--end-time", "4", "--dry-run")
+    printed = capsys.readouterr().out
+    line, = [l for l in printed.splitlines() if "steps on" in l]
+    step = float(re.search(r"implies deltaT ([\d.e+-]+) s", printed).group(1))
+    steps = int(re.search(r"is ([\d,]+) steps", line).group(1).replace(",", ""))
+    # The printed step is rounded to three figures, so this is the arithmetic and not
+    # the rounding: 4 s of it, and the mesh it is run on.
+    assert steps == pytest.approx(4 / step, rel=0.01), line
+    assert f"on {case_gen.read_mesh(box).cells:,} cells" in line, line
+    assert "advise.py" in line, "where a wall-clock comes from, which needs the machine"
+
+
+def test_the_a_priori_y_plus_is_printed_to_two_significant_figures(case_gen, box, capsys):
+    """#183. `:.0f` rounded away the whole quantity: a real wall at y+ 0.0325 printed
+    as `0` and walls at 0.82 printed as `1`, three lines above "wall-resolved LES wants
+    that y+ of order 1". a421575 corrected the per-wall lines in `les_notes` and missed
+    this one in `turbulence_notes`, which is the line every RAS case prints.
+
+    On this mesh at Re 120 the correlation gives y+ 0.85 -- 15% below the order-1 wall
+    it would be read against, and `:.0f` printed it as exactly 1.
+    """
+    case_gen.main([str(box), "--length", "0.1", "--speed", "2", "--reynolds", "120",
+                   "--turbulence", "kOmegaSST", "--dry-run"])
+    printed = capsys.readouterr().out
+    line, = [l for l in printed.splitlines() if "near wall" in l]
+    first = float(re.search(r"first cell ([\d.e+-]+) m", line).group(1))
+    flow = case_gen.derive_flow({"speed": 2.0, "reynolds": 120.0, "nu": None,
+                                 "length": None}, 0.1)
+    y_plus = case_gen.estimate_y_plus(first, flow)
+    assert y_plus < 1 and f"{y_plus:.0f}" == "1", f"the defect's own shape: {y_plus}"
+    assert f"y+ ~ {y_plus:.2g}" in line, line

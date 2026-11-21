@@ -177,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
             path = (query.get("path") or [""])[0]
             if not path:
                 raise McpError("say which file: ?path=/work/<study>/...")
-            self._file(host.download(segments[1], path)["path"])
+            self._file(host.download(segments[1], path)["path"], asked=path)
 
         elif method == "GET" and len(segments) == 2 and segments[0] == "sessions":
             session_id = segments[1]
@@ -261,12 +261,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _file(self, path: str) -> None:
+    def _file(self, path: str, asked: str = "") -> None:
         local = os.fspath(path)
         if not os.path.isfile(local):
             # A directory exists, so the host hands it over happily; there is nothing
-            # to send back for one.
-            raise McpError(f"{local} is not a file")
+            # to send back for one. Named by the path the caller gave, not by the one
+            # it resolved to: `?path=/work/<id>/case` was answered with this server's
+            # own `C:\Users\...\studies\<id>\files\...\case is not a file` in a 400
+            # body, which is this machine's filesystem layout and not the client's
+            # business (#194).
+            raise McpError(f"{asked or 'that path'} is "
+                           + ("a directory" if os.path.isdir(local) else "not there")
+                           + ", not a file to download")
         size = os.path.getsize(local)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/octet-stream")

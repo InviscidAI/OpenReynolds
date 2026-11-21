@@ -30,6 +30,7 @@ from click.testing import CliRunner
 
 from openreynolds import catalog, cli, commands
 from openreynolds.config import Config
+from openreynolds import store as store_mod
 from openreynolds.store import JobRecord, Session, Store, list_studies, tag_name
 from openreynolds.watch import earlier_conversation
 
@@ -576,6 +577,49 @@ def test_label_says_when_there_was_no_such_tag_to_drop(three_studies):
     assert Store(three_studies, "20261110-090000-eeee").session.tags == ["validated"]
 
 
+def test_an_explicit_tag_beginning_with_a_hyphen_is_added_not_dropped(three_studies):
+    """#193. `--tag` is an add option, and its value went through the in-band `-`
+    parser that belongs to the typed `/tag <words>` line: `--tag -leading` reported
+    "not on this study, so nothing to drop: leading", performing a remove and
+    stripping a character off the name on the way. `--untag` is the option that drops.
+    """
+    result = CliRunner().invoke(cli.main, ["label", "--study", "20261110-090000-eeee",
+                                           "--tag", "-leading"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to drop" not in result.output, result.output
+    tags = Store(three_studies, "20261110-090000-eeee").session.tags
+    assert tags == ["validated", "-leading"], tags
+
+
+def test_a_typed_tag_line_still_drops_with_a_leading_hyphen(three_studies):
+    """The in-band marker is right where there is only one field to type in, and a
+    typed line is the only place it applies."""
+    store = Store(three_studies, "20261110-090000-eeee")
+
+    assert commands.tag_lines(store, "-validated") == ["no tags now"]
+    assert Store(three_studies, "20261110-090000-eeee").session.tags == []
+
+
+def test_a_tag_is_capped_at_a_length_a_column_can_hold(three_studies):
+    """#194: a 500-character tag was stored verbatim, and `_aligned` pads every column
+    to its widest cell, so it pushed every column after it off the screen."""
+    def widest() -> int:
+        text = CliRunner().invoke(cli.main, ["dashboard"])
+        assert text.exit_code == 0, text.output
+        return max(len(line) for line in text.output.splitlines())
+
+    before = widest()
+    CliRunner().invoke(cli.main, ["label", "--study", "20260101-090000-aaaa",
+                                  "--tag", "x" * 500, "--project", "p" * 500])
+
+    # Two capped cells wider at most, where it used to be 500 characters of one tag
+    # plus 500 of one project on every row of the table.
+    assert widest() - before <= 2 * 42, "the table is off screen"
+    tag, = Store(three_studies, "20260101-090000-aaaa").session.tags
+    assert len(tag) == store_mod.TAG_MAX, "and the record does not carry 500 either"
+
+
 def test_label_with_an_empty_project_clears_it(three_studies):
     CliRunner().invoke(cli.main, ["label", "--study", "20261110-090000-eeee",
                                   "--project", ""])
@@ -724,6 +768,28 @@ def test_a_clone_opens_in_its_own_directory_not_the_shared_root(studies_dir, mon
     legacy.session.home = ""
     legacy.save()
     assert cli._home_path(Store(studies_dir, "20261115-090000-ffff"), resuming=True) == "/work"
+
+
+def test_a_clone_carries_the_input_files_and_not_the_old_runs_pictures(studies_dir):
+    """#194 item 11: `renders/` is the canonical "where is the image?" home for a
+    study (`store.py:128`), and a clone copies `files/` and not it. Settled the way
+    round it already behaves, and said so in the help text and on the line it prints:
+    a picture of the old run sitting in the new study's own renders directory is a
+    figure the new study did not produce, and `report.py` and `claims.py` read that
+    directory as the study's own."""
+    old = with_a_transcript(studies_dir)
+    (old.fetch_dir() / "wing.stl").write_text("solid wing endsolid wing")
+    old.renders_dir.mkdir(parents=True, exist_ok=True)
+    (old.renders_dir / "vorticity.png").write_bytes(bytes([0x89, 0x50, 0x4e, 0x47]))
+    said = CliRunner().invoke(cli.main, ["clone", "--study", "20261115-090000-ffff"])
+    assert said.exit_code == 0, said.output
+    fresh, = [item for item in list_studies(studies_dir)
+              if item.cloned_from == "20261115-090000-ffff"]
+    clone = Store(studies_dir, fresh.study_id)
+
+    assert (clone.files_dir / "wing.stl").is_file(), "its setup is carried"
+    assert not list(clone.renders_dir.glob("*")), "the old run's figures are not"
+    assert "nor are its pictures" in said.output
 
 
 def test_rerun_reproduces_the_opening_request_word_for_word(studies_dir):

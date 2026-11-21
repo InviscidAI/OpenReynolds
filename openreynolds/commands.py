@@ -572,36 +572,50 @@ def project_lines(store: Any, name: str = "") -> list[str]:
     return [f"project: {session.project}"]
 
 
-def tag_lines(store: Any, words: str | Iterable[str] = "") -> list[str]:
+def tag_lines(store: Any, words: str | Iterable[str] = "",
+              drop: Iterable[str] = ()) -> list[str]:
     """`/tag`: this study's tags, or add and drop some.
 
-    A word prefixed with `-` drops that tag, anything else adds one. Said back in
-    full, because the useful answer to "did that work" is the list as it now stands.
+    Said back in full, because the useful answer to "did that work" is the list as it
+    now stands.
 
-    A string is a typed line, where whitespace separates the tags. A list is one tag
-    per item, which is what `openreynolds label --tag` has: a repeated option can
-    carry a tag with a space in it, and splitting that on whitespace made `--tag
-    "Mesh Study"` into two tags.
+    A string is a typed line, where whitespace separates the tags and a word prefixed
+    with `-` drops that tag: on one typed line that is the only way to say it. A list
+    is one tag per item and every item is an add, because a repeated option can carry
+    a tag with a space in it and splitting that on whitespace made `--tag "Mesh Study"`
+    into two tags. `drop` is the other half of that: the explicit option, with no
+    in-band marker.
+
+    #193: the list used to go through the `-` parser too, so `label --tag -leading`
+    -- an add option -- performed a remove, and stripped the hyphen off the name on
+    the way. An option says what it does in its own name.
     """
     from .store import tag_name
 
     session = store.session
-    asked = words.split() if isinstance(words, str) else [str(word) for word in words]
-    if not asked:
+    typed = isinstance(words, str)
+    asked = words.split() if typed else [str(word) for word in words]
+    dropping = [str(word) for word in drop]
+    if not asked and not dropping:
         return [("tags: " + ", ".join(session.tags)) if session.tags
                 else "this study has no tags; /tag <tag> adds one"]
+    # (tag, whether it is an add), in the order they were given, so a line that adds
+    # and drops the same tag still ends where it reads.
+    wanted = [(word[1:], False) if typed and word.startswith("-") else (word, True)
+              for word in asked]
+    wanted += [(word, False) for word in dropping]
     unknown: list[str] = []
-    for word in asked:
-        if word.startswith("-"):
-            tag = tag_name(word[1:])
-            if tag in session.tags:
-                session.tags.remove(tag)
-            elif tag:
-                unknown.append(tag)
-            continue
+    for word, adding in wanted:
         tag = tag_name(word)
-        if tag and tag not in session.tags:
-            session.tags.append(tag)
+        if not tag:
+            continue
+        if adding:
+            if tag not in session.tags:
+                session.tags.append(tag)
+        elif tag in session.tags:
+            session.tags.remove(tag)
+        else:
+            unknown.append(tag)
     store.save()
     lines = [("tags: " + ", ".join(session.tags)) if session.tags else "no tags now"]
     if unknown:

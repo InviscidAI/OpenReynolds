@@ -515,8 +515,11 @@ def dashboard_cmd(ctx: click.Context, as_json: bool, project: str, tags: tuple[s
         rows.append((
             item["study_id"],
             item["state"],
-            item["project"] or "-",
-            ",".join(item["tags"]) or "-",
+            # Capped like the title beside them: `_aligned` pads every column to its
+            # widest cell, so one 500-character tag pushed every column after it off
+            # screen and the table stopped being readable at all (#194).
+            _cell(item["project"]),
+            _cell(",".join(item["tags"])),
             (item["created_at"] or "-")[:16],
             catalog_mod.elapsed(item["runtime_s"]),
             f"{item['total_tokens']:,}" if item["total_tokens"] else "-",
@@ -597,7 +600,10 @@ def label_cmd(study_id: str | None, project: str | None,
                      else "project cleared")
     elif store.session.project:
         lines.append(f"project: {store.session.project}")
-    lines += commands.tag_lines(store, [*add_tags, *(f"-{tag}" for tag in drop_tags)])
+    # Each option says what it does: `--tag -leading` adds a tag called `-leading`
+    # rather than dropping `leading`, which is what funnelling both through the typed
+    # line's in-band `-` did (#193).
+    lines += commands.tag_lines(store, list(add_tags), drop=drop_tags)
     console.print(f"[bold]{escape(chosen)}[/]")
     for line in lines:
         console.print(f"  {escape(line)}")
@@ -669,7 +675,7 @@ def _duplicate(study_id: str | None, rerun: bool) -> None:
     files = Store(cfg.studies_dir, fresh).files_dir
     copied = files.is_dir() and any(f.is_file() for f in files.rglob("*"))
     console.print("  its setup, its project and tags" + (" and its local files" if copied else "")
-                  + " are copied; its conversation is not")
+                  + " are copied; its conversation is not, and nor are its pictures")
     # Its workspace directory is its own and starts empty (#170): the copied files are
     # on this machine, and only `push` sends anything up -- once the clone is running,
     # since before that it has no workspace, and a push would land on another study's.
@@ -697,11 +703,14 @@ def clone_cmd(study_id: str | None) -> None:
     """Copy a past study's setup and files into a new one, without its conversation.
 
     What is carried: the project and tags, the title, the solver, the model, the
-    provider and its endpoint, the session mode, and everything of the study already
-    on this machine (`files/`). What is not: the transcript, the instance, the job
-    rows and the accounting -- those are facts about a run that happened, and this one
-    has not. Nothing is started and nothing is spent; the new study is picked up like
-    any other.
+    provider and its endpoint, the session mode, and the study's input files on this
+    machine (`files/`). What is not: the transcript, the instance, the job rows and
+    the accounting -- those are facts about a run that happened, and this one has not.
+    Its `renders/` are the same kind of fact and are not carried either (#194): a
+    picture of the old run sitting in the new study's canonical "where is the image?"
+    directory is a figure the new study did not produce, and `report.py` and
+    `claims.py` read that directory as the study's own. Nothing is started and nothing
+    is spent; the new study is picked up like any other.
     """
     _duplicate(study_id, rerun=False)
 
@@ -722,6 +731,22 @@ def rerun_cmd(study_id: str | None) -> None:
     Nothing is started here and nothing is spent.
     """
     _duplicate(study_id, rerun=True)
+
+
+TABLE_CELL = 40
+"""How wide a free-text table cell is printed. `title` was capped at 40 already."""
+
+
+def _cell(text: str, width: int = TABLE_CELL) -> str:
+    """One table cell, capped and said to have been capped.
+
+    `_aligned` pads every column to its widest cell, so a single long value is not one
+    wide cell: it is every column after it pushed off the screen. A 500-character tag
+    did that to the dashboard (#194), where `title` was already capped at 40 and
+    `project` and `tags` were not.
+    """
+    text = str(text or "")
+    return (text[:width - 3] + "...") if len(text) > width else (text or "-")
 
 
 def _aligned(rows: list[tuple[str, ...]], indent: str = "  ") -> None:

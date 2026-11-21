@@ -57,12 +57,20 @@ def measure(t: np.ndarray, x: np.ndarray, segments: int = 4) -> dict:
             "spectrum": spectrum}
 
 
-def write_dat(path: Path, t: np.ndarray, columns: dict[str, np.ndarray]) -> Path:
+def write_dat(path: Path, t: np.ndarray, columns: dict[str, np.ndarray],
+              meta: bool = True) -> Path:
     """A postProcessing `.dat` in OpenFOAM's layout: `#` meta lines, a `#` header
-    naming the columns, then the rows."""
+    naming the columns, then the rows.
+
+    `meta=False` leaves the `magUInf`/`lRef` lines out, which is a record that declares
+    no reference quantities -- a `forces` function object rather than `forceCoeffs`,
+    or a probe history.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Force coefficients", "# magUInf : 1.0", "# lRef : 0.01", "# Aref : 0.001",
-             "# Time " + " ".join(columns)]
+    lines = ["# Force coefficients"]
+    if meta:
+        lines += ["# magUInf : 1.0", "# lRef : 0.01", "# Aref : 0.001"]
+    lines += ["# Time " + " ".join(columns)]
     for index, time in enumerate(t):
         lines.append(f"{time:.8g} " + " ".join(f"{values[index]:.8g}" for values in columns.values()))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -165,18 +173,52 @@ def test_a_known_strouhal_is_recovered_from_a_synthetic_cl(tmp_path):
     assert found["strouhal"]["value"] == pytest.approx(target, rel=0.02)
 
 
-def test_no_length_or_speed_means_no_strouhal_number(tmp_path):
+def test_a_record_that_declares_no_reference_quantities_gets_no_strouhal_number(tmp_path):
     """A diameter is not read off the mesh and a free-stream speed is not read off
     anything. `grade.py:_need` refuses rather than assumes, and a St invented from a
     default of 1.0 would be a dimensionless-looking number with no physics in it --
     the kind that gets compared against Williamson and reported as agreement."""
     t, x = sine(2.0, span=10.0, samples=1001)
     write_dat(tmp_path / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
-              t, {"Cd": np.full(t.size, 1.2), "Cl": x})
+              t, {"Cd": np.full(t.size, 1.2), "Cl": x}, meta=False)
     for kwargs in ({}, {"length": 0.01}, {"speed": 1.0}):
         found = spectra.analyse(tmp_path, column="Cl", **kwargs)
         assert found["strouhal"] is None
-    assert "not computed" in spectra.report(spectra.analyse(tmp_path, column="Cl"))
+    report = spectra.report(spectra.analyse(tmp_path, column="Cl"))
+    assert "not computed" in report
+    assert "lRef, magUInf" in report, "and where a record would have declared them"
+
+
+def test_the_reference_length_and_speed_the_record_declares_are_read_not_asked_for_again(
+    tmp_path
+):
+    """#194 item 8. A real `coefficient.dat` header carries `# magUInf :` and
+    `# lRef :`, `results.py::parse_dat` parses both into `meta` for exactly this reason
+    ("they are what a coefficient means"), and `analyse` already carries that `meta` in
+    the dict it reports from -- and it still printed "No length scale or free-stream
+    speed is assumed here", so the advertised `python3 spectra.py /work/case` produced
+    no Strouhal number on any real forces case. Reading a value the case declared is
+    not assuming one; it is said on the page which it was."""
+    length, speed, target = 0.01, 1.0, 0.2   # the header's own lRef and magUInf
+    t, x = sine(target * speed / length, span=4.0, samples=4001)
+    write_dat(tmp_path / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat",
+              t, {"Cd": np.full(t.size, 1.2), "Cl": x})
+
+    found = spectra.analyse(tmp_path, column="Cl")
+    assert found["strouhal"]["value"] == pytest.approx(target, rel=0.02)
+    assert found["strouhal"]["length"] == length
+    assert found["strouhal"]["speed"] == speed
+    assert "lRef" in found["strouhal"]["length_from"]
+    assert "magUInf" in found["strouhal"]["speed_from"]
+    report = spectra.report(found)
+    assert "St = 0.2" in report
+    assert "what the case declared, not what was asked for here" in report
+
+    # A flag still wins, and then the line does not claim the case said so.
+    asked = spectra.analyse(tmp_path, column="Cl", length=0.02, speed=speed)
+    assert asked["strouhal"]["length"] == 0.02
+    assert asked["strouhal"]["length_from"] == "--length"
+    assert "what the case declared" not in spectra.report(asked)
 
 
 # -- settling ------------------------------------------------------------------

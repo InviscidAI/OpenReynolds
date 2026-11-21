@@ -1593,6 +1593,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="a per-patch heat-rate chart and a temperature histogram")
     args = parser.parse_args(argv)
 
+    if not Path(args.case).is_dir():
+        # #194, the same as wall.py: a missing directory read as a case with nothing in
+        # it printed "no wall heat flux anywhere" and exited 0, so a typo came back as
+        # a finding about a run.
+        print(f"there is no directory at {Path(args.case).as_posix()}; this reads the "
+              "heat a run left behind, so it wants the case directory that holds the "
+              "run", file=sys.stderr)
+        return 2
+
     try:
         found = measure(
             args.case, time=args.time, region=args.region, length=args.length,

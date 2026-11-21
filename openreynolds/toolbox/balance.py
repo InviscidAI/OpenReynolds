@@ -421,6 +421,18 @@ def split(rows: list[dict], zero_tol: float) -> dict:
         row["two_way"] = bool(
             row["direction"] != "no flux" and row["flux_in"] is not None
             and min(-row["flux_in"], row["flux_out"]) > cut)
+    for row in rows:
+        if row["direction"] in ("closed", "no flux"):
+            # A flux-weighted mean needs a flux, and this patch has none: the two
+            # classifications are the one the whole table is read on. pitzDaily's
+            # `empty` patch sums to 1.17549e-38 -- the single-precision tiniest, which
+            # is what a closed patch's round-off looks like -- so `weighted`'s
+            # comparison with zero let it through and it printed `p mixed = 8` beside
+            # two real walls printing `--` (#194). The tolerance belongs here, where
+            # the case's own flux scale is in hand, and not in a mean that is handed
+            # one patch's weights.
+            row["p_mixed"] = None
+            row["p_total_mixed"] = None
     inflow = -sum(row["flux"] for row in rows if row["direction"] == "inflow")
     outflow = sum(row["flux"] for row in rows if row["direction"] == "outflow")
     for row in rows:
@@ -554,6 +566,20 @@ def coefficients(drop: dict, convention: str, units: str | None, rho: float | No
         out["f_definition"] = ("f = dp_static / ((L/D) 0.5 rho U_ref^2); the static drop, "
                                "which in the constant-area duct the definition assumes is "
                                "also the total drop")
+        if out["f_darcy"] < 0:
+            # The caveat `patch_drop`'s docstring already gives for K, where it is just
+            # as true for f (#194): across the 2:1 step the static pressure rises, so
+            # dp_static is negative and so is the quotient. The arithmetic is right and
+            # the quantity is not: a Darcy friction factor is dissipation over a
+            # constant-area length and cannot be negative. Said beside the number
+            # rather than withheld, because the drop it came from is a measurement.
+            out["f_caveat"] = (
+                "f < 0: the static pressure rose between these two stations, which a "
+                "friction factor cannot describe -- it is defined on a constant-area "
+                "duct, where the static drop is the whole loss. Across an area change "
+                "the pressure recovery is in this number and the friction is not "
+                "separable from it; K on the total drop is the coefficient for that, "
+                "and f wants two developed sections of equal area (--sections)")
     return out
 
 
@@ -642,6 +668,8 @@ def table(result: dict) -> str:
         if "f_darcy" in coef:
             lines.append(f"  f = {coef['f_darcy']:.6g}   (L = {coef['length']:g} m, "
                          f"D = {coef['hydraulic_diameter']:g} m)")
+            if coef.get("f_caveat"):
+                lines.append(f"      {coef['f_caveat']}")
     for note in result["notes"]:
         lines.append(f"note: {note}")
     return "\n".join(lines)
@@ -680,6 +708,8 @@ def picture(result: dict, path: Path) -> Path:
         caption += f"   K = {coef['K']:.4g}"
     if "f_darcy" in coef:
         caption += f"   f = {coef['f_darcy']:.4g}"
+        if coef.get("f_caveat"):
+            caption += " (f < 0: not a friction factor across an area change)"
     fig.text(0.5, -0.02, caption, ha="center", va="top", fontsize=9)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=120, bbox_inches="tight")

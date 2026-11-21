@@ -748,6 +748,18 @@ def test_a_case_with_no_heat_anywhere_says_so_and_still_exits_zero(heat, tmp_pat
     assert "[skipped]" in text
 
 
+def test_a_directory_that_is_not_there_is_refused_rather_than_measured_as_empty(
+    heat, tmp_path, capsys
+):
+    """#194 item 4, the same as `wall.py`: a path that does not exist read as a case
+    with nothing in it printed "no wall heat flux anywhere" and exited 0, so a typo
+    came back as a finding about a run."""
+    assert heat.main([str(tmp_path / "no-such-case")]) == 2
+    out, err = capsys.readouterr()
+    assert "no directory at" in err and "no-such-case" in err
+    assert "no wall heat flux anywhere" not in out
+
+
 def test_json_carries_the_whole_measurement_and_parses(heat, tmp_path, capsys):
     assert heat.main([str(nusselt_case(tmp_path)), "--length", "0.1",
                       "--t-ref", "300", "--json"]) == 0
