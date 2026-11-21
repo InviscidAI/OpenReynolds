@@ -831,9 +831,35 @@ def write_case(case: Path) -> None:
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    """A command, printed, run, and raised on failure with its stderr shown."""
+    """A command, printed, run, and refused by name when it fails or is not there.
+
+    The second half is the one that was missing. A command that FAILS was already
+    reported with its binary named and its stderr shown; a command that does not
+    EXIST raised out of `subprocess.run` before the returncode check, so running this
+    template on a machine with no OpenFOAM ended in `FileNotFoundError: [WinError 2]
+    The system cannot find the file specified` (POSIX says `[Errno 2] No such file or
+    directory`), naming no binary and not saying OpenFOAM was the thing missing.
+
+    That is the laptop case, and this file is the worst place for it: a template is
+    what a person copies. So the refusal names the binary, says where it comes from,
+    and says what has already been written, because the mesh is usually the expensive
+    part and it is not lost.
+    """
     print("+", " ".join(cmd))
-    proc = subprocess.run(cmd, text=True, capture_output=True, **kw)
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, **kw)
+    except FileNotFoundError:
+        here = sorted(p.name for p in Path.cwd().iterdir() if p.is_file())
+        raise SystemExit(
+            f"refused: `{cmd[0]}` is not on PATH. It comes with OpenFOAM, which this "
+            "machine does not appear to have, so the rest of this template cannot "
+            "run here. What it has already written: "
+            + (", ".join(here[:10]) + ("" if len(here) <= 10
+                                       else f" and {len(here) - 10} more")
+               if here else "nothing yet")
+            + ". Copy this directory to a machine with OpenFOAM and run the template "
+            "there, or use `openreynolds --local` for the Docker workspace."
+        ) from None
     if proc.stdout:
         print(proc.stdout[-4000:])
     if proc.returncode != 0:
