@@ -30,6 +30,9 @@ below the examination is what found the defect.
 | [relaxation and settling](particles/) | the velocity of a particle released into a uniform stream, and its terminal velocity under gravity | `v = U (1 - exp(-t/tau_p))` and `w_t = tau_p g (1 - rho_f/rho_p)`, **exact** for linear drag, with `tau_p = rho_p d^2/18 mu`. No paper is needed for either | max error **1.9e-12** of U over five relaxation times; terminal velocity **2.2e-14** as a fraction | the convergence stop, and nothing else. These are the exact solutions of the equation the integrator integrates, so an agreement at 1e-12 is RK4 at `dt = tau_p/200` and not a physical claim. **What makes the row evidence is the contrast beside it**: the same integrator with the Schiller-Naumann correction at a particle Reynolds number of 42.8 settles at **0.4619** of the Stokes velocity, and matches the independently solved root of `w = tau_p g'/phi(Re_p(w))` to 5.1e-15. A drag law that quietly did nothing would pass the two exact checks and fail that one |
 | [tracer orbit](particles/) | a massless tracer's path in solid-body rotation | it closes **exactly** after one period, `2 pi / Omega` | **5.1e-8** of the radius at 200 steps per revolution, observed order **4.00** over three refinements | the time step, and only the time step. There is no reference, no interpolation and no stopping criterion in this one, which is why the observed order is worth reading: it is 4.00 to three figures at every refinement, so the integrator is the RK4 the docstring claims and a first-order one fails the check (`tests/test_benchmark_particles.py` hands it forward Euler to prove the check bites) |
 | [capture on a cylinder](particles/) | the critical Stokes number below which no particle reaches the wall, in inviscid flow | **1/8** in the `tau_p U_inf / R` convention. Read at source: Robinson, Warren, Turner & Sear, arXiv:2310.03474v2 (25 Feb 2025), Section III.3, "the critical Stokes number St_c = 1/4 for a cylinder" -- 1/4 in *its* convention, whose `U` is the local stagnation-point speed `2 U_inf` and whose length is the radius, and which says in the same paragraph that Langmuir and Blodgett "actually quote St_c = 1/8" "because of their alternative choice to set U = U_inf". **Taylor (1940) and Langmuir & Blodgett (1946), the primary attributions, were not read** | **0.1262909, +1.03%**, approached monotonically from above: +5.671, +3.152, +2.000, +1.375, +1.033% as the stopping speed tightens from 1e-6 to 1e-14 of U | **the stopping criterion, and its sign is not negotiable.** The threshold is an infinite-time statement -- below it the particle approaches the wall forever and never arrives -- so any tracker that has to stop waiting calls some sub-critical particles captured, and can only measure the threshold **high**. A measurement below 1/8 would be a bug and the grader fails it as one. The 1% floor is double precision: below 1e-15 of U the position increment is under the ULP of the radius, and 1e-16 measures the same 0.1262909. Not discretisation (a factor of five in `dt` moves it 0.12%, the wrong way) and not the far field (release at -3, -5, -10, -20 radii spans 0.01%), both of which were measured rather than argued |
+| [a reacting 0-D reactor](combustion/) | the end temperature of a closed, adiabatic, constant-pressure reactor | **the solver's own thermodynamics, exact**: `chemFoam` conserves absolute enthalpy, so `sum Y_i(end) Ha_i(T_end) = sum Y_i(0) Ha_i(T0)` is one equation in one unknown over the case's own JANAF coefficients, derived in [combustion/README.md](combustion/README.md) from `hEqn.H`, `solveChemistry.H` and `StandardChemistryModel.C:544-556`. **2877.7712 K** for stoichiometric CH4/air from 1000 K at 1 atm | **2877.6383 K, +0.0046%** after 5,468 steps on one cell in 0.4 s | **the unburnt tail, and nothing else.** Graded a second time against the composition the solver itself ended on, the same balance closes to **+1.1e-06%** -- eight significant figures -- so the whole 0.0046% is the 1.6e-05 mass fraction of fuel still unconsumed at 0.5 s. A one-step irreversible third-order reaction approaches completion as a power law, not exponentially, so the tail is the error |
+| " | the thermo data the answer above rests on | NIST Chemistry WebBook, gas-phase enthalpies of formation, read off its own `Mask=1` pages: CH4 **-74.6 +/- 0.3** (Manion 2002, adopting Gurvich 1991), CO2 **-393.51 +/- 0.13** and H2O **-241.826 +/- 0.040** (CODATA, Cox & Wagman 1984) kJ/mol | the image's own JANAF fit at 298.15 K: CH4 **-74.5992**, CO2 **-393.5487**, H2O **-241.8465**; heat of reaction **-802.641** against Hess's law's -802.562 kJ/mol, **+0.010%**; methane's lower heating value **50.0312** against **50.0260 MJ/kg** | **the reference's own uncertainty is larger than the agreement**, as on four other rows in this file. Every difference is inside NIST's stated error bar -- by 375x on methane, 3.4x on CO2, 1.95x on water -- and NIST's four methane determinations themselves span 0.37 kJ/mol, 0.50%, a hundred times the agreement quoted. Against the Chase (1998) value on the same page the fit reads +0.27 rather than +0.0008, which is de Vahl Davis's 4.509-against-4.519 in another costume |
+| " | that the agreement above is about combustion and not about arithmetic | 0 temperature rise with `chemistry off`, one word changed and nothing else | **999.9985 K from 1000 K**, a drift of 0.0015 K, and the grader fails it | the energy equation is still integrated with the chemistry off, so 1.5 ppm over 5,009 steps is discretisation. The reacting run rises 1877.6 K, so the control and the case are three orders apart |
 | [thermal stress, constrained bar](thermal_stress/) | `sigma_xx` through the bar, plane stress | **closed form, exact**: `sigma_xx(y) = -E alpha T(y)` with `T(y) = dT (1 - y/H)`, derived in [thermal_stress/README.md](thermal_stress/README.md) from the three kinematic facts the boundaries impose and the solver's own constitutive law. -220.0000 MPa on the hot face for the template's steel | `sigma_xx` vs `-E alpha T` at the solver's own T: **RMS 0.094%, max 0.300%** of the 220.0000 MPa peak. Extrapolated to the hot face **-220.2858 MPa, +0.130%**. `max sigmaEq` **+0.261%** on the gmsh mesh and **0.00%** on the gate's uniform grid | **the mesh, and only the mesh.** The answer is mesh-independent, so the gate's `blockMesh` grid reproduces it to 0.00% and these few tenths of a percent are the gmsh quad mesh: Blossom recombination leaves it mildly non-orthogonal (`checkMesh` 27.5 deg on the comparable duct), and `grad(D)` is `leastSquares` on it. The reference itself has no error bar to hide inside, which is the point of choosing it |
 | " | the same under `planeStress no` | the same algebra down the other branch of `readMechanicalProperties.H`: `-E alpha T(y)/(1-nu)`, **exact**, -314.2857 MPa | the same: **RMS 0.162%, max 0.556%** of 314.2857 MPa, hot face **-314.6932 MPa, +0.130%**, `max sigmaEq` **+0.324%** and **0.00%**. The two states' ratio is **1.429471** against an exact 1.428571, **+0.063%** | the same mesh, and the ratio is the cleanest number here because whatever the mesh does to one state it does to the other. Graded as well as the plane-stress run because that one contains E and alpha only as their product and so cannot distinguish a wrong `nu`; these two are 43% apart |
 
@@ -58,6 +61,67 @@ solves both plane states in the image and runs the grader on what came out, and 
 number out of the solver's own log. Nothing was installed for it: `solidDisplacementFoam`
 is standard OpenFOAM and has been in the image since the first build. What was missing
 was that nothing here knew it.
+`mhd/` and `combustion/` are the two added for the multiphysics items, and both were
+chosen for the same reason `thermal_stress/` was: their answer is a formula rather than a
+figure in somebody's paper. `mhd/` is Hartmann flow, where a transverse magnetic field
+makes the Lorentz force on a fully developed flow a **linear drag**, so the profile is a
+constant minus a cosh and `u_c/u_mean = (cosh Ha - 1)/(cosh Ha - sinh Ha/Ha)` -- derived
+in `mhd/README.md` from `mhdFoam`'s own two equations and graded by `mhd/grade.py`.
+`combustion/` is a `chemFoam` well-stirred reactor, where the solver's own `hEqn.H` and
+`solveChemistry.H` conserve the mixture's absolute enthalpy, so the end temperature is one
+scalar equation in one unknown over the case's own JANAF coefficients; it has no `grade.py`
+beside it because that root find already lives in `openreynolds/toolbox/chem0d.py` and a
+second copy would be a second thing to keep agreeing.
+
+**The Hartmann case solves, as of 2026-11-21.** It did not for two rounds: `mhdFoam`
+exited -8 on a SIGFPE inside the vector solve, with the Courant number running 15.1 at
+t = 0.27 and 38.9 one step later. The cause was the mesh, not the time step. `mhdFoam`'s
+two magnetic normal stresses are both `fvc::` and do not cancel discretely, so the
+surviving explicit force is of order `B0^2/(mu*rho*dy)` and **contains no `dt`** -- which
+is why two reductions of the step did not reach it. The ESI tutorial is stable at a
+magnetic Courant number of 2.0 where this case diverged at 0.5, so that ratio is not the
+governing quantity either.
+
+What governs it is `dy`, and the tutorial's own `dy` of 0.05 is the one value `mhdFoam` is
+known to be stable at -- stable **because** at its Ha of 20 the Hartmann layer `L/Ha` is
+exactly one cell, so the tutorial does not resolve the layer at all. This template now
+uses that cell height at Ha 5, where four cells still fall inside the layer: resolved, at
+a size the scheme tolerates. Measured in the `journey` job:
+
+| | |
+|---|---|
+| magnetic Courant `c_A*dt/dy` | **0.5000** at Ha 5, against the tutorial's stable 2.0 |
+| flow Courant, max over 400 reported steps | **0.0589** at Ha 5, **0.0618** at Ha 0 |
+| magnetic flux divergence error | 0 throughout |
+| the fourteen journey tests | all pass, graders included |
+
+**The graded profile agreement is not quoted here**, and that is deliberate: pytest
+captures a passing test's output, so the log carries the fact that `grade.py`'s bounds
+were met and not the numbers. The bounds are `shape_rms < 1.5e-2` and
+`shape_max < 5.0e-2` of the centreline speed, and they are discretisation bounds rather
+than reference uncertainties, because the profile is exact. A per-cent figure will go here
+when a run prints one.
+
+Neither has a fixture under `tests/data/`, for the reason `thermal_stress/` has none: both
+need OpenFOAM to produce one and the `benchmarks` job has none. Their graders are held to
+their closed forms by `tests/test_benchmark_mhd.py` and `tests/test_toolbox_chem0d.py` in
+the suite -- the first writes the exact profile at three Hartmann numbers and five wrong
+ones it has to reject at a different check each, the second writes a constant-Cp mixture
+whose adiabatic temperature is one line of algebra -- and the solvers are held to them by
+`tests/test_journey_mhd.py` and `tests/test_journey_chem0d.py` in the `journey` job, which
+mesh, solve and grade inside the workspace image. Nothing was installed for either:
+`mhdFoam` and `chemFoam` are standard OpenFOAM and have been in the image since the first
+build. What was missing, again, was that nothing here knew it.
+
+The combustion case is the one row in this file whose **published** reference is not the
+graded quantity. What is graded is the solver against its own thermodynamics; what is
+compared with a measurement is the thermo data itself, species by species, against NIST's
+Chemistry WebBook gas-phase formation enthalpies. That is deliberate, and
+`combustion/README.md` says why: a single irreversible global step makes no CO, OH, H, O or
+NO, so the temperature it produces is the complete-combustion one and a real flame of the
+same mixture is cooler. How much cooler is **not asserted**, because no primary source for
+it has been read here, which is the same position the dam-break row above is in.
+
 `lbm/`, `sph/` and `particles/` are the three whose graders **solve** rather than reading a
 finished run,
 and the difference is worth stating rather than hiding. The four above grade an OpenFOAM
