@@ -205,6 +205,76 @@ FAMILIES: dict[str, tuple[Option, ...]] = {
                "`benchmarks/sph/` has both what it was graded on and what it was not",
                script="sph.py"),
     ),
+    "mhd": (
+        Option("mhdFoam", "transient, incompressible, with the Lorentz force on the "
+               "momentum equation and B transported beside U",
+               "a conducting liquid in an imposed magnetic field, where the field is "
+               "part of the answer rather than a boundary condition: a liquid-metal "
+               "duct, an electromagnetic pump, a Hartmann layer. The Hartmann number "
+               "Ha = B L sqrt(sigma/(rho nu)) sets the wall layer at L/Ha, and that "
+               "layer is what fixes the cost -- `benchmarks/mhd/` has the closed form, "
+               "what a run measured against it, and the run that diverged first and "
+               "why. `mhd_hartmann.py` writes the case"),
+    ),
+    "porous-media": (
+        Option("porousSimpleFoam", "steady, incompressible, with a Darcy-Forchheimer "
+               "sink over a cell zone",
+               "a pressure drop through a region you do not want to mesh -- a packed "
+               "bed, a filter, a heat-exchanger core, a screen. The sink is "
+               "dp = (mu d U + 0.5 rho f U^2) L on the SUPERFICIAL (face) velocity and "
+               "the thickness along the flow, so a drop quoted without its thickness is "
+               "half a measurement. `porous.py` writes the case and prints the "
+               "coefficients; its arithmetic is graded in "
+               "tests/test_toolbox_rotating_porous.py, and the solve is not graded "
+               "anywhere in this repository yet"),
+    ),
+    "combustion": (
+        Option("chemFoam", "one cell, no transport: chemistry integrated at constant "
+               "pressure or constant volume",
+               "the question is about the chemistry and not about a flow -- an ignition "
+               "delay, an equilibrium temperature, whether a mechanism behaves. "
+               "`createFields.H` refuses a mesh with more than one cell, so there is no "
+               "geometry, no boundary condition and no turbulence-chemistry interaction "
+               "in it at all. It is NOT a flame: what it conserves is the mixture's "
+               "absolute enthalpy, so the temperature it reaches is the "
+               "complete-combustion one and a real flame is cooler. `chem0d.py` writes "
+               "the case and grades it; `benchmarks/combustion/` says what is graded "
+               "and what is deliberately not"),
+        Option("reactingFoam", "transient, compressible, species transport with "
+               "combustion and a turbulence-chemistry model",
+               "an actual flame, where the question is also where the heat goes and not "
+               "only how much there is: a burner, a furnace, a lifted flame. In the "
+               "image and with NO case in this repository -- no template writes one, "
+               "nothing grades one, and chem0d.py deliberately copies its thermo data "
+               "out of this solver's tutorial rather than running it. Offered because "
+               "it is the honest answer to a flame question, and its absence here is "
+               "said plainly so nobody reads it as a validated route"),
+    ),
+    "potential-flow": (
+        Option("panel.py", "a linear-strength vortex panel method for aerofoils and a "
+               "lifting-line solve for wings, in numpy, a script in this toolbox "
+               "rather than an application in the image",
+               "lift, moment or induced drag on a thin lifting surface at small angle, "
+               "wanted in seconds and with no mesh -- a section comparison, an angle "
+               "sweep, a first wing. It is inviscid with no Reynolds number in it, so "
+               "it CANNOT answer a drag question: d'Alembert makes the pressure drag of "
+               "a closed body exactly zero and the solver reproduces that to 2.19e-04 "
+               "rather than estimating a real drag. Stall, separation and thick "
+               "sections belong to the families above; `openreynolds/toolbox/panel.py "
+               "--check` grades the statements that are exact",
+               script="panel.py"),
+    ),
+    "particle-tracking": (
+        Option("tracks.py", "particles integrated through a flow field that is already "
+               "solved, with Stokes or Schiller-Naumann drag, in numpy",
+               "where the carried thing goes, once the carrying flow is known -- "
+               "deposition, capture on a body, residence time, a tracer. It is one-way: "
+               "the particles do not act back on the flow, so a loaded jet or a dense "
+               "suspension is a different question. `benchmarks/particles/` grades it "
+               "against two exact closed forms and one published capture threshold, and "
+               "the three cases are in the tutorial index's tier 1",
+               script="tracks.py"),
+    ),
 }
 """The candidates per family. `heat.py` measures what comes out of the conjugate ones
 and `ladder.CHT_APPLICATIONS` is what recognises them on the way in; the names here are
@@ -221,8 +291,10 @@ invisible to whoever reads it, which is the only reason they were missing."""
 # an external aerodynamics case is incompressible or compressible depending on a Mach
 # number that is not in the case files, so both are offered and the switch is stated.
 CLASS_FAMILIES: dict[str, tuple[str, ...]] = {
-    "external-aerodynamics": ("incompressible", "compressible", "lattice-boltzmann"),
-    "internal-flow": ("incompressible", "compressible", "lattice-boltzmann"),
+    "external-aerodynamics": ("incompressible", "compressible", "lattice-boltzmann",
+                              "potential-flow", "particle-tracking"),
+    "internal-flow": ("incompressible", "compressible", "lattice-boltzmann",
+                      "mhd", "porous-media", "particle-tracking"),
     # Not rotating machinery: both toolbox solvers have static boundaries, and neither
     # an MRF zone nor a sliding interface exists in either of them.
     "rotating-machinery": ("incompressible", "compressible"),
@@ -235,9 +307,15 @@ CLASS_FAMILIES: dict[str, tuple[str, ...]] = {
     # it: the family is offered where nothing else was recognised, which is exactly
     # the case a solid stress question presents as, and it is not offered beside
     # `interFoam` on a dam break where it would be noise.
+    # `combustion` reaches a case only through `generic`, for the reason
+    # `stress-analysis` does: a one-cell reactor has no flow signal for
+    # `ladder.classify` to recognise, so it arrives here, and offering chemFoam beside
+    # interFoam on a dam break would be noise.
     "generic": ("incompressible", "compressible", "free-surface",
                 "conjugate-heat-transfer", "stress-analysis",
-                "lattice-boltzmann", "particle"),
+                "lattice-boltzmann", "particle",
+                "mhd", "porous-media", "combustion", "potential-flow",
+                "particle-tracking"),
 }
 
 
