@@ -118,12 +118,63 @@ pytestmark = pytest.mark.skipif(
 
 # -- the case, exactly as the template defines it ------------------------------------
 
-HALF_HEIGHT_M = 1.0          # mhd_hartmann.py  HALF_HEIGHT_M
 MEAN_VELOCITY = 1.0          # mhd_hartmann.py  MEAN_VELOCITY_M_S
-CELLS_ALONG = 100            # mhd_hartmann.py  CELLS_ALONG
-CELLS_ACROSS = 80            # mhd_hartmann.py  CELLS_ACROSS
 END_TIME_S = 2.0             # mhd_hartmann.py  END_TIME_S
 WRITE_INTERVAL_S = 0.5       # mhd_hartmann.py  WRITE_INTERVAL_S
+
+def block_mesh_dict(case) -> str:
+    """The case's own `blockMeshDict`, which is what `blockMesh` read."""
+    return (case / "system" / "blockMeshDict").read_text(encoding="utf-8")
+
+
+def _divisions(case) -> tuple[int, int]:
+    found = re.search(r"hex\s*\([^)]*\)\s*\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\)",
+                      block_mesh_dict(case))
+    assert found, "no hex block with divisions in the case's blockMeshDict"
+    return int(found.group(1)), int(found.group(2))
+
+
+def cells_along(case) -> int:
+    """`nx` out of the case's own `hex (...) (nx ny nz)`."""
+    return _divisions(case)[0]
+
+
+def cells_across(case) -> int:
+    """`ny`, read rather than copied.
+
+    A constant duplicated here with a comment naming its source is a second thing to
+    keep agreeing, and it did not: this file held `CELLS_ACROSS = 80` while the template
+    moved to 40, so the magnetic Courant number was computed as 1.0 against a case whose
+    own mesh gives 0.5.
+    """
+    return _divisions(case)[1]
+
+
+def half_height(case) -> float:
+    """Half the channel, from the y-extent of the `vertices` block.
+
+    The `vertices ( ... );` block and nothing else. A regex for "a bracketed triple of
+    numbers" anywhere in the file also matches the hex divisions `(100 40 1)` and
+    `simpleGrading (1 1 1)`, and the first version of this read a half-height of 20.5
+    for a channel of 1 because the largest y it found was the 40 in the divisions.
+
+    That version still made its test PASS -- the magnetic Courant number came out 0.0244
+    rather than 0.5, comfortably inside the limit and wrong -- which is why this is a
+    separate function with its own reason written down.
+    """
+    text = block_mesh_dict(case)
+    start = text.index("vertices")
+    block = text[start:text.index(";", start)]
+    ys = [float(m.group(2)) for m in re.finditer(
+        r"\(\s*(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s*\)", block)]
+    assert ys, "no vertices in the case's blockMeshDict"
+    return (max(ys) - min(ys)) / 2.0
+
+
+def cell_height(case) -> float:
+    """dy, which is the quantity that governs whether this case solves at all."""
+    return 2.0 * half_height(case) / cells_across(case)
+
 
 # c_A*dt/dy, the ratio the graded mesh got wrong: it ran at 15.8 and diverged, while the
 # ESI tutorial runs at 2.0. `mhd_hartmann.py`'s MAGNETIC_CFL asks for 0.5.
@@ -228,7 +279,7 @@ def build_and_solve(case: Path, hartmann: float) -> dict:
     solve_log, seconds = run(["mhdFoam"], case, "mhdFoam")
     run(["postProcess", "-func", "sample", "-noZero"], case, "sample")
 
-    cells = CELLS_ALONG * CELLS_ACROSS
+    cells = cells_along(case) * cells_across(case)
     steps = int(round(END_TIME_S / delta_t(case)))
     print(f"  cost: {cells:,} cells, {steps:,} steps, {seconds:.1f} s "
           f"({1e6 * seconds / (cells * steps):.2f} us per cell-step)")
@@ -264,7 +315,7 @@ def test_block_mesh_built_the_two_dimensional_case_the_template_describes(runs):
         assert "wall" in boundary[index:index + 200], f"{patch} is not a wall patch"
 
     log = runs[5.0]["template"]
-    assert str(CELLS_ALONG * CELLS_ACROSS) in log, (
+    assert str(cells_along(case) * cells_across(case)) in log, (
         "neither blockMesh nor checkMesh reported the cell count the mesh implies")
     assert "Mesh OK" in log, "checkMesh did not pass on a uniform box"
 
@@ -316,7 +367,7 @@ def test_the_magnetic_courant_number_is_inside_the_measured_bracket(runs):
         rho = float(re.search(r"^rho\s+(\S+);", properties, re.M).group(1))
         permeability = float(re.search(r"^mu\s+(\S+);", properties, re.M).group(1))
         speed = applied / math.sqrt(permeability * rho)
-        cell = 2.0 * HALF_HEIGHT_M / CELLS_ACROSS
+        cell = cell_height(case)
         ratio = speed * delta_t(case) / cell
         print(f"  Ha {hartmann:g}: B0 {applied:g}, c_A {speed:g} m/s, dt "
               f"{delta_t(case):g} s, c_A*dt/dy {ratio:.4f}")
@@ -389,7 +440,7 @@ def test_the_shape_is_the_closed_form_and_not_the_other_one(hartmann, runs):
     """
     case = runs[hartmann]["case"]
     y, ux = read_profile(case, f"{END_TIME_S:g}")
-    eta = y / HALF_HEIGHT_M
+    eta = y / half_height(case)
     centre = float(np.interp(0.0, y, ux))
     own = float(np.sqrt(np.mean((ux / centre - shape(eta, hartmann)) ** 2)))
     other = float(np.sqrt(np.mean((ux / centre - shape(eta, 0.0)) ** 2)))
@@ -410,7 +461,7 @@ def test_the_benchmark_grader_agrees_through_its_own_command_line(hartmann, runs
     proc = subprocess.run(
         [sys.executable, str(GRADER), "hartmann", str(case),
          "--hartmann", f"{hartmann:g}", "--mean-velocity", f"{MEAN_VELOCITY:g}",
-         "--half-height", f"{HALF_HEIGHT_M:g}"],
+         "--half-height", f"{half_height(case):g}"],
         text=True, capture_output=True)
     print(proc.stdout)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -425,7 +476,8 @@ def test_the_grader_rejects_each_run_graded_as_the_other(runs):
         proc = subprocess.run(
             [sys.executable, str(GRADER), "hartmann", str(runs[solved]["case"]),
              "--hartmann", f"{graded_as:g}", "--mean-velocity", f"{MEAN_VELOCITY:g}",
-             "--half-height", f"{HALF_HEIGHT_M:g}"],
+             "--half-height",
+             f"{half_height(runs[solved]["case"]):g}"],
             text=True, capture_output=True)
         print(f"  Ha {solved:g} graded as Ha {graded_as:g}: exit {proc.returncode}")
         assert proc.returncode == 1, proc.stdout
