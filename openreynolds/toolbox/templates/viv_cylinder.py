@@ -151,6 +151,9 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return proc
 
 
+# --------------------------------------------------------------------------- mesh
+
+
 def block_mesh_dict(diameter: float, span: float) -> str:
     """The O-grid + H-grid blockMeshDict, built from the block corners outward.
 
