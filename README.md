@@ -62,6 +62,38 @@ or the environment), a machine that signs in uses Reynolds' model, metered to th
 your own. While the browser code waits for approval, a gateway error or a dropped
 connection is waited through; only a refusal or the code expiring ends it.
 
+### On your own machine, with no OpenFOAM
+
+`--native` runs the workspace here rather than in a container: no Docker, no image to
+pull, no sandbox. With the toolbox extra it solves without OpenFOAM at all, because
+`lbm.py` and `sph.py` are solvers in numpy rather than wrappers around one.
+
+```bash
+pip install 'openreynolds[toolbox]'
+openreynolds --native doctor      # the local-solvers check passes with a caveat, not a FAIL
+openreynolds --native
+```
+
+`doctor` reports local solvers as present-with-a-caveat rather than as a failure, because
+a machine that can solve a cavity should not be told it cannot run. Measured on a machine
+with no OpenFOAM, that check reads `ok  local solvers (native)` and names what will fail
+without it. The other checks are unchanged, so `doctor` still fails on a missing model
+key or an unreachable service: it is this one check that stops being a FAIL. What OpenFOAM is
+installed, if any, is used as it is (`OPENREYNOLDS_FOAM_BASHRC` names it when it is not
+found), and the agent is written for ESI v2512.
+
+**A local study still reaches the service.** Signed in, the transcript, the figures and
+the case files are mirrored and posted exactly as a hosted one's are, so the study is on
+the web afterwards and `openreynolds --study <id>` resumes it from either side. Measured
+on a Windows laptop with no OpenFOAM and no Docker: a study that solved the lid-driven
+cavity at Re 1000 against Ghia's tables put 23 of 23 messages and both figures into the
+service. `openreynolds capture --study <id>` posts anything a dropped connection left
+behind, and `--dry-run` names the gap without sending it.
+
+The account is still what pays for the model: with no provider of your own, a signed-in
+machine uses Reynolds' metered model, and `openreynolds config --provider anthropic` (or
+another vendor) switches to your own key. The solving is local either way.
+
 **A company email address starts a 30-day Pro trial with 15 full-depth studies**,
 covering the hosted workspace and Reynolds' own metered model together; a personal
 address starts a 30-day Starter trial with 5. Both take a card and renew unless you
@@ -364,7 +396,7 @@ no Docker, no download, no sandbox. It uses whatever OpenFOAM is installed here
 (`OPENREYNOLDS_FOAM_BASHRC` names it if it is not found), and the agent is written for
 ESI v2512, so another version or fork will differ in places.
 
-**With no OpenFOAM at all, `--native` still solves**, with one install:
+**With no OpenFOAM at all, `--native` still solves** (see [On your own machine, with no OpenFOAM](#on-your-own-machine-with-no-openfoam) above for the short version), with one install:
 
 ```
 pip install 'openreynolds[toolbox]'
