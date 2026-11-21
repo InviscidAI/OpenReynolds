@@ -30,7 +30,43 @@ RUN apt-get update && apt-get install -y \
 
 # pyvista renders off-screen through VTK built against OSMesa, which is not on PyPI:
 # install the stack, drop the vtk pyvista pulled in, install vtk-osmesa in its place.
-RUN python3 -m pip install --no-cache-dir --break-system-packages numpy matplotlib pandas pyvista \
+# Pinned to what this image resolved on 2026-11-21, read out of an unpinned build's own
+# `check.sh` output (PR #231, run 44802168123): the args were empty, the gate printed
+# what pip had chosen, and these are those five numbers. A measurement, not a guess --
+# and the measurement mattered. Unpinned, this line had already carried the image to
+# **pandas 3.1.1**, so pinning to a 2.x anyone would have assumed was here would have
+# CHANGED the image rather than frozen it. That is the `build123d>=0.9` failure in
+# miniature: a range nobody was watching, moved by PyPI, noticed only when something
+# broke.
+#
+# These are the versions the suite passes against: the CI `image` job builds from the
+# checkout, so its ~5,000 passing tests ran on exactly this set. What the published
+# `:2512` tag currently holds is a separate question and is not read here.
+#
+# `check.sh` asserts each one, because a pin nothing asserts is a comment. An empty arg
+# is still accepted and means "do not pin", which is how these were measured.
+ARG NUMPY_VERSION=2.5.5
+ARG MATPLOTLIB_VERSION=3.11.2
+ARG PANDAS_VERSION=3.1.1
+ARG PYVISTA_VERSION=0.49.2
+# Plain `${VAR}` and not `${VAR:+==$VAR}`, because the shell conditional kept the
+# version out of the layer cache key. BuildKit decides what to reuse by scanning a
+# RUN for the build args it references, and on the first pinned build every layer
+# from the pip install through check.sh came back CACHED (PR #231, run
+# 44809774086, steps #8 to #21) -- so the pinned install never ran and the gate
+# never asserted anything. A pin that a cache hit skips is worse than no pin: it
+# reads as pinned and ships whatever the cached layer happened to have.
+#
+# The conditional existed so an empty arg could mean "do not pin", which is how
+# these five versions were measured. That pass is done and the measurement is
+# above; check.sh still accepts an empty arg, so the next measurement works the
+# same way, but the Dockerfile now requires an exact version for each -- which is
+# what tests/test_docker_backend.py already demands of it.
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        "numpy==${NUMPY_VERSION}" \
+        "matplotlib==${MATPLOTLIB_VERSION}" \
+        "pandas==${PANDAS_VERSION}" \
+        "pyvista==${PYVISTA_VERSION}" \
     && python3 -m pip uninstall -y --break-system-packages vtk \
     && python3 -m pip install --no-cache-dir --break-system-packages \
         --extra-index-url https://wheels.vtk.org vtk-osmesa
@@ -93,4 +129,5 @@ RUN chmod +x /usr/local/bin/reynolds-install-guard \
 # --- the checks --------------------------------------------------------------------
 COPY check.sh /tmp/check.sh
 RUN bash /tmp/check.sh "${GMSH_VERSION}" "${BUILD123D_VERSION}" "${OCP_VERSION}" \
+        "${NUMPY_VERSION}" "${MATPLOTLIB_VERSION}" "${PANDAS_VERSION}" "${PYVISTA_VERSION}" \
     && rm -rf /tmp/check.sh /tmp/gate*

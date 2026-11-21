@@ -127,6 +127,50 @@ def test_the_cad_wheels_are_pinned_exactly_and_the_image_checks_them():
     assert 'version("cadquery-ocp-novtk") == sys.argv[2]' in check
 
 
+def test_the_images_python_stack_is_asked_for_by_version_and_checked():
+    """The same defect as the CAD wheels above, in the line next to them.
+
+    `pip install numpy matplotlib pandas pyvista` with no versions resolves whatever
+    PyPI serves at build time, which is how `build123d>=0.9` reached 0.13.0 and took
+    the hosted CAD desk down for four days. This line has more consumers than that
+    one did: every toolbox script imports numpy, every figure is matplotlib, and
+    `lbm.py` and `sph.py` ARE numpy -- they are the solvers a machine with no
+    OpenFOAM has.
+
+    What is pinned here was measured, not guessed: the args went in empty, an unpinned
+    build printed what pip had chosen, and those are the numbers (PR #231, run
+    44802168123). The measurement mattered -- unpinned, this line had already carried
+    the image to pandas **3.1.1**, so pinning to a 2.x anyone would have assumed was
+    here would have changed the image rather than frozen it.
+
+    So this test now demands an exact version for all four, and the mechanism beside
+    it: a pin nothing threads through to the gate is a comment. `check.sh` still
+    accepts an empty arg, which is how these were measured and how the next one would
+    be, but the Dockerfile may not ship one.
+    """
+    dockerfile = (REPO / "docker/workspace/Dockerfile").read_text(encoding="utf-8")
+    check = (REPO / "docker/workspace/check.sh").read_text(encoding="utf-8")
+    names = ("NUMPY", "MATPLOTLIB", "PANDAS", "PYVISTA")
+
+    for name in names:
+        declared = re.findall(rf"^ARG {name}_VERSION=(\S*)$", dockerfile, re.MULTILINE)
+        assert len(declared) == 1, f"{name}_VERSION is declared {len(declared)} times"
+        assert re.fullmatch(r"[\d.]+", declared[0]), (
+            f"{name}_VERSION is not an exact version: {declared[0]!r}. An empty arg is "
+            "how a version is measured, not how one ships -- run an unpinned build, "
+            "read check.sh's output, put the number here.")
+        assert f'"{name.lower()}==${{{name}_VERSION}}"' in dockerfile, (
+            f"{name} is installed without consulting its arg, or consults it through a "
+            "shell conditional. A plain ${VAR} is what BuildKit scans a RUN for when it "
+            "decides what to reuse: with `${VAR:+==$VAR}` the first pinned build came "
+            "back CACHED from the pip install through check.sh, so the pinned install "
+            "never ran and the gate asserted nothing (run 44809774086, steps #8-#21).")
+        assert f'"${{{name}_VERSION}}"' in dockerfile, f"{name} never reaches check.sh"
+
+    assert 'wanted = dict(zip(("numpy", "matplotlib", "pandas", "pyvista")' in check
+    assert "the pins and the image disagree" in check, "the gate reports but never fails"
+
+
 def test_the_default_image_is_the_published_one(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENREYNOLDS_IMAGE", raising=False)
     assert DockerBackend(root=tmp_path).image == DEFAULT_IMAGE
