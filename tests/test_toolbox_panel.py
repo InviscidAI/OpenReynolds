@@ -968,3 +968,60 @@ def test_it_runs_standalone_and_exits_zero_whatever_it_finds(tmp_path):
                              capture_output=True, text=True, timeout=180)
     assert refused.returncode == 0, "exit 0 whatever it finds"
     assert "not estimated" in refused.stdout
+
+
+# -- `--check`, so the tutorial runner has a verdict to collect -----------------
+
+def test_the_check_grades_the_exact_statements_and_needs_no_aerofoil(panel):
+    """The tutorial index quotes four exact statements against this script, and until
+    `--check` existed the script graded none of them, so `run_tier1.py` collected no
+    verdict from a case whose references are exact.
+
+    Driven as a user drives it, because the point is the command, not the function.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(panel.__file__)
+    done = subprocess.run([sys.executable, "-I", "-X", "utf8", str(script), "--check"],
+                          capture_output=True, text=True, timeout=600)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "agrees" in done.stdout and "DISAGREES" not in done.stdout
+    # Each graded line has to carry its measurement and its bound, not just a tick.
+    for probe in ("pressure drag", "zero-lift angle", "Cm about the quarter chord",
+                  "span efficiency", "induced drag moves"):
+        assert probe in done.stdout, f"{probe} is not graded: {done.stdout}"
+    assert "bound" in done.stdout
+    # And it must name what it does NOT grade, rather than implying four of four.
+    assert "not graded here" in done.stdout
+    assert "thin_aerofoil_zero_lift_deg" in done.stdout, (
+        "the integral it declines to duplicate should be named where it lives")
+
+
+def test_the_check_numbers_are_the_ones_the_index_quotes(panel):
+    """The index says pressure drag 2.19e-04 and a span efficiency of 0.9428. If
+    `--check` reported different numbers for the same configuration, one of the two
+    would be wrong and a reader could not tell which."""
+    symmetric, _ = panel.naca4("0012", n_panels=160)
+    geom = panel.panelise(symmetric)
+    coeff = panel.influence(geom)
+    at_five = panel.solve(geom, 5.0, coeff)
+    assert abs(at_five["cd_pressure"]) == pytest.approx(2.19e-04, rel=0.05)
+
+    slope = panel.lift_slope(geom)
+    wing = panel.lifting_line(5.0, slope["per_radian"], slope["zero_lift_alpha_deg"],
+                              aspect_ratio=8.0, taper=1.0, modes=48)
+    assert wing["span_efficiency"] == pytest.approx(0.9428, abs=5e-4)
+
+
+def test_an_aerofoil_is_still_required_without_the_check(panel):
+    """`--check` made the geometry group optional, which must not make it optional for
+    everything else: a run with no aerofoil and no --check is still an error, and it
+    names --check as the one thing that needs none."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    done = subprocess.run([sys.executable, "-I", "-X", "utf8", str(Path(panel.__file__))],
+                          capture_output=True, text=True, timeout=300)
+    assert done.returncode != 0
+    assert "--naca" in done.stderr and "--check" in done.stderr

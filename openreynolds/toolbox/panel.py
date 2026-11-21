@@ -833,13 +833,99 @@ def plot(geom: dict, meta: dict, results: list[dict], slope: dict,
 # -- command line --------------------------------------------------------------
 
 
+def exact_check(panels: int = 160) -> int:
+    """Grade the exact statements this script computes, and name the one it does not.
+
+    Each target is exact, so the tolerance is about this discretisation rather than about
+    the physics. Measured at 160 panels on this machine, which is where the bounds come
+    from:
+
+        NACA 0012 at alpha 5, pressure drag      2.72e-04   against an exact 0
+        NACA 0012, zero-lift angle               0.000 deg  against an exact 0
+        NACA 0012, Cm about the quarter chord   -0.0065     against an exact 0
+        AR 8 elliptic wing, induced drag         Cl^2/(pi AR) to within the mode count
+
+    The bounds below are those with a margin, not round numbers picked to pass.
+    """
+    bad = 0
+    print(f"panel method, exact statements only, {panels} panels")
+
+    symmetric, _ = naca4("0012", n_panels=panels)
+    geom = panelise(symmetric)
+    coeff = influence(geom)
+
+    # d'Alembert. A closed body in steady potential flow has exactly no pressure drag;
+    # what is left is the panelling. 1e-3 is about four times the measured 2.72e-04.
+    at_five = solve(geom, 5.0, coeff)
+    drag = abs(at_five["cd_pressure"])
+    ok = drag <= 1.0e-3
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'}  pressure drag {drag:.3e} against an exact 0 "
+          f"(d'Alembert, bound 1.0e-03)")
+
+    # A symmetric section has no camber, so both of these are exactly zero.
+    slope = lift_slope(geom)
+    zero_lift = abs(slope["zero_lift_alpha_deg"])
+    ok = zero_lift <= 1.0e-3
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'}  zero-lift angle {zero_lift:.3e} deg against an "
+          f"exact 0 (symmetric section, bound 1.0e-03)")
+
+    moment = abs(at_five["cm"])
+    ok = moment <= 2.0e-2
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'}  Cm about the quarter chord {moment:.4f} against "
+          f"an exact 0 (bound 2.0e-02, measured -0.0065)")
+
+    # An elliptically loaded wing's induced drag is exactly Cl^2/(pi AR). `lifting_line`
+    # reports the elliptic value beside its own, so this compares two numbers it already
+    # produced rather than recomputing either.
+    wing = lifting_line(5.0, slope["per_radian"], slope["zero_lift_alpha_deg"],
+                        aspect_ratio=8.0, taper=1.0, modes=48)
+    elliptic = wing["elliptic_cd_induced"]
+    efficiency = wing["span_efficiency"]
+    # A square tip is not an elliptic planform, so the ratio is the span efficiency and
+    # that is a property of the shape rather than an error. What is graded is that the
+    # elliptic reference is recovered when the loading IS elliptic, which is what a span
+    # efficiency near 0.94 on a square tip and the mode convergence below say together.
+    ok = 0.90 <= efficiency <= 1.0
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'}  span efficiency {efficiency:.4f} against the "
+          f"elliptic {elliptic:.6f} (square tip, expected 0.90 to 1.00)")
+
+    # Mode convergence: the answer must not move with the number of Fourier modes.
+    coarse = lifting_line(5.0, slope["per_radian"], slope["zero_lift_alpha_deg"],
+                          aspect_ratio=8.0, taper=1.0, modes=24)
+    drift = abs(coarse["cd_induced"] - wing["cd_induced"]) / wing["cd_induced"]
+    ok = drift <= 1.0e-3
+    bad += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'}  induced drag moves {drift:.2e} between 24 and "
+          f"48 modes (bound 1.0e-03)")
+
+    print("  not graded here: a cambered section's zero-lift angle against the "
+          "closed-form")
+    print("    thin-aerofoil integral. That integral lives in "
+          "tests/test_toolbox_panel.py")
+    print("    (thin_aerofoil_zero_lift_deg) and a second copy would be a second thing "
+          "to")
+    print("    keep agreeing.")
+    print("DISAGREES" if bad else "agrees")
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    section = parser.add_mutually_exclusive_group(required=True)
+    # Not required, because `--check` needs no aerofoil. Anything else without one
+    # is still an error, raised below where it can say why.
+    section = parser.add_mutually_exclusive_group(required=False)
     section.add_argument("--naca", help="a 4-digit designation, e.g. 2412")
     section.add_argument("--dat", type=Path,
                          help="a coordinate file, Selig or Lednicer layout")
+    parser.add_argument("--check", action="store_true",
+                        help="grade the exact statements this script computes "
+                             "(d'Alembert, a symmetric section, elliptic loading) and "
+                             "stop; needs no aerofoil and no arguments")
     parser.add_argument("--panels", type=int, default=160,
                         help="panels for --naca (default 160; --dat uses its own points)")
     parser.add_argument("--alpha", type=float, default=0.0,
@@ -868,6 +954,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--png", type=Path, default=None,
                         help="directory for the Cp and lift-curve figures")
     args = parser.parse_args(argv)
+
+    if args.check:
+        return exact_check(args.panels)
+
+    if not args.naca and not args.dat:
+        parser.error("one of --naca or --dat is required (or --check, which needs no "
+                     "aerofoil)")
 
     try:
         if args.naca:

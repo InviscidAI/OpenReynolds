@@ -8,6 +8,31 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **`export_doc.py`: a study's write-up as LaTeX or Word, from the `results.md` it
+  already has.** `export_doc.py results.md --tex report.tex --docx report.docx`, or a case
+  directory and it finds the markdown. `results.py` writes the working record and
+  `report.py` assembles a PDF; neither is a file somebody can edit, which is what a
+  reviewer adding a paragraph or a journal wanting a `.tex` source needs. **Neither pandoc
+  nor `python-docx` is used or needed** -- LaTeX is text and a `.docx` is a zip of XML that
+  `zipfile` and `xml` write between them -- so it runs where nothing is installed. What it
+  cannot carry (nested lists, HTML blocks, footnotes, reference links) it reports by line
+  number rather than dropping. Neither output is compiled or opened by its tests: the
+  checks are structural, which the module says rather than implies.
+- **`benchmarks/tutorials/run_tier1.py`: every tier 1 case in one command.** Eight cases
+  that need nothing installed, each with the reference it is measured against, and until
+  now the only way to check them was to copy eight commands out of a table. It exits
+  non-zero if a case with a verdict fails, so it is a check and not a demonstration.
+  Measured on one laptop: the cavity at n=128 about 100 s, the sloshing tank 240 s and the
+  SPH dam break 480 s, so `--quick` leaves those three out **by name**.
+- **`panel.py --check`: the exact statements the tutorial index quotes it against, graded.**
+  Pressure drag 2.189e-04 against an exact 0 (d'Alembert), a symmetric section's zero-lift
+  angle 2.301e-16 deg and quarter-chord moment 0.0065 against an exact 0, span efficiency
+  0.9428 against the elliptic value `lifting_line` already reports, and induced drag moving
+  3.65e-05 between 24 and 48 Fourier modes. The index read as though the script graded
+  these; it printed them and graded none. The fourth statement -- a cambered section's
+  zero-lift angle against the closed-form thin-aerofoil integral -- is deliberately **not**
+  graded here, because that integral already lives in `tests/test_toolbox_panel.py` and a
+  second copy would be a second thing to keep agreeing.
 - **Three `case_gen.py` flags a design study needs and a hand-written case does not.**
   `--yplus` writes the `yPlus` function object at `writeTime`, so the wall spacing a
   turbulence model assumed can be read off the case rather than asserted; `--dp` writes
@@ -168,6 +193,14 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **Every template refuses a missing binary by name, not just the six that learned to.**
+  `viv_cylinder.py` carried the pre-#241 `run()` helper, so on a machine with no OpenFOAM it
+  ended in `FileNotFoundError: [WinError 2] The system cannot find the file specified`
+  rather than a refusal naming the binary, saying it comes with OpenFOAM, and listing what
+  the run had already written. A template is what a person copies, and this is the laptop
+  case the product documents as supported. All eight templates now carry that helper byte
+  for byte, and a test compares the whole set at once -- which is the check the file's
+  docstring had claimed since #241 while nothing performed it.
 - **`benchmarks/moving_mesh/README.md` quoted an amplitude a paper does not state.** Its
   nearest reference for the VIV amplitude, Menon & Mittal (arXiv:2006.11649, published as
   *J. Fluid Mech.* **907**, A37, 2021), was re-read at source and gives no A/D number in
