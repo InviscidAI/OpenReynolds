@@ -25,6 +25,41 @@ from openreynolds.tools import CORES_PROBE, ToolContext
 from openreynolds.view import View
 
 
+BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
+
+NOT_A_CASE_FAMILY = {
+    "tutorials": "this directory: the index itself, and the tier 3 prompts",
+    "deliverables": "a model-behaviour eval -- it plays a transcript to the configured "
+                    "model and has a judge bin the reply, so it grades the agent and not "
+                    "a solver, costs a model turn, and has no reference value in it",
+}
+"""Directories under `benchmarks/` that are not case families, each with why.
+
+Named rather than derived, because "is this a case family" is a judgement and a silent
+rule would let a real family be skipped by accident -- which is the failure the guards
+below it exist for, one level up."""
+
+
+def families() -> list[str]:
+    """Every case family, from the directory rather than from a list.
+
+    Both index guards ask the same question of two different pages -- does the index
+    name every family? -- so the list lives here rather than in either of them.
+
+    It was five literals in each, written when there were five families. Three more
+    arrived (`mhd/`, `combustion/`, `particles/`) and neither guard could see them:
+    `particles/` held three graded cases, two of them exact closed forms runnable in
+    numpy on a laptop, and the tutorial index named none of them. A guard whose
+    coverage is a literal goes stale exactly when the thing it guards grows, which is
+    the only time it matters.
+    """
+    found = sorted(p.name for p in BENCHMARKS.iterdir()
+                   if p.is_dir() and not p.name.startswith((".", "_"))
+                   and p.name not in NOT_A_CASE_FAMILY)
+    assert len(found) >= 8, f"only {found} under benchmarks/ -- the glob is wrong"
+    return found
+
+
 def pytest_configure(config):
     """Windows terminals report 80 columns; pytest then folds workspace paths
     in the middle of a token and assertions on `str(files_dir)` fail even when
