@@ -1,6 +1,6 @@
 # The templates, as tutorials
 
-Tier 2 of [`README.md`](README.md): the seven recipes in
+Tier 2 of [`README.md`](README.md): every recipe in
 [`../../openreynolds/toolbox/templates/`](../../openreynolds/toolbox/templates/). Each one
 is a single Python file you copy into an empty directory and run. It builds a mesh with
 gmsh, converts it with `gmshToFoam`, retypes the patches, runs `checkMesh` and finishes by
@@ -351,6 +351,43 @@ says so, with the journal reference added.
 One normalisation trap recorded with it: Menon & Mittal define `m* = 2m/(rho D^2)`, so
 their `m* = 10` is **6.37** on displaced mass. Two papers both saying "m* = 10" can mean
 a 57% different body.
+
+## evaluate_steady.py -- one round of a parametric study, and who owns which number
+
+A cambered 2D section at incidence above a ground plane, in a box, meshed in quads by
+gmsh, extruded one cell, converted by `gmshToFoam`, retyped, `checkMesh`ed and looked at
+with `mesh_look.py`. Patches: `inlet`, `outlet`, `ground`, `top`, `body`,
+`frontAndBack`.
+
+What makes it different from the seven above is that **it is not meant to be edited.**
+Every other template here says "change the two numbers at the top and run it". This one
+is the build.py of a round, and the numbers come from a design_constants.py the
+caller writes beside it:
+
+```sh
+python3 evaluate_steady.py --write-round /work/study/rounds/000
+# -> build.py (this file), hooks.py, goal.lock.json, design_constants.py
+
+python3 /work/.toolbox/parametric.py /work/study/cand/007 \
+    --round /work/study/rounds/000 --lock /work/study/goal.lock.json --mode solve
+```
+
+`CHORD_M`, `CAMBER_1`, `CAMBER_POS`, `THICKNESS`, `ALPHA_DEG` and `RIDE_HEIGHT_M` have
+**no defaults here**, deliberately: an optimizer varies them and the lock's trim varies
+the incidence, so a candidate that arrives without the file fails loudly rather than
+meshing the same shape under a new name and reporting it as a new design. That is the
+one failure mode a parametric study cannot recover from, because the result looks
+plausible.
+
+The mesh sizes *are* this file's own, and they are the fidelity. `goal.lock.json`'s
+`fidelity.cells: {min, max}` is what holds them to account, and `fidelity.yplus` the
+wall treatment: the sample leaves `yplus.min` out, because the stagnation point puts y+
+near zero on any body and a floor there would fail every candidate for a reason that is
+not about the mesh.
+
+So three owners, and the split is the point: the **caller** owns the shape, this
+**template** owns the mesh, and the **lock** owns the physics and the bands. Nothing
+here reads a number it also writes.
 
 ## body_in_box.py -- a body-fitted mesh, and a reference it does not claim
 
