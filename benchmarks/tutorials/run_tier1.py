@@ -82,6 +82,12 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a tracer orbit in solid-body rotation",
      ("benchmarks/particles/grade.py", "tracer"),
      "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("conjugate heat transfer, the two-region reference",
+     ("openreynolds/toolbox/conjugate.py", "--check"),
+     "steady series conduction, exact, and the two continuities a conjugate"
+     " interface owes at once; plus the shell-versus-slab factor, graded"
+     " against its own algebra rather than a printed per cent",
+     False, True),
     ("quasi-1D compressible relations",
      ("openreynolds/toolbox/nozzle.py", "--check"),
      "exact closed forms, and three identities: A/A* = 1 at the throat,"
