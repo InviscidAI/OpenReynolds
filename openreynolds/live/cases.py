@@ -369,8 +369,22 @@ def _advance(world: Any, steps: int, *, sample_every: int = 0,
                      f"{figures.clock(left)} left")
 
 
+def _stop_word(stopped: dict[str, Any]) -> str:
+    """`converged`, `stalled at the precision floor`, or `stopped`. One word each.
+
+    Three outcomes and not two, because "stopped" covered both a run that hit the step
+    cap and a run whose residual had sat on the float32 floor for a million steps -- and
+    those tell a reader opposite things about whether to trust the field.
+    """
+    if stopped.get("converged"):
+        return "converged"
+    if stopped.get("stalled"):
+        return "stalled at the single-precision floor"
+    return "stopped"
+
+
 def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
-              max_steps: int = 2_000_000, reference: float = 1.0,
+              max_steps: int = 2_000_000, reference: float = 1.0, patience: int = 12,
               progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Run until the velocity field stops moving, and report what it stopped at.
 
@@ -380,16 +394,30 @@ def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
     max_steps and a run that converged are not the same answer and the difference is one
     number".
 
-    **The floor is single precision, not the scheme.** The populations are float32 and
-    the interesting part of one is five or six orders of magnitude below its weight, so
-    the residual of a converged run settles at a few times 1e-5 of the reference speed
-    and stays there. A tolerance below that never trips and the run goes to `max_steps`
-    looking like a failure to converge. Measured on the 32-cell cavity at Re 100: the
-    field is stable in its fourth digit from 20,000 steps and the residual floor is
-    5e-5. `tolerance` defaults above it.
+    **The floor is single precision, not the scheme, so there are two ways to stop.**
+    The populations are float32 and the interesting part of one is five or six orders of
+    magnitude below its weight, so the residual of a converged run settles at a few
+    times 1e-5 of the reference speed and stays there. A tolerance below that floor
+    never trips.
+
+    Measured: the 32-cell cavity at Re 100 is stable in its fourth digit from 20,000
+    steps and its residual floor is 5e-5. The 256-cell cavity at Re 1000 ran to
+    **1.6 million steps** on an H100 with its residual pinned at 4.0e-5 against a 3e-5
+    tolerance, and would have run to the four-million cap -- sixteen minutes of H100 for
+    a field that had not changed in its fourth digit for most of it.
+
+    So a run stops either when the residual reaches `tolerance`, which is convergence,
+    or when it **stops falling** -- `patience` consecutive checks without a 10%
+    improvement on the best so far -- which is the precision floor. The two are reported
+    differently, with `converged`, `stalled` and a `why` in words, because they are not
+    the same answer and a reader deciding whether to trust a number needs to know which
+    one happened. Neither is treated as a failure by the cases: every one of them reports
+    the residual it stopped at and grades the field, not the stopping.
     """
     previous = None
     residual = float("inf")
+    best = float("inf")
+    stale = 0
     done = 0
     began = time.perf_counter()
     while done < max_steps:
@@ -400,13 +428,29 @@ def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
         if previous is not None:
             residual = float(np.nanmax(np.abs(u - previous)) / abs(reference))
         previous = u.copy()
+        if residual < 0.9 * best:
+            best = residual
+            stale = 0
+        else:
+            stale += 1
         if progress is not None:
             elapsed = time.perf_counter() - began
             progress(f"    {done:>9,} steps  residual {residual:.3e}  "
                      f"{world.nodes * done / elapsed / 1e6:6.1f} MLUPS")
         if residual < tolerance:
-            break
-    return {"steps": done, "residual": residual, "converged": residual < tolerance}
+            return {"steps": done, "residual": residual, "converged": True,
+                    "stalled": False, "why": "the residual reached the tolerance"}
+        if stale >= patience:
+            return {
+                "steps": done, "residual": residual, "converged": False,
+                "stalled": True,
+                "why": (f"the residual stopped falling: {patience} consecutive checks "
+                        f"without a 10% improvement on {best:.3e}, which is the "
+                        f"single-precision floor for this field rather than a failure "
+                        f"to converge"),
+            }
+    return {"steps": done, "residual": residual, "converged": residual < tolerance,
+            "stalled": False, "why": f"reached the {max_steps:,} step cap"}
 
 
 # -- 1. Poiseuille, which is exact ------------------------------------------------------
@@ -464,7 +508,8 @@ def run_poiseuille(cells: int = 32, *, nu_lattice: float = 0.1, u_max: float = 0
 
     if steps:
         _advance(world, steps, progress=progress)
-        stopped = {"steps": steps, "residual": float("nan"), "converged": False}
+        stopped = {"steps": steps, "residual": float("nan"), "converged": False,
+                   "stalled": False, "why": "a fixed step count was asked for"}
     else:
         stopped = _converge(world, tolerance=1e-6, check_every=200,
                             max_steps=200_000, reference=u_ref, progress=progress)
@@ -492,8 +537,8 @@ def run_poiseuille(cells: int = 32, *, nu_lattice: float = 0.1, u_max: float = 0
         xlabel="u (lattice units)", ylabel="y (cells from the wall)")
     figures.ensure_rgb(figure)
     lines += [f"  steps:      {stopped['steps']:,} "
-              f"({'converged' if stopped['converged'] else 'stopped'}, "
-              f"residual {stopped['residual']:.3e})",
+              f"({_stop_word(stopped)}, residual {stopped['residual']:.3e})",
+              f"  stopped:    {stopped.get('why', '')}",
               *world.report()[-2:]]
     return _result("poiseuille", checks, lines, [figure], scaling=scaling.report(),
                    stopped=stopped)
@@ -544,7 +589,8 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
 
     if steps:
         _advance(world, steps, progress=progress)
-        stopped = {"steps": steps, "residual": float("nan"), "converged": False}
+        stopped = {"steps": steps, "residual": float("nan"), "converged": False,
+                   "stalled": False, "why": "a fixed step count was asked for"}
     else:
         stopped = _converge(world, tolerance=tolerance, check_every=1000,
                             max_steps=4_000_000, reference=lid, progress=progress)
@@ -628,8 +674,8 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
     for figure in drawn:
         figures.ensure_rgb(figure)
     lines += [f"  steps:      {stopped['steps']:,} "
-              f"({'converged' if stopped['converged'] else 'stopped'}, "
-              f"residual {stopped['residual']:.3e})",
+              f"({_stop_word(stopped)}, residual {stopped['residual']:.3e})",
+              f"  stopped:    {stopped.get('why', '')}",
               f"  reference:  {REFERENCES['ghia']['source']}",
               f"  caveat:     {REFERENCES['ghia']['caveat']}",
               *world.report()[-2:]]

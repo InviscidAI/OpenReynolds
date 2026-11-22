@@ -40,11 +40,14 @@ import math
 from openreynolds.live.units import FLUIDS
 from openreynolds.toolbox.references import sphere_drag
 
-DIAMETER = 0.004
+DIAMETER = 0.002
 DENSITY_RATIO = 1.005
 CELLS_PER_DIAMETER = 8
+U_LATTICE = 0.05
 BOX = (5.0, 5.0, 7.0)
-STEPS = 400
+"""The box in diameters. The sphere starts at 70% of its height and falls about two
+diameters in the run below."""
+STEPS = 500
 GRAVITY = 9.81
 
 
@@ -81,7 +84,8 @@ def main() -> int:
     reynolds = expected * DIAMETER / water.nu
 
     dx = DIAMETER / CELLS_PER_DIAMETER
-    scaling = Scaling.for_reynolds(dx, DIAMETER, reynolds, "water", u_lattice=0.04)
+    scaling = Scaling.for_reynolds(dx, DIAMETER, reynolds, "water",
+                                   u_lattice=U_LATTICE)
     size = tuple(side * DIAMETER for side in BOX)
     domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
                     faces={"-x": "slip", "+x": "slip", "-y": "slip", "+y": "slip",
