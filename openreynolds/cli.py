@@ -5879,6 +5879,18 @@ def _toolbox_for(solver: str) -> Path:
             for item in sorted(TOOLBOX_SOURCE.iterdir()):
                 if item.is_file() and is_felix(item.name):
                     shutil.copy2(item, staged / item.name)
+            # `references/` goes to every study whatever solves it. The split above is
+            # by solver because most of this toolbox writes or reads OpenFOAM cases and
+            # is useless to Felix, but a published constant has no solver: Ghia's
+            # tabulated cavity profiles and the drag on a sphere are the same numbers
+            # whichever code produced the flow. Leaving them out had a cost that was
+            # visible before the cause was: study 20261122-143650-ce93 ran three spheres
+            # on Felix, needed the standard drag correlations, found nothing to read and
+            # worked from memory, saying so three times in its own write-up.
+            source_refs = TOOLBOX_SOURCE / "references"
+            if source_refs.is_dir():
+                shutil.copytree(source_refs, staged / "references",
+                                ignore=shutil.ignore_patterns("__pycache__"))
         else:
             shutil.copytree(
                 TOOLBOX_SOURCE, staged,

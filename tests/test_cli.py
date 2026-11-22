@@ -3157,3 +3157,48 @@ def test_the_refusal_says_where_the_toolbox_is(monkeypatch):
     said = _root_search_refusal("find / -name nozzle.py")
     assert "ls /work/.toolbox" in said
     assert "README.md" in said
+
+
+# -- references reach every study ----------------------------------------------------
+#
+# The toolbox is split by solver, because most of it writes or reads OpenFOAM cases and
+# is useless to Felix. Published constants are not like that: Ghia's cavity profiles and
+# the drag on a sphere are the same numbers whichever code produced the flow.
+#
+# Leaving them on the OpenFOAM side had a cost that showed up before the cause did.
+# Study 20261122-143650-ce93 solved three spheres on Felix, needed the standard drag
+# correlations, found nothing in its toolbox to read, and worked from memory -- saying so
+# three times in its own write-up. A Felix study used to receive two files in total.
+
+
+def _staged_for(solver):
+    cli._staged_toolboxes.clear()
+    return cli._toolbox_for(solver)
+
+
+def test_a_felix_study_gets_the_published_references():
+    staged = _staged_for(cli.solvers.FELIX)
+    refs = staged / "references"
+    assert refs.is_dir(), sorted(p.name for p in staged.iterdir())
+    assert any(p.suffix in (".json", ".py") for p in refs.iterdir()), sorted(refs.iterdir())
+
+
+def test_the_felix_references_are_the_same_files_as_the_openfoam_ones():
+    """One set of references, not a Felix edition that can drift."""
+    felix = {p.name for p in (_staged_for(cli.solvers.FELIX) / "references").iterdir()}
+    foam = {p.name for p in (_staged_for(cli.solvers.OPENFOAM) / "references").iterdir()}
+    assert felix == foam, (felix ^ foam)
+
+
+def test_the_solver_split_itself_still_holds():
+    """The point of the split is that a Felix study is not handed OpenFOAM machinery.
+    Shipping references must not quietly ship the rest."""
+    staged = _staged_for(cli.solvers.FELIX)
+    top = {p.name for p in staged.iterdir() if p.is_file()}
+    assert "render.py" not in top and "case_gen.py" not in top, top
+    assert not (staged / "templates").exists()
+
+
+def test_no_pycache_rides_along():
+    refs = _staged_for(cli.solvers.FELIX) / "references"
+    assert not (refs / "__pycache__").exists()
