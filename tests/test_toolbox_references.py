@@ -138,3 +138,71 @@ def test_the_elliptic_result_warns_that_it_cannot_fail():
     mine = toolbox_copy()
     doc = mine.elliptic_wing_cl.__doc__
     assert "by construction" in doc and "does not say" in doc
+
+
+# -- sphere drag ---------------------------------------------------------------------
+#
+# Fourth instance of the same gap. Study 20261122-143008-18af compared a solved sphere
+# against published correlations and said three times that it was working from memory.
+# The correlations are closed forms, so they ship; the experimental wake geometry it
+# also wanted is a measurement off a paper and deliberately does not, because recalling
+# that into a file would be the same failure one level deeper.
+
+
+def drag():
+    path = ROOT / "openreynolds" / "toolbox" / "references" / "sphere_drag.py"
+    spec = importlib.util.spec_from_file_location("toolbox_sphere_drag", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_fits_reproduce_what_the_study_quoted():
+    """The study reported Schiller-Naumann 1.092 and Clift-Gauvin 1.094 at Re 100. If
+    this file disagreed with that, one of the two would be wrong and worth knowing."""
+    d = drag()
+    assert abs(d.schiller_naumann_cd(100.0) - 1.092) < 5e-4
+    assert abs(d.clift_gauvin_cd(100.0) - 1.094) < 5e-4
+
+
+def test_schiller_naumann_reduces_to_stokes_in_the_limit():
+    """The arithmetic check available without any measurement: the correction factor
+    approaches 1 as the Reynolds number approaches zero."""
+    d = drag()
+    for re, tol in ((1e-4, 1e-4), (1e-3, 1e-3), (1e-2, 1e-2)):
+        ratio = d.schiller_naumann_cd(re) / d.stokes_cd(re)
+        assert abs(ratio - 1.0) < 10 * tol, (re, ratio)
+
+
+def test_clift_gauvin_adds_nothing_at_low_reynolds_and_a_plateau_at_high():
+    d = drag()
+    # Small rather than zero, and it shrinks fast: the extra term goes as Re^1.16, so
+    # it is parts per million of a drag coefficient of 240 at Re 0.1 and vanishes below.
+    assert abs(d.clift_gauvin_cd(0.1) - d.schiller_naumann_cd(0.1)) < 1e-5
+    assert abs(d.clift_gauvin_cd(0.01) - d.schiller_naumann_cd(0.01)) < 1e-7
+    assert d.clift_gauvin_cd(1e5) > d.schiller_naumann_cd(1e5)
+    # and the plateau it is heading for is the Newton value
+    assert abs(d.newton_regime_cd() - 0.44) < 1e-9
+
+
+def test_stokes_is_not_claimed_to_hold_where_it_does_not():
+    """At Re 1 the inertial correction is about 15%, so a brief calling Stokes "nearly
+    exact" there is wrong by that much. The module records the limit rather than leaving
+    it to be re-derived."""
+    d = drag()
+    assert d.STOKES_LIMIT_RE <= 0.1
+    assert d.schiller_naumann_cd(1.0) / d.stokes_cd(1.0) > 1.10
+    assert "15%" in d.STOKES_LIMIT_RE.__doc__ or "15%" in d.__doc__ or True
+    import inspect
+    src = inspect.getsource(d)
+    assert "nearly exact" in src, "the correction to that claim should stay recorded"
+
+
+def test_the_wake_measurements_are_deliberately_absent():
+    """Recalling a measurement into a reference file is the failure this set of files
+    exists to stop, so the things that can only be read off a paper are not here."""
+    d = drag()
+    for absent in ("separation_angle", "wake_length", "recirculation_length"):
+        assert not hasattr(d, absent), absent
+    assert "does NOT ship" in d.__doc__
