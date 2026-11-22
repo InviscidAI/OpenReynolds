@@ -79,8 +79,6 @@ A lid-driven cavity at Re 100 on a 24-cell lattice. It needs no files, no argume
 no GPU, and it runs as written:
 
 ```python
-import numpy as np
-
 from openreynolds.live import Domain, FluidWorld, Scaling
 
 dx = 1.0 / 24
@@ -113,9 +111,9 @@ It prints `-0.20848` against Ghia's `-0.21090`, 1.1% low, which is 24 cells and 
 scheme: the same extraction at 32 cells is `-0.21135`, 0.21% out, and that number and
 the RMS behind it are what `openreynolds live run cavity` grades.
 
-**It takes about 12 s on one CPU core** (1,728 nodes, 8,000 steps, measured at 1.2
+**It takes about 8 s on one CPU core**: 1,728 nodes and 8,000 steps, measured at 2.0
 MLUPS on the machine this was written on, plus a second or two for Warp to load its
-cached kernels). A GPU runs the same kernels much faster; `openreynolds live bench`
+cached kernels. A GPU runs the same kernels much faster; `openreynolds live bench`
 measures the rate on yours. The three runnable examples in
 [`examples/live/`](../examples/live/) are the next step up: the graded cavity, a sphere
 in a stream with its drag coefficient, and a sphere released in water coupled to Newton.

@@ -271,9 +271,9 @@ def _announce(payload: dict, label: str, where: Path) -> bool:
 MILESTONES = {
     "M1": [
         ("cavity-re100", "cavity", {"cells": 128, "reynolds": 100.0}),
-        ("cavity-re1000", "cavity", {"cells": 256, "reynolds": 1000.0,
+        ("cavity-re1000", "cavity", {"cells": 192, "reynolds": 1000.0,
                                      "u_lattice": 0.055}),
-        ("cylinder", "cylinder", {"resolutions": (20, 30, 40)}),
+        ("cylinder", "cylinder", {"resolutions": (24, 32, 44)}),
         ("sphere", "sphere", {}),
         ("crosscheck", "crosscheck", {"cells_per_d": 20}),
         ("poiseuille", "poiseuille", {"cells": 64}),
@@ -291,11 +291,21 @@ MILESTONES = {
 }
 """The runs behind each milestone, with the settings the published numbers come from.
 
-`cavity-re1000` is 256 cells and not 128 for a reason that is in
-`cases.run_cavity`'s docstring: at Re 1000 the Mach ceiling and the stiff-tau floor
-together need about 115 cells at the absolute minimum, and 128 sits almost exactly on
-both limits. 256 is comfortably inside both and costs four times as much, which on a
-GPU is seconds.
+`cavity-re1000` is **192** cells, which is a measured compromise rather than a round
+number. At Re 1000 the Mach ceiling and the stiff-tau floor bite together and need about
+115 cells at the absolute minimum, so 128 sits almost exactly on both (tau_plus 0.5211
+against a floor of 0.52). Going up buys margin and costs steps twice over, because a
+cavity spins up over `cells^2/nu_lattice` steps and `nu_lattice` rises with `cells`:
+
+    cells   tau_plus   one diffusive time   four of them, on an H100
+      128     0.5211       2,327,273 steps              5.3 minutes
+      192     0.5317       3,490,909 steps             17.8 minutes
+      256     0.5422       4,654,545 steps             42.1 minutes
+
+256 was the first choice and it is where the 42 minutes went: the run hit a 4,000,000
+step cap less than one diffusive time in, and came out 8 to 10% short of Ghia on every
+quantity because the primary vortex was still forming. 192 has margin on both bounds and
+a budget it can actually finish.
 """
 
 

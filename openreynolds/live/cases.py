@@ -379,6 +379,7 @@ def _advance(world: Any, steps: int, *, sample_every: int = 0,
     """
     start_sampling = int(steps * settle)
     announce = every or max(1, steps // 10)
+    lattice_at_start = world.lattice_steps
     began = time.perf_counter()
     for index in range(steps):
         world.step()
@@ -387,10 +388,17 @@ def _advance(world: Any, steps: int, *, sample_every: int = 0,
             sample(index)
         if progress is not None and (index + 1) % announce == 0:
             elapsed = time.perf_counter() - began
-            rate = world.nodes * (index + 1) / elapsed / 1e6
+            # `world.lattice_steps`, not the loop index: a coupling step is `substeps`
+            # lattice steps, and counting the coupling steps under-reports the rate by
+            # exactly that factor. The rotor demos run 40-odd substeps a coupling step,
+            # so the ground-effect case reported 17 MLUPS on an H100 that was doing
+            # nearer 700 -- a number that reads as a performance catastrophe and is a
+            # reporting one.
+            done = max(1, world.lattice_steps - lattice_at_start)
+            rate = world.nodes * done / elapsed / 1e6
             left = elapsed / (index + 1) * (steps - index - 1)
-            progress(f"    {index + 1:>9,}/{steps:,} steps  {rate:6.1f} MLUPS  "
-                     f"{figures.clock(left)} left")
+            progress(f"    {index + 1:>9,}/{steps:,} steps ({done:,} lattice)  "
+                     f"{rate:6.1f} MLUPS  {figures.clock(left)} left")
 
 
 def _stop_word(stopped: dict[str, Any]) -> str:
@@ -409,6 +417,7 @@ def _stop_word(stopped: dict[str, Any]) -> str:
 
 def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
               max_steps: int = 2_000_000, reference: float = 1.0, patience: int = 12,
+              minimum_steps: int = 0,
               progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Run until the velocity field stops moving, and report what it stopped at.
 
@@ -437,6 +446,14 @@ def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
     the same answer and a reader deciding whether to trust a number needs to know which
     one happened. Neither is treated as a failure by the cases: every one of them reports
     the residual it stopped at and grades the field, not the stopping.
+
+    **`minimum_steps` exists because a plateau is not always a floor.** A lid-driven
+    cavity spins up diffusively, over `cells^2/nu_lattice` steps, and during the slow
+    part of that the residual sits almost still while the field is genuinely still
+    moving: the Re 1000 cavity at 256 cells plateaued at 3.8e-5 for millions of steps
+    and was 8 to 10% short of Ghia when it stopped. A stall detector with no floor
+    believes that plateau. The caller that knows the physical timescale passes it, and
+    `run_cavity` passes one diffusive time.
     """
     previous = None
     residual = float("inf")
@@ -464,7 +481,7 @@ def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
         if residual < tolerance:
             return {"steps": done, "residual": residual, "converged": True,
                     "stalled": False, "why": "the residual reached the tolerance"}
-        if stale >= patience:
+        if stale >= patience and done >= minimum_steps:
             return {
                 "steps": done, "residual": residual, "converged": False,
                 "stalled": True,
@@ -575,6 +592,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
                collision: str = "trt", smagorinsky: float = 0.0,
                device: str | None = None, out_dir: str | Path = ".",
                steps: int | None = None, tolerance: float = 3.0e-5,
+               diffusive_times: float = 4.0,
                progress: Callable[[str], None] | None = None, **_: Any) -> dict[str, Any]:
     """The lid-driven cavity, graded on Ghia's two centrelines.
 
@@ -611,13 +629,32 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
     lines = [f"# cavity: Re {reynolds:g}, {cells} cells a side",
              *scaling.report(), *_official("cavity", scaling, smagorinsky)]
 
+    # How long a cavity takes to spin up is a diffusive time, not a convective one: the
+    # primary vortex is established by viscosity carrying the lid's momentum across the
+    # box, which takes of order `cells^2 / nu_lattice` steps. At 256 cells and Re 1000
+    # that is 4.65 million, and the first GPU run of this case stopped at a 4,000,000
+    # cap with its residual plateaued at 3.8e-5 -- which read as a precision floor and
+    # was not one. Every measured quantity came out 8 to 10% short of Ghia's (u minimum
+    # -0.345 against -0.383, v extremes -0.469 and +0.333 against -0.516 and +0.371),
+    # which is what an under-developed vortex looks like, and the RMS failed at 3.2%.
+    #
+    # So the step budget is set from the physics and the residual is a second opinion:
+    # `diffusive_times` of `cells^2 / nu_lattice`, with `_converge` allowed to stop
+    # early only after the first one has elapsed. A residual plateau before then is the
+    # slow part of the spin-up, not convergence, and `minimum_steps` is what stops the
+    # stall detector believing it.
+    diffusive = cells * cells / max(scaling.nu_lattice, 1e-12)
+    budget = int(diffusive_times * diffusive)
     if steps:
         _advance(world, steps, progress=progress)
         stopped = {"steps": steps, "residual": float("nan"), "converged": False,
                    "stalled": False, "why": "a fixed step count was asked for"}
     else:
-        stopped = _converge(world, tolerance=tolerance, check_every=1000,
-                            max_steps=4_000_000, reference=lid, progress=progress)
+        stopped = _converge(world, tolerance=tolerance, check_every=2000,
+                            max_steps=budget, minimum_steps=int(diffusive),
+                            reference=lid, progress=progress)
+    stopped["diffusive_time_steps"] = diffusive
+    stopped["budget"] = budget
 
     u = world.fields()["u"][:, :, nz // 2, :] / lid
     mid = cells // 2
@@ -700,6 +737,10 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
     lines += [f"  steps:      {stopped['steps']:,} "
               f"({_stop_word(stopped)}, residual {stopped['residual']:.3e})",
               f"  stopped:    {stopped.get('why', '')}",
+              f"  timescale:  one diffusive time is cells^2/nu_lattice = "
+              f"{stopped['diffusive_time_steps']:,.0f} steps; the budget was "
+              f"{stopped['budget']:,} ({diffusive_times:g} of them) and it ran "
+              f"{stopped['steps'] / stopped['diffusive_time_steps']:.2f}",
               f"  reference:  {REFERENCES['ghia']['source']}",
               f"  caveat:     {REFERENCES['ghia']['caveat']}",
               *world.report()[-2:]]
@@ -714,6 +755,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
 def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
                    collision: str = "trt", smagorinsky: float = 0.0,
                    device: str | None = None, periods: float = 30.0,
+                   establish_flows: float = 8.0, sample_periods: float = 25.0,
                    settle: float = 0.5, out_dir: str | Path = ".",
                    progress: Callable[[str], None] | None = None,
                    steps: int | None = None, animate: bool = False) -> dict[str, Any]:
@@ -760,11 +802,34 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
     world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
     world.initialise(velocity=(u_mean, 0.0, 0.0))
 
-    # One shedding period in lattice steps, from the expected Strouhal number: the
-    # period is D/(St U), and in lattice units D is cells_per_d and U is u_lattice.
+    # -- how long to run, which is the thing this case got wrong -----------------------
+    #
+    # Two timescales, and the run has to respect both.
+    #
+    # One shedding period, from the expected Strouhal number: `D/(St U)`, which in
+    # lattice units is `cells_per_d / (St u_lattice)`. That sets how long the SAMPLING
+    # window has to be, and 25 periods is plenty for a mean and a frequency.
+    #
+    # One flow-through, `L/U`, which in lattice units is `(length/dx) / u_lattice`. That
+    # sets how long the ESTABLISHING window has to be, and it is much the longer of the
+    # two here: at 40 cells per diameter a period is 3,604 steps and a flow-through is
+    # 23,784.
+    #
+    # The first version of this case ran `30 * period` and sampled the last half of it,
+    # which is 4.5 flow-throughs of run and sampling from 2.3 -- a wake that had not
+    # finished arriving. It measured Cd_max 2.52 against the paper's 3.22-3.24 and St
+    # 0.241 against 0.295-0.305, both about 20% low, **and an observed convergence order
+    # of -0.17**. That last number is what identified it: an error that does not improve
+    # with resolution is not resolution error, and because `total` scaled with
+    # `cells_per_d` every resolution got the same number of flow-throughs and therefore
+    # the same error. The grid-convergence sweep paid for itself on its first run.
     expected_st = float(np.mean(REFERENCES["schafer_turek_2d2"]["strouhal"]))
     period = cells_per_d / (expected_st * u_lattice)
-    total = int(steps if steps else periods * period)
+    flow_through = (length / dx) / u_lattice
+    establish = establish_flows * flow_through
+    sample_window = sample_periods * period
+    total = int(steps if steps else establish + sample_window)
+    settle = min(0.95, establish / total) if not steps else settle
     depth = nz * dx
     coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
 
@@ -793,6 +858,10 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
         "nodes": world.nodes,
         "steps": total,
         "period_steps": period,
+        "flow_through_steps": flow_through,
+        "flow_throughs": total / flow_through,
+        "flow_throughs_before_sampling": establish / flow_through,
+        "periods_sampled": sample_window / period,
         "cd_max": float(cd_array.max()) if cd_array.size else float("nan"),
         "cd_mean": float(cd_array.mean()) if cd_array.size else float("nan"),
         "cl_max": float(cl_array.max()) if cl_array.size else float("nan"),
@@ -810,6 +879,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
 def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
                  collision: str = "trt", smagorinsky: float = 0.0,
                  device: str | None = None, periods: float = 30.0,
+                 establish_flows: float = 8.0, sample_periods: float = 25.0,
                  out_dir: str | Path = ".", steps: int | None = None,
                  animate: bool = True,
                  progress: Callable[[str], None] | None = None,
@@ -858,6 +928,8 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
                      f"({index + 1} of {len(grids)})")
         run = _cylinder_once(grid, collision=collision, smagorinsky=smagorinsky,
                              device=device, periods=periods, out_dir=out,
+                             establish_flows=establish_flows,
+                             sample_periods=sample_periods,
                              progress=progress, steps=steps,
                              animate=animate and grid == max(grids))
         runs.append(run)
@@ -918,7 +990,10 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
         lines.append(
             f"  {run['cells_per_d']:>3} cells:  Cd_max {run['cd_max']:.4f} "
             f"({error:+.3%} on the interval midpoint)  St {run['strouhal']:.5f}  "
-            f"Cl_max {run['cl_max']:.4f}  {run['nodes']:,} nodes, {run['steps']:,} steps")
+            f"Cl_max {run['cl_max']:.4f}  {run['nodes']:,} nodes, {run['steps']:,} steps "
+            f"= {run['flow_throughs']:.1f} flow-throughs, sampled from "
+            f"{run['flow_throughs_before_sampling']:.1f} over "
+            f"{run['periods_sampled']:.0f} periods")
     if len(runs) >= 3:
         lines.append(f"  order:      {order:.2f} observed on the drag error")
     lines += finest["world"].report()[-2:]
@@ -1213,8 +1288,9 @@ def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 0,
 # -- 6. a sphere falling in water, two-way coupled to Newton ----------------------------
 
 
-def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
-                       diameter: float = 0.004, collision: str = "trt",
+def run_falling_sphere(*, cells_per_d: int = 20, density_ratio: float = 2.0,
+                       diameter: float = 0.001, u_lattice: float = 0.05,
+                       collision: str = "trt",
                        smagorinsky: float = 0.0, device: str | None = None,
                        out_dir: str | Path = ".", steps: int | None = None,
                        solver: str = "mujoco", one_way: bool = False,
@@ -1286,7 +1362,7 @@ def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
 
     dx = diameter / cells_per_d
     scaling = Scaling.for_reynolds(dx, diameter, expected_re, "water",
-                                   u_lattice=0.03, scheme=collision,
+                                   u_lattice=u_lattice, scheme=collision,
                                    les=smagorinsky > 0)
     # `for_reynolds` set dt from the Reynolds number; the coupling step is that dt with
     # one substep, which is the honest tightest coupling available and is what a
@@ -1297,9 +1373,18 @@ def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
     domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
                     faces={"-x": "slip", "+x": "slip", "-y": "slip", "+y": "slip",
                            "-z": "outlet", "+z": "outlet"})
+    # The moving window, and this is the case that needs it. The sphere reaches terminal
+    # velocity in about 1.6 diameters -- the acceleration is `(1 - rho_f/rho_s) g` with
+    # the added mass in it, nearly 4 m/s^2 here -- and then keeps going at 112 mm/s. Six
+    # time constants of settling is 12 more diameters of travel, which is the whole box.
+    # Without the window the choice is a box three times larger (nine times the cells in
+    # the two cross directions that do not need them) or a run that stops before the
+    # velocity has settled. `follow` re-centres the lattice on the body instead, by whole
+    # cells, and `lattice.shift` has what that costs: momentum is not conserved across a
+    # shift, which does not matter here because what is being measured is a velocity.
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                        substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device, one_way=one_way)
+                       device=device, one_way=one_way, follow=0, follow_slack=0.12)
 
     builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
     start = (size[0] / 2.0, size[1] / 2.0, size[2] * 0.75)
@@ -1326,7 +1411,10 @@ def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
     # Settling takes about V_t / a_eff seconds, with the added mass in a_eff.
     a_eff = ((1.0 - water.rho / rho_s) * gravity
              / (1.0 + 0.5 * water.rho / rho_s))
-    settle_time = 12.0 * terminal / max(a_eff, 1e-9)
+    # Six time constants: `1 - exp(-6)` is 0.9975, so the velocity is within a quarter
+    # of a per cent of terminal, well inside the 5% the case is graded at. Twelve, which
+    # this was, is twice the GPU time for a digit the tolerance cannot see.
+    settle_time = 6.0 * terminal / max(a_eff, 1e-9)
     total = int(steps if steps else math.ceil(settle_time / dt))
 
     times: list[float] = []
@@ -1361,12 +1449,20 @@ def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
         Check("terminal Reynolds number", measured_re,
               f"{expected_re:.2f} expected", None),
         Check("displaced volume, voxelised against analytic",
-              f"{voxel_volume:.4g} m3 against {volume:.4g} m3",
-              "reported, not graded", None,
-              "the buoyancy uses the voxelised volume on purpose: it has to be the "
-              "volume the boundary condition encloses, or the weight and the drag do "
-              "not balance on the same body (DECISIONS_LIVE.md D9)"),
+              voxel_volume / volume - 1.0 if volume else float("nan"),
+              "within 5% of the analytic volume",
+              abs(voxel_volume / volume - 1.0) <= 0.05 if volume else None,
+              "graded, because the buoyancy is computed from the voxelised volume on "
+              "purpose -- it has to be the volume the boundary condition encloses, or "
+              "the weight and the drag do not act on the same body "
+              "(DECISIONS_LIVE.md D9) -- and the terminal velocity therefore inherits "
+              "this error at half its size, V_t going as the square root of the net "
+              "force"),
         Check("final state finite", world.stable(), "True", world.stable()),
+        Check("window shifts", world.shifts, "reported, not graded", None,
+              "the lattice was re-centred on the sphere this many times; momentum is "
+              "not conserved across a shift, which is why benchmarks/live/'s momentum "
+              "case runs with the window off"),
     ]
     out = Path(out_dir)
     drawn = [figures.slice_figure(
@@ -2290,7 +2386,11 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
     }
 
     height = diameter / blockage
-    length = 4.0 * height
+    # Two channel heights, which at 2.5% blockage is 80 diameters: 40 upstream of the
+    # cylinder and 40 down. Four heights was the first version and is 160 diameters of
+    # mostly undisturbed fluid, which doubles the cells and doubles the flow-through
+    # time that has to be paid for before anything can be sampled.
+    length = 2.0 * height
     dx = diameter / cells_per_d
     nz = 3
     reynolds = speed * diameter / float(constants.get("nu", 1.0e-6) or 1.0e-6)
@@ -2313,8 +2413,15 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
     world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
     world.initialise(velocity=(u_mean, 0.0, 0.0))
 
+    # Flow-throughs to establish, periods to sample. See `_cylinder_once` for the
+    # argument and for what the first version of it measured: this case ran 1.13
+    # flow-throughs and sampled from 0.56, which is a wake that had not crossed the
+    # domain once, and it came out Cd -7% and St +7%.
     period = cells_per_d / (foam["strouhal"] * u_lattice)
-    total = int(steps if steps else periods * period)
+    flow_through = (length / dx) / u_lattice
+    establish = 6.0 * flow_through
+    total = int(steps if steps else establish + 25.0 * period)
+    settle = min(0.95, establish / total)
     depth = nz * dx
     coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
     times: list[float] = []
@@ -2330,7 +2437,8 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
         if animate and len(frames) < 240 and index % max(1, total // 240) == 0:
             frames.append(figures.slice_frame(world, axis=2))
 
-    _advance(world, total, sample_every=1, sample=take, settle=0.5, progress=progress)
+    _advance(world, total, sample_every=1, sample=take, settle=settle,
+             progress=progress)
 
     cd_array = np.asarray(cd)
     cl_array = np.asarray(cl)
@@ -2396,6 +2504,8 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
         f"{foam['cycles']} cycles ({reference['source']})",
         f"  live:       Cd {live_cd:.6f} ({cd_error:+.2%}), St {live_st:.6f} "
         f"({st_error:+.2%}), {spectral['cycles']:.1f} cycles",
+        f"  run:        {total:,} steps = {total / flow_through:.1f} flow-throughs, "
+        f"sampled from {establish / flow_through:.1f}",
         f"  williamson: St {williamson} unconfined; live is {st_vs_williamson:+.2%} on "
         f"it, OpenFOAM is {foam['strouhal'] / williamson - 1.0:+.2%}",
         f"  caveat:     {reference['caveat']}",

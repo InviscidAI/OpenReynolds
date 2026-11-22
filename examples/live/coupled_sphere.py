@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A sphere released in water, two-way coupled to Newton, falling towards terminal velocity.
+"""A sphere released in water, two-way coupled to Newton, approaching terminal velocity.
 
     python examples/live/coupled_sphere.py
 
@@ -12,27 +12,36 @@ weight of the water it displaces. Nothing about that balance is in the solver.
 Skipped with a message if `newton` is not installed: the fluid half needs Warp only,
 the coupling needs the physics engine as well.
 
-What it costs: 40 x 40 x 56 = 89,600 nodes and 400 coupling steps took **26 s** on one
+What it costs: 40 x 40 x 80 = 128,000 nodes and 400 coupling steps took **36 s** on one
 CPU core of the machine this was written on. A GPU runs the same kernels much faster.
 
-Why these numbers are these numbers. The density ratio is 1.005 -- a sphere half a per
-cent heavier than water -- and that is not a decoration. The terminal Reynolds number
-has to be low enough that the lattice resolves the viscosity at an affordable
-resolution, and a denser sphere falls faster: twice the excess density here is a
-terminal Re near 100, which at 8 cells per diameter puts `tau_plus` under
-`units.STIFF_TAU` and is refused. `cases.run_falling_sphere` is the graded version of
-this case and explains the same arithmetic at 30 cells per diameter.
+Why these numbers are these numbers, because none of them is free. Three constraints
+have to hold at once and they pull against each other.
 
-What the number is worth. Buoyancy here is the **analytic** displaced volume, applied
-as a reduced gravity with `buoyancy=False`, and that is a deliberate departure from the
-graded case, which uses the volume the voxelisation encloses (`DECISIONS_LIVE.md` D9).
-The reason is this resolution: at half a per cent excess density the net driving force
-is the difference between two numbers that agree to 0.5%, so a voxelised volume 2% away
-from the analytic one -- which 8 cells across a sphere is -- does not merely perturb the
-answer, it reverses its sign. The graded case runs at 30 cells per diameter, where the
-voxelised volume is the right thing to use and is used. At this size the honest thing is
-to say which volume went in. 400 steps also reaches about 85% of terminal, not all of
-it, and the printed history shows that rather than averaging it away.
+* **The terminal Reynolds number has to be low enough to resolve at 8 cells per
+  diameter.** `nu_lattice = u_lattice * cells_per_diameter / Re`, so a faster sphere
+  drives `tau_plus` towards the 1/2 at which the collision stops relaxing, and
+  `units.Scaling` refuses the run rather than solving a stiff one. Re 17 here gives
+  `tau_plus = 0.57`, comfortable.
+* **The density ratio is 1.5 and not the graded case's 1.005.** Buoyancy is the volume
+  the voxelisation encloses and not the volume the geometry has, on purpose
+  (`DECISIONS_LIVE.md` D9), and at 8 cells across a sphere those differ by a couple of
+  per cent. At half a per cent excess density that error is larger than the whole
+  driving force and reverses the answer's sign; at 50% excess density it is a few per
+  cent of it. `cases.run_falling_sphere` is the graded version and runs at 30 cells per
+  diameter, where 1.005 is affordable.
+* **Re 17 at a 50% excess density means a 0.5 mm sphere**, because the terminal Reynolds
+  number goes as `diameter^1.5`. The lattice does not care about the absolute size (a
+  sand grain settling in water is a real problem) but the timestep does: `dt` comes out
+  at 0.09 ms, which is below a robot's. A validation whose timestep is a microsecond
+  proves nothing about a solver that has to run at a millisecond, and this one is nearer
+  the microsecond end than `falling_sphere` is.
+
+What the number is worth. 400 steps is about 2.7 settling times, so the sphere reaches
+roughly 90% of its terminal velocity rather than all of it, and the printed history
+shows that instead of averaging it away. The 5-diameter box also adds drag that an
+unconfined sphere does not have. The graded answer is `openreynolds live run
+falling_sphere`.
 """
 
 import math
@@ -40,14 +49,14 @@ import math
 from openreynolds.live.units import FLUIDS
 from openreynolds.toolbox.references import sphere_drag
 
-DIAMETER = 0.002
-DENSITY_RATIO = 1.005
+DIAMETER = 0.0005
+DENSITY_RATIO = 1.5
 CELLS_PER_DIAMETER = 8
 U_LATTICE = 0.05
-BOX = (5.0, 5.0, 7.0)
-"""The box in diameters. The sphere starts at 70% of its height and falls about two
-diameters in the run below."""
-STEPS = 500
+BOX = (5.0, 5.0, 10.0)
+"""The box in diameters. The sphere starts at 70% of its height and falls about two and
+a half diameters in the run below."""
+STEPS = 400
 GRAVITY = 9.81
 
 
@@ -103,13 +112,12 @@ def main() -> int:
     shape.has_shape_collision = False
     builder.add_shape_sphere(body, radius=radius, cfg=shape)
     model = builder.finalize()
-    # Weight less buoyancy as a reduced gravity, with `buoyancy=False` below: see the
-    # module docstring for why the analytic displaced volume and not the voxelised one.
-    model.set_gravity((0.0, 0.0, -GRAVITY * (1.0 - 1.0 / DENSITY_RATIO)))
+    model.set_gravity((0.0, 0.0, -GRAVITY))
 
     world.initialise()
-    link = NewtonCoupling(model, newton.solvers.SolverXPBD(model), world,
-                          dt=scaling.dt, buoyancy=False)
+    engine = newton.solvers.SolverMuJoCo(model, disable_contacts=True, solver="newton",
+                                         integrator="implicitfast", iterations=10)
+    link = NewtonCoupling(model, engine, world, dt=scaling.dt, buoyancy=True)
     print("\n".join(link.report()))
     print(f"  expected:   {expected * 1e3:.4f} mm/s at Re {reynolds:.2f}, "
           f"Cd {sphere_drag.schiller_naumann_cd(reynolds):.4f}")
@@ -120,12 +128,14 @@ def main() -> int:
         if taken % max(1, STEPS // 8) == 0:
             speed = -float(link.state.body_qd.numpy()[body][2])
             force, _torque = world.wrench(body)
-            print(f"  {taken:>5,}/{STEPS:,} steps  t {taken * scaling.dt:6.3f} s  "
-                  f"fall {speed * 1e3:7.4f} mm/s ({speed / expected:5.1%} of terminal)"
+            print(f"  {taken:>5,}/{STEPS:,} steps  t {taken * scaling.dt * 1e3:6.2f} ms"
+                  f"  fall {speed * 1e3:7.4f} mm/s ({speed / expected:5.1%} of terminal)"
                   f"  fluid force {force[2]:+.3e} N")
 
     print(f"\n  fall speed {speed * 1e3:.4f} mm/s against a Schiller-Naumann terminal "
           f"{expected * 1e3:.4f} mm/s ({speed / expected - 1:+.1%})")
+    print(f"  displaced volume, voxelised: {link.displaced_volume[body]:.4g} m3 against "
+          f"{4.0 / 3.0 * math.pi * radius ** 3:.4g} m3 analytic")
     print(f"  lattice still finite and positive: {world.stable()}")
     return 0
 
