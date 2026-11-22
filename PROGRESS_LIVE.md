@@ -303,11 +303,54 @@ been explained and the cases fail on it at the tolerance they state.
   the wall condition and beats the odd modes together. The cases release the cosine mode
   the theory is about.
 
-### M6 and M7 -- not started
+### M6 -- floating bodies: started, and blocked on one measured defect
 
-Floating bodies and the carried cup are not begun. M5's hydrostatic result is the
-precondition for M6 and it holds; the mass drift under motion is the precondition that
-does not, since a boat run is long and a cup run is violent.
+`run_archimedes` is written: a box of half water's density, released at the draft
+Archimedes predicts, with `NewtonCoupling(buoyancy=False)` because a free surface
+produces its own buoyancy and adding the analytic term would count it twice. It does not
+pass, and the reason is worth more than the case.
+
+**The force on a body in a fluid that carries a body force is wrong, and M1 to M4 could
+not have caught it.** Measured on a fully submerged 40 mm box in a closed tank with
+gravity applied to the fluid, where the answer is exactly `+rho V g` = +626.7 mN upward:
+
+| momentum exchange | measured | |
+| --- | --- | --- |
+| as M1 to M4 ran it | **-48.66 x rho V g** | the absolute pressure, uncancelled |
+| with the reference pressure subtracted | **-0.48 x rho V g** | right order, wrong sign |
+
+The first number is the one that matters for reading the rest of this document: it is
+not a regression, it is what the code has always done, and **no case before M5 could see
+it**. `DECISIONS_LIVE.md` D9 is why. A single-phase run applies gravity to the *body*,
+through Newton, and never to the fluid -- that is exactly why `buoyancy=True` adds
+`-rho V g` analytically -- so the fluid has no hydrostatic gradient, the absolute-pressure
+contribution cancels over a closed wetted surface, and the drag and momentum-balance
+results in M1 to M4 stand. Put gravity in the fluid, as a free surface must, and the
+cancellation goes.
+
+Subtracting the reference pressure per link (`2 W[d] rho_ref c`) removes a term a
+hundred times the answer and is kept. What remains is unexplained: the residual needed
+to reach `+1` is 3.1% larger than that term, and the hydrostatic density variation
+across the tank is about 2.5%, which says the reference should be the **local** density
+rather than a global constant and is not close enough to call derived. The interaction
+of Guo forcing with the momentum-exchange method needs deriving, not guessing -- two
+plausible mechanisms have already been argued and measured wrong today.
+
+Also found and fixed on the way, both prerequisites for any hull:
+
+* `stream` had no gas-cell guard, so a cell above the waterline ran the whole direction
+  loop and **added the momentum of its stale populations to the hull's wrench**. Every
+  cell above a waterline touches the hull, so this is not a small error. Invisible in a
+  single-phase run, which has no gas cells.
+* A floating body cannot be released into water that has not settled. The tank is
+  initialised at uniform density, the hydrostatic gradient takes on the order of a
+  thousand steps to establish (`run_hydrostatic` shows it arriving between 600 and
+  1,500), and a body released before then sees no buoyancy at all.
+
+### M7 -- not started
+
+The carried cup is not begun, and it needs M6's force to be right first: a cup of water
+is a floating-body problem turned inside out.
 
 ## What is not measured, and will not be claimed
 

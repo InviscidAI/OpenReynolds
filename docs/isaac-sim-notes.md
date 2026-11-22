@@ -521,13 +521,250 @@ GPU container time across all of it gives roughly 45 to 60 minutes, which at A10
 price is **order of one to two dollars**. That is arithmetic over counted runs, not a
 billing figure read from the dashboard.
 
-## 10. What is still unknown
+## 10. The extension RUNS inside Kit, and the free surface renders
 
-- Whether `openreynolds/live/` **runs**, rather than merely imports, on Kit's Warp 1.17.0
-  and Newton 1.6.1. It imports. That is all that was measured.
-- Whether the `isaacsim.physics.newton` backend can drive our existing
-  `couple.NewtonCoupling` directly. Probably the most valuable thing to try next.
-- Per-instance colour on `UsdGeomPointInstancer` in this build.
-- What `omni.usd.schema.usd_particle_field` is.
-- Whether Replicator's render throughput is good enough to film a live coupled run, as
-  opposed to taking one frame of a settled one.
+Added 2026-11-23, after the sections above were written. Section 4 established that
+`openreynolds.live` **imports** beside a running Kit. This section establishes that it
+**runs** there, on Kit's own Warp, and that the free surface it computes can be drawn by
+the RTX renderer in the same process.
+
+Both entrypoints are in `benchmarks/live/modal_isaacsim.py`: `cases` and `freesurface`.
+
+### 10.1 The suite, on Kit's bundled Warp
+
+`cases` starts Kit headless, then runs pytest **in that same interpreter**. That is the
+whole point. An earlier session had already run 52 of 52 of `tests/test_live_cases.py`
+in the Isaac Lab virtualenv on Warp 1.17.0 and Newton 1.6.1, but a virtualenv is not
+this: Kit never loads the pip `warp-lang`, it loads `omni.warp.core`, its own extension
+with its own build. Confirmed from inside the run:
+
+```
+warp in Kit: 1.17.0
+  from: /usr/local/lib/python3.12/site-packages/isaacsim/extscache/
+        omni.warp.core-1.17.0+lx64/warp/__init__.py
+```
+
+On an L40S, Kit up in 20.7 s:
+
+```
+pytest: returncode 0 in 41.4 s
+  63 passed, 1 warning in 35.41s
+```
+
+**63 passed, 0 failed.** No kernel failed to compile and no kernel gave a different
+answer. Kit's Warp 1.17.0 needs no shim.
+
+One failure on the way there was mine and not the extension's, and it is worth recording
+because it looks exactly like a broken extension:
+`test_both_array_layouts_give_the_same_field` re-execs `sys.executable -c ...` in a
+subprocess, because the array layout is baked into the generated kernels at import and
+two layouts need two interpreters. The child inherits the environment, not the parent's
+`sys.path`, so with `/repo` only in `sys.path` it failed with
+`ModuleNotFoundError: No module named 'openreynolds'` -- 62 passed, 1 failed. Setting
+`PYTHONPATH=/repo` fixed it. **A harness bug and an extension bug are the same colour
+in a test report.**
+
+The image for this is `tests_image`, which is the Isaac Sim image plus the package's own
+runtime dependencies. `tests/conftest.py` imports `anthropic`, `rich` and four
+`openreynolds` modules unrelated to the live backend, and pytest loads it for anything
+under `tests/`. They are installed from a list rather than with `pip install -e /repo`,
+because an editable install would re-resolve numpy and torch inside an image whose numpy
+and torch are the ones Isaac Sim pinned.
+
+### 10.2 The two graded cases
+
+Both run inside the live Kit process, on `cuda:0`, after the suite.
+
+**`hydrostatic`, cells=20, 7.2 s: PASSED, 7 of 7 graded checks.**
+
+| check | measured | target |
+| --- | --- | --- |
+| water volume at the start | 150.0 mL | 150.0000 mL +/- 2% |
+| surface height vs compressible prediction | 59.8611 mm | 59.8530 mm +/- 2% of depth |
+| surface flatness | 0.00090 | <= 2% of the depth |
+| hydrostatic pressure gradient | 1.00263 | 1.0 +/- 10% (-81.5205 kg/m4 exact) |
+| fluid cells touching gas cells | 0 | exactly 0 |
+| mass drift | 5.086e-06 | <= 1e-3 of the initial mass |
+| lattice finite | True | True |
+
+**`sloshing`, cells=80, periods=1.5, 6.8 s: PASSED, 4 of 4 graded checks.**
+
+| check | measured | target |
+| --- | --- | --- |
+| first-mode period | 0.418598 s | 0.41709 s +/- 5% |
+| mass drift | 2.204e-06 | <= 1e-3 of the initial mass |
+| fluid cells touching gas cells | 0 | exactly 0 |
+| lattice finite | True | True |
+
+The period is 1.0036x linear theory (`omega^2 = g k tanh(k h)`, k = pi/L). The
+zero-crossing cross-check reads 0.392916 s and is reported, not graded, which is how
+`cases.py` already treats it.
+
+### 10.3 A bug this caught, which was fixed while the job was running
+
+The first `cases` run failed `hydrostatic` outright:
+
+```
+File "/repo/openreynolds/live/cases.py", line 2940, in run_hydrostatic
+  limit = FREE_SURFACE_REFERENCES["hydrostatic"]["tolerance"]
+NameError: name 'FREE_SURFACE_REFERENCES' is not defined.
+Did you mean: '_FREE_SURFACE_REFERENCES'?
+```
+
+Not a Warp or a Kit problem: a plain name error on an unconditional line, so
+`run_hydrostatic` could not complete at any resolution on any device. `git log -S`
+places it in commit `2cf6584`, and by the time the next run started it was already
+corrected to `REFERENCES["hydrostatic"]` in the working tree. Nothing here fixed it.
+
+**Worth recording as a property of these runs rather than as a bug report.**
+`modal_isaacsim.py` mounts the working tree, not a commit, so a run measures whatever
+was on disk when it was launched, and this tree is being edited by another contributor
+while these jobs are in flight. Two runs an hour apart are not necessarily runs of the
+same code. Every number in this section comes from the run whose app id is given below.
+
+### 10.4 The free-surface demo
+
+`freesurface` solves a three-dimensional dam break with `FreeSurfaceWorld` and renders it
+with RTX, in one process, on one GPU, through one copy of Warp.
+
+The tank is 0.36 x 0.16 x 0.16 m closed on all six faces, a 0.12 x 0.16 x 0.12 m column
+of water released at t = 0, built through `cases._free_surface_world` so that the Froude
+scaling, the tau and the gravity sign are the repository's own decisions and not a second
+opinion. Lattice **144 x 64 x 64**, dx 2.5 mm, dt 131.69 us.
+
+Measured on an L40S, 3,920 steps covering 0.5162 s of water:
+
+| | |
+| --- | --- |
+| solver | 12.3 s, **188.7 MLUPS** |
+| render, 40 frames at 1280x720 | 9.2 s |
+| water volume | 2.35250e-3 -> 2.35020e-3 m3 |
+| mass drift | -7.70e-3 of the initial mass over 1,010,757 conversions |
+| fluid cells touching gas cells | **0** |
+| hero frame | stddev 41.7, 1,962 distinct colours |
+
+The bed wets as the surge crosses it, which is the run in one column:
+
+| t (s) | wet fraction | max depth (m) |
+| --- | --- | --- |
+| 0.0129 | 0.347 | 0.1210 |
+| 0.1162 | 0.592 | 0.1181 |
+| 0.2194 | 0.968 | 0.1154 |
+| 0.3227 | 1.000 | 0.1130 |
+| 0.4259 | 1.000 | 0.1106 |
+
+**Why a heightfield.** `surface_height(axis=2)` is per-column depth in metres, sub-cell
+accurate, `nan` where dry -- which is exactly a heightfield. So the water is one
+`UsdGeom.Mesh` of 9,216 vertices and 9,009 quads whose `points` and `normals` are
+rewritten each frame and whose topology never changes, so the renderer never rebuilds an
+acceleration structure. A `UsdGeomPointInstancer` over the interface cells draws the
+surface as beads; a `UsdVol` OpenVDB volume is the only way to draw the interior and the
+schema animates it by time-sampling a `filePath`, one `.vdb` per frame, so a live loop
+would be writing files and reading them back. Marching cubes over `world.fill` would give
+a true isosurface and rebuilds topology every frame.
+
+**The limitation, stated: a heightfield cannot show a wave that curls over itself.** One
+depth per column. For a dam break on a flat bed that is all the readable motion, and the
+vertical cliff where the reservoir meets the bed is drawn as a near-vertical sheet, which
+is correct and reads as a wall of water.
+
+**And an artifact worth naming rather than cropping.** A few single-column spikes appear
+at the tank's edges in the later frames, visible in `freesurface_039.png` as thin
+spires on the back rim and at the right edge. They are one column whose summed fill
+differs sharply from its neighbours, drawn at full height because a heightfield mesh
+joins every column to the next with no notion of how far apart their depths may
+reasonably be. They are a drawing artifact, not a solver one: `fluid_touching_gas` is 0
+for the whole run and the mass drift is -7.7e-3, so the interface is closed and the
+bookkeeping holds. A median filter over the height field before meshing would hide them,
+and would also hide a real spike, so nothing filters them here.
+
+Two details that decide whether it looks like water or like a surface plot: **vertex
+normals** computed from the height gradient as `(-dh/dx, -dh/dy, 1)` normalised, without
+which 9,009 quads read as 9,009 facets; and **dry columns pushed to z = -6 mm**, inside
+the floor slab, rather than flattened to zero where they would z-fight with the bed and
+read as a wet film over the whole tank.
+
+### 10.5 Three ways a correct scene renders as nothing
+
+All three happened here, in order, and all three produce a picture that looks like a
+broken renderer.
+
+**Nothing ticked the application.** First attempt: 44 frames in 137.9 s, every one a
+single flat colour, `render_stddev` exactly 0.0, one distinct colour. The solver was
+perfect in that same run -- 168.5 MLUPS, zero fluid cells touching gas. USD authoring
+does not reach Hydra on its own; the stage's change notices are processed on an app
+update. `_demo` never hit this because it drives `isaacsim.core.api.World`, whose
+`step(render=True)` calls `SimulationApp.update()` underneath. A demo with no PhysX scene
+has to call `sim_app.update()` itself.
+
+**The scene was inside the near clip plane.** Second attempt, after adding the updates:
+still one colour, but now `render_mean_rgb` was **(191.6, 191.6, 191.6)** rather than
+black -- lit, drawing its background, nothing in front of it. The default camera near
+plane is **1.0 stage unit**. This tank is 0.36 m across with the camera 0.59 m from what
+it is aimed at, so in SI units the entire scene lies nearer than the near plane and every
+triangle is clipped before it is shaded. `clipping_range=(0.01, 100.0)` fixes it. The
+stage also has to be told `SetStageMetersPerUnit(stage, 1.0)` and
+`SetStageUpAxis(stage, Z)`; Kit's default stage is centimetres and Y up, and `_demo`
+never had to care because `World(stage_units_in_meters=1.0)` sets both.
+
+**That is why `render_mean_rgb` is now emitted beside `render_stddev`.** A flat black
+frame means no light reached the camera; a flat grey frame means the renderer drew its
+background and there was no geometry in front of it. Those are different bugs and
+`stddev == 0` alone does not separate them.
+
+**The exposure, not the material.** The bed then rendered white, which looks exactly like
+an unbound material -- and there was a real latent binding bug beside it, the floor's
+`Shader` defined at `/World/looks/floor/surface` before its parent `Material` at
+`/World/looks/floor`. Fixing the ordering changed nothing, because the material was
+being applied and a 0.40 grey diffuse on a horizontal face under a 4,200-intensity key
+light simply saturates. Lowering the key to 2,600 and the diffuse to 0.22 is what fixed
+it. **The wrong thing went and got fixed first because the symptom named it.**
+
+### 10.6 Artifacts
+
+In `benchmarks/live/results/isaacsim/`:
+
+| file | what |
+| --- | --- |
+| `freesurface_hero.png` | 1280x720, the surge crossing the dry bed |
+| `freesurface.gif` | 40 frames at 640x360, the whole collapse |
+| `freesurface_000.png`, `_010`, `_020`, `_039` | stills across the run |
+| `freesurface-l40s.json` | every number above, including the per-frame trace |
+| `cases-l40s.json` | the pytest result and both graded cases with all checks |
+
+### 10.7 The runs behind this section
+
+Five more ephemeral `openreynolds-isaacsim` apps, all stopped, all L40S. The numbers in
+this section come from the last two.
+
+| app | what it established |
+| --- | --- |
+| `ap-YPxen1OsjMJynqw61lHPjY` | `cases`: 63 passed, hydrostatic and sloshing both PASSED |
+| `ap-zoFbrc0RIQa3bRHcpYz0dD` | `freesurface`: the hero, the GIF and the per-frame trace |
+
+The three before them are the three failure modes in 10.5, in order: the flat frame with
+no app updates, the flat grey frame inside the near clip plane, and the blown-out bed.
+
+A `cases` job is about 2 minutes of L40S and a `freesurface` job about 2.5, so the five
+together are roughly 12 minutes, **order of forty cents** at L40S list price. As in
+section 9 that is arithmetic over counted runs and not a billing figure. Running
+`freesurface` on an A10G instead is supported (`--gpu a10g`) and untested.
+
+
+## 11. What is still unknown
+
+- Whether a Warp kernel **writing** through a PhysX tensor view is seen by PhysX on the
+  next step. Reading at `cuda:0` with a real device pointer is established (section 6);
+  writing through the array rather than through `apply_forces_and_torques_at_pos` is not.
+- Whether `isaacsim.physics.newton`, Isaac Sim 6.2's own Newton backend, can drive
+  `couple.NewtonCoupling` directly. Still the most valuable thing to try next, and now
+  more so: the extension is known to run in this process.
+- Whether a rigid body in PhysX can be **two-way coupled** to `FreeSurfaceWorld` in this
+  process. The demo renders the fluid and reads PhysX bodies, but nothing yet passes a
+  wrench between them inside Kit.
+- Per-instance colour on `UsdGeomPointInstancer` in this build, and what
+  `omni.usd.schema.usd_particle_field` is.
+- Whether a marching-cubes isosurface over `world.fill` renders fast enough to replace
+  the heightfield, which is what overturning waves would need.
+- Render throughput for a long film: 40 frames took 9.2 s of a 21.5 s job, so a
+  thousand-frame sequence is minutes rather than hours, but that has not been run.

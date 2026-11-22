@@ -731,6 +731,23 @@ def stream(
         # it becomes fluid, so leaving them is correct and writing them is bandwidth.
         return
 
+    if use_flags != 0:
+        if flags[i, j, k] == CELL_GAS:
+            # **A gas cell takes no part, and saying so here is what makes a floating
+            # body possible.** Its populations are stale -- `collide` skipped it, so they
+            # are whatever was left two steps ago -- and nothing reads them: a fluid
+            # neighbour reconstructs across this link instead, and `exchange_mass` moves
+            # no mass to or from gas. The same argument as the solid early return above.
+            #
+            # Without this, a gas cell still ran the whole direction loop, and a link
+            # from it into a solid still did its bounce-back **and still added its
+            # momentum to that body's wrench**. In a single-phase run there are no gas
+            # cells and it cost nothing, which is why it survived all of M1 to M4. Put a
+            # hull in water and the cells above the waterline are gas, every one of them
+            # touching the hull, and the body collects a force computed from populations
+            # that mean nothing.
+            return
+
     # -- a free-surface interface cell needs its own velocity, once --------------------
     #
     # The gas-side reconstruction below writes an equilibrium at the ATMOSPHERIC density
@@ -927,7 +944,56 @@ def stream(
                 if body >= 0:
                     # Momentum into the solid along this link, and its moment about the
                     # centre of mass.
-                    impulse = cj * (f_in + reflected)
+                    #
+                    # **The reference pressure is subtracted, and a floating body cannot
+                    # work without it.** For a body at rest in still fluid at the
+                    # reference density, `f_in` and `reflected` are both the equilibrium
+                    # weight `W[d] rho_ref`, so this link contributes `2 W[d] rho_ref c`
+                    # -- the ABSOLUTE pressure, not the gauge pressure. Over a closed
+                    # wetted surface those contributions cancel, because `sum_d W[d] c_d`
+                    # is zero, which is why every submerged case in M1 to M4 got the
+                    # right answer with the term present.
+                    #
+                    # A hull at a waterline has no closed wetted surface. Its top is in
+                    # gas, gas cells contribute nothing, and the absolute pressure on
+                    # the bottom is left with nothing to cancel against. Measured, on a
+                    # 40 mm box of half water's density released at the draft Archimedes
+                    # predicts: a buoyant force of 34,657 mN against a weight of 313 mN
+                    # -- **110 times** -- and the box left the domain within fifty steps.
+                    # `rho c_s^2` is about 80 kPa in that run's units, and 80 kPa over
+                    # the 1,600 mm^2 base is the force that appeared.
+                    #
+                    # Subtracting `2 W[d] rho_ref c` per link is the gauge-pressure form
+                    # of the momentum exchange, and it is **a large improvement and not
+                    # yet a fix**. Measured on a fully submerged 40 mm box in a tank
+                    # with gravity applied to the fluid, where the answer is exactly
+                    # `+rho V g`:
+                    #
+                    #     rho_ref = 0  (no subtraction)    -48.66 x rho V g
+                    #     rho_ref = 1  (this code)          -0.48 x rho V g
+                    #
+                    # so the subtraction removes a term a hundred times the answer, and
+                    # what is left still has the wrong sign and about half the magnitude.
+                    # The residual needed to reach +1 is 3.1% more than this term, and
+                    # the hydrostatic density variation across that tank is about 2.5% --
+                    # close enough to say that the reference being subtracted should be
+                    # the LOCAL density rather than a global constant, and not close
+                    # enough to call it derived. **The force on a body in a fluid
+                    # carrying a body force is not settled here.** PROGRESS_LIVE.md says
+                    # what that blocks.
+                    #
+                    # None of this touches M1 to M4, and the reason is D9: a single-phase
+                    # run applies gravity to the BODY through Newton and never to the
+                    # fluid, so there is no hydrostatic gradient, the absolute-pressure
+                    # term cancels over a closed surface, and this subtraction removes a
+                    # sum that was already zero. That is also why the defect waited until
+                    # a free surface to appear.
+                    #
+                    # `gas_density` is the reference: 1 for a single-phase run and the
+                    # atmospheric density for a free-surface one -- the same number either
+                    # way, and the right name for it here.
+                    impulse = cj * (f_in + reflected
+                                    - DTYPE(2.0) * W[d] * gas_density)
                     arm = ((wp.vec3(DTYPE(i), DTYPE(j), DTYPE(k)) + cj * frac)
                            - body_com[body])
                     moment = wp.cross(arm, impulse)
@@ -953,11 +1019,10 @@ def apply_faces(
 ):
     """Inlet and outlet, imposed on the face node after streaming.
 
-    `inlet` is the Zou-He velocity condition: the density at the face is computed from
-    the populations that streamed in from the interior and the velocity being imposed,
-    and the populations that would have come from outside are filled by non-equilibrium
-    bounce-back. The code below has the formula, the citation, and measurements against
-    the two simpler conditions that preceded it. `use_profile` takes `u_in`
+    `inlet` overwrites the face node with `f^eq(1, u_in)`: the prescribed velocity at the
+    atmospheric density. First order, unconditionally stable, and a pressure inlet as
+    much as a velocity one. The code below records what the two better-founded
+    alternatives measured on an independent solver, which is why this is the one here. `use_profile` takes `u_in`
     from a two-dimensional array over the -x face instead of from `face_velocity`, which
     is what the Schafer-Turek channel needs: its inflow is a parabola, and a uniform
     inlet would be a different benchmark.
@@ -1014,61 +1079,42 @@ def apply_faces(
     u = face_velocity[face]
     if use_profile != 0 and face == 0:
         u = inlet_profile[j, k]
-    # **Zou-He, and the two things it replaced both have measurements against them.**
+    # **An equilibrium at the atmospheric density, and all three alternatives were
+    # measured.** This is the condition the M1 validations were taken with, and it is
+    # here because it is the only one of the three that reproduces them.
     #
-    # `_equilibrium(d, 1.0, u)` came first and is a pressure inlet: it pins
-    # `p = rho c_s^2` at the inflow plane, so a channel needing a pressure gradient to
-    # push past an obstruction cannot have one and the flow slows instead. Measured on
-    # Schafer-Turek 2D-2, a 24% blockage: the mid-channel velocity fell 3% in 300 steps
-    # and kept falling, and Cd decayed from 1.70 to 1.30 over 300,000 steps.
+    #   f_eq(rho = 1, u)        Cd 1.3299 (-1.9%), St 0.16281 (-2.0%)   PASSES
+    #   f_eq(rho_inward, u)     Cd 1.500  (+10.7%), St 1.113 (+570%)    fails
+    #   Zou-He (1997)           Cd 1.702  (+25.6%), St 1.223 (+636%)    fails
     #
-    # Extrapolating the whole density from the node inside came second, and is worse. It
-    # holds the velocity -- the probe stayed at 0.997 to 1.000 -- and it wrecks the
-    # forces: on the OpenFOAM cross-check, which the pinned version PASSED at
-    # Cd 1.3299 (-1.9%) and St 0.16281 (-2.0%), it gave Cd 1.500 (+10.7%) and
-    # St 1.113 against 0.166, reporting 163 shedding cycles where OpenFOAM has 7. The
-    # mechanism is a feedback loop: the face node copies its neighbour's density, the
-    # neighbour responds to the face node, and the pair rings with a one-cell delay.
+    # on the OpenFOAM cross-check -- this repository's own pimpleFoam run of a cylinder
+    # at Re 100, committed at `tests/data/moving_mesh/viv_fixed/`, which is as close to
+    # ground truth as anything here gets.
     #
-    # So this is the textbook condition instead (Zou, Q. and He, X. (1997), 'On pressure
-    # and velocity boundary conditions for the lattice Boltzmann BGK model', Physics of
-    # Fluids 9:1591-1598). Its one idea is that the density at the face is **not free and
-    # not borrowed**: the populations that streamed in from the interior already
-    # determine it, given the velocity being imposed. With `n` the inward normal and the
-    # populations split by `c_d . n`,
+    # The ordering is the interesting part, because it runs **against** boundary-condition
+    # theory. Pinning the density makes this a pressure inlet, which over-determines
+    # nothing but does fix `p` at the inflow plane; extrapolating the density from the
+    # node inside is a velocity inlet with a one-cell feedback path; Zou-He is the
+    # textbook velocity inlet, local and second order, and it is the **worst** of the
+    # three here by a factor of thirteen on the drag error. All three impose the same
+    # velocity. What separates them is how hard they hold it, and the harder they hold
+    # it the worse the answer gets -- which is the signature of a boundary **reflecting**
+    # what the wake sends upstream rather than of a boundary getting the inflow wrong.
+    # Both failing versions also report a Strouhal number around 1.2 against 0.166, from
+    # 160 to 180 shedding cycles where OpenFOAM has 7, so the lift signal they produce
+    # is dominated by something about thirty times the shedding frequency.
     #
-    #     rho = ( sum_{c.n=0} f_d + 2 sum_{c.n<0} f_d ) / (1 - u.n)
-    #
-    # and then each unknown population -- the ones that would have come from outside --
-    # is filled by non-equilibrium bounce-back against its opposite,
-    #
-    #     f_d = f_opp + f_d^eq(rho, u) - f_opp^eq(rho, u).
-    #
-    # Local, no neighbour, nothing to ring against, and second order in the normal
-    # component.
-    axis = face / 2
-    inward = DTYPE(1.0)
-    if face % 2 == 1:
-        inward = DTYPE(-1.0)
-    u_normal = u[axis] * inward
-
-    parallel = DTYPE(0.0)
-    incoming = DTYPE(0.0)
+    # So the honest state of this is: a soft inlet is used because it is the one that
+    # reproduces an independent solver, and the reason the stiff ones do not is **not
+    # settled**. What is known is that the fault is unlikely to be in the inlet formula,
+    # since the best-founded formula is the worst performer; the next thing to look at is
+    # the outlet and the upstream length, because a reflecting inlet only matters if
+    # something is arriving at it. The cost of this choice is also measured, and
+    # recorded in PROGRESS_LIVE.md: on Schafer-Turek 2D-2, a 24% blockage, the
+    # mid-channel velocity falls about 3% as the flow develops, because a pressure inlet
+    # cannot supply the gradient that geometry needs.
     for d in range(Q):
-        along = DTYPE(C[axis, d]) * inward
-        if along == DTYPE(0.0):
-            parallel += pop(f, d, i, j, k)
-        elif along < DTYPE(0.0):
-            incoming += pop(f, d, i, j, k)
-    rho_in = (parallel + DTYPE(2.0) * incoming) / (DTYPE(1.0) - u_normal)
-
-    for d in range(Q):
-        if DTYPE(C[axis, d]) * inward > DTYPE(0.0):
-            back = int(OPP[d])
-            set_pop(f, d, i, j, k,
-                    pop(f, back, i, j, k)
-                    + _equilibrium(d, rho_in, u)
-                    - _equilibrium(back, rho_in, u))
+        set_pop(f, d, i, j, k, _equilibrium(d, DTYPE(1.0), u))
 
 
 # -- 4. the solid, rebuilt every coupling step -----------------------------------------

@@ -3329,30 +3329,41 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     elevation = np.array([row[1] for row in trace])
     measured_period, how = _period_of(times, elevation)
     crossings_period, _ = _period_of(times, elevation, method="crossings")
+    both = [v for v in (measured_period, crossings_period) if np.isfinite(v)]
+    pair_period = float(np.mean(both)) if both else float("nan")
+    spread = (abs(measured_period - crossings_period)
+              if len(both) == 2 else float("inf"))
     limit = REFERENCES["linear_sloshing"]["tolerance"]
     drift = world.mass_drift()
 
     checks = [
-        Check("first-mode period, from zero crossings", crossings_period,
+        Check("first-mode period", pair_period,
               f"{period:.5f} s +/- {limit:.0%}",
-              abs(crossings_period / period - 1.0) <= limit
-              if np.isfinite(crossings_period) else False,
+              abs(pair_period / period - 1.0) <= limit
+              if np.isfinite(pair_period) else False,
               f"`omega^2 = g k tanh(k h)`, k = pi/L = {wavenumber:.4f} 1/m, "
-              f"kh = {wavenumber * depth:.4f}, from the zero crossings of the elevation "
-              f"at the -x wall. **Graded on the crossings rather than on the FFT, and "
-              f"that is a measurement.** An FFT bin is `1/T_total` wide, so over a "
-              f"handful of cycles it quantises the answer by roughly one part in the "
-              f"number of cycles -- about 38% over the 2.6 cycles this case ran while it "
-              f"was being built -- and parabolic interpolation on the peak only partly "
-              f"recovers it. A zero crossing is exact in time and is interpolated "
-              f"between samples. On the run that settled it the crossings gave 412.5 ms "
-              f"against a theoretical 417.09 (-1.1%) while the FFT gave 453.5 (+8.7%)"),
-        Check("the same period from an FFT", measured_period,
-              f"{period:.5f} s, reported as a cross-check", None,
-              f"the second estimator on the same trace ({how}). They fail differently, "
-              f"so two numbers that agree are worth more than either alone: the FFT is "
-              f"robust to noise and quantises, the crossings are exact in time and are "
-              f"pulled around by any drift in the mean"),
+              f"kh = {wavenumber * depth:.4f}. The graded number is the **mean of two "
+              f"estimators** on the elevation at the -x wall, an FFT and the zero "
+              f"crossings, and the check below requires them to agree. That is not "
+              f"hedging, it is what the measurements forced: neither estimator is "
+              f"reliably the better one. Grading the FFT alone was tried, then the "
+              f"crossings alone -- the crossings won on one run (412.5 ms against the "
+              f"FFT's 453.5, theory 417.09) and the FFT won on the next (418.6 against "
+              f"the crossings' 392.9), so picking either by name is picking whichever "
+              f"was lucky on the run that was looked at. An FFT bin is `1/T_total` "
+              f"wide and a zero crossing is pulled by any drift in the mean; they fail "
+              f"differently, so their mean is better than either and their spread is "
+              f"the honest width of the measurement"),
+        Check("the two estimators agree", spread / period,
+              f"<= {limit:.0%} of the period",
+              spread / period <= limit if np.isfinite(spread) else False,
+              f"the gap between the FFT ({measured_period * 1e3:.2f} ms) and the zero "
+              f"crossings ({crossings_period * 1e3:.2f} ms) as a fraction of the "
+              f"theoretical period. **Graded, because a measurement whose two "
+              f"estimators disagree by more than the tolerance cannot settle anything "
+              f"at that tolerance**, however close their mean happens to land. It "
+              f"narrows with resolution and with run length: 523/363 ms at 80 cells "
+              f"over 2.6 cycles, 443/407 at 240"),
         Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
               abs(drift["drift"]) <= 1e-3,
               f"over {total:,} steps and {drift['conversions']:,} conversions"),
@@ -3392,13 +3403,15 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
              f"  theory:     k = pi/L = {wavenumber:.4f} 1/m, kh = "
              f"{wavenumber * depth:.4f}, omega = {omega:.4f} rad/s, T = "
              f"{period * 1e3:.3f} ms",
-             f"  measured:   {crossings_period * 1e3:.3f} ms by zero crossings "
-             f"({crossings_period / period:.4f}x, graded), {measured_period * 1e3:.3f} "
-             f"ms by FFT ({measured_period / period:.4f}x, cross-check)",
+             f"  measured:   {pair_period * 1e3:.3f} ms "
+             f"({pair_period / period:.4f}x, graded, the mean of the two) from "
+             f"{measured_period * 1e3:.3f} by FFT and {crossings_period * 1e3:.3f} by "
+             f"zero crossings, which differ by {spread / period:.2%} of the period",
              f"  reference:  {REFERENCES['linear_sloshing']['source']}",
              *world.report()[-3:]]
-    return _result("sloshing", checks, lines, drawn, period=crossings_period,
-                   theory=period, fft=measured_period, drift=drift,
+    return _result("sloshing", checks, lines, drawn, period=pair_period,
+                   theory=period, fft=measured_period, crossings=crossings_period,
+                   spread=spread, drift=drift,
                    trace=[list(row) for row in trace])
 
 
@@ -3457,6 +3470,225 @@ def _period_of(times: np.ndarray, signal: np.ndarray,
     return (1.0 / frequency if frequency > 0 else float("nan"),
             f"FFT peak at bin {peak} + {shift:+.2f}, {span / (1.0 / frequency):.1f} "
             f"cycles sampled")
+
+
+
+
+# ======================================================================================
+# M6: floating bodies
+# ======================================================================================
+#
+# The free surface earns its keep here. A `FluidWorld` run hands a submerged body
+# `-rho V g` explicitly (D9) because a single-phase solver has no waterline and no
+# hydrostatic gradient to integrate. A `FreeSurfaceWorld` run has both -- gravity acts on
+# the fluid through the Guo forcing, the pressure really does rise with depth, and
+# `run_hydrostatic` measures `d(rho)/dz` against `-rho g / c_s^2` to within a per cent --
+# so the momentum exchange over a hull produces a real buoyant force and the analytic
+# term must NOT be added on top. `NewtonCoupling(buoyancy=False)` is how a floating body
+# is coupled, and this case is the measurement that says the force which comes out is
+# the right size.
+
+REFERENCES["archimedes"] = {
+    "source": "Archimedes' principle; exact, no paper",
+    "read": "n/a",
+    "formula": (
+        "a prism of uniform density floats at a draft `d = (rho_body / rho_water) H`, "
+        "with H its height, because the displaced weight equals its own"
+    ),
+    "caveat": (
+        "**Exact as a statement about an equilibrium, and three things stand between it "
+        "and a lattice.** The hull is voxelised, so its displaced volume is quantised: "
+        "at N cells through the draft the volume error is of order 1/N and the draft "
+        "error with it, which is why this case is graded at a resolution rather than at "
+        "one. The free surface is weakly compressible, so the water it floats in is "
+        "very slightly denser at depth -- `run_hydrostatic` measures that and it is "
+        "0.245% over 60 mm. And a released body oscillates about its equilibrium at the "
+        "heave period before it settles, so the draft has to be averaged over a window "
+        "after the oscillation has decayed, not read off at a chosen instant"
+    ),
+    "tolerance": 0.02,
+    "tolerance_is": (
+        "2% of the draft, which the addendum asks for by name ('static float draft vs "
+        "Archimedes within 2%')"
+    ),
+}
+
+
+def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04,
+                   density_ratio: float = 0.5, depth: float = 0.08,
+                   collision: str = "trt", smagorinsky: float = 0.0,
+                   device: str | None = None, out_dir: str | Path = ".",
+                   steps: int = 0, solver: str = "mujoco",
+                   progress: Callable[[str], None] | None = None,
+                   **_: Any) -> dict[str, Any]:
+    """A box of half water's density is released at the surface: where does it float?
+
+    Archimedes says a prism of uniform density floats at a draft of
+    `(rho_body / rho_water) H` -- half its height at the default ratio -- and nothing in
+    this solver knows that. The draft is whatever the pressure integrated over the
+    voxelised hull turns out to produce, so agreeing with it is evidence that the free
+    surface, the Guo forcing, the momentum exchange and the Newton coupling are all
+    right at once, and that none of them is being rescued by an analytic buoyancy term.
+    **`buoyancy=False`**, for exactly that reason.
+
+    The box is held square to the water by giving it only the heave degree of freedom
+    this case is about: roll and pitch are a separate measurement with a separate
+    analytic answer, and letting a cube find its own orientation while its draft is
+    being graded would mix the two. `run_heave_decay` takes the dynamics.
+    """
+    import warp as wp
+
+    try:
+        import newton
+    except Exception as exc:
+        raise UnphysicalScaling(
+            "this case needs the Newton physics engine, which the [live] extra "
+            f"declares:\n    pip install 'openreynolds[live]'\n(the import said: {exc})"
+        ) from exc
+
+    from .couple import NewtonCoupling
+    from .units import FLUIDS
+
+    water = FLUIDS["water"]
+    gravity = 9.81
+    rho_body = density_ratio * water.rho
+    exact_draft = density_ratio * height
+
+    tank = 5.0 * side
+    world, scaling = _free_surface_world(
+        cells=cells, size=(tank, tank, depth + 3.0 * height), depth=depth,
+        faces="wall", collision=collision, smagorinsky=smagorinsky, device=device,
+        gravity=gravity)
+    dt = scaling.dt
+
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+    # Released at the draft Archimedes predicts, not at the surface: a box dropped from
+    # above arrives with momentum and takes several heave periods to give it up, and
+    # this case is about the equilibrium. Starting at the answer is not assuming it --
+    # the body is free to leave, and a wrong buoyant force moves it straight away.
+    start = (tank / 2.0, tank / 2.0, depth - exact_draft + height / 2.0)
+    body = builder.add_body(xform=wp.transform(wp.vec3(*start), wp.quat_identity()),
+                            label="float")
+    shape_cfg = builder.default_shape_cfg.copy()
+    shape_cfg.density = rho_body
+    shape_cfg.has_shape_collision = False
+    builder.add_shape_box(body, hx=side / 2.0, hy=side / 2.0, hz=height / 2.0,
+                          cfg=shape_cfg)
+    model = builder.finalize()
+    model.set_gravity((0.0, 0.0, -gravity))
+    if solver == "mujoco":
+        engine = newton.solvers.SolverMuJoCo(model, disable_contacts=True,
+                                             solver="newton",
+                                             integrator="implicitfast", iterations=10)
+    else:
+        engine = newton.solvers.SolverFeatherstone(model)
+
+    world.initialise_free_surface(level=depth)
+    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=False)
+
+    # The heave period of a floating prism is `2 pi sqrt(d / g)` with `d` the draft --
+    # the restoring stiffness is `rho g A` and the mass is `rho_body A H = rho A d`. Run
+    # for several of them so the release transient is gone before anything is averaged.
+    heave_period = 2.0 * math.pi * math.sqrt(max(exact_draft, 1e-6) / gravity)
+    total = int(steps if steps else math.ceil(6.0 * heave_period / dt))
+    settle_from = int(0.6 * total)
+
+    track: list[tuple[float, float, float]] = []
+    every = max(1, total // 160)
+
+    for index in range(total):
+        link.step()
+        if index % every == 0 or index == total - 1:
+            centre = float(link.state.body_q.numpy()[body][2])
+            surface = world.surface_height(axis=2)
+            # The undisturbed level, read away from the hull: the mean over the outer
+            # ring of columns, which the box does not reach. Reading it under the hull
+            # instead would measure the body's own depression, and the draft is relative
+            # to the water the body is NOT disturbing.
+            edge = np.concatenate([
+                np.nan_to_num(surface[0, :]), np.nan_to_num(surface[-1, :]),
+                np.nan_to_num(surface[:, 0]), np.nan_to_num(surface[:, -1])])
+            level = float(edge[edge > 0].mean()) if (edge > 0).any() else float("nan")
+            track.append((world.steps * dt, level, level - (centre - height / 2.0)))
+        if progress and index % max(1, total // 40) == 0:
+            progress(f"    {index:,}/{total:,} steps, draft "
+                     f"{track[-1][2] * 1e3:.4f} mm" if track else "")
+
+    late = [row for row in track if row[0] >= settle_from * dt]
+    draft = float(np.mean([row[2] for row in late])) if late else float("nan")
+    wobble = float(np.std([row[2] for row in late])) if late else float("nan")
+    limit = REFERENCES["archimedes"]["tolerance"]
+    drift = world.mass_drift()
+    cells_through_draft = exact_draft / world.dx
+
+    checks = [
+        Check("draft against Archimedes", draft * 1e3,
+              f"{exact_draft * 1e3:.4f} mm +/- {limit:.0%}",
+              abs(draft / exact_draft - 1.0) <= limit
+              if np.isfinite(draft) else False,
+              f"`d = (rho_body / rho_water) H` = {density_ratio:g} x "
+              f"{height * 1e3:g} mm, averaged over the last 40% of the run, by which "
+              f"time the release transient has decayed over "
+              f"{6.0 * 0.4:.1f} heave periods. The solver is told nothing about "
+              f"buoyancy: `NewtonCoupling(buoyancy=False)`, so this force is the "
+              f"hydrostatic pressure integrated over the voxelised hull by momentum "
+              f"exchange, and nothing else"),
+        Check("the draft stopped moving", wobble / exact_draft,
+              f"<= {limit:.0%} of the draft",
+              wobble / exact_draft <= limit if np.isfinite(wobble) else False,
+              "the standard deviation of the draft over the same window. A mean draft "
+              "that is right while still oscillating is an average of a transient, not "
+              "an equilibrium"),
+        Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
+              abs(drift["drift"]) <= 1e-3,
+              f"over {total:,} steps; {drift['displaced']:.4g} lattice mass was "
+              f"displaced by the hull and is counted separately, because a body moving "
+              f"through water legitimately carries some off"),
+        Check("fluid cells touching gas cells", world.fluid_touching_gas(), "exactly 0",
+              world.fluid_touching_gas() == 0),
+        Check("lattice finite", world.stable(), "True", world.stable()),
+        Check("cells through the draft", f"{cells_through_draft:.1f}",
+              "reported, not graded", None,
+              "the hull is voxelised, so its displaced volume is quantised at about "
+              "one part in this number, and the draft error with it. It is the first "
+              "thing to raise if this case misses"),
+        Check("heave period used to size the run", f"{heave_period * 1e3:.2f} ms",
+              "reported, not graded", None,
+              "`2 pi sqrt(d / g)`: the restoring stiffness of a prism is `rho g A` and "
+              "its mass is `rho A d`, so the period depends only on the draft"),
+    ]
+    out = Path(out_dir)
+    drawn = [
+        figures.slice_figure(world, out / "live-archimedes.png", axis=1,
+                             title=f"floating box, draft {draft * 1e3:.3f} mm against "
+                                   f"{exact_draft * 1e3:.3f}"),
+        figures.profile_figure(
+            out / "live-archimedes-draft.png",
+            [{"x": [row[0] * 1e3 for row in track],
+              "y": [row[2] * 1e3 for row in track], "label": "draft (mm)"},
+             {"x": [track[0][0] * 1e3, track[-1][0] * 1e3] if track else [0, 1],
+              "y": [exact_draft * 1e3] * 2, "label": "Archimedes", "style": "--"}],
+            title=f"draft {draft * 1e3:.3f} mm, wobble {wobble * 1e3:.4f}",
+            xlabel="t (ms)", ylabel="mm"),
+    ]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# archimedes: a {side * 1e3:g} mm box at {density_ratio:g} of water's "
+             f"density, {cells} cells",
+             *scaling.report(),
+             *_free_surface_lines(world, scaling, height, gravity),
+             *_official("archimedes", scaling, smagorinsky),
+             f"  expected:   draft {exact_draft * 1e3:.4f} mm "
+             f"({cells_through_draft:.1f} cells), heave period "
+             f"{heave_period * 1e3:.2f} ms",
+             f"  measured:   draft {draft * 1e3:.4f} mm "
+             f"({draft / exact_draft:.4f}x), wobble {wobble * 1e3:.4f} mm",
+             f"  buoyancy:   NOT added analytically; the free surface produces it and "
+             f"this case is the check that it is the right size",
+             *world.report()[-3:]]
+    return _result("archimedes", checks, lines, drawn, draft=draft,
+                   exact_draft=exact_draft, wobble=wobble, drift=drift,
+                   track=[list(row) for row in track])
 
 
 # -- the catalogue ----------------------------------------------------------------------
@@ -3519,6 +3751,10 @@ CASES: dict[str, Case] = {
         "sloshing", "a tilted tank is released: the first-mode period against "
         "`omega^2 = g k tanh(k h)`",
         run_sloshing, {"cells": 120}, milestone="M5"),
+    "archimedes": Case(
+        "archimedes", "a box of half water's density is released at the surface: the "
+        "static float draft against Archimedes, with no analytic buoyancy term",
+        run_archimedes, {"cells": 160}, milestone="M6"),
     "underwater": Case(
         "underwater", "a towed capsule in water, graded at zero length against the "
         "sphere it reduces to", run_underwater, {}, milestone="M3", heavy=True),

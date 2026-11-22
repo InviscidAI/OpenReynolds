@@ -1539,6 +1539,14 @@ def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
 
         # -- the stage -----------------------------------------------------------------
         stage = omni.usd.get_context().get_stage()
+        # Metres and Z up, stated rather than assumed. Kit's own default stage is
+        # centimetres and Y up; `_demo` never had to care because
+        # `World(stage_units_in_meters=1.0)` sets both for you, and this demo has no
+        # `World`. A tank authored in metres on a centimetre stage is a tank 100 times
+        # too small for every length that does not scale with it -- of which the camera's
+        # clipping range is one. See the camera below.
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
         world_prim = UsdGeom.Xform.Define(stage, "/World")  # noqa: F841
 
         nx, ny, _ = fluid.shape
@@ -1589,27 +1597,76 @@ def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
         floor_xform.AddTranslateOp().Set(
             Gf.Vec3d(tank[0] / 2, tank[1] / 2, -0.012))
         floor_xform.AddScaleOp().Set(Gf.Vec3f(tank[0] * 1.06, tank[1] * 1.06, 0.024))
-        floor_shader = UsdShade.Shader.Define(stage, "/World/looks/floor/surface")
+        # The Material first and the Shader second, which is not a style point. Defining
+        # `/World/looks/floor/surface` before `/World/looks/floor` creates the shader
+        # under an implicit typeless parent, and typing that parent as a Material
+        # afterwards left the binding inert: the bed rendered as the default white, which
+        # under a dome light is a blown-out tabletop and is where most of the frame went.
         floor_material = UsdShade.Material.Define(stage, "/World/looks/floor")
+        floor_shader = UsdShade.Shader.Define(stage, "/World/looks/floor/surface")
         floor_shader.CreateIdAttr("UsdPreviewSurface")
+        # A mid grey, not a pale one. The bed is most of the frame once the water has
+        # spread, and a near-white bed under a bright dome clips and takes the surge's
+        # shadow with it.
         floor_shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-            Gf.Vec3f(0.62, 0.60, 0.57))
-        floor_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
+            Gf.Vec3f(0.22, 0.215, 0.205))
+        floor_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
         floor_material.CreateSurfaceOutput().ConnectToSource(
             floor_shader.ConnectableAPI(), "surface")
         UsdShade.MaterialBindingAPI(floor).Bind(floor_material)
 
         sun = UsdLux.DistantLight.Define(stage, "/World/sun")
-        sun.CreateIntensityAttr(3200.0)
+        # 2600, down from 4200. The bed is a horizontal face and the key light hits it
+        # near normal, so at 4200 a 0.40 grey diffuse still saturated to white: the
+        # material was bound and correct, and the exposure was wrong. The symptom reads
+        # as an unbound material, which is the wrong thing to go and fix.
+        sun.CreateIntensityAttr(2600.0)
         sun.CreateAngleAttr(0.8)
         UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(
             Gf.Vec3f(-50.0, 20.0, 20.0))
         sky = UsdLux.DomeLight.Define(stage, "/World/sky")
-        sky.CreateIntensityAttr(420.0)
+        # 240, not 420. At 420 the dome alone takes the pale floor to very near white,
+        # the key light has nothing left to add and the water loses the specular that is
+        # most of what makes it read as water rather than as blue plastic.
+        sky.CreateIntensityAttr(300.0)
 
+        # -- tick Kit before asking it to draw ------------------------------------
+        #
+        # The first version of this demo authored the whole scene, stepped the solver,
+        # and rendered 44 frames in 137.9 s -- every one of them a single flat colour,
+        # `render_stddev` 0.0 and exactly one distinct colour in the frame. The solver
+        # was fine in that run: 168.5 MLUPS, mass drift -1.7e-2, zero fluid cells
+        # touching gas, and a trace showing the column collapsing and the bed wetting
+        # from 0.34 to 1.00.
+        #
+        # What was missing is that **nothing ticked the application**. `_demo` never hit
+        # this because it drives `isaacsim.core.api.World`, whose `step(render=True)` and
+        # `render()` call `SimulationApp.update()` underneath; this demo has no PhysX
+        # scene and no `World`, so the only thing moving was Replicator's graph. USD
+        # authoring does not reach Hydra by itself -- the stage's change notices are
+        # processed on an app update -- so the renderer was faithfully drawing the empty
+        # scene it had been given.
+        for _ in range(8):
+            sim_app.update()
+
+        # `clipping_range` is the whole reason the second attempt rendered a frame of
+        # one single colour, mean RGB (191.6, 191.6, 191.6) and `render_stddev` exactly
+        # 0.0 -- not black, so the lights worked and the renderer drew its background,
+        # with nothing at all in front of it.
+        #
+        # The default near plane is **1.0 stage unit**. This tank is 0.36 m across and
+        # the camera sits about 0.59 m from what it is aimed at, so in metres the entire
+        # scene lies nearer than the near plane and every triangle is clipped before it
+        # is shaded. A benchtop-scale scene in SI units is exactly the case the default
+        # is wrong for, and it fails silently: a clipped scene and an empty scene produce
+        # the same picture.
+        # Raised and pulled back from the first framing, which put the camera 0.59 m out
+        # at a shallow angle: the un-collapsed column filled the left of the frame, the
+        # dry bed ran off to the right with nothing on it, and half the picture was sky.
+        # From here the whole tank is in shot and the surge crosses it.
         camera = rep.create.camera(
-            position=(0.56, -0.34, 0.20), look_at=(0.17, 0.08, 0.035),
-            focal_length=35.0)
+            position=(0.62, -0.46, 0.30), look_at=(0.17, 0.08, 0.045),
+            focal_length=32.0, clipping_range=(0.01, 100.0))
         product = rep.create.render_product(camera, (width, height))
         annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         annotator.attach([product])
@@ -1637,6 +1694,7 @@ def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
         def grab() -> "np.ndarray":
             """One rendered frame, through Replicator's own sync. See `_demo`."""
             for _ in range(6):
+                sim_app.update()
                 rep.orchestrator.step(rt_subframes=6)
                 try:
                     rep.orchestrator.wait_until_complete()
@@ -1660,6 +1718,10 @@ def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
             wp.synchronize()
             solver_seconds += time.time() - mark
             wet = push_surface()
+            # Two updates between authoring the new points and rendering them, so the
+            # frame that comes back is this step's surface and not the previous one's.
+            sim_app.update()
+            sim_app.update()
             mark = time.time()
             arr = grab()
             render_seconds += time.time() - mark
@@ -1695,16 +1757,32 @@ def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
 
         from PIL import Image
 
-        # The hero is the most dynamic frame rather than the last one, measured as the
-        # spread of the surface height: a dam break ends flat, and a picture of flat
-        # water is a picture of nothing happening.
-        spreads = [row["max_depth_m"] for row in trace]
-        hero_index = int(np.argmax(spreads[: max(len(spreads) // 2, 1)])) if spreads else 0
+        # -- which frame is the hero -----------------------------------------------
+        #
+        # The first rule here was "the frame with the greatest maximum depth", and it
+        # chose frame 0 every time -- correctly, because the deepest water in a dam break
+        # is the column before it is released. A picture of the initial condition is not
+        # a picture of the solver working.
+        #
+        # What makes the picture is the surge front still crossing a dry bed, so the rule
+        # is the last frame before the bed is essentially wet. `wet_fraction` is already
+        # in the trace, it runs 0.34 -> 1.00 over the collapse, and the moment it reaches
+        # 1 is the moment the interesting part is over.
+        hero_index = 0
+        for row in trace:
+            if row["wet_fraction"] < 0.95:
+                hero_index = row["frame"]
+        hero_index = min(hero_index + 1, len(captured) - 1)
         hero = captured[hero_index]
         emit("hero_frame", hero_index)
         emit("render_shape", list(hero.shape))
         rgb = hero.astype("float32")
         emit("render_stddev", round(float(rgb.std()), 2))
+        # The mean channel values, because a flat frame that is black means no light
+        # reached the camera and a flat frame that is grey means the renderer drew its
+        # background and there was no geometry in front of it. Those are different bugs
+        # and `stddev == 0` alone does not separate them.
+        emit("render_mean_rgb", [round(float(v), 1) for v in rgb.reshape(-1, 3).mean(0)])
         emit("render_unique_colours",
              int(len(np.unique(rgb.reshape(-1, 3)[::97], axis=0))))
         emit("render_nonzero_fraction", float((rgb > 8).mean()))
