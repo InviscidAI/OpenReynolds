@@ -246,8 +246,48 @@ RUNNERS = {"h100": on_h100, "a100": on_a100, "l40s": on_l40s, "a10g": on_a10g}
 # -- the local side ---------------------------------------------------------------------
 
 
+def _provenance() -> dict:
+    """The commit this run's code came from, and whether the tree was dirty.
+
+    **Stamped on every result because its absence cost real confusion.** Modal mounts
+    the working tree, not a commit (`add_local_dir(REPO)` above), so a job picks up
+    whatever is on disk the moment it starts. Editing while runs are in flight is
+    therefore editing the experiment: one job in this repository failed on a `NameError`
+    that a later edit had already fixed, and two runs an hour apart were not runs of the
+    same code -- which is indistinguishable, from the result file alone, from a flaky
+    solver.
+
+    `dirty` is the part that matters. A result stamped with a commit and `dirty: true`
+    says only "something like that commit", and the honest thing is for the file to say
+    so rather than for a reader to assume the commit is exact. To get a result whose
+    provenance is exact, run from a frozen checkout:
+
+        git worktree add /tmp/frozen <commit>
+        cd /tmp/frozen && MODAL_PROFILE=inviscid python -m modal run             benchmarks/live/modal_run.py::m1 --gpu h100
+
+    `REPO` is resolved relative to this file, so a worktree mounts itself and nothing in
+    the main checkout can race it.
+    """
+    import subprocess
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(("git", *args), cwd=str(REPO), capture_output=True,
+                                  text=True, timeout=15).stdout.strip()
+        except Exception:
+            return ""
+
+    status = git("status", "--porcelain")
+    return {
+        "commit": git("rev-parse", "HEAD") or "unknown",
+        "dirty": bool(status),
+        "dirty_files": len([line for line in status.splitlines() if line.strip()]),
+    }
+
+
 def _save(payload: dict, blobs: dict, label: str) -> Path:
     """Write one result and its figures under `benchmarks/live/results/<label>/`."""
+    payload = {**payload, "provenance": _provenance()}
     out = RESULTS / label
     out.mkdir(parents=True, exist_ok=True)
     (out / "result.json").write_text(json.dumps(payload, indent=2) + "\n",

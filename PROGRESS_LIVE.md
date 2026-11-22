@@ -233,10 +233,20 @@ vortex down:
 | 180,000 | 52 | **0.24%** | -0.3852 | passes |
 | 600,000 | 172 | 0.39% | -0.3806 | passes |
 | 1,200,000 | 344 | 0.91% | -0.3735 | passes |
+| 2,400,000 | 687 | 1.96% | -0.3602 | passes, barely |
 | 3,492,000 | 1,000 | 2.88% | -0.3487 | **fails** |
 
-Roughly 0.8% of error per million steps, growing without bound, so the case now runs to
-200 convective times rather than to one diffusive time.
+**0.86% of error per million steps**, straight over five points spanning a factor of
+nineteen in run length, so the 2% tolerance is crossed at about 2.45 million steps. The
+case now runs to 200 convective times rather than to one diffusive time, and the
+agreement is best at the shortest run of the five -- erosion starts immediately and there
+is no plateau to sit on.
+
+This is a property of the solver and not of this case: **any float32 lattice run of a
+closed recirculating flow loses about a per cent per million steps.** M5's runs are tens
+of thousands of steps and M6's boat would be hundreds of thousands, so it is clear of
+them by an order of magnitude, but it is the reason a long run needs its length
+justified rather than maximised.
 
 **The history is the lesson.** This case used to stop too *early*, on the spin-up
 plateau, and came out 8 to 10% short of Ghia; a one-diffusive-time floor was added to
