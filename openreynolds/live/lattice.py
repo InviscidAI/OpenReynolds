@@ -982,6 +982,14 @@ def stream(
                     # carrying a body force is not settled here.** PROGRESS_LIVE.md says
                     # what that blocks.
                     #
+                    # **Verified not to move anything already measured**: the OpenFOAM
+                    # cross-check reads Cd 1.329871 with this subtraction and Cd 1.3299
+                    # without, the same to five digits. PROGRESS_LIVE.md also records a
+                    # contradiction that is NOT resolved -- a still submerged box reads
+                    # 83 x rho V g without the subtraction while the cross-check's drag
+                    # is unmoved by it, and those two cannot both be the whole story --
+                    # which is why nothing here is claimed as a force fix.
+                    #
                     # None of this touches M1 to M4, and the reason is D9: a single-phase
                     # run applies gravity to the BODY through Newton and never to the
                     # fluid, so there is no hydrostatic gradient, the absolute-pressure

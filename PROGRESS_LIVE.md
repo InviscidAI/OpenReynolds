@@ -328,13 +328,44 @@ contribution cancels over a closed wetted surface, and the drag and momentum-bal
 results in M1 to M4 stand. Put gravity in the fluid, as a free surface must, and the
 cancellation goes.
 
-Subtracting the reference pressure per link (`2 W[d] rho_ref c`) removes a term a
-hundred times the answer and is kept. What remains is unexplained: the residual needed
-to reach `+1` is 3.1% larger than that term, and the hydrostatic density variation
-across the tank is about 2.5%, which says the reference should be the **local** density
-rather than a global constant and is not close enough to call derived. The interaction
-of Guo forcing with the momentum-exchange method needs deriving, not guessing -- two
-plausible mechanisms have already been argued and measured wrong today.
+Subtracting the reference pressure per link (`2 W[d] rho_ref c`) is kept, and it is
+verified not to disturb anything already measured: the OpenFOAM cross-check reads
+**Cd 1.329871** with it and **Cd 1.3299** without, the same number to five digits. So it
+is a no-op on the validated cases and removes a large artefact in the still-tank case.
+
+**What it removes, and the contradiction that goes with it.** A submerged box in a
+closed tank of still fluid with *no* body force must feel exactly zero force, and
+measured:
+
+| | force on the box |
+| --- | --- |
+| no subtraction, as M1 to M4 ran it | **(-30199, -30199, -30199) mN** = 83 x rho V g |
+| with the subtraction | (-0.12, -0.12, -0.12) mN = 2e-4 x rho V g |
+
+Equal in all three components, and **identical to four digits when the box is shifted
+half a cell**, so it is not a voxelisation asymmetry. For a cube in uniform fluid the
+momentum-exchange sum is zero by symmetry -- the formula is right, and was checked line
+by line: `cj` is the direction toward the solid, `f_in` is the population heading into
+it, and `impulse = cj (f_in + reflected)` is the momentum in minus the momentum out.
+A bias equal along all three axes is the signature of one face per axis not
+contributing.
+
+**And the cross-check does not show it at all**, which those two facts cannot both
+explain. An 83 x rho V g constant on every body would destroy any drag measurement, and
+the cross-check's drag is unmoved to five digits. So either the artefact is specific to
+a flat-faced body in still fluid, or the isolated harness has a quirk that four separate
+checks have not found. **That contradiction is unresolved and is the reason no force fix
+is claimed here.**
+
+Separately, and smaller: with the subtraction in place a submerged box in a tank with
+gravity reads **-0.48 x rho V g** where it should read `+1`. The residual needed to
+reach `+1` is 3.1% more than the subtracted term and the hydrostatic density variation
+across that tank is about 2.5%, which hints that the reference should be the **local**
+density rather than a global constant. A hint is not a derivation. The interaction of
+Guo forcing with the momentum-exchange method needs working out properly: four
+mechanisms have been argued and measured wrong in one sitting (the hysteresis band, the
+flag conversions, the collision operator, compressibility), and the pattern says stop
+guessing.
 
 Also found and fixed on the way, both prerequisites for any hull:
 

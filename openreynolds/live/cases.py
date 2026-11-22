@@ -598,7 +598,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
                collision: str = "trt", smagorinsky: float = 0.0,
                device: str | None = None, out_dir: str | Path = ".",
                steps: int | None = None, tolerance: float = 3.0e-5,
-               diffusive_times: float = 4.0,
+               convective_times: float = 200.0, diffusive_times: float = 4.0,
                progress: Callable[[str], None] | None = None, **_: Any) -> dict[str, Any]:
     """The lid-driven cavity, graded on Ghia's two centrelines.
 
@@ -650,16 +650,43 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
     # slow part of the spin-up, not convergence, and `minimum_steps` is what stops the
     # stall detector believing it.
     diffusive = cells * cells / max(scaling.nu_lattice, 1e-12)
-    budget = int(diffusive_times * diffusive)
+    # **The run is capped in CONVECTIVE times, and that is a measurement.** A cavity
+    # reaches steady state on the convective timescale `cells / u_lattice`, and running
+    # it much past that does not refine the answer -- it **erodes** it, because the
+    # populations are float32 and millions of steps of a closed recirculating flow
+    # accumulate round-off that spins the vortex down. Measured, the Re 1000 cavity at
+    # 192 cells against Ghia, same case, same lattice, only the step count changed:
+    #
+    #       600,000 steps (172 convective)   u RMS 0.39%   u_min -0.3806   PASSES
+    #     1,200,000 steps (344 convective)   u RMS 0.91%   u_min -0.3735   passes
+    #     3,492,000 steps (1,000 convective) u RMS 2.88%   u_min -0.3487   FAILS
+    #
+    # against Ghia's -0.38289 and a 2% tolerance: roughly **0.8% of error per million
+    # steps**, growing without bound.
+    #
+    # This case used to run to one diffusive time, `cells^2/nu_lattice`, and that floor
+    # was added here to stop the stall detector firing on the spin-up plateau -- a real
+    # problem, diagnosed from a run that stopped early and came out 8 to 10% short of
+    # Ghia. The floor cured it and caused the opposite failure, which looks **identical**
+    # from the outside: also short of Ghia, also by 9%. Two failure modes with one
+    # symptom, and the second was read as more of the first for two days.
+    #
+    # So the budget is convective now. 200 is comfortably past convergence -- Re 100
+    # converges by 100 and Re 1000 by about 170 -- and short of where erosion reaches the
+    # tolerance. The residual and stall logic still stop a run earlier if it settles.
+    convective = cells / max(scaling.u_lattice, 1e-12)
+    budget = int(convective_times * convective)
     if steps:
         _advance(world, steps, progress=progress)
         stopped = {"steps": steps, "residual": float("nan"), "converged": False,
                    "stalled": False, "why": "a fixed step count was asked for"}
     else:
         stopped = _converge(world, tolerance=tolerance, check_every=2000,
-                            max_steps=budget, minimum_steps=int(diffusive),
+                            max_steps=budget,
+                            minimum_steps=int(50.0 * convective),
                             reference=lid, progress=progress)
     stopped["diffusive_time_steps"] = diffusive
+    stopped["convective_time_steps"] = convective
     stopped["budget"] = budget
 
     u = world.fields()["u"][:, :, nz // 2, :] / lid
@@ -743,10 +770,13 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
     lines += [f"  steps:      {stopped['steps']:,} "
               f"({_stop_word(stopped)}, residual {stopped['residual']:.3e})",
               f"  stopped:    {stopped.get('why', '')}",
-              f"  timescale:  one diffusive time is cells^2/nu_lattice = "
-              f"{stopped['diffusive_time_steps']:,.0f} steps; the budget was "
-              f"{stopped['budget']:,} ({diffusive_times:g} of them) and it ran "
-              f"{stopped['steps'] / stopped['diffusive_time_steps']:.2f}",
+              f"  timescale:  one convective time is cells/u_lattice = "
+              f"{stopped['convective_time_steps']:,.0f} steps; the budget was "
+              f"{stopped['budget']:,} ({convective_times:g} of them) and it ran "
+              f"{stopped['steps'] / stopped['convective_time_steps']:.0f}. One "
+              f"diffusive time is {stopped['diffusive_time_steps']:,.0f} steps, which "
+              f"this case deliberately does NOT run to: float32 erosion costs about "
+              f"0.8% of the answer per million steps",
               f"  reference:  {REFERENCES['ghia']['source']}",
               f"  caveat:     {REFERENCES['ghia']['caveat']}",
               *world.report()[-2:]]
