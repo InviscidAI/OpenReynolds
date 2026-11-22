@@ -675,6 +675,18 @@ warning degrades first, with the time it starts and the Courant tail; and
 sibling. It reads and prints, edits nothing, and exits 0 whatever it finds. What it
 deliberately never prints is a mechanism.
 
+The location invites one move above all others -- it blew up where those cells are, so
+fix the cells -- and that is the most expensive move there is. A buoyant case with thin
+baffles was remeshed again and again after it diverged; each remesh moved the blow-up
+somewhere else, and the relaxation factors, convection schemes and time step it started
+with were never changed. When the cause is numerical a new mesh relocates it. `recover.py`
+reads which of the cheap moves this case still has room in -- a restart from the last
+good write, the time step, the relaxation, upwind convection, non-orthogonal correctors,
+a potential-flow start -- each with its edit, and puts the mesh last. Three of them each
+leaving the run diverging at the same place and time suggests the fault is the mesh, the
+boundary specification or a flow that is not steady, and that is when `--compare` earns
+its cost.
+
 ## Where rendering happens
 
 Stills render on the instance, next to the data. A field render reads hundreds of

@@ -530,3 +530,47 @@ def test_the_now_line_comes_from_the_tracker_with_no_model_and_no_clock():
 
     # Idle takes the line back: a view holds what it was told (#48 on the web app).
     assert told == ["thinking", "running bash: blockMesh", "", "writing"]
+
+
+# -- how a solver log ends ---------------------------------------------------------
+
+
+def _steps(residuals, courant=None, interface=False):
+    from itertools import repeat
+    lines = []
+    for i, (u, co) in enumerate(zip(residuals, courant or repeat(0.5)), 1):
+        if interface:
+            lines.append("Interface Courant Number mean: 0 max: 0")
+        lines += [f"Courant Number mean: 0.1 max: {co:g}", f"Time = {i}",
+                  f"smoothSolver:  Solving for Ux, Initial residual = {u:g}, "
+                  "Final residual = 1e-09, No Iterations 2"]
+    return "\n".join(lines) + "\n"
+
+
+def test_interface_courant_lines_do_not_make_the_courant_rise_from_zero():
+    from openreynolds.progress import how_it_ended
+    text = _steps([1e-4] * 5 + [1.0, 100.0], [0.5] * 5 + [5, 40], interface=True)
+    line = how_it_ended(text + "#1  Foam::sigFpe::sigHandler(int)\n")
+    assert "Courant max went from 0.5 to 40" in line
+
+
+def test_a_climb_in_a_run_that_reached_end_is_not_reported():
+    from openreynolds.progress import how_it_ended
+    assert how_it_ended(_steps([1e-5] * 5 + [0.1, 0.5]) + "End\n\n") is None
+
+
+def test_a_climb_with_no_crash_is_reported():
+    from openreynolds.progress import how_it_ended
+    line = how_it_ended(_steps([1e-5] * 5 + [0.1, 0.5]))
+    assert line.startswith("the Ux initial residual climbed from 1e-05 (Time = 1) to 0.5 (Time = 7)")
+
+
+def test_interleaved_rank_errors_still_yield_the_message():
+    """Four ranks failing at once, as a real snappyHexMesh log wrote it."""
+    from openreynolds.progress import how_it_ended
+    text = ("[3] --> FOAM FATAL IO ERROR: [4] \n[4] \n(openfoam-2512)\n[3] [2] \n[2] \n"
+            "[2] --> FOAM FATAL IO ERROR: [0] \n[0] \n"
+            "[0] --> FOAM FATAL IO ERROR: (openfoam-2512)\n"
+            "[0] Entry 'errorReduction' not found in dictionary \"meshQualityControls\"\n")
+    assert how_it_ended(text) == ("the log ends in a FOAM FATAL error: Entry 'errorReduction' "
+                                  "not found in dictionary \"meshQualityControls\"")
