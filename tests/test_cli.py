@@ -2989,3 +2989,65 @@ def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypat
     assert result.exit_code == 0, result.output
     assert "nothing to remove" in _logout_said(result) and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
     assert not (tmp_path / "c.json").exists()
+
+
+# -- the secret prompts ------------------------------------------------------------
+#
+# `config` asks for two secrets with hidden input. Giving those prompts a `default=` is
+# a trap, because the default cannot be seen: pressing Enter keeps the old value and the
+# command still prints "Saved", so a key the API has already rejected survives every
+# attempt to replace it. These two tests pin both halves of the contract.
+
+
+def _config_answers(*, service_key: str, model_key: str) -> str:
+    """Stdin for the whole `config` prompt sequence, in order."""
+    return "\n".join(["https://api.example.com", service_key, "anthropic", model_key,
+                      "claude-sonnet-5-5"]) + "\n"
+
+
+def _configured(tmp_path, monkeypatch, stored: dict) -> object:
+    import json
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(path))
+    for leaked in ("ANTHROPIC_API_KEY", "FOAMD_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(leaked, raising=False)
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    return path
+
+
+def test_pressing_enter_keeps_the_stored_key_and_says_which_one(tmp_path, monkeypatch):
+    import json
+    path = _configured(tmp_path, monkeypatch,
+                       {"llm_api_key": "sk-ant-api03-keepme-0123456789", "provider": "anthropic",
+                        "model": "claude-sonnet-5-5", "foamd_api_key": "of_live_keepme_0123"})
+
+    result = CliRunner().invoke(cli.main, ["config"],
+                                input=_config_answers(service_key="", model_key=""))
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["llm_api_key"] == "sk-ant-api03-keepme-0123456789"
+    assert saved["foamd_api_key"] == "of_live_keepme_0123"
+    # The whole point: it has to be visible that Enter kept something, and which.
+    assert "sk-ant-api03" in result.output, result.output
+    assert "Enter keeps it" in result.output
+    # Never the whole secret, in either prompt.
+    assert "keepme-0123456789" not in result.output
+    assert "of_live_keepme_0123" not in result.output
+
+
+def test_a_pasted_key_replaces_the_stored_one(tmp_path, monkeypatch):
+    import json
+    path = _configured(tmp_path, monkeypatch,
+                       {"llm_api_key": "sk-ant-api03-rejected-99", "provider": "anthropic",
+                        "model": "claude-sonnet-5-5", "foamd_api_key": "of_live_old_0123"})
+
+    result = CliRunner().invoke(
+        cli.main, ["config"],
+        input=_config_answers(service_key="of_live_new_4567", model_key="sk-ant-usr-fresh-01"))
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["llm_api_key"] == "sk-ant-usr-fresh-01", "a typed key must win over the stored one"
+    assert saved["foamd_api_key"] == "of_live_new_4567"

@@ -1110,9 +1110,7 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
         cfg.foamd_url = (
             click.prompt("Service URL", default=cfg.foamd_url or "").strip().rstrip("/")
         )
-        cfg.foamd_api_key = click.prompt(
-            "Service API key", default=cfg.foamd_api_key or "", hide_input=True
-        ).strip()
+        cfg.foamd_api_key = _prompt_secret("Service API key", cfg.foamd_api_key or "")
         if not provider:
             console.print("Model providers: " + ", ".join(sorted(PRESETS)))
             chosen = click.prompt(
@@ -1126,9 +1124,7 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
         elif chosen_preset is not None and not chosen_preset.needs_key:
             console.print(f"  ({chosen_preset.note})")
         else:
-            cfg.llm_api_key = click.prompt(
-                "Model API key", default=cfg.llm_api_key or "", hide_input=True
-            ).strip()
+            cfg.llm_api_key = _prompt_secret("Model API key", cfg.llm_api_key or "")
         cfg.model = click.prompt("Model", default=cfg.model).strip()
         if chosen_preset is not None and chosen_preset.name == REYNOLDS:
             # The service serves two families; the desk and the window follow the one
@@ -2259,6 +2255,22 @@ def _redact(secret: str) -> str:
     if not secret:
         return ""
     return f"{secret[:12]}..." if len(secret) > 12 else "set"
+
+
+def _prompt_secret(label: str, stored: str) -> str:
+    """Ask for a secret, and say what is already stored rather than defaulting to it.
+
+    Hidden input with a default is a trap: the default cannot be seen, so pressing Enter
+    silently keeps the old value while the command goes on to print "Saved". That is how
+    a key the API has already rejected survives a reconfigure -- the reason this function
+    exists rather than a `default=` argument. An empty answer means keep, and says so.
+    """
+    if stored:
+        console.print(
+            f"  Stored: {_redact(stored)}. Enter keeps it; paste a new value to replace it."
+        )
+    typed = click.prompt(label, default="", hide_input=True, show_default=False).strip()
+    return typed or stored
 
 
 def _check_settings(cfg: Config) -> tuple[str, bool, str]:
