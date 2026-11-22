@@ -106,6 +106,46 @@ cad = [
     "build123d==0.11.1",
     "cadquery-ocp-novtk==7.9.3.1.1",
 ]
+# `openreynolds/live/`: the GPU lattice Boltzmann backend and its Newton coupling, run
+# on the user's own machine by `openreynolds live` and by the agent's `live_sim` tool.
+#
+# An extra, and not a dependency, for the reason the whole extension is arranged
+# around: this is a CUDA toolchain and a robotics simulator, and core OpenReynolds
+# talks to a remote OpenFOAM workspace that needs neither. `openreynolds/live/__init__.py`
+# resolves every name lazily and `tests/test_live_optional.py` hides Warp from the
+# import system to prove the core still imports without any of this, because the
+# alternative is a laptop with no GPU where `openreynolds --help` fails.
+#
+# Licences, read out of the installed wheels' own metadata rather than taken from a
+# README (the brief allows permissive dependencies only):
+#
+#   warp-lang 1.19.0    Apache-2.0 (METADATA `License: Apache-2.0`), and its only
+#                       hard requirement is numpy. It vendors Gaia and appdirs, both
+#                       with their licence files shipped in the wheel.
+#   newton 1.8.0        Apache-2.0 (`License-Expression`), hard requirement warp-lang
+#                       >=1.17 and nothing else; the importers, viewers and torch are
+#                       all extras we do not take. Its CC-BY-4.0 file covers example
+#                       assets, not code.
+#   mujoco-warp 4.0.1   Apache-2.0 (`License-Expression`), pulling absl-py,
+#                       etils[epath], mujoco-core (Apache-2.0 too) and numpy. JAX is
+#                       behind its `cpu`/`cuda` extras, so it is not installed here --
+#                       which is the difference from XLB that decided D1 in
+#                       DECISIONS_LIVE.md, where JAX is a core requirement.
+#
+# Named directly rather than through `newton[sim]`: that extra pins `mujoco-warp
+# ~=3.17.0`, and the version this was built and measured against is 4.0.1.
+#
+# numpy and matplotlib are the extension's own, not borrowed from `dev`: `live/world.py`
+# and `live/lattice.py` import numpy when they are read, and every case draws its
+# figure. The floors are the ones the rest of this table already uses, so one
+# environment can serve the toolbox and the live backend together.
+live = [
+    "warp-lang>=1.19",
+    "newton>=1.8",
+    "mujoco-warp>=4.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+]
 [project.scripts]
 openreynolds = "openreynolds.cli:main"
 

@@ -105,9 +105,13 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
-JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard"})
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard", "live"})
 """Subcommands that have a structured answer for the group's `--output-format` to mean
-something. Everything else it is given with is refused rather than answered in prose."""
+something. Everything else it is given with is refused rather than answered in prose.
+
+`live` is the group, not its subcommands: `invoked_subcommand` is one word deep, and
+every command under it answers `--json`, so the name of the group is the honest entry.
+"""
 
 
 def _json_asked(ctx: click.Context) -> bool:
@@ -1068,6 +1072,207 @@ def site_cmd(lat: float, lon: float, name: str, radius: float, start: str, end: 
     asked = sum(1 for flag in (no_weather, no_buildings, no_terrain) if not flag)
     if failed and len(failed) == asked:
         raise SystemExit(1)
+
+
+LIVE_COLLISIONS = ("trt", "bgk", "regularized")
+"""The collision operators `openreynolds/live/lattice.py` compiles, as a flag's
+choices. Named here rather than imported from there, because importing it to build a
+`click.Choice` would pull Warp at module scope and break `openreynolds --help` on every
+machine without the extra -- which is the one thing this whole group is arranged to
+avoid. `tests/test_live_cli.py` asserts the two agree."""
+
+LIVE_FLUIDS = ("air", "water")
+"""`live/units.py::FLUIDS`, for the same reason and checked by the same test. A caller
+with a third fluid passes a `units.Fluid` of their own in Python; a flag cannot carry
+the provenance that type exists to carry."""
+
+
+def _live_cases() -> Any:
+    """`openreynolds.live.cases`, or the install line and exit 1.
+
+    Every `live` subcommand starts here, and nothing in the group imports anything
+    under `openreynolds.live` at module scope. That is not a style choice: `live/world.py`
+    imports Warp and numpy when it is read, so a single module-scope import in this
+    file would make `openreynolds --help`, `openreynolds studies` and a plain session
+    fail on any machine that has not installed the extra -- which is almost all of
+    them, by design (`pyproject.toml`'s `live` extra, and `DECISIONS_LIVE.md` D1 on why
+    the extra stays skippable).
+
+    `require()` rather than `available()`: `available()` only answers whether the spec
+    is findable, and an extra that is half-installed -- a Warp wheel for the wrong
+    Python, a CUDA driver mismatch -- is exactly the case where the import's own words
+    are worth more than ours. `LiveUnavailable` is an `ImportError`, and so is what a
+    broken install raises, so one `except` covers both and the message says which it
+    was.
+    """
+    from . import live
+
+    try:
+        live.require()
+        from .live import cases
+    except ImportError as exc:
+        # markup=False, not escape(): the message carries `pip install
+        # 'openreynolds[live]'`, and `[live]` is a rich style tag.
+        console.print(str(exc), highlight=False, markup=False)
+        raise SystemExit(1) from None
+    return cases
+
+
+def _live_answer(result: dict[str, Any], cases: Any, as_json: bool) -> None:
+    """Print one live result and exit as it did.
+
+    The exit code is the verdict, because that is the whole point of a validation: a
+    script that runs `openreynolds live crosscheck` in CI needs the answer without
+    parsing anything, and `benchmarks/*/grade.py` already set that convention here.
+    """
+    if as_json:
+        sys.stdout.write(json.dumps(result, default=str) + "\n")
+    else:
+        console.print(cases.report(result), highlight=False, markup=False)
+    if not result.get("passed"):
+        raise SystemExit(1)
+
+
+@main.group("live")
+def live_group() -> None:
+    """Run the live GPU backend on this machine (needs the [live] extra).
+
+    A lattice Boltzmann fluid that runs here, next to your own GPU, rather than in the
+    study's workspace: the workspace image has no Warp and no CUDA toolchain, and
+    `DECISIONS_LIVE.md` D6 is the record of why it is not going to get them. With no
+    GPU the same kernels run on Warp's CPU backend, slower, which is what every number
+    in `PROGRESS_LIVE.md` was measured on.
+
+    `pip install 'openreynolds[live]'` installs it. Without that, every subcommand here
+    says so and exits 1, and nothing else in OpenReynolds is affected.
+    """
+
+
+@live_group.command("cases")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_cases_cmd(ctx: click.Context, as_json: bool) -> None:
+    """List the cases the live backend can run, one line each."""
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    if as_json:
+        sys.stdout.write(json.dumps({
+            "cases": [{"name": name, "about": case.about}
+                      for name, case in cases.CASES.items()],
+        }, default=str) + "\n")
+        return
+    for line in cases.describe_cases():
+        console.print(line, highlight=False, markup=False)
+
+
+@live_group.command("run")
+@click.argument("case")
+@click.option("--resolution", type=int, default=None,
+              help="Cells across the domain's longest side. Default: the case's own.")
+@click.option("--steps", type=int, default=None,
+              help="Lattice steps. Default: what the case's reference measurement needs.")
+@click.option("--collision", type=click.Choice(LIVE_COLLISIONS), default=None,
+              help="Collision operator. Default: the case's own (trt for the graded ones).")
+@click.option("--fluid", type=click.Choice(LIVE_FLUIDS), default=None,
+              help="Fluid, at 20 C. Default: the one the case's reference was measured in.")
+@click.option("--out", "out", type=click.Path(file_okay=False, path_type=Path),
+              default=Path("."), show_default=True, help="Where the figures go.")
+@click.option("--device", default="", help="Warp device, e.g. cuda:0 or cpu. Default: the best one here.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_run_cmd(ctx: click.Context, case: str, resolution: int | None, steps: int | None,
+                 collision: str | None, fluid: str | None, out: Path, device: str,
+                 as_json: bool) -> None:
+    """Run one case, or a case file, and report what it measured.
+
+    CASE is a name from `openreynolds live cases`, or a path to a case file ending
+    .yaml or .yml -- the same file format, with the `backend:` selector
+    `DECISIONS_LIVE.md` D2 explains: `live` runs it here, `openfoam` answers with the
+    OpenFOAM case the same description corresponds to.
+
+    Only the flags you give are passed on. A case's defaults are part of what it
+    validates against -- the resolution Ghia's cavity needs to agree with Ghia is not a
+    taste -- so an unset flag leaves the case's own number alone rather than
+    substituting a default of this file's choosing.
+
+    Exits 0 if every check passed and 1 if any did not, so a script needs read nothing.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    overrides: dict[str, Any] = {"out": str(out)}
+    for name, value in (("resolution", resolution), ("steps", steps),
+                        ("collision", collision), ("fluid", fluid)):
+        if value is not None:
+            overrides[name] = value
+    if device:
+        overrides["device"] = device
+    if case.lower().endswith((".yaml", ".yml")):
+        result = cases.run_case_file(case, **overrides)
+    else:
+        result = cases.run_case(case, **overrides)
+    _live_answer(result, cases, as_json)
+
+
+@live_group.command("bench")
+@click.option("--resolution", "resolutions", type=int, multiple=True,
+              help="Cells across the longest side. Repeatable: two of them measure both "
+                   "in one go, which is the only way the rate's scaling is a measurement "
+                   "rather than an extrapolation.")
+@click.option("--steps", type=int, default=None, help="Lattice steps per resolution.")
+@click.option("--collision", type=click.Choice(LIVE_COLLISIONS), default=None,
+              help="Collision operator to measure. Default: the benchmark's own.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_bench_cmd(ctx: click.Context, resolutions: tuple[int, ...], steps: int | None,
+                   collision: str | None, as_json: bool) -> None:
+    """Measure the lattice update rate on this machine's device.
+
+    Prints MLUPS for whatever device it is run on and names the device, because a rate
+    with no device beside it is not a number anybody can use. The 1000 MLUPS target in
+    the brief is an H100 claim and is recorded as not measured until this is run on one
+    (`DECISIONS_LIVE.md` D7).
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    kwargs: dict[str, Any] = {}
+    if resolutions:
+        kwargs["resolutions"] = list(resolutions)
+    if steps is not None:
+        kwargs["steps"] = steps
+    if collision is not None:
+        kwargs["collision"] = collision
+    _live_answer(cases.benchmark(**kwargs), cases, as_json)
+
+
+@live_group.command("crosscheck")
+@click.option("--resolution", type=int, default=None, help="Cells across the longest side.")
+@click.option("--steps", type=int, default=None, help="Lattice steps.")
+@click.option("--out", "out", type=click.Path(file_okay=False, path_type=Path),
+              default=Path("."), show_default=True, help="Where the figures go.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_crosscheck_cmd(ctx: click.Context, resolution: int | None, steps: int | None,
+                        out: Path, as_json: bool) -> None:
+    """Run the live backend on the committed OpenFOAM cylinder and report the difference.
+
+    Two backends, one case. `tests/data/moving_mesh/viv_fixed/` is a finished OpenFOAM
+    run that ships with this repository -- a fixed cylinder at Re = 100 in water, with
+    its force coefficients intact -- and `benchmarks/moving_mesh/grade.py` reads the
+    Strouhal number and the mean drag straight out of those files. This runs the same
+    case on the live backend and reports the difference against them.
+
+    So it needs no cluster, no OpenFOAM install and no network, and if the OpenFOAM
+    numbers ever move the comparison moves with them: they are read, not copied into a
+    constant here.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    kwargs: dict[str, Any] = {"out": str(out)}
+    if resolution is not None:
+        kwargs["resolution"] = resolution
+    if steps is not None:
+        kwargs["steps"] = steps
+    _live_answer(cases.crosscheck(**kwargs), cases, as_json)
 
 
 @main.command("config")

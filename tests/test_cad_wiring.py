@@ -259,14 +259,15 @@ def test_every_captured_name_is_captured_wherever_it_sits(tmp_path, name):
 # -- the tool ------------------------------------------------------------------
 
 
-def test_the_tool_names_are_exactly_the_sorted_eleven_with_cad_second():
+def test_the_tool_names_are_exactly_the_sorted_twelve_with_cad_second():
     """Nine since the reviewer was offered on its own as `mesh_review`; ten since the
-    side chat's `send_to_agent` joined every list (`desk.SideChat`), and eleven since
-    `checkpoint` is in every mode's (`tools_for`). `mesh`, the desk's old name, is still
-    not one of them."""
+    side chat's `send_to_agent` joined every list (`desk.SideChat`), eleven since
+    `checkpoint` is in every mode's (`tools_for`), and twelve since `live_sim`
+    (`live_tool.py`, offered where the `[live]` extra is installed). `mesh`, the desk's
+    old name, is still not one of them."""
     names = [tool["name"] for tool in TOOLS]
     assert names == sorted(names)
-    assert len(names) == 11
+    assert len(names) == 12
     assert names[:2] == ["bash", "cad"]
     assert "mesh" not in names and "mesh_review" in names
 
