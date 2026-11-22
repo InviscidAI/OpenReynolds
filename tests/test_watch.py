@@ -99,6 +99,111 @@ def test_wake_report_carries_the_kill_on_line(backend):
     assert "Maximum number of iterations exceeded" in report
 
 
+def _diverging_log(steps: int = 200) -> bytes:
+    """A pimpleFoam log whose Ux residual sits at 1e-4 and then climbs over the last
+    few steps to a floating point exception -- long enough that the climb is far
+    outside the 2 kB the wake shows."""
+    lines = []
+    for i in range(1, steps + 1):
+        u = 1e-4 if i < steps - 4 else 1e-4 * 10 ** (2 * (i - steps + 5))
+        co = 0.8 if i < steps - 4 else 0.8 * 3 ** (i - steps + 5)
+        lines += [f"Courant Number mean: 0.1 max: {co:g}", f"Time = {i * 0.001:g}", "",
+                  f"smoothSolver:  Solving for Ux, Initial residual = {u:g}, "
+                  "Final residual = 1e-09, No Iterations 2",
+                  "DICPCG:  Solving for p, Initial residual = 0.01, "
+                  "Final residual = 1e-07, No Iterations 30",
+                  "ExecutionTime = 1.5 s  ClockTime = 2 s", ""]
+    lines += ["#0  Foam::error::printStack(Foam::Ostream&) at ??:?",
+              "#1  Foam::sigFpe::sigHandler(int) at ??:?",
+              "#2  ? in /lib/x86_64-linux-gnu/libc.so.6"] + ["#9  ? at ??:?"] * 30
+    return ("\n".join(lines) + "\n").encode()
+
+
+def test_wake_report_says_how_a_diverged_log_ends(backend):
+    """The 2 kB tail shows the stack trace; the line above it carries what the tail
+    cannot: the exception's time, the residual's climb and the Courant number's."""
+    backend.logs["job-1"] = _diverging_log()
+    size = len(backend.logs["job-1"])
+    status = JobStatus(job_id="job-1", name="solve", status="exited", exit_code=136,
+                       log_size=size)
+
+    report = _job_report(backend, status)
+
+    line = next(ln for ln in report.splitlines() if ln.startswith("how the log ends:"))
+    assert "floating point exception at Time = 0.2" in line
+    assert "Ux initial residual climbed from 0.0001" in line
+    assert "Courant max went from 0.8 to" in line
+    for suggestion in ("should", "try", "next", "recommend", "consider", "recover.py"):
+        assert suggestion not in line.lower()
+
+
+def test_wake_report_says_nothing_extra_for_a_log_that_ended_well(backend):
+    backend.logs["job-1"] = (b"Time = 1\n\nsmoothSolver:  Solving for Ux, Initial residual "
+                             b"= 1e-05, Final residual = 1e-09, No Iterations 2\nEnd\n")
+    status = JobStatus(job_id="job-1", status="exited", exit_code=0,
+                       log_size=len(backend.logs["job-1"]))
+    assert "how the log ends" not in _job_report(backend, status)
+
+
+def test_wake_report_reads_a_fatal_error_message(backend):
+    backend.logs["job-1"] = (b"Time = 0.5\n\n--> FOAM FATAL ERROR: (openfoam-2512)\n"
+                             b"    Maximum number of iterations exceeded\n\n"
+                             b"    From Foam::thermo\n")
+    status = JobStatus(job_id="job-1", status="exited", exit_code=1,
+                       log_size=len(backend.logs["job-1"]))
+    report = _job_report(backend, status)
+    assert ("how the log ends: the log ends in a FOAM FATAL error at Time = 0.5: "
+            "Maximum number of iterations exceeded") in report
+
+
+BANNER = (b"/*---------------------------------------------------------------------------*\\\n"
+          b"Build  : _1ab2c3d4-20251215 OPENFOAM=2512 version=2512\n"
+          b"Exec   : simpleFoam\n"
+          b"trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).\n"
+          b"fileModificationChecking : Monitoring run-time modified files using timeStampMaster\n\n")
+
+
+def test_the_trapfpe_banner_is_not_an_exception(backend):
+    """Every v2512 log opens with this banner; a short healthy log is read from its
+    start, so a pattern that matched the banner said every one had crashed."""
+    steps = b"".join(
+        b"Time = %d\n\nsmoothSolver:  Solving for Ux, Initial residual = 0.001, "
+        b"Final residual = 1e-06, No Iterations 2\n\n" % i for i in range(1, 50))
+    backend.logs["job-1"] = BANNER + steps + b"End\n\n"
+    status = JobStatus(job_id="job-1", status="exited", exit_code=0,
+                       log_size=len(backend.logs["job-1"]))
+    assert "how the log ends" not in _job_report(backend, status)
+
+
+def test_a_real_length_stack_trace_still_gets_its_line(backend):
+    """Twenty frames of full signatures push the handler and the last `Time =` above
+    the 2 kB tail; the line is read from the wider window regardless."""
+    frame = (b"#%d  Foam::fvMatrix<Foam::Vector<double> >::solveSegregated(Foam::dictionary"
+             b" const&) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/"
+             b"libfiniteVolume.so\n")
+    trace = (b"#0  Foam::error::printStack(Foam::Ostream&) in /usr/lib/openfoam/openfoam2512/"
+             b"platforms/linux64GccDPInt32Opt/lib/libOpenFOAM.so\n#1  Foam::sigFpe::sigHandler"
+             b"(int) in /usr/lib/openfoam/openfoam2512/platforms/linux64GccDPInt32Opt/lib/"
+             b"libOpenFOAM.so\n" + b"".join(frame % i for i in range(2, 22))
+             + b"Floating point exception (core dumped)\n")
+    backend.logs["job-1"] = BANNER + _diverging_log()[:-200] + trace
+    size = len(backend.logs["job-1"])
+    status = JobStatus(job_id="job-1", status="exited", exit_code=136, log_size=size)
+    assert b"Time = " not in backend.logs["job-1"][-2000:]
+    report = _job_report(backend, status)
+    assert "how the log ends: the log ends in a floating point exception" in report
+
+
+def test_a_parallel_fatal_error_drops_the_rank_prefix(backend):
+    backend.logs["job-1"] = (b"Time = 13\n[5] \n[5] \n[5] --> FOAM FATAL ERROR: (openfoam-2512)\n"
+                             b"[5] The device containing \"/work/case/processor5/13\" has no room\n"
+                             b"[5] \n[5]     From Foam::mkDir\n")
+    status = JobStatus(job_id="job-1", status="exited", exit_code=1,
+                       log_size=len(backend.logs["job-1"]))
+    report = _job_report(backend, status)
+    assert "FOAM FATAL error at Time = 13: The device containing" in report
+
+
 def test_expired_sandbox_is_reported_as_such(backend, store, view):
     """The volume survives this, so it is a fact the model needs, not a plain exit."""
     job_id = start_job(backend, store)

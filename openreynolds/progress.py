@@ -148,6 +148,103 @@ def parse_log_tail(text: str) -> LogFacts:
     return facts
 
 
+FATAL_LINE = re.compile(r"FOAM FATAL (?:IO )?ERROR[^\n]*((?:\n[^\n]*){0,4})")
+"""The error line and the four after it: the message is on the next non-blank line,
+behind an MPI rank prefix (`[4] `) in a parallel run's log."""
+
+FPE_LINE = re.compile(r"(?m)^(?!.*trapFpe).*(sigFpe::sigHandler|Floating point exception)")
+"""A floating point exception that happened: the handler in the stack trace, or the
+shell's `Floating point exception (core dumped)`. Not the banner every OpenFOAM log
+opens with, `trapFpe: Floating point exception trapping enabled`, which says only that
+one would be caught."""
+
+_RANK = re.compile(r"^\s*\[\d+\]\s*")
+
+
+def _fatal_message(block: str) -> str:
+    """The first line after the error that is a message: not blank, not only rank
+    prefixes, not the `(openfoam-2512)` version tag, and not another rank's error line
+    -- in a parallel run several ranks write at once and their lines interleave."""
+    for line in block.splitlines():
+        text = line.strip()
+        while _RANK.match(text):
+            text = _RANK.sub("", text, count=1).strip()
+        if not text or text.startswith("(openfoam") or "FOAM FATAL" in text:
+            continue
+        return " ".join(text.split())[:200]
+    return ""
+
+SOLVER_COURANT = re.compile(r"(?m)^Courant Number mean: ([0-9.eE+-]+) max: ([0-9.eE+-]+)")
+"""The flow's Courant number, not interFoam's `Interface Courant Number`, which is 0
+wherever there is no interface and would make every rise look like one from zero."""
+
+CLIMB_FACTOR = 1e3
+"""How far above its own lowest value in the window a field's initial residual has to
+end before the wake calls it climbing. Three decades in a few thousand lines is not a
+slow solve: a run settling or oscillating stays within one or two."""
+
+CLIMB_FLOOR = 1e-2
+"""And how high it has to end. Below this a residual has risen from a very small
+number to a small one, which is a transient's step change, not a blow-up."""
+
+
+def how_it_ended(text: str) -> str | None:
+    """One sentence on how an OpenFOAM solver log ends, when it ends badly: a FOAM
+    FATAL error, a floating point exception, or an initial residual that climbed three
+    decades within the window. None for a log that says none of those.
+
+    Facts only, with the times and numbers on them; what to do about it is the
+    reader's. The job-end wake carries the last 2 kB of a log, which shows a stack
+    trace but not the hundred steps before it in which the residual climbed and the
+    Courant number grew, and those are what tell a numerical blow-up from a fault the
+    first step already had."""
+    times = TIME.findall(text)
+    at = f" at Time = {times[-1]}" if times else ""
+    parts: list[str] = []
+    fatals = list(FATAL_LINE.finditer(text))
+    if fatals:
+        message = next((m for m in (_fatal_message(f.group(1)) for f in fatals) if m), "")
+        parts.append(f"the log ends in a FOAM FATAL error{at}" + (f": {message}" if message else ""))
+    elif FPE_LINE.search(text):
+        parts.append(f"the log ends in a floating point exception{at}")
+    # A residual that jumped and the run still reached `End` is a transient doing
+    # what it was set up to do (a timed inlet step), not a blow-up.
+    climbed = None if END_MARK.search(text[-200:]) else _climbing(text)
+    if climbed:
+        parts.append(climbed)
+    courant = [(_float(mx) or 0.0) for _mean, mx in SOLVER_COURANT.findall(text)]
+    if parts and len(courant) >= 2 and courant[-1] > 10 * min(courant) and courant[-1] > 1:
+        parts.append(f"Courant max went from {min(courant):.3g} to {courant[-1]:.3g}")
+    return "; ".join(parts) if parts else None
+
+
+def _climbing(text: str) -> str | None:
+    """The field whose first initial residual per step rose most, if any rose three
+    decades to above 1e-2, with the times it was lowest and last."""
+    series: dict[str, list[tuple[str, float]]] = {}
+    for chunk in re.split(r"(?m)^Time = ", text)[1:]:
+        step = chunk.split("\n", 1)[0].strip()
+        seen: set[str] = set()
+        for name, value in SOLVING.findall(chunk):
+            number = _float(value)
+            if name in seen or number is None:
+                continue
+            seen.add(name)
+            series.setdefault(name, []).append((step, number))
+    worst = None
+    for name, values in series.items():
+        if len(values) < 3:
+            continue
+        low_step, low = min(values, key=lambda item: item[1])
+        last_step, last = values[-1]
+        if last >= CLIMB_FLOOR and last >= CLIMB_FACTOR * max(low, 1e-300):
+            ratio = last / max(low, 1e-300)
+            if worst is None or ratio > worst[0]:
+                worst = (ratio, f"the {name} initial residual climbed from {low:.2g} "
+                                f"(Time = {low_step}) to {last:.2g} (Time = {last_step})")
+    return worst[1] if worst else None
+
+
 _DICT_ENTRY = re.compile(
     r"^\s*(startTime|endTime|deltaT|writeInterval|purgeWrite)\s+([0-9.eE+-]+)\s*;", re.M
 )
