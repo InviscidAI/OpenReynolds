@@ -58,34 +58,45 @@ def shell(cmd: list[str], cwd: Path, timeout: float = 1800) -> subprocess.Comple
     return done
 
 
-def patch_average(case: Path, field: str, patch: str) -> float:
-    """The area-weighted average of a field on a patch, from postProcess.
+def patch_pressure(case: Path, patch: str) -> float:
+    """The area-averaged pressure on a patch, from the function object the case itself ran.
 
-    Read out of the file postProcess writes rather than scraped from its stdout, because
-    the stdout format is a convenience and the file is the output.
+    No `postProcess` call: the template already declares `inletPressure` and
+    `outletPressure` surfaceFieldValue objects (see its `functions` block), so the solve
+    writes both files as it goes and the numbers are in the solver log too. Reading those
+    is reading the case's own instrument.
 
-    The directory is named and addressed exactly. An earlier version of this helper
-    globbed `*{patch}*/**/*.dat` under postProcessing and took the last match, which is
-    wrong here for a reason worth recording: the template runs its own postProcessing
-    before the test does, so the glob picked up a file this function never wrote and the
-    inlet and the outlet came back as the same number -- a drop of exactly 0.0 against a
-    solve that was correct all along (the template's own log read 392.491 and 0). A
-    "measurement" that reads whatever file sorts last is not a measurement.
+    Two earlier versions of this helper measured nothing, and both failures are worth
+    keeping in mind. The first globbed `*{patch}*/**/*.dat` and took the last match, so
+    it read a file the test never wrote. The second ran its own `postProcess` and
+    addressed that directory exactly, but took the last column of the last row, which in
+    that file is the time -- both ends came back as 103.0, the final iteration. A drop
+    that comes out identical for inlet and outlet is the signature of reading the wrong
+    column or the wrong file, which is why this one asserts its header.
     """
-    func = f"patchAverage(name={patch},fields=({field}))"
-    shell(["postProcess", "-func", func, "-latestTime"], cwd=case)
-
-    root = case / "postProcessing" / func
+    root = case / "postProcessing" / f"{patch}Pressure"
     assert root.is_dir(), (
-        f"postProcess wrote no {func} directory. Under postProcessing: "
-        + ", ".join(sorted(str(p.relative_to(case))
-                           for p in (case / "postProcessing").rglob("*"))))
-    found = sorted(root.rglob("*.dat"))
-    assert found, f"{root} holds no .dat file"
-    rows = [l for l in found[-1].read_text(encoding="utf-8").splitlines()
-            if l.strip() and not l.startswith("#")]
+        f"the solve wrote no {patch}Pressure output. Under postProcessing: "
+        + ", ".join(sorted(str(q.relative_to(case))
+                           for q in (case / "postProcessing").rglob("*"))))
+    found = sorted(root.rglob("surfaceFieldValue.dat"))
+    assert found, f"{root} holds no surfaceFieldValue.dat"
+
+    text = found[-1].read_text(encoding="utf-8")
+    # The header names the columns, and it has to say which patch and which operation,
+    # so that a file for the other end or for a different average cannot be read by
+    # mistake -- the exact confusion that produced inlet == outlet twice.
+    header = [l for l in text.splitlines() if l.startswith("#")]
+    assert any(patch in l for l in header), (
+        f"{found[-1]} does not mention {patch} in its header: {header}")
+    assert any("areaAverage(p)" in l for l in header), (
+        f"{found[-1]} is not an areaAverage of p: {header}")
+
+    rows = [l.split() for l in text.splitlines() if l.strip() and not l.startswith("#")]
     assert rows, f"{found[-1]} holds no rows"
-    return float(rows[-1].split()[-1])
+    assert len(rows[-1]) == 2, (
+        f"expected 'time value' in {found[-1]}, got {rows[-1]}")
+    return float(rows[-1][1])
 
 
 @pytest.fixture(scope="module")
@@ -120,8 +131,8 @@ def test_the_drop_matches_the_coefficients_that_were_written(solved):
     page says so too.
     """
     case, porous = solved
-    inlet = patch_average(case, "p", "inlet")
-    outlet = patch_average(case, "p", "outlet")
+    inlet = patch_pressure(case, "inlet")
+    outlet = patch_pressure(case, "outlet")
     drop_kinematic = inlet - outlet
     assert drop_kinematic > 1e-6, (
         f"the slab reported no drop at all: inlet {inlet}, outlet {outlet}. A porous "
@@ -153,7 +164,7 @@ def test_the_unit_is_the_point_and_the_wrong_one_fails(solved):
     would fail, which is the pair that keeps the question honest.
     """
     case, porous = solved
-    drop_kinematic = patch_average(case, "p", "inlet") - patch_average(case, "p", "outlet")
+    drop_kinematic = patch_pressure(case, "inlet") - patch_pressure(case, "outlet")
     assert drop_kinematic > 1e-6, f"no drop to take a ratio of: {drop_kinematic}"
     speed = porous.design_velocity_m_s()
     darcy, forchheimer = porous.coefficients_from_curve()[:2]
