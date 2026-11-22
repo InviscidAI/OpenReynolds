@@ -1939,10 +1939,29 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
     checks.append(Check("free-air induced velocity", free["induced"],
                         f"{v_free:.4f} m/s from momentum theory, T = 2 rho A v^2",
                         None,
-                        "reported, not graded: an actuator disk of finite thickness on "
-                        "a lattice does not have to reproduce the inviscid "
-                        "momentum-theory value, and the graded quantity is a ratio in "
-                        "which it cancels"))
+                        f"reported, not graded: an actuator disk of finite thickness on "
+                        f"a lattice does not have to reproduce the inviscid "
+                        f"momentum-theory value, and the graded quantity is a ratio in "
+                        f"which the disk's own discretisation cancels. It reads "
+                        f"{free['induced'] / v_free - 1.0:+.1%} on momentum theory"))
+    # The residual's sign is a diagnosis and it belongs in the output rather than only
+    # in the index. The model approaches 1 from below and cannot exceed it, so a
+    # measured ratio above 1 is the free-air denominator being low rather than the
+    # ground effect being strong -- and the reference run opens its floor to an outflow,
+    # which is a zero-gradient plane a few radii down and not infinity.
+    above = [row for row in graded if row["ratio"] > 1.0]
+    checks.append(Check(
+        "heights whose ratio exceeds 1",
+        f"{len(above)} of {len(graded)}"
+        + (f" (Z/R {', '.join(f'{r[chr(39) + 'z_over_r' + chr(39)]:g}' for r in above)})"
+           if above else ""),
+        "reported, not graded", None,
+        "the model approaches 1 from below and cannot exceed it, so a ratio above 1 is "
+        "the free-air reference being low, not the ground pushing harder. The reference "
+        "run's floor is an outflow a few radii down rather than infinity, and its "
+        f"induced velocity reads {free['induced'] / v_free - 1.0:+.1%} on momentum "
+        "theory -- which is roughly the size of the overshoot. A larger free-air box "
+        "would tighten it; it is inside the 10% this 1955 model is graded at either way"))
 
     sweep = np.linspace(0.7, 3.2, 50)
     drawn.append(figures.profile_figure(

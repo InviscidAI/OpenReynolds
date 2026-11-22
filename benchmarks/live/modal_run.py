@@ -316,9 +316,18 @@ a budget it can actually finish.
 
 @app.local_entrypoint()
 def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
-         steps: int = 0, collision: str = "", layout: str = "") -> None:
-    """Run one case on one GPU and write the result under `benchmarks/live/results/`."""
+         steps: int = 0, collision: str = "", layout: str = "",
+         window: bool = False, label: str = "") -> None:
+    """Run one case on one GPU and write the result under `benchmarks/live/results/`.
+
+    `--label` names the directory, so a variant of a case can be recorded beside it
+    rather than over it: `--case falling_sphere --window --label
+    falling-sphere-windowed` is how the windowed run gets its own row without the
+    graded one losing its.
+    """
     settings: dict = {}
+    if window:
+        settings["window"] = True
     if resolution:
         settings["resolution"] = int(resolution)
     if steps:
@@ -328,7 +337,8 @@ def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
     runner = RUNNERS[gpu.lower()]
     got = runner.remote(case, settings, layout or None)
     payload = got.get("result", got)
-    ok = _announce(payload, case, _save(payload, got.get("blobs", {}), case))
+    where = label or case
+    ok = _announce(payload, where, _save(payload, got.get("blobs", {}), where))
     if not ok:
         sys.exit(1)
 
