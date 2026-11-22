@@ -1027,10 +1027,9 @@ def apply_faces(
 ):
     """Inlet and outlet, imposed on the face node after streaming.
 
-    `inlet` overwrites the face node with `f^eq(1, u_in)`: the prescribed velocity at the
-    atmospheric density. First order, unconditionally stable, and a pressure inlet as
-    much as a velocity one. The code below records what the two better-founded
-    alternatives measured on an independent solver, which is why this is the one here. `use_profile` takes `u_in`
+    `inlet` is the Zou-He velocity condition. The code below carries six measurements
+    across three inlets and two independent cylinder references, which is what it took
+    to choose between them, and says plainly what this choice still costs. `use_profile` takes `u_in`
     from a two-dimensional array over the -x face instead of from `face_velocity`, which
     is what the Schafer-Turek channel needs: its inflow is a parabola, and a uniform
     inlet would be a different benchmark.
@@ -1087,42 +1086,73 @@ def apply_faces(
     u = face_velocity[face]
     if use_profile != 0 and face == 0:
         u = inlet_profile[j, k]
-    # **An equilibrium at the atmospheric density, and all three alternatives were
-    # measured.** This is the condition the M1 validations were taken with, and it is
-    # here because it is the only one of the three that reproduces them.
+    # **Zou-He, chosen because it is the right physical condition and not because it
+    # passes the most cases.** Six measurements, three inlets, two independent cylinder
+    # references:
     #
-    #   f_eq(rho = 1, u)        Cd 1.3299 (-1.9%), St 0.16281 (-2.0%)   PASSES
-    #   f_eq(rho_inward, u)     Cd 1.500  (+10.7%), St 1.113 (+570%)    fails
-    #   Zou-He (1997)           Cd 1.702  (+25.6%), St 1.223 (+636%)    fails
+    #                      Schafer-Turek 2D-2        OpenFOAM cross-check
+    #                      (24% blockage)            (2.5%, slip walls)
+    #                      Cd_max 3.22-3.24          Cd 1.355514
+    #                      St     0.295-0.305        St 0.166141
     #
-    # on the OpenFOAM cross-check -- this repository's own pimpleFoam run of a cylinder
-    # at Re 100, committed at `tests/data/moving_mesh/viv_fixed/`, which is as close to
-    # ground truth as anything here gets.
+    #   f_eq(1, u)         1.6955 (-47%)  St -43%    1.3299 (-1.9%)  St -2.0%   <- passes
+    #   f_eq(rho_in, u)    3.6060 (+11.6%) St +0.9%  1.500  (+10.7%) St +570%
+    #   Zou-He (1997)      3.6139 (+11.9%) St +0.9%  1.702  (+25.6%) St +636%
     #
-    # The ordering is the interesting part, because it runs **against** boundary-condition
-    # theory. Pinning the density makes this a pressure inlet, which over-determines
-    # nothing but does fix `p` at the inflow plane; extrapolating the density from the
-    # node inside is a velocity inlet with a one-cell feedback path; Zou-He is the
-    # textbook velocity inlet, local and second order, and it is the **worst** of the
-    # three here by a factor of thirteen on the drag error. All three impose the same
-    # velocity. What separates them is how hard they hold it, and the harder they hold
-    # it the worse the answer gets -- which is the signature of a boundary **reflecting**
-    # what the wake sends upstream rather than of a boundary getting the inflow wrong.
-    # Both failing versions also report a Strouhal number around 1.2 against 0.166, from
-    # 160 to 180 shedding cycles where OpenFOAM has 7, so the lift signal they produce
-    # is dominated by something about thirty times the shedding frequency.
+    # **The two references disagree about which inlet is right, and that is the whole
+    # difficulty.** Pinning the density makes this a pressure inlet: it fixes `p` at the
+    # inflow plane, so a channel that needs a pressure gradient to drive its flow past
+    # an obstruction cannot have one and the flow starves instead. On a 2.5% blockage
+    # with slip walls that costs nothing and the cross-check passes; on Schafer-Turek's
+    # 24% blockage it costs **43% of the Strouhal number**, which is to say the flow
+    # past the cylinder is running at little more than half the speed it was asked for.
     #
-    # So the honest state of this is: a soft inlet is used because it is the one that
-    # reproduces an independent solver, and the reason the stiff ones do not is **not
-    # settled**. What is known is that the fault is unlikely to be in the inlet formula,
-    # since the best-founded formula is the worst performer; the next thing to look at is
-    # the outlet and the upstream length, because a reflecting inlet only matters if
-    # something is arriving at it. The cost of this choice is also measured, and
-    # recorded in PROGRESS_LIVE.md: on Schafer-Turek 2D-2, a 24% blockage, the
-    # mid-channel velocity falls about 3% as the flow develops, because a pressure inlet
-    # cannot supply the gradient that geometry needs.
+    # A Strouhal number is the most direct statement a shedding case makes about the
+    # speed of the flow over the body, and only a velocity inlet gets it right: both
+    # velocity conditions land it inside the paper's interval and the pressure inlet
+    # misses by a factor of two. That is why this is a velocity inlet, and Zou-He
+    # (Zou, Q. and He, X. (1997), 'On pressure and velocity boundary conditions for the
+    # lattice Boltzmann BGK model', Physics of Fluids 9:1591-1598) rather than the
+    # extrapolation, because its density comes from the populations that streamed in
+    # from the interior rather than from a neighbour's whole density, which is local and
+    # has no one-cell feedback path.
+    #
+    #     rho = ( sum_{c.n=0} f_d + 2 sum_{c.n<0} f_d ) / (1 - u.n)
+    #     f_d = f_opp + f_d^eq(rho, u) - f_opp^eq(rho, u)   for the unknown d
+    #
+    # **What this costs is recorded and not hidden**: the cross-check then reads
+    # Cd +25.6% and a Strouhal number of 1.22 against 0.166, reporting 181 shedding
+    # cycles where the OpenFOAM run has 7 -- a lift signal dominated by something about
+    # thirty times the shedding frequency. Both velocity conditions do it and the
+    # pressure inlet does not, so the trigger is the inlet holding firm rather than the
+    # formula it holds with; the next place to look is the outlet and the upstream
+    # length, because a stiff inlet only matters if something is arriving at it.
+    # PROGRESS_LIVE.md carries it as an open defect. Choosing the soft inlet instead
+    # would make that defect invisible and leave Schafer-Turek 43% wrong, which is
+    # trading a visible failure for a hidden one.
+    axis = face / 2
+    inward = DTYPE(1.0)
+    if face % 2 == 1:
+        inward = DTYPE(-1.0)
+    u_normal = u[axis] * inward
+
+    parallel = DTYPE(0.0)
+    incoming = DTYPE(0.0)
     for d in range(Q):
-        set_pop(f, d, i, j, k, _equilibrium(d, DTYPE(1.0), u))
+        along = DTYPE(C[axis, d]) * inward
+        if along == DTYPE(0.0):
+            parallel += pop(f, d, i, j, k)
+        elif along < DTYPE(0.0):
+            incoming += pop(f, d, i, j, k)
+    rho_in = (parallel + DTYPE(2.0) * incoming) / (DTYPE(1.0) - u_normal)
+
+    for d in range(Q):
+        if DTYPE(C[axis, d]) * inward > DTYPE(0.0):
+            back = int(OPP[d])
+            set_pop(f, d, i, j, k,
+                    pop(f, back, i, j, k)
+                    + _equilibrium(d, rho_in, u)
+                    - _equilibrium(back, rho_in, u))
 
 
 # -- 4. the solid, rebuilt every coupling step -----------------------------------------

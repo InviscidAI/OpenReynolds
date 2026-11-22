@@ -216,6 +216,45 @@ Numbers in the summary table.
 | CPU-runnable small-grid tests in the main suite | `tests/test_live_cases.py`, 49 passed / 3 GPU skipped |
 | GPU tests behind a marker | `needs_a_gpu` skipif plus a registered `gpu` marker |
 
+### The inlet, and the two references that disagree about it
+
+Six measurements, three inlet conditions, two independent cylinder references. This is
+the open item most likely to be mistaken for a solved one, so the whole table is here.
+
+|  | Schaefer-Turek 2D-2, 24% blockage | OpenFOAM cross-check, 2.5% and slip |
+| --- | --- | --- |
+| | Cd_max 3.22-3.24, St 0.295-0.305 | Cd 1.355514, St 0.166141 |
+| `f_eq(1, u)` -- pressure inlet | 1.6955 (**-47%**), St 0.1716 (**-43%**) | 1.3299 (-1.9%), St (-2.0%) **passes** |
+| `f_eq(rho_inward, u)` | 3.6060 (+11.6%), St 0.3026 (**+0.9%**) | 1.500 (+10.7%), St 1.113 (+570%) |
+| **Zou-He (1997)** -- shipped | 3.6139 (+11.9%), St 0.3028 (**+0.9%**) | 1.702 (+25.6%), St 1.223 (+636%) |
+
+**The pressure inlet passes the cross-check and is wrong by a factor of two on
+Schaefer-Turek.** It fixes `p` at the inflow plane, so a channel needing a pressure
+gradient to drive flow past an obstruction cannot have one and starves instead. At 2.5%
+blockage with slip walls that costs nothing; at 24% it costs 43% of the Strouhal number,
+which says the flow over the cylinder is running at little more than half the speed it
+was asked for.
+
+A Strouhal number is the most direct statement a shedding case makes about the speed of
+the flow over the body, and **only a velocity inlet gets it right** -- both velocity
+conditions land inside the paper's interval, the pressure inlet misses by a factor of
+two. So the shipped condition is a velocity inlet, and Zou-He rather than the
+extrapolation because its density comes from the populations that streamed in from the
+interior rather than from a neighbour's whole density, with no one-cell feedback path.
+
+**What that costs, stated rather than hidden:** the cross-check then fails at Cd +25.6%
+with a Strouhal number of 1.22 against 0.166, reporting 181 shedding cycles where the
+OpenFOAM run has 7 -- a lift signal dominated by something near thirty times the shedding
+frequency. Both velocity conditions do it and the pressure inlet does not, so the
+trigger is the inlet holding firm, not the formula it holds with; the next place to look
+is the outlet and the upstream length, since a stiff inlet only matters if something is
+arriving at it. **Cd_max on Schaefer-Turek is +11.9% and its observed order of
+convergence is about zero**, which is the same open question seen from the other side.
+
+The alternative was to ship the soft inlet, pass the cross-check, and leave
+Schaefer-Turek 43% wrong with nothing on the page about it. That trades a visible
+failure for a hidden one.
+
 ### M5 -- the free surface
 
 `openreynolds/live/freesurface.py`, written from Korner et al. (2005) and Thurey's
