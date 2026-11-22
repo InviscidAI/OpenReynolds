@@ -216,6 +216,38 @@ Numbers in the summary table.
 | CPU-runnable small-grid tests in the main suite | `tests/test_live_cases.py`, 49 passed / 3 GPU skipped |
 | GPU tests behind a marker | `needs_a_gpu` skipif plus a registered `gpu` marker |
 
+### The Re 1000 cavity, resolved
+
+**Passes.** u RMS **0.238%** and v RMS **0.642%** of the lid speed against Ghia's 15
+interior points at a 2% tolerance, 192 cells, H100, in **62.8 s**. `u_min` -0.385197
+against his -0.38289 (+0.60%); `v` extremes -0.52252 and +0.37351 against -0.51550 and
++0.37095.
+
+It had been failing at 9 to 12% on every extremum, and nothing about the physics was
+wrong -- the stopping rule was running it to death. The populations are float32, and
+millions of steps of a closed recirculating flow accumulate round-off that spins the
+vortex down:
+
+| steps | convective times | u RMS | u_min | |
+| --- | --- | --- | --- | --- |
+| 180,000 | 52 | **0.24%** | -0.3852 | passes |
+| 600,000 | 172 | 0.39% | -0.3806 | passes |
+| 1,200,000 | 344 | 0.91% | -0.3735 | passes |
+| 3,492,000 | 1,000 | 2.88% | -0.3487 | **fails** |
+
+Roughly 0.8% of error per million steps, growing without bound, so the case now runs to
+200 convective times rather than to one diffusive time.
+
+**The history is the lesson.** This case used to stop too *early*, on the spin-up
+plateau, and came out 8 to 10% short of Ghia; a one-diffusive-time floor was added to
+push it past that plateau. The floor cured that failure and caused the opposite one,
+which looks **identical** from the outside -- also short of Ghia, also by about 9% -- and
+the second was read as more of the first for two days. Four hypotheses were argued and
+measured wrong along the way: the TRT magic parameter (BGK, with `omega_minus` twelve
+times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* than Ma
+0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
+under-convergence. Only the last was close, with the sign reversed.
+
 ### The inlet, and the two references that disagree about it
 
 Six measurements, three inlet conditions, two independent cylinder references. This is
