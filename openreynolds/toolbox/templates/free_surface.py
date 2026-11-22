@@ -498,6 +498,16 @@ def fv_schemes() -> str:
 
     `linearUpwind grad(U)` on momentum rather than plain `linear`: a dam break's
     momentum field has a shock-like front, and central differencing on it oscillates.
+
+    **The compression flux has two names, and this has to match both.** The
+    counter-diffusion term is `div(phirb,alpha)` in OpenFOAM ESI, which is what the
+    workspace image runs, and `div(phir,alpha,alpha)` in the Foundation line. This file
+    wrote only the second, so on ESI the lookup found nothing and `interFoam` stopped at
+    the first step with the scheme undefined. That is the reason nothing had ever solved
+    this template: the case it wrote could not start. Study 20261122-142104-b7fe was the
+    first to try, and had to add the entry by hand before the solve would run. One
+    `phirb?` pattern now matches either name; two patterns that both matched would be an
+    ambiguous lookup rather than a safer one.
     """
     return (header("dictionary", "fvSchemes", "system") + """
 ddtSchemes
@@ -515,7 +525,7 @@ divSchemes
     div(rhoPhi,U)   Gauss linearUpwind grad(U);
     div(U)          Gauss linear;
     "div\\(phi,alpha.*\\)"           Gauss interfaceCompression vanLeer 1;
-    "div\\(phir,alpha.*,alpha.*\\)"  Gauss interfaceCompression vanLeer 1;
+    "div\\(phirb?,alpha.*\\)"  Gauss interfaceCompression vanLeer 1;
     "div\\(\\(\\(rho\\*nuEff\\)\\*dev2\\(T\\(grad\\(U\\)\\)\\)\\)\\)" Gauss linear;
 }
 
