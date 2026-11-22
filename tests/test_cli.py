@@ -3051,3 +3051,56 @@ def test_a_pasted_key_replaces_the_stored_one(tmp_path, monkeypatch):
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["llm_api_key"] == "sk-ant-usr-fresh-01", "a typed key must win over the stored one"
     assert saved["foamd_api_key"] == "of_live_new_4567"
+
+
+# -- the native workspace is not a sandbox -------------------------------------------
+#
+# `ENVIRONMENT.md` is written for the container: it opens by calling the workspace a
+# sandbox and says the network is sealed. Both are false under `--native`, where the
+# workspace is the user's own machine, and the difference is not cosmetic. A study on
+# 2026-11-22 ran `find / -name nozzle.py` as an unconditional fallback for a file that
+# was already in `/work/.toolbox/`, spent twenty-seven minutes walking a laptop's disk
+# and was killed by its timeout before answering. In a container that search is free,
+# which is exactly why an agent told it is in a container will reach for it.
+
+
+def _staged_env(monkeypatch, value: str | None) -> str:
+    """The ENVIRONMENT.md an OpenFOAM study would be given, for this workspace kind."""
+    if value is None:
+        monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
+    else:
+        monkeypatch.setenv("OPENREYNOLDS_LOCAL", value)
+    cli._staged_toolboxes.clear()   # the staging is cached per solver, per process
+    staged = cli._toolbox_for(cli.solvers.OPENFOAM)
+    return (staged / "ENVIRONMENT.md").read_text(encoding="utf-8")
+
+
+def test_a_native_workspace_is_told_it_is_not_a_sandbox(monkeypatch):
+    text = _staged_env(monkeypatch, "native")
+
+    assert text.startswith("# Read this first: this workspace is not a sandbox"), text[:200]
+    # The two corrections have to be present, and the root search has to be named,
+    # because naming it is the whole point of the note.
+    assert "find /" in text
+    assert "/work/.toolbox/" in text
+    assert "network is not sealed" in text
+    # And the file it corrects must still be there underneath it, not replaced.
+    assert "## Python (`python3`)" in text
+
+
+def test_the_sandbox_note_is_absent_where_it_would_be_wrong(monkeypatch):
+    """A hosted or Docker workspace really is a sealed container, so the note would be
+    a false statement in the other direction."""
+    for value in (None, "docker"):
+        text = _staged_env(monkeypatch, value)
+        assert "this workspace is not a sandbox" not in text, value
+        assert text.lstrip().startswith("# What is on this instance"), (value, text[:120])
+
+
+def test_the_note_does_not_accumulate_across_stagings(monkeypatch):
+    """Staging twice in one process must not prepend it twice: the cache is keyed by
+    solver, and a second native study in the same process re-reads the staged copy."""
+    first = _staged_env(monkeypatch, "native")
+    second = _staged_env(monkeypatch, "native")
+    assert first == second
+    assert second.count("# Read this first") == 1
