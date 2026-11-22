@@ -63,3 +63,78 @@ def test_every_point_is_inside_the_lid_speed():
         for abscissa, value in shipped[key]:
             assert 0.0 <= abscissa <= 1.0, (key, abscissa)
             assert -1.0 <= value <= 1.0, (key, abscissa, value)
+
+
+# -- the aerofoil closed forms -------------------------------------------------------
+#
+# Same reason as the Ghia table above, found the same way. Study 20261122-113750-c5a7
+# reported that it had to write the thin-aerofoil integral itself because the only copy
+# "is in a test file that isn't on this machine", and that it built its own elliptic
+# wing because `--wing` has no elliptic planform. The toolbox now ships both.
+#
+# What these tests protect is the arrangement, not the physics. `tests/test_toolbox_panel.py`
+# keeps its own independent implementation of these formulas and that is what grades
+# `panel.py`; nothing here changes that, because a test importing the thing it checks is
+# checking nothing. These hold the shipped copy equal to that independent one, so the
+# reference a study reads and the reference the repository grades with cannot drift.
+
+import importlib.util
+
+
+def toolbox_copy():
+    path = ROOT / "openreynolds" / "toolbox" / "references" / "thin_aerofoil.py"
+    spec = importlib.util.spec_from_file_location("toolbox_thin_aerofoil", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def independent_copy():
+    """The test file's own implementation, which is what actually grades `panel.py`."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    import test_toolbox_panel  # noqa: E402
+    return test_toolbox_panel
+
+
+def test_the_shipped_integral_matches_the_one_that_grades_the_panel_method():
+    mine, theirs = toolbox_copy(), independent_copy()
+    for designation in ("0012", "2412", "4412", "6409", "1408", "9512"):
+        a = mine.thin_aerofoil_zero_lift_deg(designation)
+        b = theirs.thin_aerofoil_zero_lift_deg(designation)
+        assert abs(a - b) < 1e-9, (designation, a, b)
+
+
+def test_the_shipped_camber_slope_matches_too():
+    """The integral is built on this, so agreeing on the integral alone could hide two
+    errors that cancel across the integration."""
+    import numpy as np
+    mine, theirs = toolbox_copy(), independent_copy()
+    x = np.linspace(0.0, 1.0, 1001)
+    for designation in ("0012", "2412", "4412", "6409"):
+        assert np.allclose(mine.naca4_camber_slope(designation, x),
+                           theirs.naca4_camber_slope(designation, x), atol=1e-12), designation
+
+
+def test_the_shipped_elliptic_wing_matches():
+    mine, theirs = toolbox_copy(), independent_copy()
+    for slope, alpha, ar in ((2 * 3.141592653589793, 5.0, 8.0), (6.0, 2.5, 4.0), (5.5, 10.0, 12.0)):
+        a = mine.elliptic_wing_cl(slope, alpha, ar)
+        b = theirs.elliptic_wing_cl(slope, alpha, ar)
+        assert abs(a - b) < 1e-12, (slope, alpha, ar, a, b)
+
+
+def test_a_symmetric_section_has_no_zero_lift_angle_and_says_why():
+    """Zero is forced by symmetry rather than earned, which the docstring has to say,
+    because a study that counts it as a successful accuracy check has miscounted."""
+    mine = toolbox_copy()
+    assert abs(mine.thin_aerofoil_zero_lift_deg("0012")) < 1e-12
+    assert "sign conventions" in mine.naca4_camber_slope.__doc__
+
+
+def test_the_elliptic_result_warns_that_it_cannot_fail():
+    """The lifting-line series has only its first mode for an elliptic planform, so a
+    lifting-line solver reproduces this identically whatever else it does."""
+    mine = toolbox_copy()
+    doc = mine.elliptic_wing_cl.__doc__
+    assert "by construction" in doc and "does not say" in doc
