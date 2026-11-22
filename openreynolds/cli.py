@@ -5819,6 +5819,36 @@ _staged_toolboxes: dict[str, Path] = {}
 _staging_lock = threading.Lock()
 
 
+NATIVE_ENVIRONMENT_NOTE = """# Read this first: this workspace is not a sandbox
+
+This study is running natively, so the workspace is the machine the person is sitting
+at rather than a container. Two things the rest of this file says are true in the image
+and false here, and both have cost a study.
+
+- **This is somebody's own computer, and its disk is theirs.** The filesystem is not a
+  small image: a search from the root (`find /`, `grep -r /`, `ls -R /`) walks every
+  file they have and can run for tens of minutes. One study spent twenty-seven of them
+  that way and was killed before it answered. Nothing needs looking for: every script
+  the toolbox ships is in this directory, `/work/.toolbox/`, and `README.md` beside this
+  file lists them by name. Work inside `/work`.
+- **The network is not sealed here.** There may well be one. That is not an invitation:
+  what is installed is still what is below, and reaching outside it is still a dead end
+  for this study rather than a slow success.
+
+Everything after this line describes the toolbox and the Python that are present, and
+that part is accurate on this machine too.
+
+"""
+"""Prepended to `ENVIRONMENT.md` for a native workspace.
+
+`ENVIRONMENT.md` is written for the sandbox and opens by calling it one. On `--native`
+that opening is wrong in the two ways above, and an agent that believes it is in a
+sealed container reasons accordingly: it will fall back to a root-level `find` for a
+file that is already beside it, because in a container that costs nothing. It is
+prepended rather than appended because the sentences it corrects are the first ones
+the agent reads."""
+
+
 def _toolbox_for(solver: str) -> Path:
     """The toolbox as one solver's study gets it, staged once per process.
 
@@ -5857,6 +5887,12 @@ def _toolbox_for(solver: str) -> Path:
                     if n == "__pycache__" or (Path(folder) == TOOLBOX_SOURCE and is_felix(n))
                 ],
             )
+        env_note = staged / "ENVIRONMENT.md"
+        if env_note.is_file() and local_workspace() == "native":
+            env_note.write_text(
+                NATIVE_ENVIRONMENT_NOTE + env_note.read_text(encoding="utf-8"),
+                encoding="utf-8")
+
         readme = TOOLBOX_SOURCE / "README.md"
         if readme.is_file():
             kept: list[str] = []

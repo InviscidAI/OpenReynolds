@@ -38,6 +38,7 @@ requests would cost the whole conversation at the uncached rate on every side qu
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 import shlex
@@ -849,7 +850,61 @@ def _handled(ctx: ToolContext, handler: Callable[[ToolContext, dict[str, Any]], 
 # -- handlers ------------------------------------------------------------------
 
 
+_ROOT_SEARCH = re.compile(
+    r"(?:^|[;&|]\s*)(?:sudo\s+)?"
+    r"(?:find\s+(?:-[A-Za-z]+\s+)*/(?=\s|$)"
+    r"|grep\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:[^;&|]*\s)?/(?=\s|$)"
+    r"|ls\s+-[A-Za-z]*R[A-Za-z]*\s+/(?=\s|$))"
+)
+"""A recursive search anchored at `/`, at the start of a command or just after a separator.
+
+Anchored so that `find /work -name x` and `grep -r thing /work/.toolbox` are untouched:
+only a walk of the whole disk matches. The separator alternative is what catches the
+real case, which arrived as the third command of a one-line chain."""
+
+ROOT_SEARCH_REFUSED = """refused: this would search the whole filesystem.
+
+This workspace is not a container. It is the machine the person is sitting at, and `/`
+is their own disk, so a search from there walks every file they have. It is not slow
+the way a large mesh is slow: a study on 2026-11-22 ran `find / -name nozzle.py` as a
+fallback, spent twenty-seven minutes inside it, and was killed before it answered
+anything at all.
+
+Nothing the toolbox ships needs finding. It is all in one directory:
+
+    ls /work/.toolbox              every script, including the one you are after
+    cat /work/.toolbox/README.md   what each of them is for
+
+That is the search you wanted and it costs nothing. If you do need to look outside
+`/work`, name the directory you mean rather than the root of the disk."""
+
+
+def _root_search_refusal(cmd: str) -> str | None:
+    """The refusal for a whole-disk search on a native workspace, or None.
+
+    A guard rather than a line in `ENVIRONMENT.md`, and the difference was settled by
+    testing rather than taste. The note was written first and does not work: a session
+    looks for the script before it reads the file that says where the script is, so a
+    correction sitting in that file never reaches the command that would have opened
+    it. Given the original prompt on the branch carrying the note, a run still wrote
+    `cd /work; ls .toolbox; find / -name nozzle.py -not -path "*/proc/*"`, with the
+    `ls` already successful ahead of it. This lands at the moment of the mistake
+    instead, and answers the question the search was asking.
+
+    Native only. In the image `/` is a small sealed filesystem where the same search
+    costs nothing and is sometimes the right move.
+    """
+    if os.environ.get("OPENREYNOLDS_LOCAL", "").strip().lower() != "native":
+        return None
+    return ROOT_SEARCH_REFUSED if _ROOT_SEARCH.search(cmd) else None
+
+
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
+    refusal = _root_search_refusal(args["cmd"])
+    if refusal:
+        # Before `exec`, deliberately. The cost of this command is paid the moment it
+        # starts, so a note attached to its output arrives half an hour too late.
+        return refusal
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
     result = ctx.backend.exec(_pipefail(args["cmd"]), cwd=args.get("cwd") or ctx.home,
