@@ -222,12 +222,12 @@ def test_mesh_query_point_sign_normal_returns_the_fields_voxelize_reads():
                      indices=warp.array(faces, dtype=warp.int32, device="cpu"))
 
     @warp.kernel
-    def probe(m: warp.uint64, signed: warp.array(dtype=warp.float32)):
+    def probe(m: warp.uint64, out_signed: warp.array(dtype=warp.float32)):
         p = warp.vec3(0.0, 0.0, 0.0)
         query = warp.mesh_query_point_sign_normal(m, p, 10.0)
         if query.result:
             closest = warp.mesh_eval_position(m, query.face, query.u, query.v)
-            signed[0] = warp.length(p - closest) * query.sign
+            out_signed[0] = warp.length(p - closest) * query.sign
 
     out = warp.zeros(1, dtype=warp.float32, device="cpu")
     warp.launch(probe, dim=1, inputs=[mesh.id, out], device="cpu")

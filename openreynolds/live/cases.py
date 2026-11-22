@@ -683,9 +683,11 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.035,
 
     body = world.add_body(position=(centre[0], centre[1], nz * dx / 2),
                           label="cylinder")
-    world.add_shape("cylinder", body=body,
-                    position=(centre[0], centre[1], nz * dx / 2),
-                    scale=(diameter / 2.0, nz * dx, 0.0))
+    # The shape's position is in the BODY's frame, and the body is already at the
+    # cylinder's centre, so the offset is zero. Passing the world position to both --
+    # which this file did until a voxeliser test caught it -- puts the shape at twice
+    # the intended coordinate.
+    world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
     world.initialise(velocity=(u_mean, 0.0, 0.0))
 
     # One shedding period in lattice steps, from the expected Strouhal number: the
@@ -914,8 +916,8 @@ def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
         # Five diameters of upstream run and fifteen of wake.
         position = (5.0 * diameter, size[1] / 2.0, size[2] / 2.0)
         body = world.add_body(position=position, label=f"sphere_re{re:g}")
-        world.add_shape("sphere", body=body, position=position,
-                        scale=(diameter / 2.0, 0.0, 0.0))
+        # Body-frame offset, and the body is at the sphere's centre already.
+        world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
         world.initialise(velocity=(u_inf, 0.0, 0.0))
 
         # Long enough for the free stream to cross the box three times, which is the
@@ -1028,8 +1030,7 @@ def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 16,
     start = (15.0 * diameter, size[1] / 2.0, size[2] / 2.0)
     body = world.add_body(position=start, velocity=(-speed, 0, 0, 0, 0, 0),
                           label="sphere")
-    world.add_shape("sphere", body=body, position=start,
-                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
     world.initialise()
 
     total = int(steps if steps else 6.0 * cells_per_d / u_lattice)
@@ -1334,8 +1335,7 @@ def run_momentum(*, cells: int = 48, steps: int = 4000, collision: str = "trt",
     centre = tuple(v / 2.0 for v in size)
     body = world.add_body(position=centre, velocity=(speed, 0, 0, 0, 0, 0),
                           label="sphere")
-    world.add_shape("sphere", body=body, position=centre,
-                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
     world.initialise()
 
     before = np.asarray(world.momentum())
@@ -1874,7 +1874,7 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 16,
         # couple.py), so the hull is turned to lie along the stream: a quarter turn
         # about y takes z to x.
         turn = (0.0, math.sin(math.pi / 4.0), 0.0, math.cos(math.pi / 4.0))
-        world.add_shape("capsule", body=body, position=position, orientation=turn,
+        world.add_shape("capsule", body=body, orientation=turn,
                         scale=(radius, half_height, 0.0))
         world.initialise(velocity=(u_inf, 0.0, 0.0))
 
@@ -1959,8 +1959,7 @@ def run_smoke(*, cells: int = 12, steps: int = 40, collision: str = "trt",
                        device=device)
     centre = tuple(v / 2.0 for v in size)
     body = world.add_body(position=centre, label="sphere")
-    world.add_shape("sphere", body=body, position=centre,
-                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
     world.initialise(velocity=(u_inf, 0.0, 0.0))
     _advance(world, steps, progress=progress)
     force, torque = world.wrench(body)
@@ -2134,8 +2133,7 @@ def crosscheck(*, cells_per_d: int = 20, collision: str = "trt",
     # transient takes an order of magnitude longer. benchmarks/README.md records the
     # same 5 mm offset in the Schafer-Turek 2D-1 case for the same reason.
     body = world.add_body(position=centre, label="cylinder")
-    world.add_shape("cylinder", body=body, position=centre,
-                    scale=(diameter / 2.0, nz * dx, 0.0))
+    world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
     world.initialise(velocity=(u_mean, 0.0, 0.0))
 
     period = cells_per_d / (foam["strouhal"] * 0.04)

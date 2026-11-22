@@ -215,3 +215,11 @@ testpaths = ["tests"]
 # matplotlib's vendored pyparsing is noisy on import; keep real warnings visible.
 filterwarnings = ["ignore::pyparsing.PyparsingDeprecationWarning"]
 asyncio_mode = "auto"
+# `-m gpu` selects the live backend's GPU tests. They are ALSO guarded by a skipif on
+# there actually being a CUDA device (tests/test_live_cases.py::needs_a_gpu), which is
+# the repo's existing convention -- conftest.needs_a_kernel does the same thing for a
+# workspace. The marker is for selecting them on a machine that has one; the skipif is
+# for not failing on a machine that does not.
+markers = [
+    "gpu: needs a CUDA device; skipped automatically where there is none",
+]

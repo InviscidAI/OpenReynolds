@@ -153,6 +153,45 @@ def _preferred_layout() -> str:
 LAYOUT = _preferred_layout()
 SOA = LAYOUT == "soa"
 
+def _max_unroll() -> int:
+    """How far to unroll the direction loop, which is not the same answer on every Warp.
+
+    Warp unrolls a `range` loop with a constant bound only up to `max_unroll`, which
+    defaults to 16. `Q` is 19, so at the default every kernel here has a dynamic loop
+    with a counter and a bounds check, and the node-major layout's whole advantage --
+    one node's populations in two cache lines instead of nineteen -- is invisible to the
+    compiler because the nineteen reads are never in front of it at once. Raising the
+    limit past 19 is the single largest factor in the step rate on this project's CPU:
+    7.9 to 29.8 MLUPS on a streaming kernel.
+
+    **And it is the wrong move on warp-lang 1.17.** Measured on the same machine, same
+    kernel, best of three:
+
+        warp   max_unroll 16   max_unroll 24
+        1.17        43.95           38.84 MLUPS
+        1.19        49.71           55.29 MLUPS
+
+    so 1.17 is 12% slower unrolled and 1.19 is 11% faster. Whatever changed in Warp's
+    code generation between them, the honest response is to follow the measurement on
+    each rather than pick the one that suits the version this was developed on -- and
+    1.17 is not a hypothetical version, it is what Isaac Lab 3.0.0 pins, so it is what a
+    user inside Isaac Lab gets.
+
+    `OPENREYNOLDS_LIVE_UNROLL` overrides it, which is how the table above was measured
+    and how it can be re-measured when a new Warp lands.
+    """
+    asked = os.environ.get("OPENREYNOLDS_LIVE_UNROLL", "").strip()
+    if asked.isdigit():
+        return max(1, int(asked))
+    try:
+        major, minor = (int(part) for part in wp.config.version.split(".")[:2])
+    except Exception:  # pragma: no cover - a version string we cannot parse
+        return 24
+    return 16 if (major, minor) <= (1, 17) else 24
+
+
+_MAX_UNROLL = _max_unroll()
+
 wp.set_module_options({
     # Past `Q`, so the direction loop in every kernel here unrolls. See
     # `_preferred_layout` for the measurement: on this CPU it is the difference between
@@ -166,7 +205,7 @@ wp.set_module_options({
     # silently by both. That is why there is no try/except here and no per-key probing;
     # there is nothing to catch. `tests/test_live_versions.py` holds that fact, so if a
     # future Warp starts rejecting unknown keys the test says so before a user does.
-    "max_unroll": 24,
+    "max_unroll": _MAX_UNROLL,
     # Nothing in this extension differentiates through a lattice. The adjoint of every
     # kernel below is generated otherwise, which doubles the compile and the code size
     # for something no caller can reach.
