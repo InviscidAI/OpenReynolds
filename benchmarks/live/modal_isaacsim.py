@@ -2185,7 +2185,7 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         # which is what a wake looks like and is honest about being.
         wake = UsdGeom.PointInstancer.Define(stage, "/World/wake")
         droplet = UsdGeom.Sphere.Define(stage, "/World/wake/droplet")
-        droplet.CreateRadiusAttr(world.dx * 1.0)
+        droplet.CreateRadiusAttr(world.dx * 0.8)
         UsdShade.MaterialBindingAPI(droplet).Bind(
             preview_material("/World/looks/wake", (0.20, 0.78, 0.92), 0.22,
                              opacity=0.30, emissive=(0.02, 0.14, 0.20)))
@@ -2208,7 +2208,12 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         sun.CreateIntensityAttr(2400.0)
         sun.CreateAngleAttr(1.5)
         sun.CreateColorAttr(Gf.Vec3f(0.85, 0.95, 1.0))
-        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(-62.0, 12.0, 20.0))
+        # A `DistantLight` shines along its own -Z. `Rx(45)` takes that to roughly
+        # (0, +0.71, -0.71), which is light arriving from -y and +z -- the same side the
+        # camera stands on. The first rig lit the hull from behind: the orange was there
+        # all along and only a sliver of it faced the lens, so the hull rendered as a
+        # dark shape with a bright edge and read as an unbound material.
+        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(45.0, -18.0, 0.0))
         sky = UsdLux.DomeLight.Define(stage, "/World/sky")
         sky.CreateIntensityAttr(900.0)
         sky.CreateColorAttr(Gf.Vec3f(0.05, 0.22, 0.34))
@@ -2232,10 +2237,19 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         # wake drawn across a 240 mm box: the cloud filled the frame. The near-wake
         # window above is about 220 mm long, so the camera stands off far enough to hold
         # it and looks slightly down the length of it.
+        # The wake box above is about 105 mm long and the hull is 40 mm of it, so the
+        # camera stands off about 110 mm and aims at the middle of the box rather than
+        # at the hull. Earlier framings held a 220 mm box from 180 mm away and put a
+        # 40 mm submarine in the corner of the frame.
+        # The stand-off is arithmetic, not taste. A USD camera's horizontal aperture is
+        # 20.955 mm, so the frame spans `D * 20.955 / focal`; the subject is the 40 mm
+        # hull plus about 80 mm of wake behind it, so a 0.16 m frame at 30 mm focal
+        # wants `D = 0.229 m`. Every earlier framing here was picked by eye and every
+        # one of them was wrong -- the last cut the hull off at the right edge.
         camera = rep.create.camera(
-            position=(start[0] + 0.055, start[1] - 0.165, look_z + 0.062),
-            look_at=(start[0] - 0.052, start[1], look_z),
-            focal_length=34.0, clipping_range=(0.005, 100.0))
+            position=(start[0] + 0.059, start[1] - 0.207, look_z + 0.079),
+            look_at=(start[0] - 0.026, start[1], look_z),
+            focal_length=30.0, clipping_range=(0.005, 100.0))
         product = rep.create.render_product(camera, (width, height))
         annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         annotator.attach([product])
@@ -2284,7 +2298,7 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
             return (vector * (w * w - u.dot(u)) + 2.0 * u * u.dot(vector)
                     + 2.0 * w * np.cross(u, vector))
 
-        def push_wake(body_position, track: float, track_z: float) -> int:
+        def push_wake(body_position, axis_dir, track: float, track_z: float) -> int:
             """Decimate the velocity field onto the point instancer. Returns the count."""
             got = world.fields()
             u = got["u"][::3, ::3, ::3, :]
@@ -2306,10 +2320,10 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
             # a correct picture of the whole field and a useless picture of a
             # submarine. This window is the eighteen diameters behind the nose and two
             # and a half either side, which is the part that reads as a wake.
-            near = ((gx > body_position[0] - 18.0 * diameter)
-                    & (gx < body_position[0] + 4.0 * diameter)
-                    & (np.abs(gy - body_position[1]) < 2.5 * diameter)
-                    & (np.abs(gz - body_position[2]) < 2.5 * diameter))
+            near = ((gx > body_position[0] - 8.0 * diameter)
+                    & (gx < body_position[0] + 2.5 * diameter)
+                    & (np.abs(gy - body_position[1]) < 2.0 * diameter)
+                    & (np.abs(gz - body_position[2]) < 2.0 * diameter))
             keep = np.isfinite(speed) & (speed > reference) & near
             if not keep.any():
                 wake_positions.Set(Vt.Vec3fArray.FromNumpy(
@@ -2323,8 +2337,15 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
             # In WORLD coordinates, before the tracking shift below -- comparing shifted
             # points against an unshifted body position, which is what this did first
             # time round, masks a sphere of cells somewhere off to one side instead.
+            # Distance to the hull's AXIS SEGMENT, not to its centre. The first version
+            # masked a sphere of radius 1.25 r about the body's centre, which on a hull
+            # 40 mm long and 10 mm across clears the middle and leaves both ends
+            # peppered: the render came out with the wake stippled across the length of
+            # the submarine like spots.
             offset = points - np.asarray(body_position)
-            outside = np.linalg.norm(offset, axis=-1) > (radius * 1.25)
+            along = np.clip(offset @ np.asarray(axis_dir), -half_height, half_height)
+            radial = offset - along[:, None] * np.asarray(axis_dir)[None, :]
+            outside = np.linalg.norm(radial, axis=-1) > (radius * 1.7)
             points, magnitude = points[outside], magnitude[outside]
             points[:, 0] -= track          # the tracking frame; see the camera above
             points[:, 2] -= track_z
@@ -2412,7 +2433,8 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
                 # which is why frames 26 and 43 of it are the dome and nothing else --
                 # the renderer was fine and the submarine had gone.
                 track_z = float(position[2] - look_z) * 0.85
-                count = push_wake(position, track, track_z)
+                count = push_wake(position, rotate(quat, np.array([1.0, 0.0, 0.0])),
+                                  track, track_z)
                 nose = rotate(quat, np.array([1.0, 0.0, 0.0]))
                 # The hull prim, at the pose Newton computed. `UsdGeom.Capsule` with
                 # `axis="X"` is already along body x, so only the body rotation applies.

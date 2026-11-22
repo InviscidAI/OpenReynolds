@@ -1013,7 +1013,15 @@ class FreeSurfaceWorld(FluidWorld):
 
         self._sync_bodies()
         shifted = self._maybe_shift()
-        before_solid = self.lattice_mass() if self.steps else None
+        # Only charge mass to the hull when there IS a hull. `lattice_mass` is a float32
+        # atomic sum, so two reads of an unchanged field differ by round-off, and
+        # accumulating that difference every step turns it into a number: the sloshing
+        # tank, which has no bodies at all, reported 16.66 of lattice mass "displaced by
+        # bodies" over 42,556 steps. Harmless in size -- 3e-6 of the total -- and wrong
+        # in kind, because `mass_drift` credits it against the drift and a reader would
+        # believe it.
+        moving = bool(self._shapes) or self._newton_shapes is not None
+        before_solid = self.lattice_mass() if (self.steps and moving) else None
         self._voxelize()
         # A body that has moved takes the water in its new cells with it. Re-mark, then
         # charge the difference to `displaced_by_solids` rather than to the algorithm.

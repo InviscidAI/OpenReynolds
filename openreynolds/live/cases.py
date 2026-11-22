@@ -2023,11 +2023,17 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
     # ground effect being strong -- and the reference run opens its floor to an outflow,
     # which is a zero-gradient plane a few radii down and not infinity.
     above = [row for row in graded if row["ratio"] > 1.0]
+    # Built with join() on a list comprehension rather than inside the f-string. The
+    # previous version nested same-type quotes in an f-string and was repaired by
+    # concatenating the quote character around the key, which does not escape anything:
+    # it builds a DIFFERENT key, with the quotes as characters, and raised `KeyError`
+    # the first time a run actually put a height above 1. That is a report line, so it
+    # took the case down after 1,087 s of H100 with every number already computed.
+    # `tests/test_live_cases.py` guards the pattern.
+    listed = ", ".join(f"{row['z_over_r']:g}" for row in above)
     checks.append(Check(
         "heights whose ratio exceeds 1",
-        f"{len(above)} of {len(graded)}"
-        + (f" (Z/R {', '.join(f'{r[chr(39) + 'z_over_r' + chr(39)]:g}' for r in above)})"
-           if above else ""),
+        f"{len(above)} of {len(graded)}" + (f" (Z/R {listed})" if above else ""),
         "reported, not graded", None,
         "the model approaches 1 from below and cannot exceed it, so a ratio above 1 is "
         "the free-air reference being low, not the ground pushing harder. The reference "

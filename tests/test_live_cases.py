@@ -858,3 +858,30 @@ def test_the_benchmark_reports_a_rate_on_the_gpu():
     result = benchmark(resolutions=(32,), steps=20, device="cuda:0")
     assert result["rows"] and result["rows"][0]["mlups"] > 0.0
     assert "cuda" in result["device"]
+
+
+def test_no_case_builds_a_dict_key_out_of_chr_39():
+    """A narrow guard on one repair pattern, because it cost 1,087 seconds of H100.
+
+    An f-string in `run_ground_effect` needed a single-quoted dict key inside a
+    single-quoted f-string, and the repair was `r[chr(39) + 'z_over_r' + chr(39)]`. That
+    does not escape a quote; it **builds a different key**, `"'z_over_r'"` with the
+    quotes as characters, and raises `KeyError` the first time the branch containing it
+    is reached. The branch was a report line that only fires when a measured ratio
+    exceeds 1, so the case ran to completion, computed every graded number, and then
+    died formatting them.
+
+    The general lesson has no cheap test -- a report line executes after the expensive
+    work, and nothing here can afford to run the GPU cases to find out. This guard is
+    just the specific pattern, named so that the next person reaching for `chr(39)` to
+    get a quote past an f-string parser hoists the value into a variable instead.
+    """
+    offenders = []
+    for path in sorted((ROOT / "openreynolds" / "live").glob("*.py")):
+        if "chr(39)" in path.read_text(encoding="utf-8"):
+            offenders.append(path.name)
+    assert not offenders, (
+        f"{', '.join(offenders)} builds a string with chr(39). If that is standing in "
+        f"for a quote inside an f-string, it is a different string than intended -- "
+        f"assign the value to a name and interpolate the name"
+    )
