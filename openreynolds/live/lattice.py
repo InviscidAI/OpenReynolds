@@ -860,8 +860,9 @@ def apply_faces(
 ):
     """Inlet and outlet, imposed on the face node after streaming.
 
-    `inlet` is a full-equilibrium condition: the node is overwritten with
-    `f^eq(1, u_in)`. First order at the boundary and unconditionally stable, which is
+    `inlet` is an equilibrium condition at the prescribed velocity and the **density
+    extrapolated from the node inside**: the node is overwritten with
+    `f^eq(rho_inward, u_in)`. First order at the boundary and unconditionally stable, which is
     the right trade for a face that is a long way from anything being measured -- every
     case here puts its inlet several body diameters upstream. `use_profile` takes `u_in`
     from a two-dimensional array over the -x face instead of from `face_velocity`, which
@@ -920,9 +921,30 @@ def apply_faces(
     u = face_velocity[face]
     if use_profile != 0 and face == 0:
         u = inlet_profile[j, k]
+    # **The density is taken from the node inside, not fixed at 1.** A velocity inlet
+    # prescribes the velocity; the density is whatever the flow needs it to be, and
+    # fixing both over-determines the boundary.
+    #
+    # It was `_equilibrium(d, 1.0, u)` until 2026-11-23, and that is a pressure inlet
+    # wearing a velocity inlet's clothes: it pins `p = rho c_s^2` at the inflow plane,
+    # so a channel that needs a pressure gradient to push its flow past an obstruction
+    # cannot have one, and the flow simply slows down instead. Measured on the
+    # Schafer-Turek 2D-2 cylinder, which is a 24% blockage: the mid-channel mean
+    # velocity fell 3% in the first 300 steps and kept going, and over a 300,000-step
+    # run the drag coefficient decayed monotonically from 1.70 to 1.30 with the lift
+    # amplitude decaying beside it. Both were read as an under-developed wake twice
+    # before the force history made it unmistakable -- a transient settles, and this
+    # did not.
+    #
+    # The cross-check case did not notice, which is the useful part of the story: its
+    # blockage is 2.5% and its side walls are slip, so the pressure it needs at the
+    # inlet is within a part in a thousand of `rho = 1` and pinning it costs nothing.
+    # One case agreeing is not evidence that a boundary condition is right.
+    rho_in = DTYPE(0.0)
     for d in range(Q):
-        set_pop(f, d, i, j, k,
-                _equilibrium(d, DTYPE(1.0), u))
+        rho_in += pop(f, d, inward_i, inward_j, inward_k)
+    for d in range(Q):
+        set_pop(f, d, i, j, k, _equilibrium(d, rho_in, u))
 
 
 # -- 4. the solid, rebuilt every coupling step -----------------------------------------

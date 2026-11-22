@@ -2096,8 +2096,16 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
                             (0.0, 0.0, 1.0), rotor_radius, thickness=2.0 * dx)
         link = NewtonCoupling(model, engine, world, dt=world.dt, buoyancy=False)
 
+        # Two timescales again, and the longer one is the controller's. The flow needs
+        # about one crossing of the box to establish, `tall / v_hover`. The altitude
+        # loop needs several of its own time constants, which for this PD is about
+        # 0.25 s -- and at 2 ms a coupling step, 0.65 s of run (two crossings) left the
+        # vehicle still converging: it measured an altitude spread of 0.127 R over the
+        # last third, just outside the 0.1 R that counts as settled. Four crossings is
+        # 1.3 s, five of those time constants, and the extra 170 seconds of H100 is a
+        # better trade than widening the bound until the run passes.
         crossing = tall / max(v_hover, 1e-9) / world.dt
-        total = int(steps if steps else math.ceil(2.0 * crossing))
+        total = int(steps if steps else math.ceil(4.0 * crossing))
         target = height
         thrusts: list[float] = []
         wrenches: list[float] = []
