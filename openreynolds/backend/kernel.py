@@ -634,7 +634,21 @@ class Driver:
 
     def serve(self):
         (HERE / "ready").write_text("1", encoding="utf-8")
+        idle = 0
         while True:
+            # Nobody can reach a kernel whose directory is gone: every request, every
+            # control and every reply travels through a file in it. A session that is
+            # killed rather than closed never runs kernel_stop, and its directory is
+            # cleaned up without its process, so the kernel sits here polling an empty
+            # path forever. Ninety-eight of them had accumulated on one laptop, the
+            # oldest a day old, holding 2.5 GB between them. Checked every second or
+            # so rather than every pass, because the loop runs at 20 ms and this is a
+            # stat on a path that is almost always there.
+            idle += 1
+            if idle >= int(1.0 / POLL) and not HERE.is_dir():
+                raise SystemExit(0)
+            if idle >= int(1.0 / POLL):
+                idle = 0
             self.controls()
             if self.cell is None:
                 asked = take("req-%d.json" % (self.done + 1))
