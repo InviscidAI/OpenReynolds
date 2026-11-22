@@ -52,8 +52,28 @@ from pathlib import Path
 
 import modal
 
-REPO = Path(__file__).resolve().parents[2]
-RESULTS = Path(__file__).resolve().parent / "results"
+def _local_repo() -> Path:
+    """The checkout, as seen from the machine `modal run` was typed on.
+
+    Computed in a function and not at module scope, because **this module is imported
+    twice**: once locally, where it sits at `benchmarks/live/modal_run.py`, and once
+    inside the container, where Modal has placed the entrypoint at `/root/modal_run.py`
+    and `parents[2]` is an `IndexError` -- which is exactly how the first run failed,
+    during container startup and before a single kernel compiled.
+
+    Nothing remote needs it: the repository is at `/repo` there, which `_run_remote`
+    puts on `sys.path` directly.
+    """
+    here = Path(__file__).resolve()
+    return here.parents[2] if len(here.parents) > 2 else Path("/repo")
+
+
+def _results_dir() -> Path:
+    return Path(__file__).resolve().parent / "results"
+
+
+REPO = _local_repo()
+RESULTS = _results_dir()
 
 # Pinned exactly, and to the versions the extension was written against. A benchmark
 # whose dependency floats is a benchmark that cannot be compared with last week's:

@@ -105,17 +105,36 @@ def _preferred_layout() -> str:
     lines and `soa` reads them from nineteen, and the compiler can only see that when
     the nineteen reads are in front of it.
 
-    So why is `soa` the default on a GPU? Because the same argument runs the other way
-    there. A CUDA warp is 32 threads at 32 adjacent nodes, and under `soa` their reads
-    of `f[q]` are 32 adjacent floats -- one coalesced transaction. Under `aos` they are
-    32 reads 76 bytes apart, which is 32 transactions. The layout that halves the work
-    on one CPU core multiplies it by up to sixteen on a GPU.
+    So why is `soa` the default on a GPU? The obvious argument says it should be a large
+    win: a CUDA warp is 32 threads at 32 adjacent nodes, and under `soa` their reads of
+    one direction are 32 adjacent floats -- a single coalesced transaction -- while under
+    `aos` they are 32 reads 76 bytes apart. That argument predicts a factor. **It was
+    measured and it is not a factor.** Both layouts, both GPUs,
+    `benchmarks/live/modal_run.py::layouts`, this solver's own step rather than an
+    isolated kernel, best of three:
 
-    Hence: chosen from the device, overridable by `OPENREYNOLDS_LIVE_LAYOUT`, and
-    reported by `FluidWorld.report` so that no measurement in `PROGRESS_LIVE.md` is
-    ambiguous about which one produced it. It is a module-level constant and not a
-    runtime flag because it is baked into the generated code: a branch per array access
-    would cost more than the layout saves.
+        device                      aos           soa          soa's advantage
+        NVIDIA A10 (sm_86), 192^3   503.1 MLUPS   510.8 MLUPS   1.5%
+        NVIDIA H100 80GB, 384^3    1477.6 MLUPS  1478.7 MLUPS   0.07%
+
+    1.5% on an A10 and 0.07% on an H100, against a factor of 2.9 the other way on one
+    CPU core. Why the coalescing argument overpredicts: the kernel is bandwidth-bound at
+    these sizes, and the reads a warp issues under `aos` are not scattered over memory,
+    they are a contiguous 2,432-byte run (32 nodes x 19 floats). A memory controller
+    serves that at close to peak, and an H100's 50 MB of L2 absorbs what it does not.
+    The coalescing penalty is real for a strided gather across a whole lattice and small
+    for one that is dense inside a warp's own span.
+
+    So the default is still chosen per device, and it is now chosen from numbers on both
+    rather than from the argument. The honest summary is the asymmetry: **the CPU default
+    matters a great deal and the GPU default barely matters at all.** If a future device
+    reverses even that 1.5%, `OPENREYNOLDS_LIVE_LAYOUT` and the `layouts` entrypoint are
+    how it would be found out, and nothing else would have to change.
+
+    It is a module-level constant and not a runtime flag because it is baked into the
+    generated code: a branch per array access would cost more than the layout saves.
+    `FluidWorld.report` prints which one is in force, so no number in
+    `PROGRESS_LIVE.md` is ambiguous about what produced it.
 
     **The unroll table above is warp-lang 1.19.0's and does not transfer to 1.17.0.**
     Isaac Lab 3.0.0 pins 1.17.0, so the whole table was re-measured there (the numbers

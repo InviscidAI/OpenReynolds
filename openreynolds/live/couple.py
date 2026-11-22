@@ -163,6 +163,26 @@ is dropped here rather than silently ignored in the kernel.
 """
 
 
+def _as_numpy(value: Any, length: int) -> tuple[float, ...]:
+    """A Newton model attribute as a tuple of floats, whether it is on the host or not.
+
+    `Model.gravity` is a `wp.array` or a `wp.vec3` depending on the Newton version, and
+    on a CUDA device Warp refuses the implicit conversion that works on the CPU:
+    "Warp does not support implicit NumPy conversion for arrays on device cuda:0."
+    So `np.asarray(model.gravity)` is correct on the machine this was written on and a
+    `TypeError` on the one it is meant for -- which is exactly how the first GPU run of
+    the falling-sphere case died, forty-four seconds in, after the lattice had compiled.
+
+    One helper rather than a `.numpy()` at the call site, because every Newton attribute
+    this file reads from the host has the same shape of problem and there is no reason
+    for the next one to rediscover it.
+    """
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    flat = np.asarray(value, dtype=np.float64).reshape(-1)[:length]
+    return tuple(float(v) for v in flat)
+
+
 def newton_shapes(model: Any) -> list[dict[str, Any]]:
     """Newton's shape table as plain Python, for inspection and for error messages.
 
@@ -332,7 +352,7 @@ class NewtonCoupling:
                                         dtype=wp.uint64, device=device)
         self._volumes = wp.zeros(count, dtype=wp.int32, device=device)
         self._buoyancy = wp.zeros(count, dtype=wp.spatial_vector, device=device)
-        self._gravity = tuple(float(v) for v in np.asarray(model.gravity).reshape(3))
+        self._gravity = _as_numpy(model.gravity, 3)
 
         # The world voxelises from its own host shape list; with a model behind it the
         # shapes are Newton's and the poses are composed on the device every step. The

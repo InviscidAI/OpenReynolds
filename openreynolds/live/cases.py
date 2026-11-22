@@ -863,8 +863,30 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
 # -- 4. sphere drag against the standard curve ------------------------------------------
 
 
+def _cells_for(reynolds: float, u_lattice: float, floor: int = 20) -> int:
+    """The coarsest lattice that is not stiff at this Reynolds number.
+
+    `nu_lattice = u_lattice * cells / Re`, and `units.STIFF_TAU` wants it above
+    `(0.52 - 0.5) * c_s^2 = 1/150`, so
+
+        cells > Re / (150 * u_lattice)
+
+    with a floor so that a low-Reynolds sphere is still resolved as a sphere rather than
+    as whatever eight cells make. One margin of 15% on top, because landing exactly on a
+    refusal boundary means a rounding change refuses the run.
+
+    This exists because the first GPU run of the sphere case was **refused** at Re 100
+    and Re 200: 16 cells and `u_lattice` 0.04 give tau_plus 0.5192 and 0.5096, and
+    `Scaling` would not build them. The refusal was right -- those lattices cannot carry
+    those Reynolds numbers -- and the case had no business asking for a fixed resolution
+    across a factor of twenty in Re.
+    """
+    needed = 1.15 * float(reynolds) / (150.0 * u_lattice)
+    return max(int(floor), int(math.ceil(needed)))
+
+
 def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
-               cells_per_d: int = 16, u_lattice: float = 0.04,
+               cells_per_d: int = 0, u_lattice: float = 0.055,
                collision: str = "trt", smagorinsky: float = 0.0,
                device: str | None = None, out_dir: str | Path = ".",
                span: float = 20.0, cross: float = 12.0,
@@ -893,14 +915,17 @@ def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
 
     curve = sphere_drag()
     diameter = 0.01
-    dx = diameter / cells_per_d
     out = Path(out_dir)
     rows = []
     drawn = []
 
     for index, re in enumerate(float(r) for r in reynolds):
+        # One resolution per Reynolds number, not one for the sweep: see `_cells_for`.
+        cells = int(cells_per_d) if cells_per_d else _cells_for(re, u_lattice)
+        dx = diameter / cells
         if progress:
-            progress(f"  sphere at Re {re:g} ({index + 1} of {len(reynolds)})")
+            progress(f"  sphere at Re {re:g} on {cells} cells per diameter "
+                     f"({index + 1} of {len(reynolds)})")
         scaling = Scaling.for_reynolds(dx, diameter, re, "water",
                                        u_lattice=u_lattice, scheme=collision,
                                        les=smagorinsky > 0)
@@ -939,7 +964,8 @@ def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
         expected = curve.schiller_naumann_cd(re)
         rows.append({"reynolds": re, "cd": cd, "schiller_naumann": expected,
                      "error": cd / expected - 1.0, "nodes": world.nodes,
-                     "steps": total, "force": force})
+                     "steps": total, "force": force, "cells_per_d": cells,
+                     "tau_plus": scaling.tau_plus})
         drawn.append(figures.slice_figure(
             world, out / f"live-sphere-re{re:g}.png", axis=2,
             title=f"sphere Re {re:g}, Cd {cd:.4f} against "
@@ -971,22 +997,24 @@ def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
     for figure in drawn:
         figures.ensure_rgb(figure)
     lines = [f"# sphere: drag at Re {', '.join(f'{r:g}' for r in reynolds)}, "
-             f"{cells_per_d} cells per diameter",
+             f"one resolution per Reynolds number",
              f"  domain:     {span:g} D long, {cross:g} D across, slip sides",
              f"  reference:  {REFERENCES['schiller_naumann']['source']}",
              f"  caveat:     {REFERENCES['schiller_naumann']['caveat']}"]
     for row in rows:
         lines.append(f"  Re {row['reynolds']:>6g}:  Cd {row['cd']:.4f} against "
                      f"{row['schiller_naumann']:.4f} ({row['error']:+.2%})  "
-                     f"{row['nodes']:,} nodes, {row['steps']:,} steps")
+                     f"{row['cells_per_d']} cells per diameter, tau_plus "
+                     f"{row['tau_plus']:.4f}, {row['nodes']:,} nodes, "
+                     f"{row['steps']:,} steps")
     return _result("sphere", checks, lines, drawn, rows=rows)
 
 
 # -- 5. a translating sphere: the moving-boundary and refill check ----------------------
 
 
-def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 16,
-                           u_lattice: float = 0.04, collision: str = "trt",
+def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 0,
+                           u_lattice: float = 0.055, collision: str = "trt",
                            smagorinsky: float = 0.0, device: str | None = None,
                            out_dir: str | Path = ".", steps: int | None = None,
                            progress: Callable[[str], None] | None = None,
@@ -1015,6 +1043,7 @@ def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 16,
 
     curve = sphere_drag()
     diameter = 0.01
+    cells_per_d = int(cells_per_d) if cells_per_d else _cells_for(reynolds, u_lattice)
     dx = diameter / cells_per_d
     scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
                                    u_lattice=u_lattice, scheme=collision,
@@ -1295,12 +1324,12 @@ def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
 # -- 7. the momentum balance ------------------------------------------------------------
 
 
-def run_momentum(*, cells: int = 48, steps: int = 4000, collision: str = "trt",
-                 smagorinsky: float = 0.0, device: str | None = None,
-                 out_dir: str | Path = ".",
+def run_momentum(*, cells: int = 48, steps: int = 0, cells_per_d: int = 16,
+                 collision: str = "trt", smagorinsky: float = 0.0,
+                 device: str | None = None, out_dir: str | Path = ".",
                  progress: Callable[[str], None] | None = None,
                  **_: Any) -> dict[str, Any]:
-    """Momentum in, momentum out: a closed periodic box with one moving body in it.
+    """Momentum in, momentum out, measured twice because the two halves fail differently.
 
     The conservation law this solver has to obey and the one its boundary treatment can
     break quietly. With every face periodic and no body force, the only thing that can
@@ -1309,74 +1338,130 @@ def run_momentum(*, cells: int = 48, steps: int = 4000, collision: str = "trt",
         d/dt (fluid momentum) = - (force on the body)
 
     exactly, and the integral of the force the solver reported must equal the change in
-    the momentum the solver holds. Both sides are measured here. A bounce-back that
-    reflects the wrong population, a Bouzidi interpolation with the wrong `q`, a refill
-    that invents mass -- all of them show up as a gap between the two, and none of them
-    shows up in a drag coefficient that is within 5% of a published fit.
+    the momentum the solver holds. A bounce-back that reflects the wrong population, a
+    Bouzidi interpolation with the wrong `q`, a sign flipped in the momentum exchange --
+    all of them show up as a gap between the two, and none of them shows up in a drag
+    coefficient that is within 5% of a published fit.
 
-    The moving window is off and must be: `lattice.shift` does not conserve momentum by
-    construction (fluid leaves one face and free stream arrives at the other), so a
-    balance measured across a shift is a measurement of the window.
+    **The still body is the tight check.** A fixed sphere in a closed periodic box with
+    the fluid started moving: the flow decays as it drags on the sphere, nothing is ever
+    refilled because nothing moves, and the balance is between two things the solver
+    computes independently -- a field integral over the whole lattice and a time integral
+    of a surface sum. Graded at 1%.
+
+    **The moving body is the loose one, and the slack is a real deficiency rather than
+    numerical noise.** A translating sphere uncovers lattice nodes as it goes, and
+    `lattice.refill` builds each of them from equilibrium at the body's own surface
+    velocity -- which **injects momentum that no force on the body accounts for**. The
+    gap is therefore a measurement of what equilibrium refilling costs, which is exactly
+    what `DECISIONS_LIVE.md` D5 said this case would measure. Graded at 10% and reported
+    with the refill count beside it, because the number means nothing without it.
+
+    **The body does not wrap.** The first run of this case let the sphere cross the
+    periodic x boundary and reappear at the far side, three times in four thousand
+    steps. Every wrap is a body vanishing from one place and appearing in another, which
+    is a momentum discontinuity of the whole body's worth, and it measured a 7.6%
+    imbalance that was almost entirely that. The run is now short enough that the sphere
+    stays inside, and `travelled` is reported so a reader can see that it did.
     """
     import warp  # noqa: F401
 
     from .world import Domain, FluidWorld
 
     diameter = 0.01
-    dx = diameter / 10.0
+    dx = diameter / int(cells_per_d)
     size = (cells * dx, cells * dx, cells * dx)
     scaling = Scaling.for_reynolds(dx, diameter, 50.0, "water", u_lattice=0.04,
                                    scheme=collision, les=smagorinsky > 0)
     speed = scaling.reference_velocity
-    domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces="periodic")
-    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                       substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device)
     centre = tuple(v / 2.0 for v in size)
-    body = world.add_body(position=centre, velocity=(speed, 0, 0, 0, 0, 0),
-                          label="sphere")
-    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
-    world.initialise()
 
-    before = np.asarray(world.momentum())
+    def box():
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces="periodic")
+        world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                           substeps=1, collision=collision, smagorinsky=smagorinsky,
+                           device=device)
+        body = world.add_body(position=centre, label="sphere")
+        world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
+        return world, body
+
+    # -- part one: the body is still and the fluid runs down ---------------------------
+    still, still_body = box()
+    still.initialise(velocity=(speed, 0.0, 0.0))
+    held = int(steps) if steps else 1500
+    before = np.asarray(still.momentum())
     impulse = np.zeros(3)
-    position = np.asarray(centre, dtype=float)
     history = []
-    for index in range(steps):
-        position = position + np.array([speed * world.dt, 0.0, 0.0])
-        # Periodic in x, so the body wraps with the lattice rather than leaving it.
-        position[0] = (position[0] - domain.origin[0]) % size[0] + domain.origin[0]
-        world.set_body_state(body, position=tuple(position))
-        world.step()
-        force, _ = world.wrench(body)
-        impulse += np.asarray(force) * world.dt
-        if index % max(1, steps // 200) == 0:
-            history.append((index * world.dt,
-                            float(np.linalg.norm(np.asarray(world.momentum()) - before)),
+    for index in range(held):
+        still.step()
+        force, _ = still.wrench(still_body)
+        impulse += np.asarray(force) * still.dt
+        if index % max(1, held // 200) == 0:
+            history.append((index * still.dt,
+                            float(np.linalg.norm(np.asarray(still.momentum()) - before)),
                             float(np.linalg.norm(impulse))))
-    after = np.asarray(world.momentum())
+        if progress and (index + 1) % max(1, held // 6) == 0:
+            progress(f"    still body {index + 1:>7,}/{held:,}")
+    gained = np.asarray(still.momentum()) - before
+    still_residual = float(np.linalg.norm(gained + impulse))
+    still_scale = float(max(np.linalg.norm(gained), np.linalg.norm(impulse), 1e-30))
+    still_relative = still_residual / still_scale
+    still.fallbacks = int(still._fallbacks.numpy()[0])
 
-    gained = after - before
-    # The fluid gained what the body lost, so the two should sum to zero.
-    residual = float(np.linalg.norm(gained + impulse))
-    scale = float(max(np.linalg.norm(gained), np.linalg.norm(impulse), 1e-30))
-    relative = residual / scale
-    # A grading choice: 5% of the momentum exchanged. The quantity is a difference of
-    # two independently computed numbers, one a field integral over tens of thousands of
-    # nodes in single precision and the other a time integral of a surface sum, so it
-    # cannot be tight. What it catches is a sign error or a factor, which is what a
-    # momentum balance is for; a 1% bound would be measuring float32.
-    limit = 0.05
+    # -- part two: the body translates, and the refilling shows up ---------------------
+    moving, moving_body = box()
+    moving.initialise()
+    # Short enough that the sphere stays inside the box: a third of the way across, so
+    # it never approaches the periodic face it would otherwise wrap through.
+    travel_steps = int(0.33 * cells / 0.04)
+    position = np.asarray(centre, dtype=float)
+    moving.set_body_state(moving_body, velocity=(speed, 0, 0, 0, 0, 0))
+    before_moving = np.asarray(moving.momentum())
+    impulse_moving = np.zeros(3)
+    for index in range(travel_steps):
+        position = position + np.array([speed * moving.dt, 0.0, 0.0])
+        moving.set_body_state(moving_body, position=tuple(position))
+        moving.step()
+        force, _ = moving.wrench(moving_body)
+        impulse_moving += np.asarray(force) * moving.dt
+        if progress and (index + 1) % max(1, travel_steps // 6) == 0:
+            progress(f"    moving body {index + 1:>7,}/{travel_steps:,}")
+    gained_moving = np.asarray(moving.momentum()) - before_moving
+    moving_residual = float(np.linalg.norm(gained_moving + impulse_moving))
+    moving_scale = float(max(np.linalg.norm(gained_moving),
+                             np.linalg.norm(impulse_moving), 1e-30))
+    moving_relative = moving_residual / moving_scale
+    travelled = float((position[0] - centre[0]) / diameter)
+    moving.refilled = int(moving._refilled.numpy()[0])
+    moving.fallbacks = int(moving._fallbacks.numpy()[0])
+
     checks = [
-        Check("momentum balance, |fluid gained + body impulse| / |exchanged|", relative,
-              f"<= {limit:.0%}", relative <= limit),
-        Check("fluid momentum gained", f"{gained[0]:+.4e} kg m/s (x)",
-              "reported, not graded", None),
-        Check("impulse the solver reported on the body",
+        Check("momentum balance, still body: |fluid gained + impulse| / |exchanged|",
+              still_relative, "<= 1%", still_relative <= 0.01,
+              "nothing moves, so nothing is refilled: this is the boundary condition "
+              "and the force sum checked against each other and nothing else"),
+        Check("momentum balance, translating body", moving_relative, "<= 10%",
+              moving_relative <= 0.10,
+              f"{moving.refilled:,} nodes were refilled from equilibrium, each "
+              f"injecting momentum that no force on the body accounts for. The gap is a "
+              f"measurement of what equilibrium refilling costs (DECISIONS_LIVE.md D5)"),
+        Check("the body stayed inside the box", f"{travelled:.2f} diameters travelled",
+              "no wrap through a periodic face",
+              travelled < 0.4 * cells / cells_per_d),
+        Check("fluid momentum gained, still body",
+              f"{gained[0]:+.4e} kg m/s (x)", "reported, not graded", None),
+        Check("impulse the solver reported, still body",
               f"{impulse[0]:+.4e} kg m/s (x)", "reported, not graded", None),
-        Check("lattice still finite", world.stable(), "True", world.stable()),
-        Check("window shifts", world.shifts, "0, or this measures the window",
-              world.shifts == 0),
+        Check("lattice still finite", still.stable() and moving.stable(), "True",
+              still.stable() and moving.stable()),
+        Check("window shifts", still.shifts + moving.shifts,
+              "0, or this measures the window",
+              still.shifts + moving.shifts == 0),
+        Check("Bouzidi fallbacks",
+              f"{still.fallbacks:,} still, {moving.fallbacks:,} moving",
+              "reported, not graded", None,
+              "links whose second fluid node was also solid; at "
+              f"{cells_per_d} cells per diameter this is the sphere's own curvature"),
     ]
     out = Path(out_dir)
     drawn = [figures.profile_figure(
@@ -1385,15 +1470,25 @@ def run_momentum(*, cells: int = 48, steps: int = 4000, collision: str = "trt",
           "label": "|fluid momentum change|"},
          {"x": [h[0] for h in history], "y": [h[2] for h in history],
           "label": "|impulse on the body|", "style": "--"}],
-        title=f"momentum balance: {relative:.2%} residual",
+        title=f"momentum balance, still body: {still_relative:.3%} residual",
         xlabel="t (s)", ylabel="kg m/s")]
+    drawn.append(figures.slice_figure(
+        moving, out / "live-momentum-moving.png", axis=2,
+        title=f"translating sphere after {travelled:.2f} D, "
+              f"{moving_relative:.2%} imbalance"))
     for figure in drawn:
         figures.ensure_rgb(figure)
-    lines = [f"# momentum: closed periodic box, {cells}^3, one translating sphere",
+    lines = [f"# momentum: a closed periodic box, {cells}^3, "
+             f"{cells_per_d} cells per diameter",
              *scaling.report(), *_official("momentum", scaling, smagorinsky),
-             f"  balance:    {relative:.3%} of the momentum exchanged",
-             *world.report()[-2:]]
-    return _result("momentum", checks, lines, drawn, relative=relative)
+             f"  still body: {still_relative:.4%} of the momentum exchanged, over "
+             f"{held:,} steps, 0 refills",
+             f"  moving:     {moving_relative:.4%} over {travel_steps:,} steps and "
+             f"{travelled:.2f} diameters, {moving.refilled:,} refills",
+             *still.report()[-2:]]
+    return _result("momentum", checks, lines, drawn, still=still_relative,
+                   moving=moving_relative, refilled=moving.refilled,
+                   travelled=travelled)
 
 
 # -- 8. ground effect: one actuator disk over a plane -----------------------------------
@@ -1846,6 +1941,7 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 16,
     curve = sphere_drag()
     diameter = 0.01
     radius = diameter / 2.0
+    cells_per_d = int(cells_per_d) if cells_per_d else _cells_for(reynolds, 0.04)
     dx = diameter / cells_per_d
     out = Path(out_dir)
     rows = []

@@ -1140,8 +1140,10 @@ def live_group() -> None:
     A lattice Boltzmann fluid that runs here, next to your own GPU, rather than in the
     study's workspace: the workspace image has no Warp and no CUDA toolchain, and
     `DECISIONS_LIVE.md` D6 is the record of why it is not going to get them. With no
-    GPU the same kernels run on Warp's CPU backend, slower, which is what every number
-    in `PROGRESS_LIVE.md` was measured on.
+    GPU the same kernels run on Warp's CPU backend, correctly and much more slowly:
+    the physics is device-independent and only the rate is not. `PROGRESS_LIVE.md`
+    names the device beside every number, because a rate without a device is not a
+    measurement.
 
     `pip install 'openreynolds[live]'` installs it. Without that, every subcommand here
     says so and exits 1, and nothing else in OpenReynolds is affected.
