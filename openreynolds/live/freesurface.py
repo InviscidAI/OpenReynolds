@@ -606,6 +606,103 @@ def sync_fluid_mass(
 
 
 @wp.kernel
+def refill_vacated(
+    f: wp.array4d(dtype=DTYPE),
+    phi: wp.array3d(dtype=DTYPE),
+    phi_prev: wp.array3d(dtype=DTYPE),
+    flags: wp.array3d(dtype=wp.int32),
+    fill: wp.array3d(dtype=DTYPE),
+    mass: wp.array3d(dtype=DTYPE),
+    returned: wp.array(dtype=DTYPE),
+):
+    """Water closes in behind a moving hull. Without this, the surface tears.
+
+    A cell a body has just left is fresh: `phi >= 0` now, `phi_prev < 0` a step ago. The
+    single-phase solver has `lattice.refill` for exactly this and builds an equilibrium
+    there from the neighbours. A free-surface run cannot reuse it unchanged, because a
+    vacated cell may be under water, in the air, or straddling the surface, and the
+    three want different answers.
+
+    **What went wrong without it.** `flags_from_solid` marked every vacated cell `GAS`,
+    which is right above the waterline and wrong below it: a gas cell appearing inside
+    the water is a hole, its fluid neighbours are then fluid cells touching gas, and the
+    reconstruction that should have closed the hole never fires because it is
+    conditioned on a cell being an **interface** cell. Measured on the floating box at
+    160 cells: **626 fluid cells touching gas**, and the run went non-finite shortly
+    after -- *after* producing a correct draft, which is the worst way for it to fail,
+    because the graded numbers all passed on the way past.
+
+    So the decision is made from the neighbours, which is the only local evidence of
+    where the water is:
+
+    * no wet neighbour at all -- the cell is in the air, or inside the hull still. `GAS`,
+      no mass, and nothing else to do.
+    * wet neighbours -- their mean density and velocity become this cell's equilibrium,
+      and their mean fill becomes its mass. A cell that opens up deep in the water gets
+      a full cell of water; one that opens up at the surface gets the fraction its
+      neighbours have, and the ordinary conversion machinery takes it from there.
+
+    The mass handed back is accumulated into `returned`, because
+    `FreeSurfaceWorld.displaced_by_solids` is charged for the water the hull carried off
+    and has to be credited for the water it gives back. A hull that moves and stops
+    should owe nothing.
+    """
+    i, j, k = wp.tid()
+    if phi[i, j, k] < DTYPE(0.0):
+        return
+    if phi_prev[i, j, k] >= DTYPE(0.0):
+        return
+
+    nx = flags.shape[0]
+    ny = flags.shape[1]
+    nz = flags.shape[2]
+    rho = DTYPE(0.0)
+    mom = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+    filled = DTYPE(0.0)
+    found = DTYPE(0.0)
+    for d in range(1, Q):
+        a = int(i + L.C[0, d])
+        b = int(j + L.C[1, d])
+        c = int(k + L.C[2, d])
+        if a < 0 or a >= nx or b < 0 or b >= ny or c < 0 or c >= nz:
+            continue
+        neighbour = flags[a, b, c]
+        if neighbour != CELL_FLUID and neighbour != CELL_INTERFACE:
+            continue
+        local = DTYPE(0.0)
+        local_mom = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+        for q in range(Q):
+            value = L.pop(f, q, a, b, c)
+            local += value
+            local_mom += wp.vec3(DTYPE(L.C[0, q]), DTYPE(L.C[1, q]),
+                                 DTYPE(L.C[2, q])) * value
+        rho += local
+        mom += local_mom
+        filled += fill[a, b, c]
+        found += DTYPE(1.0)
+
+    if found == DTYPE(0.0):
+        flags[i, j, k] = CELL_GAS
+        mass[i, j, k] = DTYPE(0.0)
+        return
+
+    density = rho / found
+    velocity = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+    if rho > DTYPE(1.0e-9):
+        velocity = mom / rho
+    for q in range(Q):
+        L.set_pop(f, q, i, j, k, L._equilibrium(q, density, velocity))
+    share = wp.clamp(filled / found, DTYPE(0.0), DTYPE(1.0))
+    given = density * share
+    mass[i, j, k] = given
+    wp.atomic_add(returned, 0, given)
+    if share >= DTYPE(1.0) - FILL_EPSILON:
+        flags[i, j, k] = CELL_FLUID
+    else:
+        flags[i, j, k] = CELL_INTERFACE
+
+
+@wp.kernel
 def flags_from_solid(
     phi: wp.array3d(dtype=DTYPE),
     flags: wp.array3d(dtype=wp.int32),
@@ -616,9 +713,9 @@ def flags_from_solid(
     A cell that a body has just moved into becomes solid and gives up its mass -- which
     is counted, in `FreeSurfaceWorld.step`, because a boat pushing water out of the way
     is the one place this solver can lose mass for a legitimate reason and still has to
-    say how much. A cell a body has just left becomes gas and is given nothing; the
-    refilling and the conversion machinery will bring the surface back to it if the
-    water is there to do it.
+    say how much. A cell a body has just **left** is marked gas here and then handed to
+    `refill_vacated`, which is the kernel that can see its neighbours and therefore
+    decide whether the water closes in behind the hull or the air does.
     """
     i, j, k = wp.tid()
     solid = phi[i, j, k] < DTYPE(0.0)
@@ -629,6 +726,9 @@ def flags_from_solid(
             mass[i, j, k] = DTYPE(0.0)
         return
     if flag == CELL_SOLID:
+        # Vacated. `refill_vacated` decides what it becomes, from its neighbours; it
+        # cannot be decided here because this kernel sees only the cell. Marked gas as
+        # the safe default for a cell with no wet neighbour.
         flags[i, j, k] = CELL_GAS
         mass[i, j, k] = DTYPE(0.0)
 
@@ -901,6 +1001,7 @@ class FreeSurfaceWorld(FluidWorld):
         self._lost = wp.zeros(1, dtype=DTYPE, device=self.device)
         self._converted = wp.zeros(1, dtype=wp.int32, device=self.device)
         self._mass_probe = wp.zeros(1, dtype=DTYPE, device=self.device)
+        self._returned = wp.zeros(1, dtype=DTYPE, device=self.device)
         self._use_flags = 1
         self.initial_mass = 0.0
         self.displaced_by_solids = 0.0
@@ -1027,6 +1128,23 @@ class FreeSurfaceWorld(FluidWorld):
         # charge the difference to `displaced_by_solids` rather than to the algorithm.
         wp.launch(flags_from_solid, dim=self.shape,
                   inputs=[self.phi, self._flags, self.mass], device=self.device)
+        if self._static == 0 or self.steps == 0:
+            # Water closes in behind a moving hull. `fill` is from the previous step,
+            # which is what the refilled cell's neighbours were last known to hold, and
+            # is the right thing to copy: the surface has not moved yet this step.
+            wp.launch(refill_vacated, dim=self.shape,
+                      inputs=[self.f, self.phi, self.phi_prev, self._flags, self.fill,
+                              self.mass, self._returned],
+                      device=self.device)
+            # And close the interface, because a hull sweeping through can leave a fluid
+            # cell beside a gas one in a way no conversion rule covers -- 626 of them on
+            # the floating box before this ran, and a non-finite lattice shortly after.
+            wp.launch(close_interface, dim=self.shape,
+                      inputs=[self.f, self._flags, self.mass, self._wanted],
+                      device=self.device)
+            wp.launch(adopt_flags, dim=self.shape,
+                      inputs=[self._flags, self._wanted, self.mass, self.f],
+                      device=self.device)
         if before_solid is not None:
             self.displaced_by_solids += before_solid - self.lattice_mass()
         wp.copy(self.phi_prev, self.phi)

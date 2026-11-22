@@ -757,10 +757,21 @@ Added 2026-11-23. This closes the item that sat at the top of the unknown list: 
 rigid body can be **two-way coupled** to `openreynolds/live/` inside a live Kit process.
 It can. Everything below is from `benchmarks/live/modal_isaacsim.py::submarine`.
 
-Deliberately on `FluidWorld` and not `FreeSurfaceWorld`. `DECISIONS_LIVE.md` D9 records
-that the momentum-exchange wrench on a body in a fluid carrying a body force is not yet
-derived -- a fully submerged box whose answer is exactly `+rho V g` reads -0.48 times it
--- so anything at a waterline is blocked. A fully submerged hull never touches that path.
+Deliberately on `FluidWorld` and not `FreeSurfaceWorld`, on the brief that D9's
+momentum-exchange wrench was underived and a fully submerged box reading `-0.48 x rho V g`
+blocked anything at a waterline.
+
+**That premise was retracted while this was being built, and the retraction is the more
+important news.** Commit `1096a13`, "NewtonCoupling pushes poses at construction; four
+buoyancy findings retracted", found that `world.step()` syncs poses from the world's own
+arrays and not from Newton, so a body that existed only in Newton sat at the origin for
+every world-only step and voxelised into the corner of the domain. All four buoyancy
+numbers came from that, including the -0.48. `4ae1c95` then measured that there is no
+force defect: the momentum exchange gives buoyancy to 0.1%.
+
+So a submarine was not, in the end, necessary to dodge a defect -- **a boat is no longer
+blocked by that finding.** What a submarine still does, and what this section is for, is
+answer the two-way-coupling question with the fewest moving parts.
 
 ### 11.1 The answer
 
@@ -772,18 +783,30 @@ boundary links in our Warp kernels -- and at steady state they must cancel:
 
 | | |
 | --- | --- |
-| **mean `|fluid Fx|` / thrust at cruise** | **0.82** |
-| momentum balance `|F_fluid| / (T - m a)`, late run | **0.885** |
-| hull voxelised into the lattice | 23,184 cells of (0.5 mm)^3 |
+| **mean `|fluid Fx|` / thrust at cruise** | **0.815** |
+| **momentum balance `|F_fluid| / (T - m a)`, 20 pre-dive frames** | **0.879** |
+| axial wrench samples it is averaged over | 347, standard deviation 9.33e-6 N |
+| hull voxelised into the lattice | 23,184 cells of (0.5 mm)^3, holding 23,075 to 23,200 |
 | voxel volume against the analytic capsule | 2.898e-6 against 2.87979e-6 m3, **+0.63%** |
+| Cd from the fluid wrench, late pre-dive | 4.41 at Re 64 |
 
 A one-way coupling flies the submarine and fails both of those. The second row is the
 better test: it does not assume terminal velocity, because `m a = T - F_fluid` holds at
 every instant, and it is what caught the vacuum case in 11.3.
 
 The run: lattice **480 x 160 x 200 = 15.36 M nodes**, dx 0.5 mm, dt 1.993 ms, 5,236
-coupled steps covering 10.4 s, solver **490 MLUPS** on an L40S, render 13.0 s for 44
-frames at 1280x720.
+coupled steps covering 10.4 s, solver **514 MLUPS** on an L40S, render 9.2 s for 44
+frames at 1280x720. The hull swims from x = 30 mm to x = 99 mm and reaches 9.1 mm/s;
+the pitch pulse takes the nose from level to 45 degrees down and the hull descends at
+1.7 mm/s on thrust vectoring alone.
+
+**The Cd of 4.41 at Re 64 is reported, not graded.** `cases.run_underwater` grades a
+*zero-length* capsule, which is a sphere with a published answer, and reports its
+fineness-4 hull as higher than the sphere's on the same frontal area without grading it,
+because no published coefficient for that shape has been read for this repository. The
+same applies here and more so: this hull is self-propelled and still a little short of
+terminal speed, so the number is a measurement of this run and not a claim about
+capsules.
 
 ### 11.2 Three things that had to be got right, each found by being got wrong
 
@@ -854,10 +877,20 @@ Neither is needed for anything here to work; both would make a submarine easier 
 1. **`FluidWorld._maybe_shift` and the voxelisation.** Section 11.3. This is the one that
    matters, because the moving window is how any travelling body is meant to be run and
    the failure is silent: a zero wrench reads as a coupling that was never wired up.
-2. **Let `NewtonCoupling` take the displaced volume instead of recounting voxels.**
-   Something like `NewtonCoupling(..., buoyancy=True, volume=V)`. Section 11.2 is the
-   argument: for a near-neutrally-buoyant body the voxel count's own quantisation is the
-   dominant force error, and the caller usually knows the analytic volume exactly.
+2. ~~Let `NewtonCoupling` take the displaced volume instead of recounting voxels.~~
+   **Withdrawn after reading `couple.py` properly.** It already says why it uses the
+   voxelised volume and not the analytic one: "using the analytic volume for the
+   buoyancy and the voxelised surface for the drag does not balance and the error lands
+   squarely on the quantity being graded". For a falling sphere, whose terminal velocity
+   is the difference between two numbers of the same size, that is correct and an
+   analytic override would break it.
+
+   The measurement in 11.2 still stands -- for a *near-neutrally-buoyant* body the voxel
+   quantisation is the dominant force error -- but the remedy is not an override. It is
+   a finer lattice, or a sub-cell-weighted volume of the kind `lattice.submerged_volumes`
+   now computes for the free surface, or accepting that neutral buoyancy is out of reach
+   at this resolution and modelling it as the absence of both forces, which is what this
+   demo does.
 
 ### 11.5 Drawing the fluid, and the renderer traps that were already written down
 
@@ -894,13 +927,72 @@ reports distinct colours for each. **All six prim-and-scale combinations draw**,
 what proved the submarine's blank frames were never a renderer problem -- the submarine
 had dived out of shot.
 
-<!-- SUB-RESULT -->
+### 11.6 Which commit each number is from
+
+This tree was being edited by another contributor throughout, including
+`openreynolds/live/couple.py` and `lattice.py`, and `modal_isaacsim.py` mounts the
+working tree rather than a commit.
+
+**Every number in 11.1, and the artifacts, come from the last run, which started at
+06:05 and therefore postdates `1096a13` (05:44) and `4ae1c95` (05:51) and predates
+`531404a` (06:13, which touched only `cases.py` and `freesurface.py`).** It is current
+against the coupling code as committed.
+
+The earlier runs quoted in 11.2 and 11.3 -- the rising hull, the density calibration, the
+44x buoyancy swing, the window collapse -- predate `1096a13`. Their subject is the
+granularity of the voxelisation and the behaviour of `_maybe_shift`, neither of which
+that commit touched, and the last run reproduces the stable-voxelisation half of it
+(`solid_cells` 23,075 to 23,200 with the window off). The window finding has **not** been
+re-measured against the current `couple.py`, and should be before anyone acts on it.
+
+### 11.7 The runs, and what they cost
+
+Twelve `submarine` runs plus one `stage_check`, all L40S, all stopped. The numbers above
+are from the last.
+
+| app | what it settled |
+| --- | --- |
+| `ap-Kha1Xuf3CLF5Ybhc4caUq0` | first coupled run: hull rose on the 0.63% voxel buoyancy |
+| `ap-IfNwtbfPVzLhzZExEHH8kQ` | density calibrated, residual 9.7e-10 N, still sank on the 44x swing |
+| `ap-xQ1hStFuROM2AHCXTZGv1H` | gravity set after the solver was built: divergence to 1e8 m |
+| `ap-i5VvDMGkvAJnIGfp1l26XM` | gravity order fixed; the window had killed the voxelisation |
+| `ap-OBvi4O4AnXWKibwzMgiEOy` | `stage_check`: all six prim-and-scale combinations draw |
+| `ap-NIusmgDmcXcTjfT8tItgpm` | `follow=None`: wrench non-zero, `solid_cells` stable |
+| `ap-Ukoy1RneOo3tEXKNjLnGFV` | the run every number in 11.1 comes from |
+
+The four runs between the last two are framing and lighting: the metallic hull, the
+wake threshold, the wake's hull mask, and three camera stand-offs picked by eye before
+one was finally computed from the aperture. A `submarine` job is about 3.5 minutes of
+L40S, so the thirteen together are roughly 45 minutes, **order of a dollar fifty** at
+L40S list price. Arithmetic over counted runs, not a billing figure.
+
+**On rebuilding the image:** none was needed when `openreynolds/live/lattice.py`
+changed. This file mounts the repository with `add_local_dir` **without** `copy=True`,
+so the working tree is uploaded at run time and is never baked into a cached layer.
+Section 10.3 is the evidence: a `cases` run picked up a fix to `cases.py` minutes after
+it was made, while the run before it had the bug.
+
+
+
+### 11.8 Artifacts
+
+In `benchmarks/live/results/isaacsim/`:
+
+| file | what |
+| --- | --- |
+| `submarine_hero.png` | 1280x720, the hull pitched nose-down mid-dive with its wake |
+| `submarine.gif` | 44 frames at 640x360, the whole run |
+| `submarine_000.png`, `_014`, `_024`, `_043` | stills across the run |
+| `submarine-l40s.json` | every number above and the per-frame trace |
+| `stagecheck.json` | which prim types draw at which scale and near plane |
 
 ## 12. What is still unknown
 
 - **`FluidWorld._maybe_shift` and the voxelisation collapse (11.3).** The most valuable
   thing on this list, because the moving window is how a travelling body is meant to run
-  and the failure is silent.
+  and the failure is silent. **Measured before `1096a13` and not since**; that commit
+  changed when poses are pushed, which is adjacent enough that it should be re-run
+  before anyone digs into `_maybe_shift`.
 - Whether a Warp kernel **writing** through a PhysX tensor view is seen by PhysX on the
   next step. Reading at `cuda:0` with a real device pointer is established (section 6).
 - Whether `isaacsim.physics.newton`, Isaac Sim 6.2's own Newton backend, can drive

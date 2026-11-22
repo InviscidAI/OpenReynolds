@@ -2096,10 +2096,11 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         analytic = math.pi * radius * radius * 2.0 * half_height             + 4.0 / 3.0 * math.pi * radius ** 3
         emit("analytic_volume_m3", analytic)
         emit("hull_mass_kg", float(model.body_mass.numpy()[0]))
-        # NOT `world.solid_cells(0)` here (before the probe above there was nothing to
-        # read). The lattice has no idea where the body is
-        # until a step has pushed the poses and voxelised, so read before the first
-        # `link.step()` it is 0 -- which is precisely the reading that
+        # NOT `world.solid_cells(0)` here. `NewtonCoupling.__init__` does push the body
+        # poses at construction as of `1096a13`, but pushing poses is not voxelising:
+        # `solid_cells` reads `owner`, and `owner` is written by the voxelisation inside
+        # `world.step()`. So before the first `link.step()` it reads 0 -- which is
+        # precisely the reading that
         # `world.solid_cells`' own docstring warns means "a body too small for its
         # lattice", and a 10 mm capsule on a 0.5 mm lattice is nothing of the kind. The
         # real count is emitted after the first step below, where it is a diagnostic
