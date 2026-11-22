@@ -480,6 +480,61 @@ Also found and fixed on the way, both prerequisites for any hull:
 The carried cup is not begun, and it needs M6's force to be right first: a cup of water
 is a floating-body problem turned inside out.
 
+## Inside Isaac Sim
+
+The addendum asks that the demos "work within Isaac Sim natively", "look good" and be
+"verified within Isaac Sim". All three were established by running it, on Modal L40S and
+A10G containers against `isaacsim` 6.2.0.0. `docs/isaac-sim-notes.md` is the full
+write-up; `benchmarks/live/modal_isaacsim.py` is the app.
+
+**It installs and renders.** Isaac Sim 6.2.0.0 installs from `pypi.nvidia.com` into an
+ordinary Modal image -- 7,465 MiB of wheels, built once in 305 s -- starts headless in 17
+to 47 s, runs PhysX on the GPU and **renders with RTX**. The container's own
+`vulkaninfo` reports no Vulkan device at all, on every base image and GPU, and Kit gets
+the device anyway because it brings its own loader. The only test that settles whether a
+container can render is starting Kit and looking at the pixels.
+
+**The extension runs inside a live Kit process, on Kit's own Warp.** Kit bundles Warp
+**1.17.0** and Newton **1.6.1**, two minor versions below what `benchmarks/live/` pins,
+and `import warp` inside Kit resolves to `omni.warp.core-1.17.0` rather than the pip
+wheel. Against that: **63 passed, 0 failed**, no shim, no kernel failing to compile and
+none giving a different answer. `hydrostatic` passed 7/7 and `sloshing` 4/4 **inside
+Kit**, the latter at 1.0036 of linear theory.
+
+**Two-way coupling works inside Kit**, which was the open question:
+
+| | |
+| --- | --- |
+| fluid drag against thrust at cruise | `|Fx| / T` = **0.815** |
+| momentum balance | `|F_fluid| / (T - m a)` = **0.879** |
+| samples | 347 wrench samples, sigma 9.33e-6 N, over 20 frames |
+| lattice | 480 x 160 x 200 = **15.36 M nodes** at **514 MLUPS** on an L40S |
+
+Those two forces arrive by completely different routes -- the body's kinematics in
+Newton, and the populations crossing boundary links in the Warp kernels -- so a one-way
+coupling flies the submarine and fails both numbers.
+
+**The demos.** A submarine (capsule hull, fineness 4, swims 30 to 99 mm at 9.1 mm/s,
+then takes a dive pulse to 45 degrees nose-down and descends at 1.7 mm/s on thrust
+vectoring alone; wake drawn as a point instancer over the decimated velocity field) and
+a 144 x 64 x 64 dam break at 167 MLUPS with the water as a heightfield mesh rebuilt each
+frame. Hero stills and GIFs are in `benchmarks/live/results/isaacsim/`.
+
+**"It rendered" is a measurement here, not an assumption**, and that took three
+iterations to get right. A flat frame and an empty frame are different bugs, so the
+guard reports `render_unique_colours` (0 means the annotator gave nothing, 1 means a
+flat frame) beside a **per-channel** standard deviation -- a whole-array stddev scored
+51.32 on a flat teal frame whose true colour count was 1. Three ways a correct scene
+renders as nothing were found and are written up: nothing ticking the app, the scene
+inside the default 1.0-stage-unit near clip plane (Kit's default stage is centimetres
+and Y-up, so a benchtop-scale SI scene is exactly what it is wrong for), and exposure
+rather than material -- a 0.40 grey under a 4,200 key saturates and looks exactly like
+an unbound shader, which sent the first fix to the wrong place.
+
+**What is not established**: whether `isaacsim.physics.newton` -- Isaac Sim 6.2 ships
+Newton as a first-class backend -- can drive `couple.NewtonCoupling` directly. The demos
+read PhysX bodies and render the fluid; the coupled run above uses Newton directly.
+
 ## What is not measured, and will not be claimed
 
 - **The drone demo at 0.5x real time or better.** It is a device claim. The rate is
