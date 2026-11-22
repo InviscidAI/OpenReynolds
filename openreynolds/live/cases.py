@@ -1168,121 +1168,195 @@ def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
 # -- 5. a translating sphere: the moving-boundary and refill check ----------------------
 
 
+def _sphere_in_a_box(reynolds: float, cells_per_d: int, u_lattice: float,
+                     moving: bool, *, collision: str, smagorinsky: float,
+                     device: str | None, steps: int | None,
+                     progress: Callable[[str], None] | None):
+    """One sphere at one Reynolds number, either held in a stream or moving through still
+    fluid, in the **same box at the same resolution**. Returns its drag coefficient.
+
+    One function for both, because the whole point of the comparison is that nothing
+    differs between them except which of the two is moving. Two functions, or two
+    hand-written setups, would leave a reader wondering whether the box or the sampling
+    window had changed too.
+    """
+    from .world import Domain, FluidWorld
+
+    diameter = 0.01
+    dx = diameter / cells_per_d
+    scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
+                                   u_lattice=u_lattice, scheme=collision,
+                                   les=smagorinsky > 0)
+    speed = scaling.reference_velocity
+    size = (24.0 * diameter, 12.0 * diameter, 12.0 * diameter)
+    if moving:
+        faces = {"-x": "outlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                 "-z": "slip", "+z": "slip"}
+        face_velocity: dict[str, tuple[float, float, float]] = {}
+    else:
+        faces = {"-x": "inlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                 "-z": "slip", "+z": "slip"}
+        face_velocity = {"-x": (speed, 0.0, 0.0)}
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces=faces,
+                    face_velocity=face_velocity)
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    # The moving sphere starts downstream and travels upstream, so that it spends the
+    # whole run in fluid it has not already disturbed. The held one sits where the
+    # moving one ends up, so both are measured at the same place in the same box.
+    start = (18.0 * diameter if moving else 6.0 * diameter,
+             size[1] / 2.0, size[2] / 2.0)
+    body = world.add_body(position=start, label="sphere",
+                          velocity=(-speed, 0, 0, 0, 0, 0) if moving else None)
+    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
+    world.initialise(velocity=(0.0, 0.0, 0.0) if moving else (speed, 0.0, 0.0))
+
+    total = int(steps if steps else 8.0 * cells_per_d / u_lattice)
+    area = math.pi * (diameter / 2.0) ** 2
+    scale = 2.0 / (scaling.fluid.rho * speed * speed * area)
+    position = np.asarray(start, dtype=float)
+    samples: list[float] = []
+    history: list[tuple[float, float]] = []
+
+    for index in range(total):
+        if moving:
+            position = position + np.array([-speed * world.dt, 0.0, 0.0])
+            world.set_body_state(body, position=tuple(position))
+        world.step()
+        if index > total // 2:
+            force, _ = world.wrench(body)
+            samples.append(float(force[0]) * scale)
+            history.append(((start[0] - position[0]) / diameter, samples[-1]))
+        if progress and (index + 1) % max(1, total // 6) == 0:
+            progress(f"    {'moving' if moving else 'held  '} "
+                     f"{index + 1:>7,}/{total:,} steps")
+
+    cd = float(np.mean(samples[-max(1, len(samples) // 3):])) if samples else float("nan")
+    return {
+        "moving": moving, "cd": cd, "cells_per_d": cells_per_d, "nodes": world.nodes,
+        "steps": total, "refilled": int(world._refilled.numpy()[0]),
+        "fallbacks": int(world._fallbacks.numpy()[0]),
+        "travelled": float((start[0] - position[0]) / diameter),
+        "history": history, "world": world, "scaling": scaling,
+    }
+
+
 def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 0,
                            u_lattice: float = 0.055, collision: str = "trt",
                            smagorinsky: float = 0.0, device: str | None = None,
                            out_dir: str | Path = ".", steps: int | None = None,
                            progress: Callable[[str], None] | None = None,
                            **_: Any) -> dict[str, Any]:
-    """The same sphere, moving through still fluid instead of held in a stream.
+    """The same sphere twice: held in a stream, and moving through still fluid.
 
     This is the check `DECISIONS_LIVE.md` D5 promises for the fresh-node refilling, and
     it is the right one because the quantity a bad refill ruins is exactly this: the
     force on a body that is uncovering lattice nodes as it goes. A held sphere in a
-    stream never refills anything.
+    stream never refills anything, so it is the control.
 
-    Galilean invariance is the reference and it is exact. The same sphere at the same
-    Reynolds number must feel the same drag whether the fluid moves past it or it moves
-    through the fluid, so the number to compare against is `run_sphere`'s at the same
-    Re -- a reference measured by this same solver, which makes this a test of the
-    moving-boundary treatment alone and not of the drag model. Schiller-Naumann is
-    reported beside it as the external check.
+    **The reference is Galilean invariance, and it is exact.** The same sphere at the
+    same Reynolds number must feel the same drag whether the fluid moves past it or it
+    moves through the fluid. So the graded number is the *ratio* of the two drag
+    coefficients, both measured here, in the same box, at the same resolution, with the
+    same sampling window -- and a ratio cancels every error the two runs share:
+    resolution, blockage, the collision operator, the Reynolds number, the sampling. What
+    is left is what the moving-boundary treatment costs, which is the only thing this
+    case can honestly claim to measure.
 
-    The sphere is driven at a prescribed constant velocity rather than released, because
-    a released sphere's velocity is an outcome and this case is about the boundary
-    treatment. `falling_sphere` is the released one.
+    Schiller-Naumann is reported for both and graded for neither. That is the change the
+    first GPU run forced: this case used to grade the moving sphere against the
+    correlation, which conflates the refill error with the resolution error and the
+    blockage error, and a 12-diameter box at 20 cells per diameter has several per cent
+    of both. Grading a difference against an exact reference is strictly better evidence
+    than grading an absolute against a fitted one.
+
+    That run also found the drag sign: it reported **Cd = -1.19**, because the force on a
+    sphere moving in -x is +x and the sampler negated it. The magnitude was right, which
+    is why only the sign gave it away.
     """
     import warp  # noqa: F401
 
-    from .world import Domain, FluidWorld
-
     curve = sphere_drag()
-    diameter = 0.01
-    cells_per_d = int(cells_per_d) if cells_per_d else _cells_for(reynolds, u_lattice)
-    dx = diameter / cells_per_d
-    scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
-                                   u_lattice=u_lattice, scheme=collision,
-                                   les=smagorinsky > 0)
-    speed = scaling.reference_velocity
-    size = (20.0 * diameter, 12.0 * diameter, 12.0 * diameter)
-    domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
-                    faces={"-x": "outlet", "+x": "outlet", "-y": "slip", "+y": "slip",
-                           "-z": "slip", "+z": "slip"})
-    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                       substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device)
-    start = (15.0 * diameter, size[1] / 2.0, size[2] / 2.0)
-    body = world.add_body(position=start, velocity=(-speed, 0, 0, 0, 0, 0),
-                          label="sphere")
-    world.add_shape("sphere", body=body, scale=(diameter / 2.0, 0.0, 0.0))
-    world.initialise()
+    cells = int(cells_per_d) if cells_per_d else _cells_for(reynolds, u_lattice)
+    runs = {}
+    for moving in (False, True):
+        if progress:
+            progress(f"  sphere at Re {reynolds:g}, "
+                     f"{'moving through still fluid' if moving else 'held in a stream'}")
+        runs[moving] = _sphere_in_a_box(
+            reynolds, cells, u_lattice, moving, collision=collision,
+            smagorinsky=smagorinsky, device=device, steps=steps, progress=progress)
 
-    total = int(steps if steps else 6.0 * cells_per_d / u_lattice)
-    position = np.asarray(start, dtype=float)
-    samples: list[float] = []
-    travelled = []
-
-    def take(_index: int) -> None:
-        force, _ = world.wrench(body)
-        samples.append(float(-force[0]))
-        travelled.append((start[0] - position[0]) / diameter)
-
-    for index in range(total):
-        position = position + np.array([-speed * world.dt, 0.0, 0.0])
-        world.set_body_state(body, position=tuple(position))
-        world.step()
-        if index > total // 2:
-            take(index)
-        if progress and (index + 1) % max(1, total // 8) == 0:
-            progress(f"    {index + 1:>8,}/{total:,} steps  "
-                     f"{(start[0] - position[0]) / diameter:.2f} D travelled")
-
-    area = math.pi * (diameter / 2.0) ** 2
-    force = float(np.mean(samples[-max(1, len(samples) // 3):])) if samples else 0.0
-    cd = 2.0 * force / (scaling.fluid.rho * speed * speed * area)
+    held, going = runs[False], runs[True]
     expected = curve.schiller_naumann_cd(reynolds)
-    world.fallbacks = int(world._fallbacks.numpy()[0])
-    world.refilled = int(world._refilled.numpy()[0])
+    ratio = going["cd"] / held["cd"] if held["cd"] else float("nan")
     limit = REFERENCES["schiller_naumann"]["tolerance"]
 
     checks = [
-        Check(f"Cd of a translating sphere at Re {reynolds:g}", cd,
-              f"{expected:.4f} +/- {limit:.0%} (Schiller-Naumann)",
-              abs(cd / expected - 1.0) <= limit),
-        Check("fresh nodes refilled", world.refilled, "> 0, or nothing moved",
-              world.refilled > 0,
+        Check("Galilean invariance: Cd moving / Cd held", ratio,
+              f"1.0 +/- {limit:.0%}, and this reference is exact",
+              abs(ratio - 1.0) <= limit,
+              "both measured here, same box, same resolution, same window, so the "
+              "ratio carries only what the moving-boundary treatment costs"),
+        Check("Cd held in a stream", held["cd"],
+              f"{expected:.4f} (Schiller-Naumann), reported not graded", None,
+              f"{held['cd'] / expected - 1.0:+.2%} on the correlation; the difference is "
+              f"resolution and the {1 / 12:.1%} blockage of a 12-diameter box, which the "
+              f"ratio above cancels"),
+        Check("Cd moving through still fluid", going["cd"],
+              f"{expected:.4f} (Schiller-Naumann), reported not graded", None,
+              f"{going['cd'] / expected - 1.0:+.2%} on the correlation"),
+        Check("fresh nodes refilled, moving", going["refilled"],
+              "> 0, or nothing moved", going["refilled"] > 0,
               "the count this case exists to exercise: a sphere that uncovered no "
               "lattice node has not tested the refilling at all"),
-        Check("Bouzidi fallbacks", world.fallbacks, "reported, not graded", None,
-              "links whose second fluid node was also solid; a sub-cell body or a "
-              "sharp edge"),
+        Check("fresh nodes refilled, held", held["refilled"], "0, it does not move",
+              held["refilled"] == 0),
+        Check("diameters travelled", f"{going['travelled']:.2f}",
+              "reported, not graded", None),
+        Check("Bouzidi fallbacks",
+              f"{held['fallbacks']:,} held, {going['fallbacks']:,} moving",
+              "reported, not graded", None),
     ]
     out = Path(out_dir)
-    drawn = [figures.slice_figure(
-        world, out / "live-translating-sphere.png", axis=2,
-        title=f"sphere translating at Re {reynolds:g}, Cd {cd:.4f}")]
-    history = figures.profile_figure(
-        out / "live-translating-sphere-history.png",
-        [{"x": travelled, "y": [2.0 * f / (scaling.fluid.rho * speed * speed * area)
-                                for f in samples], "label": "Cd"},
-         {"x": [travelled[0], travelled[-1]] if travelled else [0, 1],
-          "y": [expected, expected], "label": "Schiller-Naumann", "style": "--"}],
-        title="drag on a translating sphere, against the held one",
-        xlabel="diameters travelled", ylabel="Cd")
-    drawn.append(history)
+    drawn = [
+        figures.slice_figure(going["world"], out / "live-translating-sphere.png", axis=2,
+                             title=f"sphere translating at Re {reynolds:g}, "
+                                   f"Cd {going['cd']:.4f}"),
+        figures.slice_figure(held["world"], out / "live-translating-sphere-held.png",
+                             axis=2, title=f"the same sphere held in a stream, "
+                                           f"Cd {held['cd']:.4f}"),
+        figures.profile_figure(
+            out / "live-translating-sphere-history.png",
+            [{"x": [h[0] for h in going["history"]],
+              "y": [h[1] for h in going["history"]], "label": "moving"},
+             {"x": [going["history"][0][0], going["history"][-1][0]]
+              if going["history"] else [0, 1],
+              "y": [held["cd"], held["cd"]], "label": "held in a stream", "style": "--"},
+             {"x": [going["history"][0][0], going["history"][-1][0]]
+              if going["history"] else [0, 1],
+              "y": [expected, expected], "label": "Schiller-Naumann", "style": ":"}],
+            title=f"Galilean invariance: moving/held = {ratio:.4f}",
+            xlabel="diameters travelled", ylabel="Cd"),
+    ]
     for figure in drawn:
         figures.ensure_rgb(figure)
-    lines = [f"# translating sphere: Re {reynolds:g}, {cells_per_d} cells per diameter",
-             *scaling.report(),
-             *_official("translating_sphere", scaling, smagorinsky),
-             f"  Galilean:   the reference is run_sphere at the same Re, measured by "
-             f"this same solver; Schiller-Naumann is the external check",
-             f"  refilled:   {world.refilled:,} fresh nodes, "
-             f"{world.fallbacks:,} Bouzidi fallbacks",
-             *world.report()[-2:]]
-    return _result("translating_sphere", checks, lines, drawn, cd=cd,
-                   schiller_naumann=expected, refilled=world.refilled,
-                   fallbacks=world.fallbacks)
+    lines = [f"# translating sphere: Re {reynolds:g}, {cells} cells per diameter, "
+             f"held and moving in the same box",
+             *going["scaling"].report(),
+             *_official("translating_sphere", going["scaling"], smagorinsky),
+             f"  held:       Cd {held['cd']:.4f} "
+             f"({held['cd'] / expected - 1.0:+.2%} on Schiller-Naumann), "
+             f"{held['refilled']:,} refills",
+             f"  moving:     Cd {going['cd']:.4f} "
+             f"({going['cd'] / expected - 1.0:+.2%} on Schiller-Naumann), "
+             f"{going['refilled']:,} refills over {going['travelled']:.2f} diameters",
+             f"  Galilean:   moving/held = {ratio:.4f}, and 1.0 is exact",
+             *going["world"].report()[-2:]]
+    return _result("translating_sphere", checks, lines, drawn, ratio=ratio,
+                   cd_held=held["cd"], cd_moving=going["cd"],
+                   schiller_naumann=expected, refilled=going["refilled"])
 
 
 # -- 6. a sphere falling in water, two-way coupled to Newton ----------------------------
@@ -1290,7 +1364,7 @@ def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 0,
 
 def run_falling_sphere(*, cells_per_d: int = 20, density_ratio: float = 2.0,
                        diameter: float = 0.001, u_lattice: float = 0.05,
-                       collision: str = "trt",
+                       window: bool = False, collision: str = "trt",
                        smagorinsky: float = 0.0, device: str | None = None,
                        out_dir: str | Path = ".", steps: int | None = None,
                        solver: str = "mujoco", one_way: bool = False,
@@ -1369,25 +1443,41 @@ def run_falling_sphere(*, cells_per_d: int = 20, density_ratio: float = 2.0,
     # validation should use. A demo trades substeps for speed; a graded number does not.
     dt = scaling.dt
 
-    size = (12.0 * diameter, 12.0 * diameter, 14.0 * diameter)
+    # -- the box, and why the graded run does not use the moving window -----------------
+    #
+    # The sphere reaches terminal velocity in about 1.6 diameters and then keeps going at
+    # 112 mm/s; six settling time constants is about twenty more. So either the box is
+    # tall enough for all of it, or the window follows the body.
+    #
+    # **The window was the first choice and it biased the answer.** A windowed run in a
+    # 14-diameter box shifted ten times and measured a terminal velocity **12.05% high**
+    # (125.87 mm/s against 112.33), outside the 5% this is graded at. The cause is
+    # visible in what a shift does: `lattice.shift` fills the slab uncovered at the
+    # trailing edge with the free stream, and for a falling body the trailing edge is
+    # **where the wake is**. Every 1.4 diameters of travel, the wake was replaced with
+    # quiescent fluid, and a body that keeps meeting fresh fluid instead of its own wake
+    # falls faster than one that does not.
+    #
+    # That is a real property of an integer-shift window and not a bug in it: the window
+    # exists to follow a body across a domain it would otherwise leave, and it is
+    # correct for a body whose wake does not matter to its own motion. For a falling
+    # sphere the wake is the whole mechanism. So the graded run uses a tall box and no
+    # window -- 26 diameters of it, which at 20 cells per diameter is 30 million nodes and
+    # 160 seconds on an H100, an affordable price for not having to caveat the number --
+    # and `window=True` runs the windowed version beside it so that what the window costs
+    # is measured and reported rather than assumed.
+    tall = 14.0 if window else 26.0
+    size = (12.0 * diameter, 12.0 * diameter, tall * diameter)
     domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
                     faces={"-x": "slip", "+x": "slip", "-y": "slip", "+y": "slip",
                            "-z": "outlet", "+z": "outlet"})
-    # The moving window, and this is the case that needs it. The sphere reaches terminal
-    # velocity in about 1.6 diameters -- the acceleration is `(1 - rho_f/rho_s) g` with
-    # the added mass in it, nearly 4 m/s^2 here -- and then keeps going at 112 mm/s. Six
-    # time constants of settling is 12 more diameters of travel, which is the whole box.
-    # Without the window the choice is a box three times larger (nine times the cells in
-    # the two cross directions that do not need them) or a run that stops before the
-    # velocity has settled. `follow` re-centres the lattice on the body instead, by whole
-    # cells, and `lattice.shift` has what that costs: momentum is not conserved across a
-    # shift, which does not matter here because what is being measured is a velocity.
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                        substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device, one_way=one_way, follow=0, follow_slack=0.12)
+                       device=device, one_way=one_way,
+                       follow=0 if window else None, follow_slack=0.12)
 
     builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
-    start = (size[0] / 2.0, size[1] / 2.0, size[2] * 0.75)
+    start = (size[0] / 2.0, size[1] / 2.0, size[2] * (0.75 if window else 0.88))
     # `add_body` already creates the free joint; adding one would give the body two.
     body = builder.add_body(xform=wp.transform(wp.vec3(*start), wp.quat_identity()),
                             label="sphere")
@@ -1459,10 +1549,15 @@ def run_falling_sphere(*, cells_per_d: int = 20, density_ratio: float = 2.0,
               "this error at half its size, V_t going as the square root of the net "
               "force"),
         Check("final state finite", world.stable(), "True", world.stable()),
-        Check("window shifts", world.shifts, "reported, not graded", None,
-              "the lattice was re-centred on the sphere this many times; momentum is "
-              "not conserved across a shift, which is why benchmarks/live/'s momentum "
-              "case runs with the window off"),
+        Check("window shifts", world.shifts,
+              "0 for the graded run: a shift replaces the wake with free stream, and "
+              "for a falling body the wake is the mechanism",
+              world.shifts == 0 if not window else None,
+              "a windowed run in a 14-diameter box shifted ten times and measured "
+              "12.05% high; `window=True` reproduces that deliberately"),
+        Check("travelled", f"{(start[2] - float(link.state.body_q.numpy()[body][2])) / diameter:.2f} diameters "
+                           f"of a {tall:g}-diameter box",
+              "inside the box", True),
     ]
     out = Path(out_dir)
     drawn = [figures.slice_figure(

@@ -281,6 +281,11 @@ MILESTONES = {
     "M2": [
         ("translating-sphere", "translating_sphere", {}),
         ("falling-sphere", "falling_sphere", {}),
+        # The same case with the moving window on, in a box a third the height, so that
+        # what the window costs is a measurement in this repository rather than a
+        # sentence in a docstring. It is expected to read high; `run_falling_sphere` has
+        # the first number it produced and why.
+        ("falling-sphere-windowed", "falling_sphere", {"window": True}),
         ("momentum", "momentum", {}),
     ],
     "M3": [
