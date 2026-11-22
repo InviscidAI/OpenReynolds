@@ -1171,8 +1171,9 @@ def shift(
     is quantised to `dx`, which the body's boundary condition already is.
 
     What it does cost: momentum is not conserved across a shift, because fluid leaves at
-    one face and uniform free stream arrives at the other. `FluidWorld.momentum_balance`
-    reports shifts separately from everything else for that reason -- a momentum check
+    one face and uniform free stream arrives at the other. `FluidWorld.momentum`
+    is therefore meaningless across one, and `benchmarks/live/`'s momentum case
+    reports the shift count from everything else for that reason -- a momentum check
     run across a shift is checking the window, not the solver.
     """
     i, j, k = wp.tid()

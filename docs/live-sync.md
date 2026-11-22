@@ -228,7 +228,7 @@ wrong.
 | `initialise(velocity=(0,0,0), density=1.0)` | every node at equilibrium with a uniform state, `velocity` in m/s. It also voxelises once and copies the result into the previous-step fields, so the first `step()` finds no fresh nodes rather than refilling every node inside every body |
 | `step(substeps=None)` | one coupling step, and returns what it cost: `{"step", "lattice_steps", "seconds", "mlups", "shifted"}`. In order: poses in, window shift if the followed body drifted, voxelise, refill fresh nodes, rotor force field, zero the wrench, then `substeps` times collide / stream / apply faces |
 | `wrench(body=None, *, substeps=None)` | the **mean** fluid wrench over the last coupling step, in SI: `(force, torque)` as two 3-tuples for one body, or an `(n, 6)` array for all of them. Mean and not instantaneous, because that is the interval Newton is about to integrate over. A host read, and deliberately not in the step loop: `NewtonCoupling` pushes the wrench into Newton with a kernel and never copies it |
-| `rotor_reaction(body)` | the six numbers the rotors on `body` owe it, force then torque. The arm is meant to be to the centre of mass, because `body_f` is documented as a wrench referenced there, and with a Newton model behind the world it is not: see the last entry under *Limitations* |
+| `rotor_reaction(body)` | the six numbers the rotors on `body` owe it, force then torque. The arm is to the body's centre of mass, because `body_f` is documented as a wrench referenced there. Note for the Isaac Lab task: the torque is new as of 2026-11-22, and the last entry under *Limitations* is what has not caught up with it |
 | `fields()` | `{"rho", "u", "solid"}` as numpy arrays in SI: `(nx, ny, nz)` in kg/m^3, `(nx, ny, nz, 3)` in m/s, and the solid mask. Solid nodes are `nan` in the first two, so a figure does not draw the inside of a body as stationary fluid. A host read and not cheap, 32 MB of velocity at two million nodes; cached until the next `step()` |
 | `momentum()` | total fluid momentum in kg m/s, summed over the fluid nodes. The quantity the conservation check is made on: with every face periodic and no body force a closed lattice must hold it constant to round-off, and any drift is the boundary treatment leaking. `shifts` has to be zero for it to mean anything |
 | `stable()` | whether the lattice still holds finite, positive densities at its fluid nodes, which is the only way this solver fails. A full host read of the density field, so it is for the long runs rather than every step |
@@ -666,19 +666,16 @@ measuring it.
   `1/(2 dx)` error into every one of them. The immersed-boundary alternative is better
   for thin membranes and worse for drag on a bluff body; a swimmer with a thin fin is the
   case that would want it (`DECISIONS_LIVE.md` D4).
-- **A rotor's reaction moment is wrong when a Newton model drives the world, as of
-  2026-11-23.** `FluidWorld.rotor_reaction` takes the moment arm from the host body table
-  that `add_body` fills, and `NewtonCoupling` writes the body *poses* into that table
-  every step but leaves the centres of mass at zero, so the arm is measured from the
-  domain's world origin rather than from the body. Measured on one body at
-  `(1, 0, 1)` m carrying four disks on 0.18 m arms with 0.3 N of thrust across them: a
-  pitch moment of 0.309 N m where the moment about the centre of mass is 0.009 N m. The
-  error scales with how far the vehicle is from the origin and vanishes at the origin.
-  `openreynolds.live.isaac` then adds the correct moment a second time through
-  `control.joint_f`, on the belief that `rotor_reaction` carries force only, which it
-  did until 2026-11-22. Until both are fixed, treat the attitude moment on a rotor
-  vehicle as unusable with the fluid on. Nothing else in this list is a defect; this one
-  is.
+- **The Isaac Lab task applies its rotors' attitude moment twice when the fluid is on,
+  as of 2026-11-23.** `FluidWorld.rotor_reaction` returns six numbers, force and torque,
+  and `NewtonCoupling` adds all six to `state.body_f`. `isaac._Rig.apply` adds the same
+  moment again through `control.joint_f`, on the belief -- stated in its own docstring
+  and in a comment at the call site -- that `rotor_reaction` carries force only, which
+  was true until the torque was added to it on 2026-11-22. The force half is already
+  guarded by an `if`; the moment half is not. So a `HoverFluidEnv` with `fluid_on=True`
+  rolls and pitches at twice the rate the same differential thrust gives it with
+  `fluid_on=False`, which is exactly the comparison that task exists to make. Nothing
+  else in this list is a defect; this one is.
 
 ## Performance
 

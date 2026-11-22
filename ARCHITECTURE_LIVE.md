@@ -46,7 +46,7 @@ two indexes from drifting.
 openreynolds/live/
   __init__.py     the public API, and the one place that reports the extra is missing
   units.py        physical <-> lattice, the fluid table, and the three refusals
-  lattice.py      D3Q19 and D3Q27, and every Warp kernel
+  lattice.py      D3Q19, and every Warp kernel
   world.py        FluidWorld: allocation, voxelisation, the substep loop, the wrenches
   couple.py       the Newton adapter: body_q/body_qd in, body_f out
   cases.py        the validation and demo cases, their references, and their figures
@@ -79,6 +79,9 @@ Each refusal names the knob that fixes it, in the style of `benchmarks/*/grade.p
 `GradeError`: "the case cannot be run as it stands; the message says what to do."
 
 ### `lattice.py` -- D3Q19, and why the collision is a choice
+
+D3Q19 only. D3Q27 is "optional" in the brief and the option is not taken;
+`DECISIONS_LIVE.md` D8 has the three reasons and what would change them.
 
 Two collision operators, because the two halves of this extension want different
 things and the repository's own style is to keep a contrast measurable rather than

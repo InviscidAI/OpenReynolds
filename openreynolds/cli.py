@@ -1201,7 +1201,13 @@ def live_run_cmd(ctx: click.Context, case: str, resolution: int | None, steps: i
     """
     as_json = as_json or _json_asked(ctx)
     cases = _live_cases()
-    overrides: dict[str, Any] = {"out": str(out)}
+    # `out_dir`, which is the keyword `cases.run_case` and every runner takes.
+    # It was `out` until 2026-11-23, and `out` is not a parameter of any of
+    # them -- it travelled through `**overrides` into the runner and was
+    # swallowed by its trailing `**_`, so `--out` was accepted, ignored, and
+    # every figure landed in the working directory instead. Silent, because
+    # the runners ignore unknown keywords on purpose (see `run_case`).
+    overrides: dict[str, Any] = {"out_dir": str(out)}
     for name, value in (("resolution", resolution), ("steps", steps),
                         ("collision", collision), ("fluid", fluid)):
         if value is not None:
@@ -1269,7 +1275,7 @@ def live_crosscheck_cmd(ctx: click.Context, resolution: int | None, steps: int |
     """
     as_json = as_json or _json_asked(ctx)
     cases = _live_cases()
-    kwargs: dict[str, Any] = {"out": str(out)}
+    kwargs: dict[str, Any] = {"out_dir": str(out)}
     if resolution is not None:
         kwargs["resolution"] = resolution
     if steps is not None:

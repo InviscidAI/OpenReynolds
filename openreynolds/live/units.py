@@ -349,12 +349,16 @@ def rates(nu_lattice: float, scheme: str = "trt") -> tuple[float, float]:
 class Scaling:
     """The conversion between SI and lattice units for one run, and its own verdict.
 
-    Built through one of the three classmethods below rather than directly, because the
+    Built through one of the four classmethods below rather than directly, because the
     useful question is never "what is dt" -- it is one of:
 
-        from_velocity   I have a resolution and a flow speed      (the graded cases)
+        for_reynolds    I have a resolution and a Reynolds number (every graded case)
+        from_velocity   I have a resolution and a flow speed      (a case with a speed)
         for_coupling    I have a resolution and a robot timestep  (the demos)
         from_dt         I have both and I know what I am doing    (the tests)
+
+    `for_reynolds` is the one to reach for first and was missing from this list: a
+    benchmark is specified by a Reynolds number and a geometry, never by a timestep.
 
     Every field is SI except the three named `_lattice`. `peak_velocity` is the largest
     speed the caller expects anywhere, which is what `U_LATTICE_MAX` is checked against;

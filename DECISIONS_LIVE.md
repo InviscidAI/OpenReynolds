@@ -179,19 +179,165 @@ machinery picks them up with no change.
 
 ---
 
-## D7. No GPU on the machine this was built on, and what that means for the numbers
+## D7. No GPU on the machine this was built on, so the GPU runs go to Modal
 
-**2026-11-22.** `nvidia-smi` is not present here and Warp reports exactly one device,
-`"cpu"`. Every number in `PROGRESS_LIVE.md` was therefore measured on Warp's CPU
-backend. That is stated at the top of that file and beside every rate in it, and the
-brief's "1000+ MLUPS on an H100-class GPU" target is recorded as **not measured**
-rather than estimated from a scaling argument. A performance claim nobody ran is the
-one kind of number this repository's `benchmarks/README.md` is written against.
+**2026-11-22, revised 2026-11-23.** `nvidia-smi` is not present on the development
+machine and Warp reports exactly one device, `"cpu"`. Every number measured there is one
+core of Warp's single-threaded CPU backend.
 
-What this does *not* compromise: the physics. The same Warp kernels compile for CUDA
-from the same source, and the validations are resolution-limited rather than
-device-limited -- a cavity that agrees with Ghia on the CPU agrees with Ghia on an
-H100. What it does compromise: the two end-to-end rate targets (the drone demo at 0.5x
-real time, and the 1000 MLUPS floor), which are device claims and are left open.
-`benchmarks/live/grade.py` prints MLUPS on whatever device it is run on, so the moment
-this is run on a GPU the number exists.
+**What this decision said on 2026-11-22, and why it was wrong to leave it there.** It
+said the brief's "1000+ MLUPS on an H100-class GPU" would be recorded as *not measured*
+rather than estimated, on the grounds that a performance claim nobody ran is the one kind
+of number this repository's `benchmarks/README.md` is written against. The first half of
+that is right and stands. The second half was a decision not to try, and it was the wrong
+one: this project has a Modal workspace, an H100 is a few lines of `modal.App` away, and
+"we could not measure it" was never true -- only "we had not".
+
+**What it says now.** `benchmarks/live/modal_run.py` runs the cases on a real GPU, and
+every GPU number in `PROGRESS_LIVE.md` comes from one. The runner is built so that it
+cannot become an expense nobody is watching: one-shot `@app.function`s with explicit
+timeouts, no `@app.cls`, no warm pool, no `min_containers`, no volume. A job starts, runs
+one case, returns its result and its figures as bytes, and the container exits.
+
+The target is met: **1478.7 MLUPS** on an H100 80GB at 384 cells, and 1095.2 at 128 --
+which is the useful half, because the target is reached at a lattice a real-time loop can
+afford rather than only at one that fills the card.
+
+**What the GPU found that the CPU could not.** Three things, and they justify the runs on
+their own:
+
+- `NewtonCoupling` called `np.asarray(model.gravity)`, which Warp permits on a CPU array
+  and refuses on a CUDA one. It is a `TypeError` on every GPU and on no CPU.
+- The layout argument in `lattice._preferred_layout` predicted a large direction-major
+  win on a GPU from a coalescing argument. Measured: 1.5% on an A10 and **0.07%** on an
+  H100. The reasoning was sound and the magnitude was wrong by an order of magnitude, and
+  only a GPU could say so.
+- The cost of being wrong about a timescale. The Re 1000 cavity burned 42 minutes of
+  H100 running to a step cap it should never have reached, which is how the diffusive
+  spin-up time got written down. On a CPU that run would simply never have been attempted.
+
+**What is still not measured, and is still not claimed:** the drone demo's real-time
+factor against the brief's 0.5x, which is reported by every `quadrotor` run rather than
+asserted here; and warp 1.18 and newton 1.7, which are inside the declared range and were
+never installed. `PROGRESS_LIVE.md`'s closing section is the list.
+
+---
+
+## D8. D3Q19 only; D3Q27 is not shipped
+
+**2026-11-22.** The brief says "D3Q19 (D3Q27 optional)", and the option is not taken.
+
+D3Q27 adds the eight body-diagonal directions, which buys two things: better rotational
+isotropy of the fourth-order moments, and a little more stability at high Reynolds number
+for the same collision operator. It costs 42% more memory and 42% more bandwidth, and
+this kernel is bandwidth-bound on every device measured -- so a D3Q27 run is roughly 0.7
+times the step rate of a D3Q19 one at the same resolution, or the same rate at 0.89 of
+the resolution in each direction.
+
+Three reasons it is not here.
+
+**The accuracy it buys is not the accuracy these cases are limited by.** D3Q19's
+quadrature is exact to the order the second-order equilibrium uses -- the moment checks in
+`tests/test_live_cases.py::test_the_velocity_set_satisfies_the_moments_it_is_a_quadrature_for`
+are what that means -- and the errors measured in `benchmarks/live/` are resolution and
+boundary errors, not isotropy errors. Spending 42% of the bandwidth on a fourth moment
+while the cylinder's drag is limited by how many cells are across its diameter is
+spending it in the wrong place: the same 42% buys 12% more cells in each direction.
+
+**The stability it buys is bought more cheaply by the collision operator.** The
+regularised operator annihilates every ghost mode every step, which is a stronger
+intervention than adding directions, and it costs nothing in memory.
+`DECISIONS_LIVE.md` D3 is that choice.
+
+**It would be a second instantiation of every kernel.** The velocity set is baked in as a
+`wp.constant` and `Q` appears in every loop bound and every local vector type, so
+supporting both means two compiled variants of the whole module, two layouts each, and
+four combinations to test and to report numbers for. That is a real maintenance surface
+for a gain the cases cannot see.
+
+**What would change this:** a rotating flow at a high Reynolds number, where D3Q19's
+anisotropy is documented to matter, or a measurement in `benchmarks/live/` that an error
+is isotropy-limited rather than resolution-limited. Neither exists here. If it is added,
+the honest way is a `Q` module option beside `LAYOUT`, measured on both devices like the
+layout was, and `lattice.py` is written so that `Q`, `C`, `W`, `OPP` and `MIRROR_*` are
+the only things that would have to change.
+
+---
+
+## D9. The fluid has no gravity in it; the body gets weight minus buoyancy
+
+**2026-11-22.** Gravity is applied to the rigid bodies and **not** to the lattice. That is
+not an omission and it is not an approximation: it is what every incompressible solver
+does, and in a weakly compressible one it is close to mandatory.
+
+A lattice Boltzmann fluid is weakly compressible by construction: pressure is
+`rho c_s^2`, so a pressure gradient **is** a density gradient. A metre of water is 9.8 kPa,
+and against water's `rho c_s^2` that is a density variation of order 1e-5 -- which sounds
+small until it is compared with the density variations the scheme is resolving, which at
+`Ma < 0.1` are of the same order. A hydrostatic column would therefore put a real,
+solver-visible density stratification into a problem that has none, and it would grow with
+the domain height. The usual lattice Boltzmann answer is to subtract the hydrostatic part
+analytically, which for a problem with no free surface means leaving it out entirely.
+
+So `FluidWorld` has no gravity term, `set_body_force` is documented as "not gravity", and
+`couple.NewtonCoupling` gives each body `-rho_fluid * V * g` -- its buoyancy -- beside the
+surface wrench, with Newton applying the weight itself.
+
+**`V` is the voxelised volume and not the analytic one, and that is the part worth
+arguing about.** `lattice.volumes` counts the nodes `owner` assigns to each body, which
+at twenty cells across a sphere differs from `pi d^3/6` by a few per cent. The analytic
+volume is the more accurate number for the real sphere; the voxelised one is the volume
+the **boundary condition actually encloses**, and it is the right one here because the
+drag is computed on that same voxelised surface. Using the analytic volume for the
+buoyancy and the voxelised surface for the drag means the two do not act on the same
+body, and a terminal velocity -- which is the difference between two numbers of similar
+size -- lands the mismatch squarely on the quantity being graded.
+
+`run_falling_sphere` grades the two volumes against each other for that reason, and the
+first design of that case is the evidence: at a density ratio of 1.005 the net driving
+force is 0.5% of the weight, the volume error is a few per cent, and the sphere sat
+motionless at -0.003 mm/s of an expected 13.2 while every individual part of the
+calculation was correct. The case now runs at a ratio of 2, where a 2% volume error moves
+the terminal velocity by 1%.
+
+**What this rules out:** a free surface, a stratified flow, thermal convection, and
+anything else in which gravity acts on the fluid rather than only on bodies in it. None
+of those is in scope -- the brief is aerodynamic and hydrodynamic loads on robots -- and
+all of them would want the OpenFOAM path, which has `interFoam` and a real buoyant solver.
+
+---
+
+## D10. The quadrotor is built from primitives, not from Newton's Crazyflie asset
+
+**2026-11-22.** `newton/examples/assets/crazyflie.usd` exists and is not used. The demo
+builds a box and four actuator disks instead.
+
+The asset was loaded to find out. It carries **no `RigidBodyAPI`, no `MassAPI`, no joints
+and no applied schemas at all**: `ModelBuilder.add_usd` on it yields **zero bodies, twelve
+mesh shapes all with `shape_body == -1`, `shape_flags == 0x1` (visible only) and a total
+mass of 0.0**. It is a visual prop. No Newton example loads it either -- the drone example's
+own line reads `# TODO: Use drone path to load USD asset and draw it`, and
+`self.drone_path` is never read again; that example's drone is two crossed boxes. Reading
+it also needs `usd-core` and `newton-usd-schemas`, two packages the `[live]` extra does
+not declare and would have to.
+
+A flyable body can be built from it by re-adding the twelve meshes with a density, which
+was also tried and works: one body, twelve shapes, one free joint, 14.8 g at 1750 kg/m^3.
+But then every coupling step voxelises twelve triangle meshes through
+`wp.mesh_query_point_sign_normal`, which for an airframe whose aerodynamic effect is
+"there is a flat thing under the rotors" is the most expensive possible way to say so --
+and `FluidWorld.solid_cells` is the reminder that at any affordable resolution the whole
+airframe is a handful of cells thick anyway. A mesh resolved to a tenth of a cell is a
+mesh query spent on nothing.
+
+So the demo uses a box sized from the asset's measured geometry -- its rotors sit at
+`(+/-0.029565, +/-0.029772, 0.026824)` m in body-local, Z up, which is where the real
+Crazyflie's are -- scaled up to a 1.2 kg, 180 mm-arm class vehicle so that a 120 mm rotor
+is resolvable at a lattice a real-time loop can afford. A 65 mm Crazyflie would need
+sub-millimetre cells to resolve its rotor at all.
+
+**What is given up:** the demo does not look like a Crazyflie, and a user who wants their
+own airframe's geometry in the flow has to give `FluidWorld` a mesh -- which it supports,
+through Newton's `shape_source_ptr`, and which `couple.py` documents. What is kept: the
+physics the demo exists to show, which is a vehicle feeling the downwash its own rotors
+made, off a geometry the lattice can actually see.

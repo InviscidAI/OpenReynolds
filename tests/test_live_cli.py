@@ -151,7 +151,13 @@ def test_run_passes_only_the_flags_that_were_given(cases):
     assert invoke("run", "cavity").exit_code == 0
     what, args, kwargs = cases.calls[-1]
     assert what == "run_case" and args == ("cavity",)
-    assert kwargs == {"out": "."}
+    # `out_dir`, which is the keyword `cases.run_case` and every runner actually
+    # takes. It was `out` here and in `cli.py`, and `out` is not a parameter of any of
+    # them: it travelled through `**overrides` into the runner and was swallowed by its
+    # trailing `**_`, so `--out` was accepted, ignored, and every figure landed in the
+    # working directory. This assertion is the reason to spell the keyword out rather
+    # than check that *some* path was passed.
+    assert kwargs == {"out_dir": "."}
 
 
 def test_run_passes_every_flag_that_was(cases):
@@ -161,7 +167,7 @@ def test_run_passes_every_flag_that_was(cases):
     assert result.exit_code == 0, result.output
     what, args, kwargs = cases.calls[-1]
     assert what == "run_case" and args == ("cavity",)
-    assert kwargs == {"out": "figs", "resolution": 64, "steps": 2000,
+    assert kwargs == {"out_dir": "figs", "resolution": 64, "steps": 2000,
                       "collision": "regularized", "fluid": "air", "device": "cuda:0"}
 
 
@@ -214,7 +220,7 @@ def test_bench_with_nothing_asked_for_asks_for_nothing(cases):
 def test_crosscheck_needs_no_options(cases):
     assert invoke("crosscheck").exit_code == 0
     what, _, kwargs = cases.calls[-1]
-    assert what == "crosscheck" and kwargs == {"out": "."}
+    assert what == "crosscheck" and kwargs == {"out_dir": "."}
 
 
 # -- the verdict is the exit code ----------------------------------------------

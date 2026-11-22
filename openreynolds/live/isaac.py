@@ -538,17 +538,29 @@ class _Rig:
         from .world import _quat_matrix
 
         rotation = _quat_matrix(self.pose()[1])
-        moment = np.zeros(3)
-        for offset, thrust in zip(self.rotor_offsets, thrusts):
-            moment += np.cross(offset, np.array([0.0, 0.0, float(thrust)]))
-        self._joint_f[3:] = rotation @ moment
         if self.world is not None:
+            # **Both halves arrive through `rotor_reaction`, so neither is added here.**
+            #
+            # This used to zero the force and still write the moment, on the stated
+            # grounds that "`rotor_reaction` does not carry" one. It did not, when this
+            # was written: it returned three numbers. It returns six now -- a rotor off
+            # the centre of mass applies `r x F` and a quadrotor with no attitude moment
+            # has one controllable degree of freedom -- and `couple._push_extras` adds
+            # all six into `body_f`.
+            #
+            # Leaving the moment here was therefore applying it twice, and only with
+            # the fluid on. That is the worst possible place for it: `fluid_on` is the
+            # one comparison this task exists to make, and a doubled roll authority on
+            # one side of it would have read as the fluid doing something.
             for index, thrust in enumerate(thrusts):
                 self.world.set_rotor_thrust(index, float(thrust))
-            # The thrust force arrives through `rotor_reaction`; adding it here as well
-            # would double it. Only the moment, which `rotor_reaction` does not carry.
-            self._joint_f[:3] = 0.0
+            self._joint_f[:] = 0.0
         else:
+            # No fluid, so nothing else is applying the rotors: both halves here.
+            moment = np.zeros(3)
+            for offset, thrust in zip(self.rotor_offsets, thrusts):
+                moment += np.cross(offset, np.array([0.0, 0.0, float(thrust)]))
+            self._joint_f[3:] = rotation @ moment
             self._joint_f[:3] = rotation @ np.array([0.0, 0.0, float(np.sum(thrusts))])
         self.control.joint_f.assign(self._joint_f)
 

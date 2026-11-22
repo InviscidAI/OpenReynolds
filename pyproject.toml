@@ -206,6 +206,10 @@ exclude = [
     ".github/",
     ".githooks/",
     "docs/",
+    # The runnable examples, which import the package and read nothing the sdist
+    # carries, so they are documentation rather than payload -- the same reason
+    # `docs/`, `benchmarks/` and `scripts/` are above.
+    "examples/",
     ".claude/",
     "*.log",
 ]

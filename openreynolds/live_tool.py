@@ -172,7 +172,7 @@ def handler(ctx: Any, args: dict[str, Any]) -> str:
     from .live import cases as live_cases
 
     overrides = {key: args[key] for key in OVERRIDES if args.get(key) is not None}
-    result = live.run_case(case, out=str(figures_dir(ctx)), **overrides)
+    result = live.run_case(case, out_dir=str(figures_dir(ctx)), **overrides)
     for figure in result.get("figures") or ():
         rendered(ctx, str(figure))
     return live_cases.report(result)

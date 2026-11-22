@@ -618,6 +618,60 @@ def test_the_sphere_drag_curve_is_the_toolboxs_and_not_a_second_copy():
         1.0, rel=1e-3), "Schiller-Naumann does not reduce to Stokes in its own limit"
 
 
+# -- the documents the code points at ----------------------------------------------------
+
+
+def test_every_decision_the_code_cites_is_written_down():
+    """`DECISIONS_LIVE.md D9` in a docstring is a promise that D9 exists.
+
+    It did not. Three decisions were cited from five files -- D8 on the velocity set, D9
+    on gravity and buoyancy, D10 on the quadrotor's geometry -- while the document stopped
+    at D7, so a reader following the pointer found nothing and had to take the
+    surrounding sentence on trust. That is the same failure
+    `tests/test_toolbox.py::test_the_toolbox_index_names_nothing_that_is_not_there` was
+    written for: an index running ahead of what it indexes fails nothing unless something
+    checks it.
+
+    Both directions are checked. A cited decision must exist, and an existing one must be
+    cited or referenced from somewhere -- a decision nobody points at is a decision nobody
+    reads, and this file counts `DECISIONS_LIVE.md` itself as a referrer so that the
+    document's own cross-references count.
+    """
+    import re
+
+    document = ROOT / "DECISIONS_LIVE.md"
+    assert document.is_file(), "DECISIONS_LIVE.md is gone"
+    written = set(re.findall(r"^## (D\d+)\.", document.read_text(encoding="utf-8"),
+                             re.M))
+    assert written, "DECISIONS_LIVE.md has no numbered decisions"
+
+    cited: dict[str, set[str]] = {}
+    sources = [*(ROOT / "openreynolds").rglob("*.py"), *ROOT.glob("*.md"),
+               *(ROOT / "docs").glob("*.md"), *(ROOT / "benchmarks").rglob("*.md"),
+               *(ROOT / "benchmarks").rglob("*.py"), *(ROOT / "tests").glob("*.py")]
+    for path in sources:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for found in re.finditer(r"DECISIONS_LIVE\.md\W{0,3}(D\d+)", text):
+            cited.setdefault(found.group(1), set()).add(path.name)
+
+    dangling = {name: sorted(where) for name, where in cited.items()
+                if name not in written}
+    assert not dangling, (
+        "the code cites decisions that DECISIONS_LIVE.md does not contain: "
+        + "; ".join(f"{name} from {', '.join(where)}"
+                    for name, where in sorted(dangling.items()))
+    )
+    unreferenced = sorted(written - set(cited), key=lambda s: int(s[1:]))
+    assert not unreferenced, (
+        f"DECISIONS_LIVE.md contains {', '.join(unreferenced)}, which nothing points "
+        f"at. A decision nobody references is a decision nobody reads: cite it from the "
+        f"code it governs, or from another decision"
+    )
+
+
 # -- the Ghia tables ---------------------------------------------------------------------
 
 
