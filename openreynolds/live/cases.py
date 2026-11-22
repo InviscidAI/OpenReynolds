@@ -794,7 +794,8 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
                    establish_flows: float = 8.0, sample_periods: float = 25.0,
                    settle: float = 0.5, out_dir: str | Path = ".",
                    progress: Callable[[str], None] | None = None,
-                   steps: int | None = None, animate: bool = False) -> dict[str, Any]:
+                   steps: int | None = None, animate: bool = False,
+                   upstream: float = 0.0) -> dict[str, Any]:
     """One resolution of the Schafer-Turek 2D-2 cylinder. `run_cylinder` runs three."""
     import warp  # noqa: F401
 
@@ -804,6 +805,22 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
     diameter = geometry["diameter"]
     length, height = geometry["length"], geometry["height"]
     centre = geometry["centre"]
+    # `upstream` lengthens the channel ahead of the cylinder and moves the cylinder with
+    # it, leaving the paper's geometry untouched at the default of zero. **A diagnostic,
+    # not a benchmark knob**: the graded run is the paper's domain, and a run with this
+    # set is not Schafer-Turek 2D-2 and must not be reported as it.
+    #
+    # It exists because this case is +11% on BOTH force coefficients, converged -- the
+    # observed order of convergence is about zero across 24, 32 and 44 cells per
+    # diameter, so the error is not discretisation -- while its Strouhal number sits
+    # inside the paper's interval at +0.9%. A converged wrong force with the right
+    # frequency is a boundary condition, and the structural difference from the
+    # cross-check that passes at -1.9% is this one: 24% blockage against 2.5%, no-slip
+    # channel walls against slip, and the inlet two diameters ahead of the body. If Cd
+    # falls toward 3.23 as the inlet moves away, the inlet is the cause.
+    if upstream > 0:
+        length += upstream
+        centre = (centre[0] + upstream, centre[1])
     reynolds = geometry["reynolds"]
 
     dx = diameter / cells_per_d
@@ -913,6 +930,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
 
 
 def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
+                 upstream: float = 0.0,
                  collision: str = "trt", smagorinsky: float = 0.0,
                  device: str | None = None, periods: float = 30.0,
                  establish_flows: float = 8.0, sample_periods: float = 25.0,
@@ -962,7 +980,8 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
         if progress:
             progress(f"  cylinder at {grid} cells per diameter "
                      f"({index + 1} of {len(grids)})")
-        run = _cylinder_once(grid, collision=collision, smagorinsky=smagorinsky,
+        run = _cylinder_once(grid, upstream=upstream, collision=collision,
+                             smagorinsky=smagorinsky,
                              device=device, periods=periods, out_dir=out,
                              establish_flows=establish_flows,
                              sample_periods=sample_periods,
