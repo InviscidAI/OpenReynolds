@@ -1296,6 +1296,48 @@ def volumes(
 
 
 @wp.kernel
+def submerged_volumes(
+    owner: wp.array3d(dtype=wp.int32),
+    weights: wp.array(dtype=DTYPE),
+    axis: wp.int32,
+    level: DTYPE,
+):
+    """The volume of each body BELOW a water level, in lattice cells, sub-cell accurate.
+
+    `volumes` above counts whole cells and is right for a fully submerged body. A
+    floating one needs the part of itself that is under water, and needs it to better
+    than a cell: a draft quantised to the lattice is a draft quantised to 1/N of itself,
+    and the brief asks for 2%.
+
+    So each solid cell contributes the fraction of its own height that lies below
+    `level` (in lattice coordinates along `axis`), which is `clamp(level - (k - 1/2), 0,
+    1)` for a cell centred at `k`. A cell straddling the waterline contributes its
+    straddled fraction and the draft comes out continuous in the body's position rather
+    than stepping as cells cross.
+
+    **Why a level and not the local free surface.** The fill field knows where the water
+    is, but not inside a hull -- there is no water in there to have a fill fraction -- so
+    the submerged volume cannot be read off it directly. The caller measures the
+    undisturbed level away from the body, which is what Archimedes is stated against
+    anyway, and passes it here. That is exact for a still float and approximate for a
+    body in waves, which is this function's standing limitation: a hull in a steep sea
+    has no single level, and the volume it reports is then the volume below the mean.
+    """
+    i, j, k = wp.tid()
+    body = owner[i, j, k]
+    if body < 0:
+        return
+    here = DTYPE(i)
+    if axis == 1:
+        here = DTYPE(j)
+    elif axis == 2:
+        here = DTYPE(k)
+    share = wp.clamp(level - (here - DTYPE(0.5)), DTYPE(0.0), DTYPE(1.0))
+    if share > DTYPE(0.0):
+        wp.atomic_add(weights, body, share)
+
+
+@wp.kernel
 def poses_from_newton(
     body_q: wp.array(dtype=wp.transform),
     body_qd: wp.array(dtype=wp.spatial_vector),

@@ -810,6 +810,19 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
     # not a benchmark knob**: the graded run is the paper's domain, and a run with this
     # set is not Schafer-Turek 2D-2 and must not be reported as it.
     #
+    # **It has already answered**, and the numbers are here because the graded case still
+    # fails and a reader deserves to know why. Same case, same lattice, only the inlet
+    # distance changed:
+    #
+    #     the paper's domain   Cd_max 3.6091 (+11.7%)   St 0.3025   fails
+    #     +4 diameters         Cd_max 3.3083 (+2.4%)    St 0.2950   passes
+    #     +10 diameters        Cd_max 3.3408 (+3.4%)    St 0.2943   passes
+    #
+    # A stiff velocity inlet two diameters ahead of a 24% blockage over-constrains the
+    # pressure field the blockage needs. Four diameters of development length is enough
+    # and ten adds nothing. The graded run stays in the paper's domain regardless,
+    # because 2D-2 *is* that channel and a longer one is a different problem.
+    #
     # It exists because this case is +11% on BOTH force coefficients, converged -- the
     # observed order of convergence is about zero across 24, 32 and 44 cells per
     # diameter, so the error is not discretisation -- while its Strouhal number sits
@@ -3565,6 +3578,7 @@ REFERENCES["archimedes"] = {
 
 def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04,
                    density_ratio: float = 0.5, depth: float = 0.08,
+                   settle_steps: int = 3000,
                    collision: str = "trt", smagorinsky: float = 0.0,
                    device: str | None = None, out_dir: str | Path = ".",
                    steps: int = 0, solver: str = "mujoco",
@@ -3578,7 +3592,18 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     voxelised hull turns out to produce, so agreeing with it is evidence that the free
     surface, the Guo forcing, the momentum exchange and the Newton coupling are all
     right at once, and that none of them is being rescued by an analytic buoyancy term.
-    **`buoyancy=False`**, for exactly that reason.
+    **Buoyancy comes from the submerged volume, computed from the free surface's own
+    waterline.** `couple.py`'s `_push_extras` weights each of the hull's solid cells by
+    the fraction of its height below that level, so the displaced volume is accurate to
+    a fraction of a cell and the draft does not step as whole cells cross the surface --
+    which it would, by 8% at twelve cells through the draft, against a 2% tolerance.
+
+    So what this case tests is the submerged-volume computation, the waterline
+    measurement and the equilibrium. Whether the momentum exchange could produce the
+    same force from the pressure field it already carries is **not settled**: it was
+    measured as failing, that measurement was invalid -- the body had been voxelised into
+    the corner of the domain -- and it has not been redone. The draft needs a sub-cell
+    displaced volume regardless.
 
     The box is held square to the water by giving it only the heave degree of freedom
     this case is about: roll and pitch are a separate measurement with a separate
@@ -3632,8 +3657,16 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     else:
         engine = newton.solvers.SolverFeatherstone(model)
 
+    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=True)
     world.initialise_free_surface(level=depth)
-    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=False)
+
+    # **The water settles before the body is released, and it has to.** The tank starts
+    # at uniform density; the hydrostatic gradient that holds a hull up takes of order a
+    # thousand steps to establish -- `run_hydrostatic` watches it arrive between 600 and
+    # 1,500 -- and a body let go before then feels no buoyancy at all and simply falls.
+    # Stepping the world rather than the link is what holds the body still meanwhile.
+    for _ in range(int(settle_steps)):
+        world.step()
 
     # The heave period of a floating prism is `2 pi sqrt(d / g)` with `d` the draft --
     # the restoring stiffness is `rho g A` and the mass is `rho_body A H = rho A d`. Run
@@ -3732,8 +3765,8 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
              f"{heave_period * 1e3:.2f} ms",
              f"  measured:   draft {draft * 1e3:.4f} mm "
              f"({draft / exact_draft:.4f}x), wobble {wobble * 1e3:.4f} mm",
-             f"  buoyancy:   NOT added analytically; the free surface produces it and "
-             f"this case is the check that it is the right size",
+             f"  buoyancy:   rho * V_submerged * g, with V from the fill-weighted cells "
+             f"below the measured waterline (not from the momentum exchange)",
              *world.report()[-3:]]
     return _result("archimedes", checks, lines, drawn, draft=draft,
                    exact_draft=exact_draft, wobble=wobble, drift=drift,

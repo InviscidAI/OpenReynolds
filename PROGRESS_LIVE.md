@@ -258,6 +258,35 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
+### The cylinder's +11%, localised: the inlet needs four diameters it is not given
+
+Schaefer-Turek 2D-2 puts the inlet two diameters ahead of the cylinder, and that is the
+benchmark. Moving it further back, changing nothing else:
+
+| inlet distance | Cd_max | Cl_max | St | |
+| --- | --- | --- | --- | --- |
+| the paper's domain | 3.6091 (**+11.7%**) | 1.1030 | 0.3025 | **fails** |
+| +4 diameters | **3.3083 (+2.4%)** | 0.8539 | 0.2950 | passes |
+| +10 diameters | **3.3408 (+3.4%)** | 0.8555 | 0.2943 | passes |
+
+Two independent distances agree, so this is the cause and not a coincidence: a stiff
+velocity inlet two diameters ahead of a 24% blockage over-constrains the pressure field
+the blockage needs, and the force comes out high. Give it four diameters of development
+length and the drag lands inside the 5% tolerance; ten adds nothing, so four is the
+length the condition wants.
+
+**The graded case still runs the paper's domain and still fails**, and that is
+deliberate. 2D-2 *is* a 2.2 x 0.41 channel with the cylinder at x = 0.2; a run in a
+longer channel is not that benchmark and cannot be reported as it, the same way the
+windowed falling sphere is reported and not graded. What the diagnostic buys is that the
+failure is now **localised rather than mysterious** -- it is the inlet's development
+length, not the collision, not the resolution (the observed order is about zero), not
+the reference, and not the force normalisation.
+
+`run_cylinder(upstream=...)` is the knob, defaulting to zero. Note that `Cl_max` moves
+the other way, from +10% to -15%, so the extended domain is not uniformly better and
+the lift is not being claimed either way.
+
 ### The inlet, and the two references that disagree about it
 
 Six measurements, three inlet conditions, two independent cylinder references. This is
@@ -391,62 +420,30 @@ Archimedes predicts, with `NewtonCoupling(buoyancy=False)` because a free surfac
 produces its own buoyancy and adding the analytic term would count it twice. It does not
 pass, and the reason is worth more than the case.
 
-**The force on a body in a fluid that carries a body force is wrong, and M1 to M4 could
-not have caught it.** Measured on a fully submerged 40 mm box in a closed tank with
-gravity applied to the fluid, where the answer is exactly `+rho V g` = +626.7 mN upward:
+**Retracted: the force measurements that blocked this were taken with the body in the
+wrong place.** Four runs reported that a submerged body feels the wrong buoyant force --
+-48.66 and then -0.48 times `rho V g` -- and all four were invalid. `world.step()` syncs
+body poses from the world's own arrays, not from Newton, so a body that exists only in
+Newton sits at the identity transform; the settling loop those measurements needed used
+`world.step()`, and a 40 mm box was therefore voxelised into the **corner of the
+domain**, 216 cells of it instead of 1,728, straddling two walls. It did not move when
+it was moved, which is what finally gave it away -- three offsets returning identical
+forces to six digits. `NewtonCoupling.__init__` now pushes poses once, so a world is
+voxelised correctly before anybody steps anything, and that is a real library fix and
+not only a harness one.
 
-| momentum exchange | measured | |
-| --- | --- | --- |
-| as M1 to M4 ran it | **-48.66 x rho V g** | the absolute pressure, uncancelled |
-| with the reference pressure subtracted | **-0.48 x rho V g** | right order, wrong sign |
+The conditioning arithmetic those runs were explained with is still arithmetic -- the
+absolute pressure a momentum exchange must cancel is `1/(3 g_lattice N)` times the
+hydrostatic difference across the body, 204 to 1 at twelve cells through a 40 mm draft --
+but **nothing has been measured against it**, so it is a reason to be careful and not a
+finding. Whether momentum-exchange buoyancy works here is open.
 
-The first number is the one that matters for reading the rest of this document: it is
-not a regression, it is what the code has always done, and **no case before M5 could see
-it**. `DECISIONS_LIVE.md` D9 is why. A single-phase run applies gravity to the *body*,
-through Newton, and never to the fluid -- that is exactly why `buoyancy=True` adds
-`-rho V g` analytically -- so the fluid has no hydrostatic gradient, the absolute-pressure
-contribution cancels over a closed wetted surface, and the drag and momentum-balance
-results in M1 to M4 stand. Put gravity in the fluid, as a free surface must, and the
-cancellation goes.
-
-Subtracting the reference pressure per link (`2 W[d] rho_ref c`) is kept, and it is
-verified not to disturb anything already measured: the OpenFOAM cross-check reads
-**Cd 1.329871** with it and **Cd 1.3299** without, the same number to five digits. So it
-is a no-op on the validated cases and removes a large artefact in the still-tank case.
-
-**What it removes, and the contradiction that goes with it.** A submerged box in a
-closed tank of still fluid with *no* body force must feel exactly zero force, and
-measured:
-
-| | force on the box |
-| --- | --- |
-| no subtraction, as M1 to M4 ran it | **(-30199, -30199, -30199) mN** = 83 x rho V g |
-| with the subtraction | (-0.12, -0.12, -0.12) mN = 2e-4 x rho V g |
-
-Equal in all three components, and **identical to four digits when the box is shifted
-half a cell**, so it is not a voxelisation asymmetry. For a cube in uniform fluid the
-momentum-exchange sum is zero by symmetry -- the formula is right, and was checked line
-by line: `cj` is the direction toward the solid, `f_in` is the population heading into
-it, and `impulse = cj (f_in + reflected)` is the momentum in minus the momentum out.
-A bias equal along all three axes is the signature of one face per axis not
-contributing.
-
-**And the cross-check does not show it at all**, which those two facts cannot both
-explain. An 83 x rho V g constant on every body would destroy any drag measurement, and
-the cross-check's drag is unmoved to five digits. So either the artefact is specific to
-a flat-faced body in still fluid, or the isolated harness has a quirk that four separate
-checks have not found. **That contradiction is unresolved and is the reason no force fix
-is claimed here.**
-
-Separately, and smaller: with the subtraction in place a submerged box in a tank with
-gravity reads **-0.48 x rho V g** where it should read `+1`. The residual needed to
-reach `+1` is 3.1% more than the subtracted term and the hydrostatic density variation
-across that tank is about 2.5%, which hints that the reference should be the **local**
-density rather than a global constant. A hint is not a derivation. The interaction of
-Guo forcing with the momentum-exchange method needs working out properly: four
-mechanisms have been argued and measured wrong in one sitting (the hysteresis band, the
-flag conversions, the collision operator, compressibility), and the pattern says stop
-guessing.
+What M6 now does, and does not claim: buoyancy is `rho V_submerged g`, with the
+submerged volume weighted sub-cell from the free surface's measured waterline, because a
+draft graded to 2% cannot be quantised to whole cells (8% at twelve cells through it).
+That makes the Archimedes case a test of the volume computation, the waterline and the
+equilibrium, and **not** of the pressure integration. Weaker than the first draft of
+this case claimed, and true.
 
 Also found and fixed on the way, both prerequisites for any hull:
 

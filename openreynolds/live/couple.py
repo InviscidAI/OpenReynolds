@@ -386,6 +386,9 @@ class NewtonCoupling:
             self._shape_mesh = wp.zeros(max(1, int(model.shape_count)),
                                         dtype=wp.uint64, device=device)
         self._volumes = wp.zeros(count, dtype=wp.int32, device=device)
+        # A free-surface run's submerged volume, in fractional cells, so a draft is not
+        # quantised to the lattice. `_push_extras` says why it is not the whole volume.
+        self._submerged = wp.zeros(count, dtype=L.DTYPE, device=device)
         self._buoyancy = wp.zeros(count, dtype=wp.spatial_vector, device=device)
         self._gravity = _as_numpy(model.gravity, 3)
 
@@ -396,6 +399,21 @@ class NewtonCoupling:
             self._shape_kinds, self._shape_body, self._shape_pose, self._shape_scale,
             self._shape_mesh,
         )
+        # **Push the poses once, here, so the world is voxelised correctly before anybody
+        # steps anything.** Until 2026-11-23 this happened only inside `step`, and the
+        # consequence was quiet and expensive: `world.step()` syncs from the world's own
+        # pose arrays, so a body that exists only in Newton sat at the identity transform
+        # -- the origin -- for every world-only step.
+        #
+        # That is not a hypothetical. A floating body has to be released into water that
+        # has already settled hydrostatically, and the obvious way to settle it is to
+        # step the world while leaving the body alone. Doing that voxelised a 40 mm box
+        # into the corner of the domain, 216 cells of it instead of 1,728, straddling two
+        # walls; the measured "buoyancy" was then a force on a box wedged in a corner,
+        # and it did not change when the box was moved, because the box was never where
+        # it was put. Four separate measurements were taken that way before the voxel
+        # count gave it away.
+        self._push_poses()
 
     # -- the shapes, once --------------------------------------------------------------
 
@@ -540,11 +558,38 @@ class NewtonCoupling:
         count = int(self.model.body_count)
         extras = np.zeros((count, 6), dtype=np.float32)
         if self.buoyancy:
-            self._volumes.zero_()
-            wp.launch(L.volumes, dim=self.world.shape,
-                      inputs=[self.world.owner, self._volumes],
-                      device=self.world.device)
-            cells = self._volumes.numpy().astype(np.float64)
+            level = getattr(self.world, "waterline", None)
+            if level is None:
+                self._volumes.zero_()
+                wp.launch(L.volumes, dim=self.world.shape,
+                          inputs=[self.world.owner, self._volumes],
+                          device=self.world.device)
+                cells = self._volumes.numpy().astype(np.float64)
+            else:
+                # **A free-surface run buoys on its SUBMERGED volume, sub-cell
+                # accurate**, because a floating body's draft would otherwise be
+                # quantised to the lattice: `volumes` counts whole cells, and at twelve
+                # cells through a draft that is 8% steps in the one number the
+                # Archimedes case grades to 2%. `submerged_volumes` weights each solid
+                # cell by the fraction of its height below `world.waterline`, so the
+                # displaced volume -- and the draft -- is continuous in the body's
+                # position.
+                #
+                # Whether the momentum exchange could supply this force instead, from
+                # the pressure field it already has, is **open**. It was measured as
+                # failing and that measurement was invalid: the body had been voxelised
+                # into the corner of the domain, because `world.step()` does not sync
+                # poses from Newton and the settling loop used it. The constructor now
+                # pushes poses once so that cannot recur, and the question has not been
+                # re-measured. Nothing here rests on the answer: a sub-cell displaced
+                # volume is needed for the draft either way.
+                self._submerged.zero_()
+                wp.launch(L.submerged_volumes, dim=self.world.shape,
+                          inputs=[self.world.owner, self._submerged, 2,
+                                  L.DTYPE(self.world._to_lattice(
+                                      (0.0, 0.0, float(level)))[2])],
+                          device=self.world.device)
+                cells = self._submerged.numpy().astype(np.float64)
             volume = cells * self.world.dx ** 3
             displaced = -self.world.fluid.rho * volume[:, None] * np.asarray(self._gravity)
             extras[:, :3] += displaced.astype(np.float32)

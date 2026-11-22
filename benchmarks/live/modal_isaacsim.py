@@ -1834,6 +1834,864 @@ def freesurface_a10g(cells: int = 144, frames: int = 44) -> dict:
     return _freesurface_demo(cells=cells, frames=frames)
 
 
+# -- 6. a submarine: PhysX-free, Newton-coupled, RTX-rendered ---------------------------
+
+
+def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
+               width: int = 1280, height: int = 720) -> dict:
+    """A self-propelled capsule hull in water, two-way coupled to Newton, rendered by RTX.
+
+    This answers the question at the top of the unknown list: **can a rigid body be
+    two-way coupled to our solver inside a live Kit process.** Not PhysX -- Newton, which
+    is what `openreynolds/live/couple.py` couples to and what Isaac Sim 6.2 now ships as
+    a physics backend of its own.
+
+    ## Why a submarine and not a boat
+
+    `DECISIONS_LIVE.md` D9. The momentum-exchange wrench on a body sitting in a fluid
+    that carries a body force is not yet derived, and the symptom is severe: a fully
+    submerged box where the answer is exactly `+rho V g` reads -0.48 times it. Anything
+    floating at a waterline goes through that path.
+
+    A fully submerged body does not. Gravity goes to the **body**, through Newton, and
+    never into the fluid, so the fluid carries no body force at all; the displaced weight
+    arrives separately and analytically as `NewtonCoupling(buoyancy=True)` summing the
+    voxelised volume. That is the path M3's `underwater` case validates, where a capsule
+    of zero length is a sphere and reproduces Schiller-Naumann to +1.1%.
+
+    So this demo is deliberately on `FluidWorld` and not `FreeSurfaceWorld`, and the hull
+    stays well below any surface because there is no surface.
+
+    ## What is measured, so that this is not only a picture
+
+    The hull is **neutrally buoyant** -- its density is water's -- so weight and buoyancy
+    cancel exactly and the only forces left are the thruster and the fluid. A constant
+    thrust `T` is applied along the body's own axis. At terminal speed the body stops
+    accelerating, which means the fluid is pushing back with exactly `T`, so
+
+        Cd = 2 T / (rho V^2 A)
+
+    with `V` the measured terminal speed and `A = pi r^2` the frontal area, the same
+    definition `cases.run_underwater` grades against Schiller-Naumann.
+
+    **And it is cross-checked against the solver's own wrench.** `world.wrench(body)`
+    returns the surface force the momentum exchange actually summed, and at steady state
+    its axial component must equal `-T`. Those two numbers are computed by completely
+    different routes -- one from the body's kinematics, one from the populations crossing
+    the boundary links -- so their ratio is a direct test that the coupling is wired up
+    in both directions. A one-way coupling would still fly the submarine and would fail
+    this.
+
+    ## The manoeuvre
+
+    Thrust is applied along the **body** axis, rotated by the body's own orientation each
+    step, so a pitched hull thrusts downward as well as forward. Part way through, a
+    short pitch moment is applied through `control.joint_f`, the nose goes down, and the
+    submarine dives under its own thrust. That is the part a policy would care about and
+    it is the part that shows the coupling is live: the wake tilts with the hull.
+    """
+    import io
+    import json
+    import math
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name(), "cells_per_d": cells_per_d,
+                 "reynolds_target": reynolds, "frames": frames}
+    blobs: dict[str, bytes] = {}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("SUB " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print(f'SUB {{"{key}": "unserialisable: {exc}"}}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({  # noqa: F841  -- keeps Kit alive
+            "headless": True, "width": width, "height": height,
+            "renderer": "RaytracedLighting",
+        })
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("error", traceback.format_exc()[-4000:])
+        return {"result": out, "blobs": blobs}
+
+    sys.path.insert(0, "/repo")
+    try:
+        import numpy as np
+        import omni.replicator.core as rep
+        import omni.usd
+        import warp as wp
+        from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, Vt
+
+        import newton
+        from openreynolds.live.couple import NewtonCoupling
+        from openreynolds.live.units import Scaling
+        from openreynolds.live.world import Domain, FluidWorld
+
+        emit("warp_version", wp.config.version)
+        emit("newton_version", newton.__version__)
+
+        # -- the hull and the water ----------------------------------------------------
+        #
+        # Every dimension and the scaling come from `cases.run_underwater`, which is the
+        # validated setup: a 10 mm capsule in water at `u_lattice = 0.04`, the Reynolds
+        # scaling built by `Scaling.for_reynolds` on the diameter. The fineness ratio of
+        # 4 is that case's elongated hull, the one it reports rather than grades.
+        diameter = 0.01
+        radius = diameter / 2.0
+        length_ratio = 3.0
+        half_height = length_ratio * radius
+        # The resolution is chosen by the repository, not here. Asking for 16 cells per
+        # diameter at Re 100 is **refused**, and rightly:
+        #
+        #   UnphysicalScaling: tau_plus is 0.51920, within 0.02 of the 1/2 at which the
+        #   collision stops relaxing anything
+        #
+        # `cases._cells_for` exists because the first GPU run of the sphere case hit the
+        # same wall at the same number, and its docstring says so. It returns 20 here.
+        # A fixed resolution across a range of Reynolds numbers is the thing that has no
+        # business being hard-coded, so `--cells-per-d` defaults to 0 meaning "ask".
+        from openreynolds.live.cases import _cells_for
+
+        cells_per_d = int(cells_per_d) if cells_per_d else _cells_for(reynolds, 0.04)
+        emit("cells_per_d", cells_per_d)
+        dx = diameter / cells_per_d
+        scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
+                                       u_lattice=0.04, scheme="trt")
+        speed_target = scaling.reference_velocity
+        water = scaling.fluid
+
+        # A box the submarine would leave in a couple of seconds, with the moving window
+        # on so that it does not. `follow=0` re-centres the lattice on body 0 whenever it
+        # has drifted past `follow_slack` of the box, which is exactly the case the
+        # window is correct for: a body that swims in a straight line is not driven by
+        # its own wake. `run_falling_sphere` records the case where that is false.
+        # -- no moving window, and that is a measurement too --------------------------
+        #
+        # `follow=0` is the validated way to keep a travelling body in frame and it is
+        # what `cases.run_underwater` and `run_falling_sphere` use. It did not survive
+        # here, and the evidence is unambiguous. With `follow=0, follow_slack=0.15` and
+        # the hull started 35 mm off centre, the window shifted once on the first step
+        # and the voxelisation then **collapsed**: `solid_cells` went from 23,184 to a
+        # range of 0 to 2,346, `world.wrench(0)` returned exactly 0.0 on every frame,
+        # and the submarine accelerated in a perfect straight line at
+        #
+        #     measured dv per frame  3.756e-04 m/s
+        #     T / m                  3.7545e-04 m/s
+        #
+        # which is a body in vacuum to four significant figures. The fluid was still
+        # being solved; it simply had nothing in it.
+        #
+        # This is reported rather than worked around in `world.py`, which this file is
+        # not allowed to touch. The workaround here is to not need the window: a domain
+        # twice as long in x, the hull started a quarter of the way along, and nothing
+        # shifting. That costs 15.4 M nodes instead of 7.7 M and buys a run where the
+        # body stays voxelised from the first step to the last.
+        size = (24.0 * diameter, 8.0 * diameter, 10.0 * diameter)
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                        faces={"-x": "outlet", "+x": "outlet", "-y": "slip",
+                               "+y": "slip", "-z": "slip", "+z": "slip"})
+        world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                           substeps=1, collision="trt", smagorinsky=0.0,
+                           device="cuda:0", follow=None)
+        emit("lattice_shape", list(world.shape))
+        emit("nodes", int(world.nodes))
+        emit("dx", world.dx)
+        emit("dt", float(world.dt))
+
+        # -- the Newton body -----------------------------------------------------------
+        #
+        # Neutrally buoyant on purpose: with the shape's density set to the water's,
+        # `NewtonCoupling(buoyancy=True)` adds `rho V g` upward and Newton's gravity pulls
+        # `rho_s V g` down, and they cancel to the precision of the voxelised volume. What
+        # is left is thrust and fluid, which is what the measurement below needs.
+        start = (3.0 * diameter, size[1] / 2.0, size[2] / 2.0)
+        # A capsule's axis is its local z, which `cases.run_underwater` states and
+        # measured; a quarter turn about y takes z to x so the hull lies along the
+        # direction it swims.
+        turn = wp.quat(0.0, math.sin(math.pi / 4.0), 0.0, math.cos(math.pi / 4.0))
+
+        def build(density: float, gravity: float = -9.81):
+            builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+            # `add_body` already makes the free joint; do not add one.
+            hull_body = builder.add_body(
+                xform=wp.transform(wp.vec3(*start), wp.quat_identity()), label="hull")
+            cfg = builder.default_shape_cfg.copy()
+            cfg.density = density
+            cfg.has_shape_collision = False
+            builder.add_shape_capsule(
+                hull_body, xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), turn),
+                radius=radius, half_height=half_height, cfg=cfg)
+            built = builder.finalize()
+            # Gravity BEFORE the solver is constructed, not after. `SolverMuJoCo`
+            # converts the Newton model into a MuJoCo model in its constructor, so a
+            # `set_gravity` that lands afterwards updates one of them and not the other.
+            # Doing it in the wrong order sent the hull to 59 m/s within 98 steps and to
+            # 1e8 m by the next frame -- a divergence that looks like a coupling blow-up
+            # and is a model the solver never saw.
+            built.set_gravity((0.0, 0.0, gravity))
+            engine = newton.solvers.SolverMuJoCo(
+                built, disable_contacts=True, solver="newton",
+                integrator="implicitfast", iterations=10)
+            return built, engine
+
+        # -- gravity and buoyancy are both OFF, and that is a measurement ------------
+        #
+        # The intent was a neutrally buoyant hull: give it the water's density so that
+        # `m = rho_w * V`, keep `NewtonCoupling(buoyancy=True)` so D9's analytic
+        # displaced-weight path is exercised, and let thrust and fluid do the rest. Two
+        # runs measured why that cannot work at this scale.
+        #
+        # **Run one, density = rho_water.** The hull *rose* at 15 mm/s and climbed 130 mm
+        # while travelling 6.5 mm forward. Newton takes the mass from the analytic
+        # capsule, 2.87979e-6 m3; the coupling takes the displaced weight from the
+        # voxelised hull, 23,184 cells of (0.5 mm)^3 = 2.898e-6 m3. They differ by
+        # **0.632%**, and
+        #
+        #     weight                                2.8198e-05 N  =  5,104 x the thrust
+        #     net buoyancy from that 0.632%         1.7801e-04 N  =     32 x the thrust
+        #     volume error the thrust could absorb      0.0196%
+        #
+        # **Run two, density calibrated to the voxel count.** Setting the density so that
+        # `m = rho_w * V_voxel` at the starting pose drove the residual from 1.78e-4 N to
+        # **9.7e-10 N**, and it still did not hold, because the voxelisation is a
+        # function of where the body sits relative to the grid. Measured over the run:
+        #
+        #     solid cells          22,992 to 23,192, a swing of 200
+        #     buoyancy swing       2.4481e-04 N  =  **44 x the thrust**
+        #
+        # and the hull sank out of frame on the mean deficit.
+        #
+        # So neutral buoyancy here is the cancellation of two forces five thousand times
+        # larger than the one the demo is about, to a precision the voxelisation is two
+        # orders of magnitude short of. **A body that is neutrally buoyant by definition
+        # has no net weight, and the exact way to say that is for neither force to
+        # exist.** Gravity goes to zero and `buoyancy=False`, which is not an evasion: it
+        # is numerically identical to the ideal being modelled and it removes a 44x noise
+        # source from a measurement of a 5.5e-6 N force.
+        #
+        # **What this costs, said plainly: D9's buoyancy path is NOT exercised by this
+        # demo.** `cases.run_underwater` and `run_falling_sphere` still cover it. What is
+        # exercised here is the momentum-exchange wrench and the pose feedback, which is
+        # what "two-way coupled" names and what the balance check below tests.
+        #
+        # The fix that would let a submarine float properly is in `couple.py` and is
+        # written up in the notes: let the caller pass the displaced volume instead of
+        # having it recounted from the voxels every step.
+        model, engine = build(water.rho, gravity=0.0)
+        world.initialise()
+        link = NewtonCoupling(model, engine, world, dt=float(world.dt), buoyancy=False)
+        emit("gravity", [0.0, 0.0, 0.0])
+        emit("buoyancy_enabled", False)
+        analytic = math.pi * radius * radius * 2.0 * half_height             + 4.0 / 3.0 * math.pi * radius ** 3
+        emit("analytic_volume_m3", analytic)
+        emit("hull_mass_kg", float(model.body_mass.numpy()[0]))
+        # NOT `world.solid_cells(0)` here (before the probe above there was nothing to
+        # read). The lattice has no idea where the body is
+        # until a step has pushed the poses and voxelised, so read before the first
+        # `link.step()` it is 0 -- which is precisely the reading that
+        # `world.solid_cells`' own docstring warns means "a body too small for its
+        # lattice", and a 10 mm capsule on a 0.5 mm lattice is nothing of the kind. The
+        # real count is emitted after the first step below, where it is a diagnostic
+        # rather than an artifact of when it was taken.
+        emit("solid_cells_before_any_step", int(world.solid_cells(0)))
+
+        volume = math.pi * radius * radius * 2.0 * half_height \
+            + 4.0 / 3.0 * math.pi * radius ** 3
+        area = math.pi * radius * radius
+        emit("hull_volume_m3", volume)
+        emit("frontal_area_m2", area)
+
+        # The thrust that should hold the target Reynolds number, from a guessed Cd. It
+        # is a guess and it does not have to be right: whatever speed it settles at is
+        # measured, and the Cd reported below is computed from that speed and this
+        # thrust, not from the guess.
+        # 3.5, not 1.4. Run seven measured Cd near 5.8 at Re 43 for this fineness-4
+        # hull, which is several times a sphere's and is the right way round at this
+        # Reynolds number -- `cases.run_underwater` says the same of its elongated hull.
+        # A thrust sized for Cd 1.4 therefore settled at Re 49 and was still climbing
+        # after twelve seconds. This aims the terminal speed at Re 100.
+        cd_guess = 3.5
+        thrust = 0.5 * water.rho * speed_target ** 2 * area * cd_guess
+        emit("thrust_N", thrust)
+        emit("target_speed_mps", speed_target)
+
+        # -- the stage -----------------------------------------------------------------
+        stage = omni.usd.get_context().get_stage()
+        # Metres and Z up, for the reason the free-surface demo records: Kit's own stage
+        # is centimetres and Y up, and a 0.1 m scene on a centimetre stage is inside the
+        # camera's default near plane.
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+        UsdGeom.Xform.Define(stage, "/World")
+
+        def preview_material(path: str, colour, roughness: float, metallic: float = 0.0,
+                             opacity: float = 1.0, emissive=None) -> UsdShade.Material:
+            """Material first, Shader second. The free-surface demo records why."""
+            material = UsdShade.Material.Define(stage, path)
+            shader = UsdShade.Shader.Define(stage, path + "/surface")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+                Gf.Vec3f(*colour))
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(roughness)
+            shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(metallic)
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(opacity)
+            if emissive is not None:
+                shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).Set(
+                    Gf.Vec3f(*emissive))
+            material.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface")
+            return material
+
+        # The hull, drawn as a USD capsule rather than as the voxelisation. `solid_cells`
+        # is the right thing to look at when asking whether the lattice can see the body
+        # -- and it is reported above -- but a 16-cells-per-diameter voxel blob is a
+        # picture of the discretisation, not of the submarine. The analytic capsule is
+        # the same shape Newton was given, placed at the pose Newton computed.
+        hull = UsdGeom.Capsule.Define(stage, "/World/hull")
+        hull.CreateRadiusAttr(radius)
+        hull.CreateHeightAttr(2.0 * half_height)
+        hull.CreateAxisAttr("X")
+        hull_xform = UsdGeom.Xformable(hull.GetPrim())
+        hull_op = hull_xform.AddTransformOp()
+        UsdShade.MaterialBindingAPI(hull).Bind(
+            preview_material("/World/looks/hull", (0.97, 0.56, 0.10), 0.22, 0.65))
+
+        # -- the wake ------------------------------------------------------------------
+        #
+        # A `UsdGeomPointInstancer` over the lattice cells the body has actually stirred.
+        # Section 7 of the notes ranked this as the practical option for a field that has
+        # to update every frame: positions are an in-memory attribute write, there is no
+        # disk round trip the way a `UsdVol` OpenVDB sequence needs, and it scales to the
+        # tens of thousands of points a decimated 3.9 M-node lattice produces.
+        #
+        # It is a decimated field and says so: every second node in each direction, and
+        # only where the speed is above a fraction of the body's own. That is not an
+        # isosurface of anything, it is a cloud whose density is where the momentum went,
+        # which is what a wake looks like and is honest about being.
+        wake = UsdGeom.PointInstancer.Define(stage, "/World/wake")
+        droplet = UsdGeom.Sphere.Define(stage, "/World/wake/droplet")
+        droplet.CreateRadiusAttr(world.dx * 1.0)
+        UsdShade.MaterialBindingAPI(droplet).Bind(
+            preview_material("/World/looks/wake", (0.20, 0.78, 0.92), 0.22,
+                             opacity=0.30, emissive=(0.02, 0.14, 0.20)))
+        wake.CreatePrototypesRel().SetTargets([droplet.GetPath()])
+        wake_positions = wake.CreatePositionsAttr()
+        wake_protos = wake.CreateProtoIndicesAttr()
+        wake_scales = wake.CreateScalesAttr()
+        # Per-instance colour, which the notes listed as unverified for this build. It is
+        # tried here and the answer is in the picture: `primvars:displayColor` at `vertex`
+        # interpolation on a PointInstancer is the documented way to colour instances
+        # individually, and if it is ignored the wake comes out the flat material colour
+        # above rather than graded by speed.
+        wake_colour = UsdGeom.PrimvarsAPI(wake).CreatePrimvar(
+            "displayColor", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex)
+
+        # Deep water: a tinted dome is the whole background, because underwater there is
+        # no horizon and no floor in shot. A key light from above stands in for the
+        # surface and gives the hull a lit top and a shadowed belly.
+        sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+        sun.CreateIntensityAttr(2400.0)
+        sun.CreateAngleAttr(1.5)
+        sun.CreateColorAttr(Gf.Vec3f(0.85, 0.95, 1.0))
+        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(-62.0, 12.0, 20.0))
+        sky = UsdLux.DomeLight.Define(stage, "/World/sky")
+        sky.CreateIntensityAttr(900.0)
+        sky.CreateColorAttr(Gf.Vec3f(0.05, 0.22, 0.34))
+
+        # -- the camera, and the frame everything is drawn in --------------------------
+        #
+        # The second attempt built a `UsdGeom.Camera` by hand and moved it each frame to
+        # track the hull, aiming it with `Gf.Matrix4d().SetLookAt(...).GetInverse()`. The
+        # render came back a single flat colour, mean RGB (48.4, 138.0, 169.5) -- the
+        # dome, and nothing in front of it.
+        #
+        # Rather than debug a hand-built camera against a `rep.create.render_product`
+        # that takes a path string, this uses the call that demonstrably works in the
+        # other two demos and **moves the scene instead of the camera**. Everything
+        # drawn is offset by the hull's own x displacement, so the submarine stays put
+        # horizontally while the wake streams past it. That is a change of reference
+        # frame and nothing more -- and deliberately only in x, so the dive still reads
+        # as a dive rather than as the world sliding upward.
+        look_z = start[2]
+        # Back and up from run seven, which sat 75 mm from a hull 40 mm long with the
+        # wake drawn across a 240 mm box: the cloud filled the frame. The near-wake
+        # window above is about 220 mm long, so the camera stands off far enough to hold
+        # it and looks slightly down the length of it.
+        camera = rep.create.camera(
+            position=(start[0] + 0.055, start[1] - 0.165, look_z + 0.062),
+            look_at=(start[0] - 0.030, start[1], look_z),
+            focal_length=38.0, clipping_range=(0.005, 100.0))
+        product = rep.create.render_product(camera, (width, height))
+        annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        annotator.attach([product])
+        for _ in range(8):
+            sim_app.update()
+
+        # -- the loop ------------------------------------------------------------------
+        # Long enough to actually reach terminal speed, which run six did not: it was
+        # still accelerating linearly when the dive began, so its "cruise speed" was a
+        # number from the middle of a ramp and its Cd of 3.9 was meaningless. With drag
+        # working, `v_term = sqrt(2T / (rho A Cd))` is 11 to 13 mm/s for Cd between 0.8
+        # and 1.2, and the time constant `m v / T` is about 6 s, so 9 s of settling is
+        # about one and a half of them.
+        settle = int(7.0 / float(world.dt))
+        dive_start = int(settle * 0.72)
+        dive_stop = dive_start + int(0.35 / float(world.dt))
+        total = settle + int(3.5 / float(world.dt))
+        stride = max(total // frames, 1)
+        total = stride * frames
+        emit("total_steps", total)
+        emit("steps_per_frame", stride)
+        emit("dive_window_steps", [dive_start, dive_stop])
+        emit("simulated_seconds", round(total * float(world.dt), 3))
+
+        joint_f = np.zeros(6, dtype=np.float32)
+        axial: list = []
+        captured: list = []
+        trace: list = []
+        solver_seconds = 0.0
+        render_seconds = 0.0
+
+        def body_pose():
+            """Position and orientation of the hull, as numpy, from Newton's own state.
+
+            `link.state` is the public accessor and is the state `step()` will read
+            next, which is what matters after the coupling swaps `state_0` and
+            `state_1` at the end of every step.
+            """
+            q = link.state.body_q.numpy()[0]
+            return np.asarray(q[:3], dtype=float), np.asarray(q[3:7], dtype=float)
+
+        def rotate(quat, vector):
+            """Rotate `vector` by the (x, y, z, w) quaternion. Warp and Newton's order."""
+            x, y, z, w = [float(v) for v in quat]
+            u = np.array([x, y, z])
+            return (vector * (w * w - u.dot(u)) + 2.0 * u * u.dot(vector)
+                    + 2.0 * w * np.cross(u, vector))
+
+        def push_wake(body_position, track: float, track_z: float) -> int:
+            """Decimate the velocity field onto the point instancer. Returns the count."""
+            got = world.fields()
+            u = got["u"][::3, ::3, ::3, :]
+            speed = np.linalg.norm(u, axis=-1)
+            # The threshold is a fraction of the body's own speed, so the cloud is "where
+            # the hull has changed the water" at whatever speed it happens to be doing,
+            # rather than a fixed number that is empty early and solid late.
+            reference = max(float(np.nanmax(speed)) * 0.33, 1e-9)
+            xs, ys, zs = (world.node_coordinates(a) for a in range(3))
+            gx, gy, gz = np.meshgrid(xs[::3], ys[::3], zs[::3], indexing="ij")
+            # Only the near wake. Run seven drew every stirred cell in a 240 mm box and
+            # the cloud filled the frame edge to edge with the hull buried inside it:
+            # a correct picture of the whole field and a useless picture of a
+            # submarine. This window is the eighteen diameters behind the nose and two
+            # and a half either side, which is the part that reads as a wake.
+            near = ((gx > body_position[0] - 18.0 * diameter)
+                    & (gx < body_position[0] + 4.0 * diameter)
+                    & (np.abs(gy - body_position[1]) < 2.5 * diameter)
+                    & (np.abs(gz - body_position[2]) < 2.5 * diameter))
+            keep = np.isfinite(speed) & (speed > reference) & near
+            if not keep.any():
+                wake_positions.Set(Vt.Vec3fArray.FromNumpy(
+                    np.zeros((0, 3), dtype=np.float32)))
+                wake_protos.Set(Vt.IntArray.FromNumpy(np.zeros(0, dtype=np.int32)))
+                return 0
+            points = np.stack([gx[keep], gy[keep], gz[keep]], axis=-1)
+            magnitude = speed[keep]
+            # Drop anything inside the hull's own radius: those are the cells the
+            # voxelisation owns and drawing them puts the wake inside the submarine.
+            # In WORLD coordinates, before the tracking shift below -- comparing shifted
+            # points against an unshifted body position, which is what this did first
+            # time round, masks a sphere of cells somewhere off to one side instead.
+            offset = points - np.asarray(body_position)
+            outside = np.linalg.norm(offset, axis=-1) > (radius * 1.25)
+            points, magnitude = points[outside], magnitude[outside]
+            points[:, 0] -= track          # the tracking frame; see the camera above
+            points[:, 2] -= track_z
+            if len(points) > 90000:
+                pick = np.argsort(-magnitude)[:90000]
+                points, magnitude = points[pick], magnitude[pick]
+            wake_positions.Set(Vt.Vec3fArray.FromNumpy(points.astype(np.float32)))
+            wake_protos.Set(Vt.IntArray.FromNumpy(
+                np.zeros(len(points), dtype=np.int32)))
+            # Bigger and brighter where the water is moving fastest, which is what makes
+            # a point cloud read as a wake rather than as noise.
+            level = np.clip(magnitude / max(float(magnitude.max()), 1e-12), 0.0, 1.0)
+            scale = (0.55 + 1.15 * level).astype(np.float32)
+            wake_scales.Set(Vt.Vec3fArray.FromNumpy(
+                np.repeat(scale[:, None], 3, axis=1)))
+            colours = np.stack([0.06 + 0.52 * level,
+                                0.45 + 0.42 * level,
+                                0.62 + 0.33 * level], axis=-1)
+            wake_colour.Set(Vt.Vec3fArray.FromNumpy(colours.astype(np.float32)))
+            return int(len(points))
+
+        def grab():
+            for _ in range(6):
+                sim_app.update()
+                rep.orchestrator.step(rt_subframes=6)
+                try:
+                    rep.orchestrator.wait_until_complete()
+                except Exception:
+                    pass
+                arr = np.asarray(annotator.get_data())
+                if arr.size:
+                    sample = arr[..., :3].reshape(-1, 3)[::401]
+                    # Distinct colours, not standard deviation: a flat tinted frame has
+                    # a large whole-array deviation and exactly one colour.
+                    if len(np.unique(sample, axis=0)) > 8:
+                        return arr
+            return np.asarray(annotator.get_data())
+
+        for step in range(total):
+            position, quat = body_pose()
+            axis = rotate(quat, np.array([1.0, 0.0, 0.0]))
+            joint_f[:] = 0.0
+            joint_f[:3] = (axis * thrust).astype(np.float32)
+            if dive_start <= step < dive_stop:
+                # A short pitch-down pulse about the world y axis. The hull has no fins,
+                # so nothing restores it: it keeps the attitude the pulse left it at and
+                # the thrust, which follows the body axis, now has a downward component.
+                # That is the dive, and it is driven entirely through Newton.
+                # Positive about y pitches the nose DOWN: run six used -9.0e-7 and the
+                # nose went UP through 90 degrees and the hull tumbled, which is both
+                # the wrong sign and about six times too much. This is sized for roughly
+                # twenty degrees.
+                joint_f[4] = 6.0e-7
+            link.control.joint_f.assign(joint_f)
+            mark = time.time()
+            link.step()
+            solver_seconds += time.time() - mark
+            if step % 4 == 0:
+                # Every fourth step, not once a frame. The instantaneous wrench on a
+                # body this small fluctuates hard -- run seven's per-frame samples of
+                # |F_fluid| / (T - m a) ranged from 0.14 to 1.51 about a mean of 0.885
+                # -- and one sample every 136 steps is not a measurement of a mean.
+                # `cases.run_underwater` averages hundreds of samples for the same
+                # reason.
+                axial.append(float(world.wrench(0)[0][0]))
+            if step == 0:
+                emit("solid_cells", int(world.solid_cells(0)))
+                emit("voxel_volume_m3", world.solid_cells(0) * world.dx ** 3)
+
+            if (step + 1) % stride == 0:
+                wp.synchronize()
+                position, quat = body_pose()
+                # `body_qd` is **linear first**, which Newton's own docstring states
+                # and `isaac.py` records as checked by dropping a body and reading which
+                # three components moved. This read was `[3:6]` first time round, which
+                # would have reported the angular velocity as the swimming speed and put
+                # a plausible-looking wrong number in every row of the table below.
+                velocity = np.asarray(link.state.body_qd.numpy()[0][:3], dtype=float)
+                spin = np.asarray(link.state.body_qd.numpy()[0][3:6], dtype=float)
+                force, torque = world.wrench(0)
+                track = float(position[0] - start[0])
+                # Vertically the camera follows at 85%, so a 130 mm descent shows as
+                # 20 mm of drift in a frame about 46 mm tall: visible as a dive, and
+                # still in shot. Run four descended 128 mm and left the frame entirely,
+                # which is why frames 26 and 43 of it are the dome and nothing else --
+                # the renderer was fine and the submarine had gone.
+                track_z = float(position[2] - look_z) * 0.85
+                count = push_wake(position, track, track_z)
+                nose = rotate(quat, np.array([1.0, 0.0, 0.0]))
+                # The hull prim, at the pose Newton computed. `UsdGeom.Capsule` with
+                # `axis="X"` is already along body x, so only the body rotation applies.
+                rot = Gf.Rotation(Gf.Quatd(float(quat[3]), Gf.Vec3d(
+                    float(quat[0]), float(quat[1]), float(quat[2]))))
+                xform = Gf.Matrix4d().SetRotate(rot)
+                xform.SetTranslateOnly(Gf.Vec3d(float(position[0] - track),
+                                                float(position[1]),
+                                                float(position[2] - track_z)))
+                hull_op.Set(xform)
+                sim_app.update()
+                sim_app.update()
+                mark = time.time()
+                arr = grab()
+                render_seconds += time.time() - mark
+                if not arr.size:
+                    emit("render_error", f"empty annotator at step {step}")
+                    break
+                captured.append(arr[..., :3].astype("uint8").copy())
+                trace.append({
+                    "step": step + 1,
+                    "t": round((step + 1) * float(world.dt), 4),
+                    "pos": [round(float(v), 5) for v in position],
+                    "speed": round(float(np.linalg.norm(velocity)), 6),
+                    "u_x": round(float(velocity[0]), 6),
+                    "u_z": round(float(velocity[2]), 6),
+                    "nose_z": round(float(nose[2]), 4),
+                    "pitch_rate": round(float(spin[1]), 5),
+                    "fluid_fx": float(force[0]),
+                    "wake_points": count,
+                    "solid_cells": int(world.solid_cells(0)),
+                })
+        emit("trace", trace)
+        emit("solver_seconds", round(solver_seconds, 1))
+        emit("render_seconds", round(render_seconds, 1))
+        if solver_seconds > 0:
+            emit("solver_mlups",
+                 round(total * float(world.nodes) / solver_seconds / 1e6, 1))
+        emit("window_shifts", int(world.shifts))
+        # How much the voxelised volume moved about as the hull swam. This is the
+        # residual the calibration above cannot remove: the lattice re-voxelises the
+        # body at every new pose, and a cell gained or lost is 1.25e-10 m3 of displaced
+        # water, which is 1.2e-6 N of buoyancy -- about a fifth of the thrust, per cell.
+        cells = [row["solid_cells"] for row in trace]
+        if cells:
+            emit("solid_cells_range", [int(min(cells)), int(max(cells))])
+            swing = (max(cells) - min(cells)) * world.dx ** 3 * water.rho * 9.81
+            emit("buoyancy_swing_N", float(swing))
+            emit("buoyancy_swing_over_thrust", round(float(swing / thrust), 3))
+
+        # -- the numbers ---------------------------------------------------------------
+        #
+        # Measured over the stretch just before the dive, where the body is at terminal
+        # speed and still swimming straight.
+        cruise = [row for row in trace
+                  if 0.45 * dive_start <= row["step"] <= dive_start]
+        if cruise:
+            speed = float(np.mean([row["speed"] for row in cruise]))
+            lo = int(len(axial) * 0.45 * dive_start / max(total, 1))
+            hi = max(lo + 1, int(len(axial) * dive_start / max(total, 1)))
+            fluid_fx = float(np.mean(axial[lo:hi])) if axial else 0.0
+            emit("axial_samples", len(axial[lo:hi]))
+            emit("axial_stddev_N", float(np.std(axial[lo:hi])) if axial else 0.0)
+            emit("cruise_speed_mps", round(speed, 6))
+            emit("cruise_reynolds", round(speed * diameter / water.nu, 2))
+            emit("cd_from_thrust", round(2.0 * thrust
+                                         / (water.rho * speed * speed * area), 4))
+            emit("fluid_axial_force_N", fluid_fx)
+            # The cross-check. At terminal speed the fluid must be pushing back with
+            # exactly the thrust, and these two numbers come from different routes: one
+            # from the body's kinematics through Newton, one from the populations
+            # crossing the boundary links. A one-way coupling flies the submarine and
+            # fails this.
+            emit("thrust_over_fluid_force", round(abs(fluid_fx) / thrust, 4))
+            emit("cd_from_fluid_wrench",
+                 round(2.0 * abs(fluid_fx) / (water.rho * speed * speed * area), 4))
+        dived = [row for row in trace if row["step"] > dive_stop]
+        if dived:
+            emit("descent_rate_mps", round(float(np.mean(
+                [row["u_z"] for row in dived])), 6))
+            emit("final_nose_z", dived[-1]["nose_z"])
+            emit("depth_change_m", round(dived[-1]["pos"][2] - trace[0]["pos"][2], 5))
+
+        # -- the artifacts -------------------------------------------------------------
+        if not captured:
+            emit("render_error", "no frames captured")
+            emit("ok", False)
+            return {"result": out, "blobs": blobs}
+
+        from PIL import Image
+
+        # The hero is mid-dive: the hull pitched, the wake tilted behind it. That is the
+        # frame that shows the coupling doing something a policy would care about.
+        hero_index = min(len(captured) - 1,
+                         max(0, int(dive_stop / max(stride, 1)) + 2))
+        hero = captured[hero_index]
+        emit("hero_frame", hero_index)
+        emit("render_shape", list(hero.shape))
+        rgb = hero.astype("float32")
+        # **Per channel, then averaged** -- not `rgb.std()` over the whole array, which
+        # is the trap the previous run walked into. A frame that is one flat teal,
+        # R 48.4 / G 138.0 / B 169.5, has a whole-array standard deviation of 51.32
+        # because most of that spread is the gap *between* the channel means, not any
+        # variation within the picture. It read as a healthy render and was a blank one.
+        # `render_unique_colours` caught it with the value 1, which is why that number
+        # exists; this makes the headline number honest too.
+        emit("render_stddev",
+             round(float(np.mean([rgb[..., c].std() for c in range(3)])), 2))
+        emit("render_stddev_whole_array", round(float(rgb.std()), 2))
+        emit("render_mean_rgb", [round(float(v), 1) for v in rgb.reshape(-1, 3).mean(0)])
+        emit("render_unique_colours",
+             int(len(np.unique(rgb.reshape(-1, 3)[::97], axis=0))))
+
+        buf = io.BytesIO()
+        Image.fromarray(hero, "RGB").save(buf, format="PNG", optimize=True)
+        blobs["submarine_hero.png"] = buf.getvalue()
+        emit("hero_png_bytes", len(blobs["submarine_hero.png"]))
+
+        small = [Image.fromarray(f, "RGB").resize((width // 2, height // 2),
+                                                  Image.LANCZOS).quantize(
+                     colors=128, method=Image.MEDIANCUT) for f in captured]
+        buf = io.BytesIO()
+        small[0].save(buf, format="GIF", save_all=True, append_images=small[1:],
+                      duration=80, loop=0, optimize=True)
+        blobs["submarine.gif"] = buf.getvalue()
+        emit("gif_bytes", len(blobs["submarine.gif"]))
+        emit("gif_frames", len(small))
+        for pick in sorted({0, len(captured) // 3, hero_index, len(captured) - 1}):
+            buf = io.BytesIO()
+            Image.fromarray(captured[pick], "RGB").save(buf, format="PNG", optimize=True)
+            blobs[f"submarine_{pick:03d}.png"] = buf.getvalue()
+        emit("ok", True)
+    except Exception:
+        emit("error", traceback.format_exc()[-6000:])
+        emit("ok", False)
+    finally:
+        # No `sim_app.close()`. See the end of `_probe`.
+        out["total_seconds"] = round(time.time() - started, 1)
+    return {"result": out, "blobs": blobs}
+
+
+@app.function(image=image, gpu="L40S", timeout=5400, memory=32768)
+def submarine_l40s(cells_per_d: int = 0, reynolds: float = 100.0,
+                   frames: int = 44) -> dict:
+    return _submarine(cells_per_d=cells_per_d, reynolds=reynolds, frames=frames)
+
+
+@app.function(image=image, gpu="A10G", timeout=5400, memory=32768)
+def submarine_a10g(cells_per_d: int = 0, reynolds: float = 100.0,
+                   frames: int = 44) -> dict:
+    return _submarine(cells_per_d=cells_per_d, reynolds=reynolds, frames=frames)
+
+
+def _stagecheck() -> dict:
+    """Which prim types and which clipping ranges actually draw, at submarine scale.
+
+    A focused, solver-free diagnostic. The submarine demo rendered a frame of exactly
+    one colour twice running -- once with a hand-built camera and once with
+    `rep.create.camera`, both times mean RGB (48.4, 138.0, 169.5), the dome and nothing
+    else. Two four-minute runs had already gone into guessing, and the remaining
+    suspects were all cheap to separate: the prim types (an implicit `Capsule` and a
+    `PointInstancer`, neither of which the other demos use), the scale (0.04 m against
+    the free-surface demo's 0.36 m), and the near clipping plane (0.001, an order of
+    magnitude tighter than anything that has worked here).
+
+    So this builds the same lights and camera and renders one frame per variant, with no
+    fluid at all. Forty seconds answers what three more full runs would have guessed at.
+    """
+    import json
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name()}
+
+    def emit(key, value):
+        out[key] = value
+        print("STAGE " + json.dumps({key: value}, default=str), flush=True)
+
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    import isaacsim  # noqa: F401
+    from isaacsim.simulation_app import SimulationApp
+
+    sim_app = SimulationApp({"headless": True, "width": 640, "height": 360,  # noqa: F841
+                             "renderer": "RaytracedLighting"})
+    emit("kit_startup_seconds", round(time.time() - started, 1))
+    sys.path.insert(0, "/repo")
+
+    import numpy as np
+    import omni.replicator.core as rep
+    import omni.usd
+    from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, Vt
+
+    stage = omni.usd.get_context().get_stage()
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.Xform.Define(stage, "/World")
+    sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+    sun.CreateIntensityAttr(2400.0)
+    UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(-62.0, 12.0, 20.0))
+    sky = UsdLux.DomeLight.Define(stage, "/World/sky")
+    sky.CreateIntensityAttr(900.0)
+    sky.CreateColorAttr(Gf.Vec3f(0.05, 0.22, 0.34))
+
+    material = UsdShade.Material.Define(stage, "/World/looks/m")
+    shader = UsdShade.Shader.Define(stage, "/World/looks/m/surface")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(0.9, 0.5, 0.15))
+    material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+
+    def colours(arr) -> int:
+        if not arr.size:
+            return 0
+        return int(len(np.unique(arr[..., :3].reshape(-1, 3)[::401], axis=0)))
+
+    def shoot(label, build, scale, near):
+        """Build one variant at `scale` metres, render it, count the distinct colours."""
+        root = f"/World/try_{label}"
+        try:
+            build(root, scale)
+            camera = rep.create.camera(
+                position=(1.2 * scale, -7.2 * scale, 1.9 * scale),
+                look_at=(0.0, 0.0, 0.0), focal_length=34.0,
+                clipping_range=(near, near * 20000.0))
+            product = rep.create.render_product(camera, (640, 360))
+            annot = rep.AnnotatorRegistry.get_annotator("rgb")
+            annot.attach([product])
+            arr = np.empty(0)
+            for _ in range(5):
+                sim_app.update()
+                rep.orchestrator.step(rt_subframes=6)
+                try:
+                    rep.orchestrator.wait_until_complete()
+                except Exception:
+                    pass
+                arr = np.asarray(annot.get_data())
+                if colours(arr) > 8:
+                    break
+            emit(f"{label}@{scale}m,near{near}", colours(arr))
+            annot.detach([product])
+            stage.RemovePrim(root)
+        except Exception as exc:
+            emit(f"{label}@{scale}m,near{near}", f"FAILED: {type(exc).__name__}: {exc}")
+
+    def make_cube(root, scale):
+        prim = UsdGeom.Cube.Define(stage, root)
+        prim.CreateSizeAttr(1.0)
+        x = UsdGeom.Xformable(prim.GetPrim())
+        x.AddScaleOp().Set(Gf.Vec3f(scale, scale, scale))
+        UsdShade.MaterialBindingAPI(prim).Bind(material)
+
+    def make_capsule(root, scale):
+        prim = UsdGeom.Capsule.Define(stage, root)
+        prim.CreateRadiusAttr(scale * 0.25)
+        prim.CreateHeightAttr(scale * 1.5)
+        prim.CreateAxisAttr("X")
+        UsdShade.MaterialBindingAPI(prim).Bind(material)
+
+    def make_instancer(root, scale):
+        inst = UsdGeom.PointInstancer.Define(stage, root)
+        drop = UsdGeom.Sphere.Define(stage, root + "/drop")
+        drop.CreateRadiusAttr(scale * 0.04)
+        UsdShade.MaterialBindingAPI(drop).Bind(material)
+        inst.CreatePrototypesRel().SetTargets([drop.GetPath()])
+        grid = np.stack(np.meshgrid(*[np.linspace(-scale, scale, 12)] * 3,
+                                    indexing="ij"), axis=-1).reshape(-1, 3)
+        inst.CreatePositionsAttr().Set(Vt.Vec3fArray.FromNumpy(grid.astype(np.float32)))
+        inst.CreateProtoIndicesAttr().Set(
+            Vt.IntArray.FromNumpy(np.zeros(len(grid), dtype=np.int32)))
+
+    try:
+        for scale in (0.04, 0.4):
+            for near in (0.001, 0.01):
+                shoot("cube", make_cube, scale, near)
+                shoot("capsule", make_capsule, scale, near)
+                shoot("instancer", make_instancer, scale, near)
+    except Exception:
+        emit("error", traceback.format_exc()[-3000:])
+    return out
+
+
+@app.function(image=image, gpu="L40S", timeout=1800, memory=32768)
+def stagecheck() -> dict:
+    return _stagecheck()
+
+
 # -- the local side ---------------------------------------------------------------------
 
 PROBES = {"a10g": probe_a10g, "l40s": probe_l40s}
@@ -1984,6 +2842,65 @@ def freesurface(gpu: str = "l40s", cells: int = 144, frames: int = 44) -> None:
     if payload.get("error"):
         print(payload["error"])
     _save(f"freesurface-{gpu}", payload, blobs)
+    if not payload.get("ok"):
+        sys.exit(1)
+
+
+@app.local_entrypoint()
+def stage_check() -> None:
+    """Which prim types draw at submarine scale, and at which near clipping plane."""
+    got = stagecheck.remote()
+    print(f"gpu: {got.get('gpu')}   kit {got.get('kit_startup_seconds')} s")
+    print("distinct colours in the frame (1 means nothing but the dome):")
+    for key, value in got.items():
+        if "@" in key:
+            print(f"  {key:34s} {value}")
+    _save("stagecheck", got)
+
+
+@app.local_entrypoint()
+def submarine(gpu: str = "l40s", cells_per_d: int = 0, reynolds: float = 100.0,
+              frames: int = 44) -> None:
+    """A Newton-coupled submarine in our fluid, rendered by Isaac Sim's RTX."""
+    runner = {"l40s": submarine_l40s, "a10g": submarine_a10g}[gpu.lower()]
+    got = runner.remote(cells_per_d, reynolds, frames)
+    payload = got.get("result", got)
+    blobs = got.get("blobs", {})
+    print(f"\ngpu: {payload.get('gpu')}")
+    print(f"warp {payload.get('warp_version')}   newton {payload.get('newton_version')}")
+    print(f"lattice {payload.get('lattice_shape')} = {payload.get('nodes')} nodes, "
+          f"dx {payload.get('dx')} m, dt {payload.get('dt')} s")
+    print(f"hull: {payload.get('hull_mass_kg')} kg, "
+          f"{payload.get('hull_volume_m3')} m3, "
+          f"{payload.get('solid_cells')} solid cells")
+    print(f"thrust {payload.get('thrust_N')} N, "
+          f"{payload.get('total_steps')} steps = "
+          f"{payload.get('simulated_seconds')} s, "
+          f"{payload.get('window_shifts')} window shifts")
+    print(f"solver {payload.get('solver_seconds')} s "
+          f"({payload.get('solver_mlups')} MLUPS), "
+          f"render {payload.get('render_seconds')} s")
+    print("\n-- measured --")
+    print(f"  cruise speed        {payload.get('cruise_speed_mps')} m/s")
+    print(f"  Reynolds            {payload.get('cruise_reynolds')}")
+    print(f"  Cd from thrust      {payload.get('cd_from_thrust')}")
+    print(f"  Cd from fluid wrench{payload.get('cd_from_fluid_wrench')}")
+    print(f"  |fluid Fx| / thrust {payload.get('thrust_over_fluid_force')}  "
+          f"(1.0 means the two-way coupling balances)")
+    print(f"  descent rate        {payload.get('descent_rate_mps')} m/s")
+    print(f"  depth change        {payload.get('depth_change_m')} m")
+    print(f"  final nose z        {payload.get('final_nose_z')}")
+    for row in (payload.get("trace") or [])[::6]:
+        print(f"  t {row['t']:.3f}  pos {row['pos']}  |u| {row['speed']:.5f}  "
+              f"uz {row['u_z']:+.5f}  nose_z {row['nose_z']:+.3f}  "
+              f"wake {row['wake_points']}")
+    print(f"\nhero frame {payload.get('hero_frame')}: {payload.get('render_shape')} "
+          f"stddev {payload.get('render_stddev')} "
+          f"colours {payload.get('render_unique_colours')} "
+          f"mean {payload.get('render_mean_rgb')}")
+    if payload.get("error"):
+        print(payload["error"])
+    _save(f"submarine-{gpu}", payload, blobs)
     if not payload.get("ok"):
         sys.exit(1)
 

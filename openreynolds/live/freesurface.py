@@ -1090,6 +1090,31 @@ class FreeSurfaceWorld(FluidWorld):
 
     # -- what the caller reads --------------------------------------------------------
 
+    @property
+    def waterline(self) -> float:
+        """The undisturbed free-surface level in metres, read away from any body.
+
+        **What makes a floating body possible**, and the one number `couple.py` needs
+        from a free surface that a single-phase world cannot give it: `_push_extras`
+        weights each of a hull's solid cells by the fraction of its height below this,
+        and that is the displaced volume Archimedes is about.
+
+        Measured over the outer ring of columns -- the four edges of the domain in x and
+        y -- because that is water the body is not disturbing. Reading it under the hull
+        would measure the body's own depression, and a draft is defined against the
+        level the body is **not** affecting. It is a host read of one small array and it
+        happens once per coupling step, not per substep.
+
+        `nan` if nothing is wet, which `_push_extras` must not be handed; it falls back
+        to the whole voxelised volume when this is not a number.
+        """
+        depth = self.surface_height(axis=2)
+        edge = np.concatenate([depth[0, :], depth[-1, :], depth[:, 0], depth[:, -1]])
+        wet = np.isfinite(edge) & (edge > 0.0)
+        if not wet.any():
+            return float("nan")
+        return float(self.domain.origin[2] + edge[wet].mean())
+
     def lattice_mass(self) -> float:
         """Total mass on the lattice, in lattice units. A host read; a diagnostic."""
         self._mass_probe.zero_()
