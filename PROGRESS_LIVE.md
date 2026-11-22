@@ -420,30 +420,49 @@ Archimedes predicts, with `NewtonCoupling(buoyancy=False)` because a free surfac
 produces its own buoyancy and adding the analytic term would count it twice. It does not
 pass, and the reason is worth more than the case.
 
-**Retracted: the force measurements that blocked this were taken with the body in the
-wrong place.** Four runs reported that a submerged body feels the wrong buoyant force --
--48.66 and then -0.48 times `rho V g` -- and all four were invalid. `world.step()` syncs
+**There is no force defect. The momentum exchange gives buoyancy to a part in a
+thousand**, and the four measurements that said otherwise were taken with the body in
+the wrong place.
+
+A fully submerged 40 mm box in a closed tank with gravity in the fluid, pinned, with the
+hydrostatic density gradient verified at **1.000** of exact, feels
+
+    Fz = +626.805 mN   against an exact rho V g of +626.716 mN   =  +1.000 x
+
+converged and steady over 14,000 steps. That is the right force, with nothing analytic
+supplied: `NewtonCoupling(buoyancy=False)`, the hydrostatic pressure integrated over the
+voxelised hull and nothing else.
+
+**What was wrong was the harness, and the bug was in the library.** `world.step()` syncs
 body poses from the world's own arrays, not from Newton, so a body that exists only in
-Newton sits at the identity transform; the settling loop those measurements needed used
-`world.step()`, and a 40 mm box was therefore voxelised into the **corner of the
-domain**, 216 cells of it instead of 1,728, straddling two walls. It did not move when
-it was moved, which is what finally gave it away -- three offsets returning identical
-forces to six digits. `NewtonCoupling.__init__` now pushes poses once, so a world is
-voxelised correctly before anybody steps anything, and that is a real library fix and
-not only a harness one.
+Newton sits at the identity transform. A floating body has to be released into settled
+water, the obvious way to settle it is to step the world and leave the body alone, and
+doing that voxelised the box into the **corner of the domain** -- 216 cells instead of
+1,728, straddling two walls. Every force reported from it (-48.66 and -0.48 times
+`rho V g`, and the two contradictions built on them) is retracted. What gave it away was
+that the box did not move when it was moved: three offsets returning identical forces to
+six digits, which no physical configuration does.
 
-The conditioning arithmetic those runs were explained with is still arithmetic -- the
-absolute pressure a momentum exchange must cancel is `1/(3 g_lattice N)` times the
-hydrostatic difference across the body, 204 to 1 at twelve cells through a 40 mm draft --
-but **nothing has been measured against it**, so it is a reason to be careful and not a
-finding. Whether momentum-exchange buoyancy works here is open.
+`NewtonCoupling.__init__` now pushes poses once, so a world is voxelised correctly
+before anything is stepped. Verified: 1,728 cells exactly, centred where the body was
+put, and a three-cell offset moves it three cells. M1 to M4 are unaffected and this was
+checked rather than assumed -- those cases call `world.initialise()` before constructing
+the coupling and then only ever call `link.step()`.
 
-What M6 now does, and does not claim: buoyancy is `rho V_submerged g`, with the
-submerged volume weighted sub-cell from the free surface's measured waterline, because a
-draft graded to 2% cannot be quantised to whole cells (8% at twelve cells through it).
-That makes the Archimedes case a test of the volume computation, the waterline and the
-equilibrium, and **not** of the pressure integration. Weaker than the first draft of
-this case claimed, and true.
+The conditioning arithmetic that the retracted runs were explained with is also
+withdrawn as a finding. It remains true as arithmetic that a momentum exchange must
+cancel an absolute pressure `1/(3 g_lattice N)` times the hydrostatic difference across
+the body -- 204 to 1 at twelve cells through a 40 mm draft -- and the measurement above
+says it does, which is the answer that matters.
+
+**So M6 is not blocked, and `run_archimedes` grades the hard version**:
+`buoyancy=False`, the draft produced by the pressure field alone. Handing the body
+`rho V g` from its own voxel count would make the equilibrium draft come out at
+`(rho_body/rho_water) H` almost by construction and test only the volume count. A
+floating hull is still the harder case than the submerged box above -- its top is in gas,
+so the absolute pressure on the wetted part has less to cancel against -- and a
+resolution sweep is running to say whether it holds there. At 40 cells, which is four
+cells through the draft against the twelve the submerged box had, it diverges.
 
 Also found and fixed on the way, both prerequisites for any hull:
 

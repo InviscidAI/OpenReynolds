@@ -3592,18 +3592,18 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     voxelised hull turns out to produce, so agreeing with it is evidence that the free
     surface, the Guo forcing, the momentum exchange and the Newton coupling are all
     right at once, and that none of them is being rescued by an analytic buoyancy term.
-    **Buoyancy comes from the submerged volume, computed from the free surface's own
-    waterline.** `couple.py`'s `_push_extras` weights each of the hull's solid cells by
-    the fraction of its height below that level, so the displaced volume is accurate to
-    a fraction of a cell and the draft does not step as whole cells cross the surface --
-    which it would, by 8% at twelve cells through the draft, against a 2% tolerance.
+    **Buoyancy is not supplied: `NewtonCoupling(buoyancy=False)`.** The draft this case
+    measures is produced by the hydrostatic pressure integrated over the voxelised hull
+    by momentum exchange, and by nothing else, which is what makes it a test rather than
+    a restatement. Handing the body `rho V g` from its own voxel count would make the
+    equilibrium draft come out at `(rho_body/rho_water) H` almost by construction and
+    test only the volume count.
 
-    So what this case tests is the submerged-volume computation, the waterline
-    measurement and the equilibrium. Whether the momentum exchange could produce the
-    same force from the pressure field it already carries is **not settled**: it was
-    measured as failing, that measurement was invalid -- the body had been voxelised into
-    the corner of the domain -- and it has not been redone. The draft needs a sub-cell
-    displaced volume regardless.
+    That it can work at all is measured: a fully submerged box in a tank with gravity in
+    the fluid, pinned, with the density gradient verified at 1.000 of exact, feels
+    **+1.001 times `rho V g`** -- the right force to a part in a thousand. A floating
+    hull is the harder case, because its top is in gas and the absolute pressure on the
+    wetted part has less to cancel against, and that is what this case measures.
 
     The box is held square to the water by giving it only the heave degree of freedom
     this case is about: roll and pitch are a separate measurement with a separate
@@ -3657,16 +3657,26 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     else:
         engine = newton.solvers.SolverFeatherstone(model)
 
-    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=True)
+    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=False)
     world.initialise_free_surface(level=depth)
 
-    # **The water settles before the body is released, and it has to.** The tank starts
-    # at uniform density; the hydrostatic gradient that holds a hull up takes of order a
-    # thousand steps to establish -- `run_hydrostatic` watches it arrive between 600 and
-    # 1,500 -- and a body let go before then feels no buoyancy at all and simply falls.
-    # Stepping the world rather than the link is what holds the body still meanwhile.
+    # **Fill the tank, hold the boat, let the water settle, then let go.** The tank
+    # starts at uniform density; the hydrostatic gradient that holds a hull up takes of
+    # order a thousand steps to establish -- `run_hydrostatic` watches it arrive between
+    # 600 and 1,500 -- and a body released before then feels no buoyancy at all and
+    # simply falls.
+    #
+    # The body is held by pinning its pose and velocity after each coupled step, **not**
+    # by stepping the world instead of the link. Stepping the world does not sync poses
+    # from Newton, and doing it here voxelised this very box into the corner of the
+    # domain for long enough to produce four retracted measurements; the constructor now
+    # pushes poses once, and this loop still goes through `link.step` so the hull is
+    # where it says it is on every one of them.
+    held_q = link.state.body_q.numpy().copy()
     for _ in range(int(settle_steps)):
-        world.step()
+        link.step()
+        link.state.body_qd.zero_()
+        link.state.body_q.assign(held_q)
 
     # The heave period of a floating prism is `2 pi sqrt(d / g)` with `d` the draft --
     # the restoring stiffness is `rho g A` and the mass is `rho_body A H = rho A d`. Run
@@ -3765,8 +3775,8 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
              f"{heave_period * 1e3:.2f} ms",
              f"  measured:   draft {draft * 1e3:.4f} mm "
              f"({draft / exact_draft:.4f}x), wobble {wobble * 1e3:.4f} mm",
-             f"  buoyancy:   rho * V_submerged * g, with V from the fill-weighted cells "
-             f"below the measured waterline (not from the momentum exchange)",
+             f"  buoyancy:   NOT supplied; the momentum exchange over the hull produces "
+             f"it and this case is the check that it is the right size",
              *world.report()[-3:]]
     return _result("archimedes", checks, lines, drawn, draft=draft,
                    exact_draft=exact_draft, wobble=wobble, drift=drift,

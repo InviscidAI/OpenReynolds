@@ -751,20 +751,166 @@ section 9 that is arithmetic over counted runs and not a billing figure. Running
 `freesurface` on an A10G instead is supported (`--gpu a10g`) and untested.
 
 
-## 11. What is still unknown
+## 11. A submarine: a Newton body two-way coupled to our fluid, inside Kit
 
+Added 2026-11-23. This closes the item that sat at the top of the unknown list: whether a
+rigid body can be **two-way coupled** to `openreynolds/live/` inside a live Kit process.
+It can. Everything below is from `benchmarks/live/modal_isaacsim.py::submarine`.
+
+Deliberately on `FluidWorld` and not `FreeSurfaceWorld`. `DECISIONS_LIVE.md` D9 records
+that the momentum-exchange wrench on a body in a fluid carrying a body force is not yet
+derived -- a fully submerged box whose answer is exactly `+rho V g` reads -0.48 times it
+-- so anything at a waterline is blocked. A fully submerged hull never touches that path.
+
+### 11.1 The answer
+
+**Yes, and here is the number.** A capsule hull, fineness 4, 10 mm diameter, is driven
+along its own axis by a constant thrust through `control.joint_f`, and the fluid pushes
+back through `world.wrench(0)`. Those two forces are computed by completely different
+routes -- one from the body's kinematics in Newton, one from the populations crossing the
+boundary links in our Warp kernels -- and at steady state they must cancel:
+
+| | |
+| --- | --- |
+| **mean `|fluid Fx|` / thrust at cruise** | **0.82** |
+| momentum balance `|F_fluid| / (T - m a)`, late run | **0.885** |
+| hull voxelised into the lattice | 23,184 cells of (0.5 mm)^3 |
+| voxel volume against the analytic capsule | 2.898e-6 against 2.87979e-6 m3, **+0.63%** |
+
+A one-way coupling flies the submarine and fails both of those. The second row is the
+better test: it does not assume terminal velocity, because `m a = T - F_fluid` holds at
+every instant, and it is what caught the vacuum case in 11.3.
+
+The run: lattice **480 x 160 x 200 = 15.36 M nodes**, dx 0.5 mm, dt 1.993 ms, 5,236
+coupled steps covering 10.4 s, solver **490 MLUPS** on an L40S, render 13.0 s for 44
+frames at 1280x720.
+
+### 11.2 Three things that had to be got right, each found by being got wrong
+
+**Neutral buoyancy is not achievable here, and that is a measurement.** The obvious
+build gives the hull the water's density so `m = rho_w V`. It rose at 15 mm/s and climbed
+130 mm while travelling 6.5 mm forward. Newton takes the mass from the **analytic**
+capsule; `NewtonCoupling(buoyancy=True)` takes the displaced weight from the
+**voxelised** one; they differ by 0.63%, and
+
+```
+weight                                2.8198e-05 N  =  5,104 x the thrust
+net buoyancy from that 0.63%          1.7801e-04 N  =     32 x the thrust
+volume error the thrust could absorb      0.0196%
+```
+
+Calibrating the density so that `m = rho_w V_voxel` at the start pose drove the residual
+to **9.7e-10 N** and still did not hold, because the voxelisation is a function of where
+the body sits relative to the grid. Measured over a run: `solid_cells` swung **22,992 to
+23,192**, which is **2.4481e-04 N of buoyancy, 44 x the thrust**, and the hull sank out
+of frame on the mean deficit.
+
+So neutral buoyancy here is a cancellation of two forces five thousand times larger than
+the one being measured, to a precision the voxelisation is two orders of magnitude short
+of. The demo sets gravity to zero and `buoyancy=False`, which is numerically identical to
+the ideal being modelled. **D9's buoyancy path is therefore not exercised by this demo;**
+`cases.run_underwater` and `run_falling_sphere` still cover it.
+
+**Gravity has to be set before the solver is built.** `SolverMuJoCo` converts the Newton
+model into a MuJoCo model in its constructor, so a `set_gravity` landing afterwards
+updates one and not the other. Doing it in the wrong order sent the hull to 59 m/s within
+98 steps and to 1e8 m by the next frame. That reads like a coupling blow-up and is a
+model the solver never saw.
+
+**`body_qd` is linear first.** Newton's own docstring says so and `isaac.py` records it as
+checked by dropping a body and reading which three components moved. Reading `[3:6]` for
+the swimming speed would have put the angular velocity in every row of the table and
+looked entirely plausible.
+
+### 11.3 The moving window broke the voxelisation
+
+`follow=0` is the validated way to keep a travelling body in frame and is what
+`run_underwater` and `run_falling_sphere` use. **It did not survive here.** With
+`follow=0, follow_slack=0.15` and the hull started 35 mm off centre, the window shifted
+once on the first step and the voxelisation collapsed:
+
+```
+solid_cells            23,184  ->  range 0 to 2,346
+world.wrench(0)[0]     exactly 0.0 on every frame
+measured dv per frame  3.756e-04 m/s
+T / m                  3.7545e-04 m/s
+```
+
+A body in vacuum to four significant figures. The fluid was still being solved; it simply
+had nothing in it. With `follow=None` and a domain twice as long, `solid_cells` holds at
+**23,092 to 23,192** across the whole run and the wrench is non-zero throughout.
+
+**This is a bug report, not a workaround.** `benchmarks/` may not touch
+`openreynolds/live/`, so the demo avoids the window rather than fixing it. What wants
+looking at is `FluidWorld._maybe_shift`: it shifts `f`/`f_next`, updates `domain.origin`
+and calls `_sync_bodies()`, and something in that sequence leaves `owner` unpopulated
+afterwards. The cheap reproduction is any body started outside `follow_slack` of the
+domain centre, which forces a large shift on step one.
+
+### 11.4 What this demo would like changed in `openreynolds/live/`
+
+Neither is needed for anything here to work; both would make a submarine easier to build.
+
+1. **`FluidWorld._maybe_shift` and the voxelisation.** Section 11.3. This is the one that
+   matters, because the moving window is how any travelling body is meant to be run and
+   the failure is silent: a zero wrench reads as a coupling that was never wired up.
+2. **Let `NewtonCoupling` take the displaced volume instead of recounting voxels.**
+   Something like `NewtonCoupling(..., buoyancy=True, volume=V)`. Section 11.2 is the
+   argument: for a near-neutrally-buoyant body the voxel count's own quantisation is the
+   dominant force error, and the caller usually knows the analytic volume exactly.
+
+### 11.5 Drawing the fluid, and the renderer traps that were already written down
+
+The wake is a **`UsdGeomPointInstancer`** over the decimated velocity field -- every third
+node, where the speed is above 15% of the frame's peak, inside a box eighteen diameters
+behind the hull. Section 7 ranked this as the practical option for a field that updates
+every frame, and it is: positions are an in-memory attribute write with no disk round
+trip, and per-instance scale and `primvars:displayColor` at `vertex` interpolation give
+the speed map. The hull itself is an analytic `UsdGeom.Capsule` at the pose Newton
+computed, not the voxelisation -- `solid_cells` is the right thing to *measure*, and a
+16-cell-per-diameter voxel blob is a picture of the discretisation.
+
+Three new traps, on top of the three in section 10.5:
+
+**`render_stddev` over the whole array is fooled by a tinted background.** A frame that is
+one flat teal, R 48.4 / G 138.0 / B 169.5, has a whole-array standard deviation of
+**51.32**, because most of that spread is the gap between the channel means and not any
+variation in the picture. It read as a healthy render and was a blank one;
+`render_unique_colours` caught it with the value **1**. The guard now averages the
+per-channel deviations, and the retry inside the frame grab counts distinct colours
+rather than looking at a deviation.
+
+**An empty annotator and a flat frame are different failures.** `render_unique_colours`
+of **0** means the annotator returned nothing and the renderer was not ready;
+**1** means it drew the background and there was no geometry in front of it. Separating
+them turned a diagnostic run from ambiguous into decisive.
+
+**A metallic surface has no diffuse term.** The hull was built at `metallic=0.65` and
+rendered dark olive green: a correct render of an orange mirror under a deep blue dome.
+
+A solver-free `stage_check` entrypoint exists because of all this. It renders a cube, a
+capsule and a point instancer at 0.04 m and 0.4 m, at two near clipping planes, and
+reports distinct colours for each. **All six prim-and-scale combinations draw**, which is
+what proved the submarine's blank frames were never a renderer problem -- the submarine
+had dived out of shot.
+
+<!-- SUB-RESULT -->
+
+## 12. What is still unknown
+
+- **`FluidWorld._maybe_shift` and the voxelisation collapse (11.3).** The most valuable
+  thing on this list, because the moving window is how a travelling body is meant to run
+  and the failure is silent.
 - Whether a Warp kernel **writing** through a PhysX tensor view is seen by PhysX on the
-  next step. Reading at `cuda:0` with a real device pointer is established (section 6);
-  writing through the array rather than through `apply_forces_and_torques_at_pos` is not.
+  next step. Reading at `cuda:0` with a real device pointer is established (section 6).
 - Whether `isaacsim.physics.newton`, Isaac Sim 6.2's own Newton backend, can drive
-  `couple.NewtonCoupling` directly. Still the most valuable thing to try next, and now
-  more so: the extension is known to run in this process.
-- Whether a rigid body in PhysX can be **two-way coupled** to `FreeSurfaceWorld` in this
-  process. The demo renders the fluid and reads PhysX bodies, but nothing yet passes a
-  wrench between them inside Kit.
-- Per-instance colour on `UsdGeomPointInstancer` in this build, and what
-  `omni.usd.schema.usd_particle_field` is.
+  `couple.NewtonCoupling` directly, which would remove the separate Newton install.
+- A **floating** body, which needs D9's body-force wrench derived first.
+- Whether the free-surface solver and a coupled rigid body run together in one process.
+  Each has now been done inside Kit; they have not been done at once.
+- Per-instance `displayColor` on a `UsdGeomPointInstancer`: it is set by this demo and
+  the wake does read as a speed map, but no run has isolated it against a flat-coloured
+  control.
 - Whether a marching-cubes isosurface over `world.fill` renders fast enough to replace
-  the heightfield, which is what overturning waves would need.
-- Render throughput for a long film: 40 frames took 9.2 s of a 21.5 s job, so a
-  thousand-frame sequence is minutes rather than hours, but that has not been run.
+  the free-surface heightfield, which is what overturning waves would need.
+

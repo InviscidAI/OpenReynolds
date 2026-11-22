@@ -2165,7 +2165,11 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         hull_xform = UsdGeom.Xformable(hull.GetPrim())
         hull_op = hull_xform.AddTransformOp()
         UsdShade.MaterialBindingAPI(hull).Bind(
-            preview_material("/World/looks/hull", (0.97, 0.56, 0.10), 0.22, 0.65))
+            # metallic 0.0, not 0.65. A metallic surface has no diffuse term and shows
+            # the environment instead, so a 65% metallic orange hull under a deep blue
+            # dome rendered **dark olive green** -- a correct render of a mirror in blue
+            # water, and not the submarine anyone was looking for.
+            preview_material("/World/looks/hull", (0.95, 0.52, 0.11), 0.38, 0.0))
 
         # -- the wake ------------------------------------------------------------------
         #
@@ -2230,8 +2234,8 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
         # it and looks slightly down the length of it.
         camera = rep.create.camera(
             position=(start[0] + 0.055, start[1] - 0.165, look_z + 0.062),
-            look_at=(start[0] - 0.030, start[1], look_z),
-            focal_length=38.0, clipping_range=(0.005, 100.0))
+            look_at=(start[0] - 0.052, start[1], look_z),
+            focal_length=34.0, clipping_range=(0.005, 100.0))
         product = rep.create.render_product(camera, (width, height))
         annotator = rep.AnnotatorRegistry.get_annotator("rgb")
         annotator.attach([product])
@@ -2288,7 +2292,13 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
             # The threshold is a fraction of the body's own speed, so the cloud is "where
             # the hull has changed the water" at whatever speed it happens to be doing,
             # rather than a fixed number that is empty early and solid late.
-            reference = max(float(np.nanmax(speed)) * 0.33, 1e-9)
+            # 0.15 of the peak, not 0.33. At a third of the maximum the only cells left
+            # are the ones against the hull, so the cloud came out as a shell wrapped
+            # tight round the body and there was no trailing wake at all -- the thing
+            # the picture is supposed to show. The near-wake box below is what keeps the
+            # count manageable at a threshold this low; run seven had the low threshold
+            # and no box, and drew the entire domain.
+            reference = max(float(np.nanmax(speed)) * 0.15, 1e-9)
             xs, ys, zs = (world.node_coordinates(a) for a in range(3))
             gx, gy, gz = np.meshgrid(xs[::3], ys[::3], zs[::3], indexing="ij")
             # Only the near wake. Run seven drew every stirred cell in a 240 mm box and
@@ -2367,7 +2377,7 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
                 # nose went UP through 90 degrees and the hull tumbled, which is both
                 # the wrong sign and about six times too much. This is sized for roughly
                 # twenty degrees.
-                joint_f[4] = 6.0e-7
+                joint_f[4] = 4.0e-7
             link.control.joint_f.assign(joint_f)
             mark = time.time()
             link.step()
