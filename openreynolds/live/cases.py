@@ -1,0 +1,2669 @@
+"""The cases: what each one measures, what it is measured against, and how close it got.
+
+Written to the same contract as `benchmarks/README.md`, which is this repository's
+strictest document: *a case with a reference and no measured agreement beside it teaches
+a reader to trust an unvalidated number*. So every case here carries its reference, its
+tolerance, the source the reference was read from, and -- where the reference is not
+exact -- what the reference's own uncertainty is.
+
+## Where the references came from, and which of them were read
+
+Every number in `REFERENCES` below was read from a document, in this session, by
+fetching and opening it. That is not a courtesy. `openreynolds/toolbox/references/`
+exists because four separate studies in this project reached for a published value the
+toolbox did not carry and produced one from memory; `benchmarks/README.md` records the
+two reference values that were *wrong* before that directory existed, both of which
+flattered the result. The provenance of each is in the entry.
+
+Two of them could not be fully established and say so:
+
+* Ghia's Table II at Re 100 rests on one OCR of the 1982 scan, because no second
+  transcription of that table could be found. Table I was cross-checked against an
+  independent transcription and all 17 values agree.
+* There is **no canonical published drag coefficient for a cylinder at Re 100**. The
+  literature clusters between 1.32 and 1.37. The cross-check against this repository's
+  own OpenFOAM run does not need one, which is part of why that cross-check is the one
+  the cylinder's drag is graded on.
+
+## Large eddy simulation is off for every laminar case, and that is load-bearing
+
+`cavity`, `cylinder`, `sphere`, `translating_sphere`, `falling_sphere` and `poiseuille`
+all run with `smagorinsky=0.0` and the `trt` collision, and `run_case` refuses to grade
+them with it on. A Smagorinsky term adds a positive eddy viscosity wherever the strain
+rate is non-zero, which in a laminar flow is everywhere; the effective Reynolds number
+is then lower than the one the case was set up at, and the drag comes out closer to the
+published value than the scheme deserves. A subgrid model has nothing to model in a
+resolved laminar flow, so switching it on can only make the agreement a coincidence.
+`LAMINAR` is the list, and `_official` is the check.
+
+The two cases that *do* use it, `ground_effect` and `quadrotor`, are rotor flows at
+Reynolds numbers in the tens of thousands, where no affordable lattice resolves the
+molecular viscosity at all (`units.STIFF_TAU` has the arithmetic). They say so in their
+own report, every run.
+
+## Grid convergence, because one coarse-grid match is luck
+
+`cylinder` runs at three resolutions and reports the observed order of convergence from
+the three errors. That is the only evidence in this file that distinguishes "the scheme
+is second-order accurate and this grid is fine enough" from "this grid happens to agree".
+`benchmarks/README.md`'s own commentary makes the point about an agreement that has not
+been examined; three resolutions is the cheapest examination there is.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+import numpy as np
+
+from . import figures
+from .units import CS, MACH_MAX, STIFF_TAU, Scaling, UnphysicalScaling
+
+__all__ = [
+    "CASES", "Case", "REFERENCES", "LAMINAR",
+    "describe_cases", "run_case", "run_case_file", "benchmark", "crosscheck", "report",
+]
+
+REFERENCE_DIR = Path(__file__).resolve().parents[1] / "toolbox" / "references"
+REPO = Path(__file__).resolve().parents[2]
+
+
+# -- the references ---------------------------------------------------------------------
+
+REFERENCES: dict[str, dict[str, Any]] = {
+    "ghia": {
+        "source": (
+            "Ghia, U., Ghia, K.N. and Shin, C.T. (1982), 'High-Re solutions for "
+            "incompressible flow using the Navier-Stokes equations and a multigrid "
+            "method', Journal of Computational Physics 48:387-411, Tables I and II"
+        ),
+        "read": "the scanned paper; Table I also against an independent transcription",
+        "caveat": (
+            "Ghia solved on a 129x129 grid to second order, and his Re 1000 centreline "
+            "extrema sit 1.46%, 1.59% and 2.20% from Botella and Peyret's (1998) "
+            "spectral benchmark -- so an agreement tighter than about 1.5% at Re 1000 "
+            "is partly luck, which benchmarks/README.md already says about the Felix "
+            "run of this same case. The Re 100 v column rests on a single OCR of the "
+            "1982 scan"
+        ),
+        "tolerance": 0.02,
+        "tolerance_is": (
+            "RMS of (u - u_Ghia) over his 17 points, as a fraction of the lid speed. "
+            "The same bound benchmarks/felix/grade.py applies to the same quantity, "
+            "taken from docs/felix-mode-acceptance.md, so the two solvers in this "
+            "repository are graded identically on the one case they share"
+        ),
+    },
+    "schafer_turek_2d2": {
+        "source": (
+            "Schafer, M. and Turek, S. (1996), 'Benchmark computations of laminar flow "
+            "around a cylinder', Notes on Numerical Fluid Mechanics 52:547-566, test "
+            "case 2D-2, Table 4"
+        ),
+        "read": "the full paper text",
+        "cd_max": (3.2200, 3.2400),
+        "cl_max": (0.9900, 1.0100),
+        "strouhal": (0.2950, 0.3050),
+        "pressure_drop": (2.4600, 2.5000),
+        "caveat": (
+            "2D-2 has no single reference value: the paper gives only these intervals, "
+            "which it calls 'estimated intervals for the exact results as suggested by "
+            "the authors'. The Strouhal number is f*D/U with D = 0.1 m and U the MEAN "
+            "inflow velocity of 1.0 m/s, not the 1.5 m/s peak. The paper's "
+            "experimental St = 0.287 +/- 0.003 is for an extended-inlet variant and is "
+            "NOT this case"
+        ),
+        "geometry": {
+            "length": 2.2, "height": 0.41, "diameter": 0.1, "centre": (0.2, 0.2),
+            "nu": 1.0e-3, "u_max": 1.5, "u_mean": 1.0, "reynolds": 100.0,
+        },
+        "tolerance": {"cd": 0.05, "strouhal": 0.03},
+        "tolerance_is": (
+            "the brief's: drag within 5% and Strouhal within 3%. Both are taken against "
+            "the midpoint of the paper's interval, and the interval is reported beside "
+            "the measurement so a reader can see which side of it the run fell"
+        ),
+    },
+    "schiller_naumann": {
+        "source": (
+            "Schiller, L. and Naumann, A. (1933), as implemented in "
+            "openreynolds/toolbox/references/sphere_drag.py"
+        ),
+        "read": "this repository's own reference module, which carries the formula",
+        "caveat": (
+            "A fit to measurements, not a derivation, so it carries the scatter of the "
+            "data behind it; sphere_drag.py is explicit that its accuracy should be "
+            "quoted from a source and not from the formula. It holds below Re about "
+            "1000. Stokes drag is the exact check and only in its own limit: at Re 1 "
+            "the inertial correction is already about 15% (sphere_drag.STOKES_LIMIT_RE)"
+        ),
+        "tolerance": 0.05,
+        "tolerance_is": "the brief's 5%, on the terminal velocity and on Cd",
+    },
+    "cheeseman_bennett": {
+        "source": (
+            "Cheeseman, I.C. and Bennett, W.E. (1955), 'The effect of the ground on a "
+            "helicopter rotor in forward flight', ARC R&M 3021, equation (2)"
+        ),
+        "read": "the original report",
+        "formula": "T_g/T_inf = 1 / (1 - R^2/(16 Z^2))",
+        "caveat": (
+            "Three things the usual quotation drops. The ratio is derived AT CONSTANT "
+            "POWER. Z is the height of the rotor above the ground. The report states no "
+            "numeric lower bound on Z/R -- only that small Z/R gives 'large errors' and "
+            "is 'of no practical interest' -- and its one number is in the conclusions, "
+            "that flight results agree for Z/R greater than 0.6; the Z/R >= 0.25 figure "
+            "that circulates could not be traced to it. Sanchez-Cuevas, Heredia and "
+            "Ollero (2017), Int. J. Aerospace Eng. 1823056, measured that a single small "
+            "rotor follows Cheeseman and Bennett but a complete multirotor does not: the "
+            "effect is much larger and reaches to about 5R rather than 2R, because of a "
+            "fountain under the airframe. That is why the graded case here is ONE "
+            "actuator disk and the quadrotor is a demo rather than a graded comparison"
+        ),
+        "tolerance": 0.10,
+        "tolerance_is": (
+            "a grading choice, and a loose one, for a model whose own author declined to "
+            "bound its validity. 10% on the induced-velocity ratio, over Z/R from 0.75 "
+            "to 3 where the flight data he quotes applies"
+        ),
+    },
+    "openfoam_cylinder": {
+        "source": (
+            "this repository's own OpenFOAM run, committed at "
+            "tests/data/moving_mesh/viv_fixed/ and graded by "
+            "benchmarks/moving_mesh/grade.py"
+        ),
+        "read": "the committed postProcessing/forceCoeffs/*/coefficient.dat",
+        "strouhal": 0.166141,
+        "cd": 1.355514,
+        "geometry": {"diameter": 0.01, "speed": 0.01, "nu": 1.0e-6, "blockage": 0.025},
+        "caveat": (
+            "A cylinder at Re 100 in water with 2.5% blockage, run with pimpleFoam on a "
+            "morphing mesh. The two numbers are asserted to five digits by "
+            "tests/test_benchmark_moving_mesh.py, so they cannot drift without a test "
+            "failing. Williamson (1996) gives St = 0.164 for an unconfined cylinder at "
+            "Re 100 -- his figure 7b prints the fit S0 = -3.3265/Re + 0.1816 + "
+            "1.6e-4*Re, which at Re 100 is 0.16433 -- and benchmarks/moving_mesh/ "
+            "records that 2.5% blockage is expected to raise St by about a percent, "
+            "which is what the +1.31% of the OpenFOAM run is. There is NO canonical "
+            "published Cd at Re 100; the literature clusters 1.32 to 1.37 and Posdziech "
+            "and Grundmann (2007) give 1.325, which could not be read in the original. "
+            "So drag here is graded against this repository's own run and not against a "
+            "published value, which is the honest thing a cross-check can do"
+        ),
+        "tolerance": {"cd": 0.05, "strouhal": 0.03},
+        "tolerance_is": "the brief's, applied to the difference between the two backends",
+    },
+    "poiseuille": {
+        "source": "closed form; no paper",
+        "read": "n/a",
+        "formula": "u(y) = G y (H - y) / (2 mu),  u_max = G H^2 / (8 mu)",
+        "caveat": (
+            "Exact, and that is the point of having it: with two relaxation times and "
+            "LAMBDA = 3/16 the no-slip wall sits on the link midpoint at any viscosity, "
+            "so the discrete solution is the analytic parabola to the convergence "
+            "residual rather than to second order. benchmarks/lbm/ grades the "
+            "two-dimensional version of this claim at three viscosities and grades "
+            "single-relaxation-time beside it, because a validation whose reference is "
+            "the thing being validated is no validation"
+        ),
+        "tolerance": 2.0e-3,
+        "tolerance_is": "max |u - u_exact| / u_max, which for an exact scheme is the residual",
+    },
+}
+
+LAMINAR = frozenset({
+    "poiseuille", "cavity", "cylinder", "sphere", "translating_sphere",
+    "falling_sphere", "momentum", "smoke",
+})
+"""The cases whose official numbers are measured with no subgrid model.
+
+See the module docstring. `_official` refuses to mark a run in this set as the graded
+one if `smagorinsky` is non-zero, rather than quietly reporting a flattered agreement.
+"""
+
+
+def _reference(name: str) -> dict[str, Any]:
+    path = REFERENCE_DIR / name
+    if not path.is_file():
+        raise UnphysicalScaling(
+            f"the reference table {path} is missing. It ships with the package "
+            f"(openreynolds/toolbox/references/); a source checkout that has it and an "
+            f"install that does not means the wheel is not packaging it"
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sphere_drag():
+    """`toolbox/references/sphere_drag.py`, imported rather than re-derived.
+
+    It is in the toolbox so that a session can read it in a workspace, and it is
+    importable as `openreynolds.toolbox.references.sphere_drag` because `references/`
+    is a package directory under an installed `openreynolds`. Reaching for it here
+    rather than writing `24/Re (1 + 0.15 Re^0.687)` into this file is the whole point of
+    that directory existing: one copy of a published correlation, with its caveats
+    attached, and a test (`tests/test_live_cases.py`) that this module agrees with it.
+    """
+    from ..toolbox.references import sphere_drag as module
+
+    return module
+
+
+# -- the result shape -------------------------------------------------------------------
+
+
+@dataclass
+class Check:
+    """One graded quantity: what it is, what came out, what it should be, and the verdict.
+
+    `target` is a string, deliberately. A target is sometimes a number, sometimes an
+    interval, sometimes a tolerance about a midpoint, and sometimes "reported, not
+    graded" -- and a structured field that could hold all four would be read wrong more
+    often than a sentence. `benchmarks/*/grade.py` prints targets the same way.
+    """
+
+    name: str
+    measured: float | str
+    target: str
+    passed: bool | None
+    note: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "measured": self.measured, "target": self.target,
+                "passed": self.passed, "note": self.note}
+
+
+@dataclass
+class Case:
+    """One runnable case: how to run it, and one line about what it is for."""
+
+    name: str
+    about: str
+    runner: Callable[..., dict[str, Any]]
+    defaults: dict[str, Any] = field(default_factory=dict)
+    milestone: str = ""
+    needs_newton: bool = False
+    heavy: bool = False
+    """Whether this case wants a GPU. The CPU runs it correctly and slowly; `heavy`
+    is what `benchmarks/live/grade.py` reads to decide whether to refuse on a CPU, and
+    what the agent tool warns about."""
+
+
+def _result(case: str, checks: Sequence[Check], lines: Sequence[str],
+            figures_written: Sequence[Any] = (), **extra: Any) -> dict[str, Any]:
+    graded = [c for c in checks if c.passed is not None]
+    return {
+        "case": case,
+        "passed": all(c.passed for c in graded) if graded else True,
+        "checks": [c.as_dict() for c in checks],
+        "report": list(lines),
+        "figures": [str(p) for p in figures_written if p],
+        **extra,
+    }
+
+
+def _official(case: str, scaling: Scaling, smagorinsky: float) -> list[str]:
+    """The note every run carries about whether its numbers are the official ones.
+
+    Refuses rather than warns for a laminar case with the subgrid model on, because the
+    whole failure this guards against is a *better-looking* number: an eddy viscosity in
+    a laminar flow lowers the effective Reynolds number, and a drag coefficient measured
+    at a lower Reynolds number than the one the case claims is closer to the published
+    value for reasons that have nothing to do with the solver being right.
+    """
+    if case in LAMINAR and smagorinsky:
+        raise UnphysicalScaling(
+            f"{case} is a laminar benchmark and its graded numbers are measured with no "
+            f"subgrid model, but smagorinsky is {smagorinsky:g}. A Smagorinsky term adds "
+            f"a positive eddy viscosity wherever the strain rate is non-zero, which in a "
+            f"laminar flow is everywhere, so the effective Reynolds number is below the "
+            f"one this case is set up at and the agreement it reports is flattered. Run "
+            f"it with smagorinsky=0 for a graded number; run it with the model on only "
+            f"to measure what the model costs, and say that is what you did"
+        )
+    notes = []
+    if case in LAMINAR:
+        notes.append("  graded:     subgrid model off (smagorinsky = 0), as a laminar "
+                     "benchmark's official numbers must be")
+    else:
+        notes.append(f"  graded:     subgrid model ON (Cs = {smagorinsky:g}): this case "
+                     f"is a rotor flow at a Reynolds number no affordable lattice "
+                     f"resolves, so the answer away from a wall is the model's")
+    notes.extend(f"  NOTE:       {note}" for note in scaling.notes())
+    return notes
+
+
+# -- the loop every case runs -----------------------------------------------------------
+
+
+def _advance(world: Any, steps: int, *, sample_every: int = 0,
+             sample: Callable[[int], None] | None = None,
+             settle: float = 0.0, progress: Callable[[str], None] | None = None,
+             every: int = 0) -> None:
+    """Step the world `steps` times, sampling and reporting on the way.
+
+    One loop for every case, so that "how a case is run" is one thing rather than nine.
+    `settle` is the fraction of the run to discard before sampling, which is the
+    transient; a case that samples its own transient and then averages over it reports
+    an average of a flow that was still arriving.
+    """
+    start_sampling = int(steps * settle)
+    announce = every or max(1, steps // 10)
+    began = time.perf_counter()
+    for index in range(steps):
+        world.step()
+        if sample is not None and sample_every and index >= start_sampling \
+                and (index - start_sampling) % sample_every == 0:
+            sample(index)
+        if progress is not None and (index + 1) % announce == 0:
+            elapsed = time.perf_counter() - began
+            rate = world.nodes * (index + 1) / elapsed / 1e6
+            left = elapsed / (index + 1) * (steps - index - 1)
+            progress(f"    {index + 1:>9,}/{steps:,} steps  {rate:6.1f} MLUPS  "
+                     f"{figures.clock(left)} left")
+
+
+def _converge(world: Any, *, tolerance: float = 1.0e-6, check_every: int = 500,
+              max_steps: int = 2_000_000, reference: float = 1.0,
+              progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+    """Run until the velocity field stops moving, and report what it stopped at.
+
+    The residual is the largest change in any velocity component over `check_every`
+    steps, as a fraction of `reference`. Reported whether or not it reached `tolerance`,
+    because -- in `toolbox/lbm.py`'s words about the same quantity -- "a run that hit
+    max_steps and a run that converged are not the same answer and the difference is one
+    number".
+
+    **The floor is single precision, not the scheme.** The populations are float32 and
+    the interesting part of one is five or six orders of magnitude below its weight, so
+    the residual of a converged run settles at a few times 1e-5 of the reference speed
+    and stays there. A tolerance below that never trips and the run goes to `max_steps`
+    looking like a failure to converge. Measured on the 32-cell cavity at Re 100: the
+    field is stable in its fourth digit from 20,000 steps and the residual floor is
+    5e-5. `tolerance` defaults above it.
+    """
+    previous = None
+    residual = float("inf")
+    done = 0
+    began = time.perf_counter()
+    while done < max_steps:
+        for _ in range(check_every):
+            world.step()
+        done += check_every
+        u = world.fields()["u"]
+        if previous is not None:
+            residual = float(np.nanmax(np.abs(u - previous)) / abs(reference))
+        previous = u.copy()
+        if progress is not None:
+            elapsed = time.perf_counter() - began
+            progress(f"    {done:>9,} steps  residual {residual:.3e}  "
+                     f"{world.nodes * done / elapsed / 1e6:6.1f} MLUPS")
+        if residual < tolerance:
+            break
+    return {"steps": done, "residual": residual, "converged": residual < tolerance}
+
+
+# -- 1. Poiseuille, which is exact ------------------------------------------------------
+
+
+def run_poiseuille(cells: int = 32, *, nu_lattice: float = 0.1, u_max: float = 0.05,
+                   collision: str = "trt", smagorinsky: float = 0.0,
+                   device: str | None = None, out_dir: str | Path = ".",
+                   steps: int | None = None, progress: Callable[[str], None] | None = None,
+                   **_: Any) -> dict[str, Any]:
+    """A force-driven periodic channel against the exact parabola.
+
+    The cheapest check in the suite and the only exact one. `cells` fluid rows between
+    two walls, periodic along the channel and across it, driven by a uniform body force
+    chosen so the centreline reaches `u_max` in lattice units.
+
+    Three viscosities would be better than one and `benchmarks/live/grade.py` runs
+    three, for the reason `benchmarks/lbm/README.md` gives: one viscosity cannot tell
+    "exact" from "exact at this tau".
+    """
+    import warp  # noqa: F401  - fail here rather than inside the first launch
+
+    from .world import Domain, FluidWorld
+
+    # Work backwards from the lattice numbers, because this case is specified in them:
+    # nu_lattice and u_max are the case, and any dx and fluid that give them are the
+    # same case. dx is 1 mm and water, so the reported dt and speed are recognisable.
+    dx = 1.0e-3
+    fluid_name = "water"
+    from .units import FLUIDS
+
+    dt = nu_lattice * dx * dx / FLUIDS[fluid_name].nu
+    u_ref = u_max * dx / dt
+    scaling = Scaling.from_dt(dx, dt, fluid_name, reference_velocity=u_ref,
+                              scheme=collision, les=smagorinsky > 0)
+    height = cells * dx
+    lines = [f"# poiseuille: {cells} cells across, exact parabola",
+             *scaling.report(), *_official("poiseuille", scaling, smagorinsky)]
+
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=(4 * dx, height, 3 * dx),
+                    faces={"-x": "periodic", "+x": "periodic",
+                           "-y": "wall", "+y": "wall",
+                           "-z": "periodic", "+z": "periodic"})
+    world = FluidWorld(domain=domain, dx=dx, fluid=fluid_name, scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    # u_max = G H^2 / (8 mu) with mu = rho nu, so G = 8 u_max mu / H^2. In lattice
+    # units mu_l = nu_l (rho_l = 1), and the force per unit volume converts through
+    # Scaling.body_force_to_lattice -- which is the one conversion in this file that is
+    # easy to get wrong, so it is done by the units layer and not here.
+    force_lattice = 8.0 * u_max * nu_lattice / (cells * cells)
+    force_si = force_lattice * scaling.fluid.rho * dx / (dt * dt)
+    world.set_body_force((force_si, 0.0, 0.0))
+    world.initialise()
+
+    if steps:
+        _advance(world, steps, progress=progress)
+        stopped = {"steps": steps, "residual": float("nan"), "converged": False}
+    else:
+        stopped = _converge(world, tolerance=1e-6, check_every=200,
+                            max_steps=200_000, reference=u_ref, progress=progress)
+
+    u = world.fields()["u"][2, :, 1, 0] / (dx / dt)   # lattice units, mid-channel column
+    y = (np.arange(cells) + 0.5)
+    exact = force_lattice / (2.0 * nu_lattice) * y * (cells - y)
+    error = float(np.nanmax(np.abs(u - exact)) / u_max)
+    measured_max = float(np.nanmax(u))
+
+    tolerance = REFERENCES["poiseuille"]["tolerance"]
+    checks = [
+        Check("profile, max |u - u_exact| / u_max", error,
+              f"<= {tolerance:.1e}", error <= tolerance),
+        Check("u_max against the closed form", measured_max,
+              f"{u_max:.6f} +/- 1%", abs(measured_max / u_max - 1) <= 0.01),
+        Check("residual at stop", stopped["residual"], "reported, not graded", None),
+    ]
+    out = Path(out_dir)
+    figure = figures.profile_figure(
+        out / "live-poiseuille.png",
+        [{"x": exact, "y": y, "label": "exact parabola"},
+         {"x": u, "y": y, "label": "lattice", "style": "o"}],
+        title=f"Poiseuille, {cells} cells, nu_lattice {nu_lattice:g}",
+        xlabel="u (lattice units)", ylabel="y (cells from the wall)")
+    figures.ensure_rgb(figure)
+    lines += [f"  steps:      {stopped['steps']:,} "
+              f"({'converged' if stopped['converged'] else 'stopped'}, "
+              f"residual {stopped['residual']:.3e})",
+              *world.report()[-2:]]
+    return _result("poiseuille", checks, lines, [figure], scaling=scaling.report(),
+                   stopped=stopped)
+
+
+# -- 2. the lid-driven cavity against Ghia ----------------------------------------------
+
+
+def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 0.055,
+               collision: str = "trt", smagorinsky: float = 0.0,
+               device: str | None = None, out_dir: str | Path = ".",
+               steps: int | None = None, tolerance: float = 3.0e-5,
+               progress: Callable[[str], None] | None = None, **_: Any) -> dict[str, Any]:
+    """The lid-driven cavity, graded on Ghia's two centrelines.
+
+    Quasi-two-dimensional: three lattice planes, periodic in z, with no z dependence in
+    any boundary condition. A z-invariant field stays z-invariant exactly under D3Q19 --
+    nothing in the collision or the streaming couples to z when the field does not --
+    so this is the two-dimensional answer computed by the three-dimensional code, which
+    is the point: it grades the kernels that the three-dimensional cases use.
+
+    `u_lattice` defaults to 0.055 rather than `toolbox/lbm.py`'s 0.1 because 0.1 puts
+    the lattice Mach number at 0.173, above this extension's own ceiling
+    (`units.MACH_MAX`). That is a real tension and not a preference: at Re 1000 the two
+    bounds together -- Ma below 0.1 and tau above `STIFF_TAU` -- require about 115 cells
+    at the very least, and `cells` defaults to 128 for that reason. The arithmetic is
+    `nu_lattice = u_lattice * cells / Re`.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    dx = 1.0 / cells
+    nz = 3
+    scaling = Scaling.for_reynolds(dx, 1.0, reynolds, "water", u_lattice=u_lattice,
+                                   scheme=collision, les=smagorinsky > 0)
+    lid = scaling.reference_velocity
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=(1.0, 1.0, nz * dx),
+                    faces={"-x": "wall", "+x": "wall", "-y": "wall", "+y": "wall",
+                           "-z": "periodic", "+z": "periodic"},
+                    face_velocity={"+y": (lid, 0.0, 0.0)})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    world.initialise()
+    lines = [f"# cavity: Re {reynolds:g}, {cells} cells a side",
+             *scaling.report(), *_official("cavity", scaling, smagorinsky)]
+
+    if steps:
+        _advance(world, steps, progress=progress)
+        stopped = {"steps": steps, "residual": float("nan"), "converged": False}
+    else:
+        stopped = _converge(world, tolerance=tolerance, check_every=1000,
+                            max_steps=4_000_000, reference=lid, progress=progress)
+
+    u = world.fields()["u"][:, :, nz // 2, :] / lid
+    mid = cells // 2
+    columns = slice(mid - 1, mid + 1) if cells % 2 == 0 else slice(mid, mid + 1)
+    # x = 0.5 and y = 0.5 fall between two nodes for an even cell count, so both
+    # centrelines are the mean of the two straddling lines rather than a nearest pick.
+    # `toolbox/lbm.py::cavity` makes the same choice for the same reason.
+    u_line = u[columns, :, 0].mean(axis=0)
+    v_line = u[:, columns, 1].mean(axis=1)
+    coordinate = (np.arange(cells) + 0.5) / cells
+
+    table = _reference(f"ghia_re{int(reynolds)}.json")
+    u_ref = np.asarray(table["table_1_u_on_vertical_centreline"], dtype=float)
+    v_ref = np.asarray(table["table_2_v_on_horizontal_centreline"], dtype=float)
+    u_at = np.interp(u_ref[:, 0], coordinate, u_line)
+    v_at = np.interp(v_ref[:, 0], coordinate, v_line)
+    u_rms_all = float(np.sqrt(np.mean((u_at - u_ref[:, 1]) ** 2)))
+    v_rms_all = float(np.sqrt(np.mean((v_at - v_ref[:, 1]) ** 2)))
+
+    # The graded RMS is over Ghia's INTERIOR points, and the two walls are excluded for
+    # a reason that is about the grading and not about the solver.
+    #
+    # Ghia's tables start and end on the boundaries: his first row for u is y = 1.0,
+    # u = 1.0, and his last is y = 0.0, u = 0.0. Neither is a solved value. They are the
+    # boundary condition, which every solver reproduces exactly by construction -- and
+    # which a lattice Boltzmann solver cannot be *sampled* at, because its nodes sit
+    # half a lattice spacing inside the wall and the no-slip plane is between nodes
+    # (`world.Domain.origin`). Interpolating to y = 1.0 therefore clamps to the last
+    # node, at y = 1 - 1/(2n), where the real solution is already well below the lid
+    # speed: at 32 cells that one point contributes 0.039 to the RMS on its own, which
+    # is twice the whole tolerance, while the extrema this run actually gets -- u
+    # minimum within 0.15% of Ghia's, v extremes within 1.2% -- say the field is right.
+    #
+    # Grading a solver on a point where it is being asked to extrapolate its own
+    # boundary condition measures the sampling and not the solution. So the two
+    # boundary rows come out, the count that went in is reported, and the RMS over ALL
+    # of Ghia's points is reported beside it so that nothing is hidden by the choice.
+    # benchmarks/felix/grade.py keeps all 17 and is right to: Felix is a mesh solver
+    # with nodes *on* the wall, so for it y = 1.0 is a real sample.
+    u_inside = (u_ref[:, 0] > 0.0) & (u_ref[:, 0] < 1.0)
+    v_inside = (v_ref[:, 0] > 0.0) & (v_ref[:, 0] < 1.0)
+    u_rms = float(np.sqrt(np.mean((u_at[u_inside] - u_ref[u_inside, 1]) ** 2)))
+    v_rms = float(np.sqrt(np.mean((v_at[v_inside] - v_ref[v_inside, 1]) ** 2)))
+
+    limit = REFERENCES["ghia"]["tolerance"]
+    checks = [
+        Check(f"u on x = 0.5, RMS against Ghia Table I "
+              f"({int(u_inside.sum())} interior points)", u_rms,
+              f"<= {limit:.0%} of the lid speed", u_rms <= limit),
+        Check(f"v on y = 0.5, RMS against Ghia Table II "
+              f"({int(v_inside.sum())} interior points)", v_rms,
+              f"<= {limit:.0%} of the lid speed", v_rms <= limit),
+        Check("the same RMS over all 17 of Ghia's points, walls included",
+              f"u {u_rms_all:.4f}, v {v_rms_all:.4f}", "reported, not graded", None,
+              "his first and last rows are the boundary condition, not a solution, and "
+              "a lattice has no node on the wall to sample them at"),
+        Check("u minimum on x = 0.5", float(u_line.min()),
+              f"{u_ref[:, 1].min():.5f} (Ghia)", None),
+        Check("v extremes on y = 0.5", f"{v_line.min():+.5f} to {v_line.max():+.5f}",
+              f"{v_ref[:, 1].min():+.5f} to {v_ref[:, 1].max():+.5f} (Ghia)", None),
+        Check("residual at stop", stopped["residual"], "reported, not graded", None),
+    ]
+    out = Path(out_dir)
+    tag = f"re{int(reynolds)}-n{cells}"
+    drawn = [
+        figures.slice_figure(world, out / f"live-cavity-{tag}.png", axis=2,
+                             title=f"lid-driven cavity, Re {reynolds:g}, {cells} cells"),
+        figures.profile_figure(
+            out / f"live-cavity-{tag}-centrelines.png",
+            [{"x": u_line, "y": coordinate, "label": "u on x = 0.5 (lattice)"},
+             {"x": u_ref[:, 1], "y": u_ref[:, 0], "label": "Ghia Table I", "style": "o"},
+             {"x": coordinate, "y": v_line, "label": "v on y = 0.5 (lattice)", "panel": 1},
+             {"x": v_ref[:, 0], "y": v_ref[:, 1], "label": "Ghia Table II", "style": "o",
+              "panel": 1}],
+            title=f"Re {reynolds:g}: u RMS {u_rms:.2%}, v RMS {v_rms:.2%}",
+            xlabel="u/u_lid, or x", ylabel="y, or v/u_lid", panels=2),
+    ]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines += [f"  steps:      {stopped['steps']:,} "
+              f"({'converged' if stopped['converged'] else 'stopped'}, "
+              f"residual {stopped['residual']:.3e})",
+              f"  reference:  {REFERENCES['ghia']['source']}",
+              f"  caveat:     {REFERENCES['ghia']['caveat']}",
+              *world.report()[-2:]]
+    return _result("cavity", checks, lines, drawn, reynolds=reynolds, cells=cells,
+                   u_rms=u_rms, v_rms=v_rms, u_rms_all=u_rms_all,
+                   v_rms_all=v_rms_all, stopped=stopped)
+
+
+# -- 3. the cylinder, Schafer-Turek 2D-2, at three resolutions --------------------------
+
+
+def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.035,
+                   collision: str = "trt", smagorinsky: float = 0.0,
+                   device: str | None = None, periods: float = 30.0,
+                   settle: float = 0.5, out_dir: str | Path = ".",
+                   progress: Callable[[str], None] | None = None,
+                   steps: int | None = None, animate: bool = False) -> dict[str, Any]:
+    """One resolution of the Schafer-Turek 2D-2 cylinder. `run_cylinder` runs three."""
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    geometry = REFERENCES["schafer_turek_2d2"]["geometry"]
+    diameter = geometry["diameter"]
+    length, height = geometry["length"], geometry["height"]
+    centre = geometry["centre"]
+    reynolds = geometry["reynolds"]
+
+    dx = diameter / cells_per_d
+    nz = 3
+    scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
+                                   u_lattice=u_lattice, peak_factor=1.5,
+                                   scheme=collision, les=smagorinsky > 0)
+    u_mean = scaling.reference_velocity
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
+                    faces={"-x": "inlet", "+x": "outlet", "-y": "wall", "+y": "wall",
+                           "-z": "periodic", "+z": "periodic"})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+
+    # The parabolic inflow, which is the case. 4 U_max y (H - y) / H^2 peaks at U_max on
+    # the centreline and averages 2/3 of it, so U_mean = 1.0 against U_max = 1.5 is the
+    # same statement as the paper's. A uniform inlet at the same mean is a different
+    # benchmark with a different answer, which is why this array exists at all.
+    y = world.node_coordinates(1)
+    peak = 1.5 * u_mean
+    profile = np.zeros((world.ny, world.nz, 3))
+    profile[:, :, 0] = (4.0 * peak * y * (height - y) / height ** 2)[:, None]
+    world.set_inlet_profile(profile)
+
+    body = world.add_body(position=(centre[0], centre[1], nz * dx / 2),
+                          label="cylinder")
+    world.add_shape("cylinder", body=body,
+                    position=(centre[0], centre[1], nz * dx / 2),
+                    scale=(diameter / 2.0, nz * dx, 0.0))
+    world.initialise(velocity=(u_mean, 0.0, 0.0))
+
+    # One shedding period in lattice steps, from the expected Strouhal number: the
+    # period is D/(St U), and in lattice units D is cells_per_d and U is u_lattice.
+    expected_st = float(np.mean(REFERENCES["schafer_turek_2d2"]["strouhal"]))
+    period = cells_per_d / (expected_st * u_lattice)
+    total = int(steps if steps else periods * period)
+    depth = nz * dx
+    coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
+
+    times: list[float] = []
+    cd: list[float] = []
+    cl: list[float] = []
+    frames: list[np.ndarray] = []
+
+    def take(index: int) -> None:
+        force, _ = world.wrench(body)
+        times.append(world.steps * scaling.dt)
+        cd.append(float(force[0]) * coefficient)
+        cl.append(float(force[1]) * coefficient)
+        if animate and len(frames) < 240 and index % max(1, total // 240) == 0:
+            frames.append(figures.slice_frame(world, axis=2))
+
+    _advance(world, total, sample_every=1, sample=take, settle=settle,
+             progress=progress)
+
+    cd_array = np.asarray(cd)
+    cl_array = np.asarray(cl)
+    spectral = figures.strouhal(times, cl_array, diameter, u_mean)
+    out = {
+        "cells_per_d": cells_per_d,
+        "dx": dx,
+        "nodes": world.nodes,
+        "steps": total,
+        "period_steps": period,
+        "cd_max": float(cd_array.max()) if cd_array.size else float("nan"),
+        "cd_mean": float(cd_array.mean()) if cd_array.size else float("nan"),
+        "cl_max": float(cl_array.max()) if cl_array.size else float("nan"),
+        "scaling": scaling,
+        "world": world,
+        "times": times,
+        "cd": cd,
+        "cl": cl,
+        "frames": frames,
+        **spectral,
+    }
+    return out
+
+
+def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (20, 30, 40),
+                 collision: str = "trt", smagorinsky: float = 0.0,
+                 device: str | None = None, periods: float = 30.0,
+                 out_dir: str | Path = ".", steps: int | None = None,
+                 animate: bool = True,
+                 progress: Callable[[str], None] | None = None,
+                 **_: Any) -> dict[str, Any]:
+    """Schafer-Turek 2D-2 at three resolutions, with the observed order of convergence.
+
+    One resolution that agrees with a published value is not evidence that the scheme is
+    right; it is evidence that one grid agreed. Three resolutions give the observed
+    order,
+
+        p = log(e_coarse / e_fine) / log(h_coarse / h_fine)
+
+    on the drag error, and a second-order scheme with an interpolated boundary should
+    land near 2. A `p` near zero means the error is not grid error -- the domain, the
+    inflow or the sampling window is dominating -- and a `p` near 4 means the three
+    errors are noise. Either way the number says more than the agreement does.
+
+    `cells_per_d` runs one resolution instead of three, which is what the agent tool and
+    a quick look use.
+    """
+    reference = REFERENCES["schafer_turek_2d2"]
+    cd_interval = reference["cd_max"]
+    st_interval = reference["strouhal"]
+    cl_interval = reference["cl_max"]
+    cd_mid = float(np.mean(cd_interval))
+    st_mid = float(np.mean(st_interval))
+    tolerances = reference["tolerance"]
+
+    grids = [int(cells_per_d)] if cells_per_d else [int(c) for c in resolutions]
+    runs = []
+    out = Path(out_dir)
+    drawn = []
+    for index, grid in enumerate(grids):
+        if progress:
+            progress(f"  cylinder at {grid} cells per diameter "
+                     f"({index + 1} of {len(grids)})")
+        run = _cylinder_once(grid, collision=collision, smagorinsky=smagorinsky,
+                             device=device, periods=periods, out_dir=out,
+                             progress=progress, steps=steps,
+                             animate=animate and grid == max(grids))
+        runs.append(run)
+        drawn.append(figures.slice_figure(
+            run["world"], out / f"live-cylinder-n{grid}.png", axis=2,
+            title=f"cylinder Re 100, {grid} cells per diameter, "
+                  f"Cd_max {run['cd_max']:.4f}, St {run['strouhal']:.4f}"))
+        if run["frames"]:
+            gif = figures.animate(run["frames"], out / f"live-cylinder-n{grid}.gif",
+                                  fps=20)
+            if gif:
+                drawn.append(gif)
+
+    finest = runs[-1]
+    errors = [abs(r["cd_max"] - cd_mid) / cd_mid for r in runs]
+    order = float("nan")
+    if len(runs) >= 2 and errors[-1] > 0 and errors[0] > 0:
+        h = [r["dx"] for r in runs]
+        order = float(np.log(errors[0] / errors[-1]) / np.log(h[0] / h[-1]))
+
+    cd_error = abs(finest["cd_max"] - cd_mid) / cd_mid
+    st_error = abs(finest["strouhal"] - st_mid) / st_mid
+    checks = [
+        Check(f"Cd_max at {finest['cells_per_d']} cells per diameter", finest["cd_max"],
+              f"{cd_mid:.4f} +/- {tolerances['cd']:.0%} "
+              f"(the paper's interval {cd_interval[0]}-{cd_interval[1]})",
+              cd_error <= tolerances["cd"]),
+        Check(f"Strouhal at {finest['cells_per_d']} cells per diameter",
+              finest["strouhal"],
+              f"{st_mid:.4f} +/- {tolerances['strouhal']:.0%} "
+              f"(the paper's interval {st_interval[0]}-{st_interval[1]})",
+              st_error <= tolerances["strouhal"]),
+        Check("Cl_max", finest["cl_max"],
+              f"the paper's interval {cl_interval[0]}-{cl_interval[1]}", None,
+              "reported, not graded: the lift is a small difference of two large surface "
+              "integrals, and benchmarks/README.md records the same case's lift being "
+              "reported and not graded for the same reason"),
+        Check("Strouhal by the two methods",
+              f"{finest['strouhal_crossings']:.5f} (crossings), "
+              f"{finest['strouhal_fft']:.5f} (fft), {finest['cycles']:.1f} cycles",
+              "the two should agree", None),
+    ]
+    if len(runs) >= 3:
+        checks.append(Check(
+            "observed order of convergence on the drag error", order,
+            ">= 1.0, and near 2 for a second-order scheme with an interpolated wall",
+            order >= 1.0,
+            "from " + ", ".join(f"{r['cells_per_d']} cells: {e:.3%}"
+                                for r, e in zip(runs, errors))))
+
+    lines = [f"# cylinder: Schafer-Turek 2D-2, Re 100, "
+             f"{', '.join(str(r['cells_per_d']) for r in runs)} cells per diameter",
+             *finest["scaling"].report(),
+             *_official("cylinder", finest["scaling"], smagorinsky),
+             f"  reference:  {reference['source']}",
+             f"  caveat:     {reference['caveat']}"]
+    for run, error in zip(runs, errors):
+        lines.append(
+            f"  {run['cells_per_d']:>3} cells:  Cd_max {run['cd_max']:.4f} "
+            f"({error:+.3%} on the interval midpoint)  St {run['strouhal']:.5f}  "
+            f"Cl_max {run['cl_max']:.4f}  {run['nodes']:,} nodes, {run['steps']:,} steps")
+    if len(runs) >= 3:
+        lines.append(f"  order:      {order:.2f} observed on the drag error")
+    lines += finest["world"].report()[-2:]
+
+    history = figures.profile_figure(
+        out / "live-cylinder-history.png",
+        [{"x": finest["times"], "y": finest["cd"], "label": "Cd"},
+         {"x": finest["times"], "y": finest["cl"], "label": "Cl", "panel": 1}],
+        title=f"Re 100, {finest['cells_per_d']} cells per diameter, "
+              f"{finest['cycles']:.1f} cycles sampled",
+        xlabel="t (s)", ylabel="coefficient", panels=2)
+    drawn.append(history)
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    return _result("cylinder", checks, lines, drawn,
+                   resolutions=[{k: v for k, v in r.items()
+                                 if k not in ("world", "scaling", "frames", "times",
+                                              "cd", "cl")} for r in runs],
+                   order=order)
+
+
+# -- 4. sphere drag against the standard curve ------------------------------------------
+
+
+def run_sphere(reynolds: Sequence[float] = (10.0, 50.0, 100.0, 200.0), *,
+               cells_per_d: int = 16, u_lattice: float = 0.04,
+               collision: str = "trt", smagorinsky: float = 0.0,
+               device: str | None = None, out_dir: str | Path = ".",
+               span: float = 20.0, cross: float = 12.0,
+               steps: int | None = None,
+               progress: Callable[[str], None] | None = None,
+               **_: Any) -> dict[str, Any]:
+    """Drag on a fixed sphere at several Reynolds numbers, against Schiller-Naumann.
+
+    The domain is `span` diameters long and `cross` across, with slip side faces, an
+    inlet and an outflow. Those are the numbers that decide whether this case measures
+    the sphere or the box: a confined sphere has a higher drag than a free one, the
+    correction goes as `(D/H)^3` for a slip-walled box, and at `cross = 12` it is a few
+    tenths of a per cent. It is reported rather than corrected for, because a correction
+    applied to a measurement makes the measurement unfalsifiable.
+
+    Re 1 is deliberately absent. Stokes drag is the exact reference there and the domain
+    a Stokes flow needs is enormous -- the disturbance decays as 1/r -- so a 12-diameter
+    box at Re 1 measures the box. `toolbox/references/sphere_drag.py` is explicit that
+    Stokes holds as Re approaches zero and not at small-but-finite values, and the
+    cheapest honest thing to do is to stay in the range where the fit this is graded
+    against was fitted.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    curve = sphere_drag()
+    diameter = 0.01
+    dx = diameter / cells_per_d
+    out = Path(out_dir)
+    rows = []
+    drawn = []
+
+    for index, re in enumerate(float(r) for r in reynolds):
+        if progress:
+            progress(f"  sphere at Re {re:g} ({index + 1} of {len(reynolds)})")
+        scaling = Scaling.for_reynolds(dx, diameter, re, "water",
+                                       u_lattice=u_lattice, scheme=collision,
+                                       les=smagorinsky > 0)
+        u_inf = scaling.reference_velocity
+        size = (span * diameter, cross * diameter, cross * diameter)
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                        faces={"-x": "inlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                               "-z": "slip", "+z": "slip"},
+                        face_velocity={"-x": (u_inf, 0.0, 0.0)})
+        world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                           substeps=1, collision=collision, smagorinsky=smagorinsky,
+                           device=device)
+        # Five diameters of upstream run and fifteen of wake.
+        position = (5.0 * diameter, size[1] / 2.0, size[2] / 2.0)
+        body = world.add_body(position=position, label=f"sphere_re{re:g}")
+        world.add_shape("sphere", body=body, position=position,
+                        scale=(diameter / 2.0, 0.0, 0.0))
+        world.initialise(velocity=(u_inf, 0.0, 0.0))
+
+        # Long enough for the free stream to cross the box three times, which is the
+        # cheapest statement of "the wake has arrived and settled".
+        crossing = size[0] / dx / u_lattice
+        total = int(steps if steps else 3.0 * crossing)
+        samples: list[float] = []
+
+        def take(_index: int, world=world, samples=samples) -> None:
+            force, _ = world.wrench(body)
+            samples.append(float(force[0]))
+
+        _advance(world, total, sample_every=max(1, total // 400), sample=take,
+                 settle=0.75, progress=progress)
+
+        area = math.pi * (diameter / 2.0) ** 2
+        force = float(np.mean(samples[-max(1, len(samples) // 4):])) if samples else 0.0
+        cd = 2.0 * force / (scaling.fluid.rho * u_inf * u_inf * area)
+        expected = curve.schiller_naumann_cd(re)
+        rows.append({"reynolds": re, "cd": cd, "schiller_naumann": expected,
+                     "error": cd / expected - 1.0, "nodes": world.nodes,
+                     "steps": total, "force": force})
+        drawn.append(figures.slice_figure(
+            world, out / f"live-sphere-re{re:g}.png", axis=2,
+            title=f"sphere Re {re:g}, Cd {cd:.4f} against "
+                  f"Schiller-Naumann {expected:.4f}"))
+
+    limit = REFERENCES["schiller_naumann"]["tolerance"]
+    checks = [
+        Check(f"Cd at Re {row['reynolds']:g}", row["cd"],
+              f"{row['schiller_naumann']:.4f} +/- {limit:.0%} (Schiller-Naumann)",
+              abs(row["error"]) <= limit)
+        for row in rows
+    ]
+    blockage = 1.0 / cross
+    checks.append(Check("blockage, D/H", blockage,
+                        "reported, not graded", None,
+                        "a slip-walled box's confinement correction goes as (D/H)^3, so "
+                        f"{blockage ** 3:.2e} here"))
+
+    curve_re = np.logspace(0, 3, 60)
+    drawn.append(figures.profile_figure(
+        out / "live-sphere-drag.png",
+        [{"x": curve_re, "y": [curve.schiller_naumann_cd(r) for r in curve_re],
+          "label": "Schiller-Naumann (1933)"},
+         {"x": curve_re, "y": [curve.stokes_cd(r) for r in curve_re],
+          "label": "Stokes 24/Re", "style": "--"},
+         {"x": [r["reynolds"] for r in rows], "y": [r["cd"] for r in rows],
+          "label": "lattice Boltzmann", "style": "o"}],
+        title="sphere drag", xlabel="Re", ylabel="Cd"))
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# sphere: drag at Re {', '.join(f'{r:g}' for r in reynolds)}, "
+             f"{cells_per_d} cells per diameter",
+             f"  domain:     {span:g} D long, {cross:g} D across, slip sides",
+             f"  reference:  {REFERENCES['schiller_naumann']['source']}",
+             f"  caveat:     {REFERENCES['schiller_naumann']['caveat']}"]
+    for row in rows:
+        lines.append(f"  Re {row['reynolds']:>6g}:  Cd {row['cd']:.4f} against "
+                     f"{row['schiller_naumann']:.4f} ({row['error']:+.2%})  "
+                     f"{row['nodes']:,} nodes, {row['steps']:,} steps")
+    return _result("sphere", checks, lines, drawn, rows=rows)
+
+
+# -- 5. a translating sphere: the moving-boundary and refill check ----------------------
+
+
+def run_translating_sphere(reynolds: float = 100.0, *, cells_per_d: int = 16,
+                           u_lattice: float = 0.04, collision: str = "trt",
+                           smagorinsky: float = 0.0, device: str | None = None,
+                           out_dir: str | Path = ".", steps: int | None = None,
+                           progress: Callable[[str], None] | None = None,
+                           **_: Any) -> dict[str, Any]:
+    """The same sphere, moving through still fluid instead of held in a stream.
+
+    This is the check `DECISIONS_LIVE.md` D5 promises for the fresh-node refilling, and
+    it is the right one because the quantity a bad refill ruins is exactly this: the
+    force on a body that is uncovering lattice nodes as it goes. A held sphere in a
+    stream never refills anything.
+
+    Galilean invariance is the reference and it is exact. The same sphere at the same
+    Reynolds number must feel the same drag whether the fluid moves past it or it moves
+    through the fluid, so the number to compare against is `run_sphere`'s at the same
+    Re -- a reference measured by this same solver, which makes this a test of the
+    moving-boundary treatment alone and not of the drag model. Schiller-Naumann is
+    reported beside it as the external check.
+
+    The sphere is driven at a prescribed constant velocity rather than released, because
+    a released sphere's velocity is an outcome and this case is about the boundary
+    treatment. `falling_sphere` is the released one.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    curve = sphere_drag()
+    diameter = 0.01
+    dx = diameter / cells_per_d
+    scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
+                                   u_lattice=u_lattice, scheme=collision,
+                                   les=smagorinsky > 0)
+    speed = scaling.reference_velocity
+    size = (20.0 * diameter, 12.0 * diameter, 12.0 * diameter)
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                    faces={"-x": "outlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                           "-z": "slip", "+z": "slip"})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    start = (15.0 * diameter, size[1] / 2.0, size[2] / 2.0)
+    body = world.add_body(position=start, velocity=(-speed, 0, 0, 0, 0, 0),
+                          label="sphere")
+    world.add_shape("sphere", body=body, position=start,
+                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.initialise()
+
+    total = int(steps if steps else 6.0 * cells_per_d / u_lattice)
+    position = np.asarray(start, dtype=float)
+    samples: list[float] = []
+    travelled = []
+
+    def take(_index: int) -> None:
+        force, _ = world.wrench(body)
+        samples.append(float(-force[0]))
+        travelled.append((start[0] - position[0]) / diameter)
+
+    for index in range(total):
+        position = position + np.array([-speed * world.dt, 0.0, 0.0])
+        world.set_body_state(body, position=tuple(position))
+        world.step()
+        if index > total // 2:
+            take(index)
+        if progress and (index + 1) % max(1, total // 8) == 0:
+            progress(f"    {index + 1:>8,}/{total:,} steps  "
+                     f"{(start[0] - position[0]) / diameter:.2f} D travelled")
+
+    area = math.pi * (diameter / 2.0) ** 2
+    force = float(np.mean(samples[-max(1, len(samples) // 3):])) if samples else 0.0
+    cd = 2.0 * force / (scaling.fluid.rho * speed * speed * area)
+    expected = curve.schiller_naumann_cd(reynolds)
+    world.fallbacks = int(world._fallbacks.numpy()[0])
+    world.refilled = int(world._refilled.numpy()[0])
+    limit = REFERENCES["schiller_naumann"]["tolerance"]
+
+    checks = [
+        Check(f"Cd of a translating sphere at Re {reynolds:g}", cd,
+              f"{expected:.4f} +/- {limit:.0%} (Schiller-Naumann)",
+              abs(cd / expected - 1.0) <= limit),
+        Check("fresh nodes refilled", world.refilled, "> 0, or nothing moved",
+              world.refilled > 0,
+              "the count this case exists to exercise: a sphere that uncovered no "
+              "lattice node has not tested the refilling at all"),
+        Check("Bouzidi fallbacks", world.fallbacks, "reported, not graded", None,
+              "links whose second fluid node was also solid; a sub-cell body or a "
+              "sharp edge"),
+    ]
+    out = Path(out_dir)
+    drawn = [figures.slice_figure(
+        world, out / "live-translating-sphere.png", axis=2,
+        title=f"sphere translating at Re {reynolds:g}, Cd {cd:.4f}")]
+    history = figures.profile_figure(
+        out / "live-translating-sphere-history.png",
+        [{"x": travelled, "y": [2.0 * f / (scaling.fluid.rho * speed * speed * area)
+                                for f in samples], "label": "Cd"},
+         {"x": [travelled[0], travelled[-1]] if travelled else [0, 1],
+          "y": [expected, expected], "label": "Schiller-Naumann", "style": "--"}],
+        title="drag on a translating sphere, against the held one",
+        xlabel="diameters travelled", ylabel="Cd")
+    drawn.append(history)
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# translating sphere: Re {reynolds:g}, {cells_per_d} cells per diameter",
+             *scaling.report(),
+             *_official("translating_sphere", scaling, smagorinsky),
+             f"  Galilean:   the reference is run_sphere at the same Re, measured by "
+             f"this same solver; Schiller-Naumann is the external check",
+             f"  refilled:   {world.refilled:,} fresh nodes, "
+             f"{world.fallbacks:,} Bouzidi fallbacks",
+             *world.report()[-2:]]
+    return _result("translating_sphere", checks, lines, drawn, cd=cd,
+                   schiller_naumann=expected, refilled=world.refilled,
+                   fallbacks=world.fallbacks)
+
+
+# -- 6. a sphere falling in water, two-way coupled to Newton ----------------------------
+
+
+def run_falling_sphere(*, cells_per_d: int = 30, density_ratio: float = 1.005,
+                       diameter: float = 0.004, collision: str = "trt",
+                       smagorinsky: float = 0.0, device: str | None = None,
+                       out_dir: str | Path = ".", steps: int | None = None,
+                       solver: str = "mujoco", one_way: bool = False,
+                       animate: bool = True,
+                       progress: Callable[[str], None] | None = None,
+                       **_: Any) -> dict[str, Any]:
+    """Release a sphere in water and let the coupling find its terminal velocity.
+
+    The first case here in which the fluid decides what the body does. Newton integrates
+    the sphere, this extension hands it the fluid wrench every step, and the terminal
+    velocity it settles at is compared with the velocity at which Schiller-Naumann's
+    drag balances the sphere's weight less its buoyancy:
+
+        (rho_s - rho_f) V g = 0.5 rho_f Cd(Re) A V_t^2,   Re = V_t D / nu
+
+    solved by fixed-point iteration below. Nothing about that balance is in the solver;
+    it is the external answer, and the measured terminal velocity either matches it or
+    does not.
+
+    **Why the numbers are these numbers.** `density_ratio` is 1.005 and the sphere is
+    4 mm, which looks like an odd choice and is the only one that works. Three
+    constraints have to hold at once. The terminal Reynolds number has to be inside
+    Schiller-Naumann's range and low enough that the lattice resolves it: with
+    `nu_lattice = u_lattice * cells_per_d / Re`, a terminal Re of 32 at 30 cells per
+    diameter gives tau = 0.584, comfortably above `units.STIFF_TAU`, where a terminal Re
+    of 235 (a sphere twice as dense) would give 0.509 and be refused. The sphere has to
+    reach terminal velocity in a distance smaller than the box, and a near-neutrally
+    buoyant sphere does: the effective acceleration is
+    `(1 - rho_f/rho_s) g / (1 + 0.5 rho_f/rho_s)` with the added mass in it, about
+    0.03 m/s^2 here, so it reaches 8 mm/s in a quarter of a diameter. And the fluid's
+    own timestep has to be a plausible robot timestep, which at these numbers it is:
+    half a millisecond.
+
+    That last point is the one worth keeping. A validation whose timestep is a
+    microsecond proves nothing about a solver that has to run at a millisecond.
+    """
+    import warp as wp
+
+    try:
+        import newton
+    except Exception as exc:
+        raise UnphysicalScaling(
+            "this case needs the Newton physics engine, which the [live] extra "
+            f"declares:\n    pip install 'openreynolds[live]'\n(the import said: {exc})"
+        ) from exc
+
+    from .couple import NewtonCoupling
+    from .units import FLUIDS
+    from .world import Domain, FluidWorld
+
+    curve = sphere_drag()
+    water = FLUIDS["water"]
+    gravity = 9.81
+    radius = diameter / 2.0
+    volume = 4.0 / 3.0 * math.pi * radius ** 3
+    area = math.pi * radius ** 2
+    rho_s = density_ratio * water.rho
+
+    # The expected answer, by fixed point. Cd falls with Re and Re rises with V, so the
+    # iteration converges from below in a handful of passes; it is started from Stokes.
+    excess = (rho_s - water.rho) * volume * gravity
+    terminal = math.sqrt(2.0 * excess / (water.rho * area * 1.0))
+    for _ in range(80):
+        re = max(terminal * diameter / water.nu, 1e-6)
+        cd = curve.schiller_naumann_cd(re)
+        terminal = math.sqrt(2.0 * excess / (water.rho * area * cd))
+    expected_re = terminal * diameter / water.nu
+    expected_cd = curve.schiller_naumann_cd(expected_re)
+
+    dx = diameter / cells_per_d
+    scaling = Scaling.for_reynolds(dx, diameter, expected_re, "water",
+                                   u_lattice=0.03, scheme=collision,
+                                   les=smagorinsky > 0)
+    # `for_reynolds` set dt from the Reynolds number; the coupling step is that dt with
+    # one substep, which is the honest tightest coupling available and is what a
+    # validation should use. A demo trades substeps for speed; a graded number does not.
+    dt = scaling.dt
+
+    size = (12.0 * diameter, 12.0 * diameter, 14.0 * diameter)
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                    faces={"-x": "slip", "+x": "slip", "-y": "slip", "+y": "slip",
+                           "-z": "outlet", "+z": "outlet"})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device, one_way=one_way)
+
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+    start = (size[0] / 2.0, size[1] / 2.0, size[2] * 0.75)
+    # `add_body` already creates the free joint; adding one would give the body two.
+    body = builder.add_body(xform=wp.transform(wp.vec3(*start), wp.quat_identity()),
+                            label="sphere")
+    shape_cfg = builder.default_shape_cfg.copy()
+    shape_cfg.density = rho_s
+    shape_cfg.has_shape_collision = False
+    builder.add_shape_sphere(body, radius=radius, cfg=shape_cfg)
+    model = builder.finalize()
+    model.set_gravity((0.0, 0.0, -gravity))
+
+    if solver == "mujoco":
+        engine = newton.solvers.SolverMuJoCo(model, disable_contacts=True,
+                                             solver="newton", integrator="implicitfast",
+                                             iterations=10)
+    else:
+        engine = newton.solvers.SolverFeatherstone(model)
+
+    world.initialise()
+    link = NewtonCoupling(model, engine, world, dt=dt, buoyancy=True)
+
+    # Settling takes about V_t / a_eff seconds, with the added mass in a_eff.
+    a_eff = ((1.0 - water.rho / rho_s) * gravity
+             / (1.0 + 0.5 * water.rho / rho_s))
+    settle_time = 12.0 * terminal / max(a_eff, 1e-9)
+    total = int(steps if steps else math.ceil(settle_time / dt))
+
+    times: list[float] = []
+    speeds: list[float] = []
+    frames: list[np.ndarray] = []
+    sample_every = max(1, total // 400)
+    for index in range(total):
+        link.step()
+        if index % sample_every == 0:
+            qd = link.state.body_qd.numpy()[body]
+            times.append(index * dt)
+            speeds.append(float(-qd[2]))
+            if animate and len(frames) < 200:
+                frames.append(figures.slice_frame(world, axis=1))
+        if progress and (index + 1) % max(1, total // 10) == 0:
+            qd = link.state.body_qd.numpy()[body]
+            progress(f"    {index + 1:>8,}/{total:,} steps  "
+                     f"v {-float(qd[2]) * 1e3:7.3f} mm/s of an expected "
+                     f"{terminal * 1e3:.3f}")
+
+    measured = float(np.mean(speeds[-max(1, len(speeds) // 10):])) if speeds else 0.0
+    measured_re = measured * diameter / water.nu
+    error = measured / terminal - 1.0 if terminal else float("nan")
+    limit = REFERENCES["schiller_naumann"]["tolerance"]
+    volume_cells = getattr(link, "displaced_volume", None)
+    voxel_volume = float(volume_cells[body]) if volume_cells is not None else float("nan")
+
+    checks = [
+        Check("terminal velocity", measured,
+              f"{terminal:.6g} m/s +/- {limit:.0%} (Schiller-Naumann balance)",
+              abs(error) <= limit),
+        Check("terminal Reynolds number", measured_re,
+              f"{expected_re:.2f} expected", None),
+        Check("displaced volume, voxelised against analytic",
+              f"{voxel_volume:.4g} m3 against {volume:.4g} m3",
+              "reported, not graded", None,
+              "the buoyancy uses the voxelised volume on purpose: it has to be the "
+              "volume the boundary condition encloses, or the weight and the drag do "
+              "not balance on the same body (DECISIONS_LIVE.md D9)"),
+        Check("final state finite", world.stable(), "True", world.stable()),
+    ]
+    out = Path(out_dir)
+    drawn = [figures.slice_figure(
+        world, out / "live-falling-sphere.png", axis=1,
+        title=f"sphere falling in water, Re {measured_re:.1f}, "
+              f"v {measured * 1e3:.3f} mm/s")]
+    drawn.append(figures.profile_figure(
+        out / "live-falling-sphere-history.png",
+        [{"x": times, "y": speeds, "label": "coupled simulation"},
+         {"x": [times[0], times[-1]] if times else [0, 1],
+          "y": [terminal, terminal], "label": "Schiller-Naumann terminal", "style": "--"}],
+        title=f"terminal velocity: {measured * 1e3:.4f} against "
+              f"{terminal * 1e3:.4f} mm/s ({error:+.2%})",
+        xlabel="t (s)", ylabel="fall speed (m/s)"))
+    if frames:
+        gif = figures.animate(frames, out / "live-falling-sphere.gif", fps=20)
+        if gif:
+            drawn.append(gif)
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# falling sphere: {diameter * 1e3:g} mm, rho_s/rho_f {density_ratio:g}, "
+             f"{cells_per_d} cells per diameter",
+             *scaling.report(),
+             *_official("falling_sphere", scaling, smagorinsky),
+             f"  expected:   V_t {terminal * 1e3:.4f} mm/s at Re {expected_re:.2f}, "
+             f"Cd {expected_cd:.4f}",
+             f"  measured:   V_t {measured * 1e3:.4f} mm/s at Re {measured_re:.2f} "
+             f"({error:+.2%})",
+             *link.report()[:2], *world.report()[-2:]]
+    return _result("falling_sphere", checks, lines, drawn, terminal=measured,
+                   expected=terminal, reynolds=measured_re, error=error,
+                   times=times, speeds=speeds)
+
+
+# -- 7. the momentum balance ------------------------------------------------------------
+
+
+def run_momentum(*, cells: int = 48, steps: int = 4000, collision: str = "trt",
+                 smagorinsky: float = 0.0, device: str | None = None,
+                 out_dir: str | Path = ".",
+                 progress: Callable[[str], None] | None = None,
+                 **_: Any) -> dict[str, Any]:
+    """Momentum in, momentum out: a closed periodic box with one moving body in it.
+
+    The conservation law this solver has to obey and the one its boundary treatment can
+    break quietly. With every face periodic and no body force, the only thing that can
+    change the fluid's total momentum is the body, so
+
+        d/dt (fluid momentum) = - (force on the body)
+
+    exactly, and the integral of the force the solver reported must equal the change in
+    the momentum the solver holds. Both sides are measured here. A bounce-back that
+    reflects the wrong population, a Bouzidi interpolation with the wrong `q`, a refill
+    that invents mass -- all of them show up as a gap between the two, and none of them
+    shows up in a drag coefficient that is within 5% of a published fit.
+
+    The moving window is off and must be: `lattice.shift` does not conserve momentum by
+    construction (fluid leaves one face and free stream arrives at the other), so a
+    balance measured across a shift is a measurement of the window.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    diameter = 0.01
+    dx = diameter / 10.0
+    size = (cells * dx, cells * dx, cells * dx)
+    scaling = Scaling.for_reynolds(dx, diameter, 50.0, "water", u_lattice=0.04,
+                                   scheme=collision, les=smagorinsky > 0)
+    speed = scaling.reference_velocity
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces="periodic")
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    centre = tuple(v / 2.0 for v in size)
+    body = world.add_body(position=centre, velocity=(speed, 0, 0, 0, 0, 0),
+                          label="sphere")
+    world.add_shape("sphere", body=body, position=centre,
+                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.initialise()
+
+    before = np.asarray(world.momentum())
+    impulse = np.zeros(3)
+    position = np.asarray(centre, dtype=float)
+    history = []
+    for index in range(steps):
+        position = position + np.array([speed * world.dt, 0.0, 0.0])
+        # Periodic in x, so the body wraps with the lattice rather than leaving it.
+        position[0] = (position[0] - domain.origin[0]) % size[0] + domain.origin[0]
+        world.set_body_state(body, position=tuple(position))
+        world.step()
+        force, _ = world.wrench(body)
+        impulse += np.asarray(force) * world.dt
+        if index % max(1, steps // 200) == 0:
+            history.append((index * world.dt,
+                            float(np.linalg.norm(np.asarray(world.momentum()) - before)),
+                            float(np.linalg.norm(impulse))))
+    after = np.asarray(world.momentum())
+
+    gained = after - before
+    # The fluid gained what the body lost, so the two should sum to zero.
+    residual = float(np.linalg.norm(gained + impulse))
+    scale = float(max(np.linalg.norm(gained), np.linalg.norm(impulse), 1e-30))
+    relative = residual / scale
+    # A grading choice: 5% of the momentum exchanged. The quantity is a difference of
+    # two independently computed numbers, one a field integral over tens of thousands of
+    # nodes in single precision and the other a time integral of a surface sum, so it
+    # cannot be tight. What it catches is a sign error or a factor, which is what a
+    # momentum balance is for; a 1% bound would be measuring float32.
+    limit = 0.05
+    checks = [
+        Check("momentum balance, |fluid gained + body impulse| / |exchanged|", relative,
+              f"<= {limit:.0%}", relative <= limit),
+        Check("fluid momentum gained", f"{gained[0]:+.4e} kg m/s (x)",
+              "reported, not graded", None),
+        Check("impulse the solver reported on the body",
+              f"{impulse[0]:+.4e} kg m/s (x)", "reported, not graded", None),
+        Check("lattice still finite", world.stable(), "True", world.stable()),
+        Check("window shifts", world.shifts, "0, or this measures the window",
+              world.shifts == 0),
+    ]
+    out = Path(out_dir)
+    drawn = [figures.profile_figure(
+        out / "live-momentum.png",
+        [{"x": [h[0] for h in history], "y": [h[1] for h in history],
+          "label": "|fluid momentum change|"},
+         {"x": [h[0] for h in history], "y": [h[2] for h in history],
+          "label": "|impulse on the body|", "style": "--"}],
+        title=f"momentum balance: {relative:.2%} residual",
+        xlabel="t (s)", ylabel="kg m/s")]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# momentum: closed periodic box, {cells}^3, one translating sphere",
+             *scaling.report(), *_official("momentum", scaling, smagorinsky),
+             f"  balance:    {relative:.3%} of the momentum exchanged",
+             *world.report()[-2:]]
+    return _result("momentum", checks, lines, drawn, relative=relative)
+
+
+# -- 8. ground effect: one actuator disk over a plane -----------------------------------
+
+
+def _cheeseman_bennett(radius: float, height: float) -> float:
+    """`T_g/T_inf = 1/(1 - R^2/(16 Z^2))`, Cheeseman and Bennett (1955) equation (2).
+
+    Written out rather than only cited, because the citation is the thing that goes
+    wrong: the constant inside the bracket is 4 (so 16 when squared), the ratio is
+    derived **at constant power**, and `Z` is the rotor's height above the ground. All
+    three were read off the original report (ARC R&M 3021). See
+    `REFERENCES["cheeseman_bennett"]`.
+    """
+    ratio = radius / (4.0 * height)
+    return 1.0 / (1.0 - ratio * ratio)
+
+
+def _induced_ratio(radius: float, height: float) -> float:
+    """The same model as a ratio of induced velocities, which is what is measurable here.
+
+    Cheeseman and Bennett's result is a thrust ratio at constant power, and a lattice
+    Boltzmann run with an actuator disk has the *thrust* as its input -- the disk is a
+    momentum source of a set strength -- so a thrust ratio is not a quantity this case
+    can measure. The induced velocity is.
+
+    The two are the same statement. The model's mechanism is that the ground's image
+    source reduces the induced velocity at the disk by `(R/4Z)^2`, so
+
+        v_g / v_inf = 1 - (R / 4Z)^2
+
+    and at constant power `P = T v` a thrust ratio of `1/(1 - (R/4Z)^2)` follows
+    immediately -- which is `_cheeseman_bennett` above, and the two functions are each
+    other's reciprocal by construction. Grading the induced velocity is therefore
+    grading the same physics without having to hold power constant in a solver that has
+    no notion of rotor power.
+    """
+    ratio = radius / (4.0 * height)
+    return 1.0 - ratio * ratio
+
+
+def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
+                      heights: Sequence[float] = (0.75, 1.0, 1.5, 2.0, 3.0),
+                      free_height: float = 6.0, cells_per_r: int = 12,
+                      collision: str = "regularized", smagorinsky: float = 0.12,
+                      device: str | None = None, out_dir: str | Path = ".",
+                      steps: int | None = None,
+                      progress: Callable[[str], None] | None = None,
+                      **_: Any) -> dict[str, Any]:
+    """One actuator disk at several heights over a ground plane, against the 1955 model.
+
+    `heights` are in rotor radii, which is how the model is written. The measured
+    quantity is the mean axial velocity through the disk, and the graded quantity is its
+    *ratio* to the same disk in free air -- because a ratio cancels everything about the
+    actuator-disk model that is not the ground: the disk's thickness, how its momentum
+    is spread, the lattice resolution and the subgrid constant all appear in both the
+    numerator and the denominator.
+
+    **This case runs with the subgrid model on, and says so every time.** A 120 mm rotor
+    pushing 5 m/s of air is a Reynolds number near 80,000 on the diameter, and
+    `units.STIFF_TAU`'s arithmetic shows there is no resolution at which a millisecond
+    timestep resolves air's molecular viscosity. What carries the run is the eddy
+    viscosity. That is legitimate for this quantity -- the ground effect is an inviscid
+    image-source argument and the model being compared against is itself inviscid -- and
+    it is why this is the one graded case in the suite with the LES on.
+
+    **One disk and not four.** Sanchez-Cuevas, Heredia and Ollero (2017) measured that a
+    complete multirotor does not follow Cheeseman and Bennett: the effect is much larger
+    and reaches about five radii rather than two, because of a fountain of air under the
+    airframe. A quadrotor graded against this model would be graded against a model that
+    the later literature shows does not apply to it. The quadrotor is `quadrotor`, and
+    it is a demo.
+    """
+    import warp  # noqa: F401
+
+    from .units import FLUIDS
+    from .world import Domain, FluidWorld
+
+    dx = radius / cells_per_r
+    area = math.pi * radius * radius
+    air = FLUIDS["air"]
+    # Momentum theory for the free-air induced velocity, which sets the lattice speed:
+    # T = 2 rho A v^2.
+    v_free = math.sqrt(thrust / (2.0 * air.rho * area))
+    out = Path(out_dir)
+    rows = []
+    drawn = []
+
+    for index, z_over_r in enumerate([*heights, free_height]):
+        height = z_over_r * radius
+        is_free = z_over_r == free_height
+        if progress:
+            progress(f"  disk at Z/R {z_over_r:g}"
+                     f"{' (free air reference)' if is_free else ''} "
+                     f"({index + 1} of {len(heights) + 1})")
+        # Enough room for the jet to turn and leave: eight radii each way, and the
+        # domain top always well above the disk.
+        span = 16.0 * radius
+        tall = max(height + 8.0 * radius, 12.0 * radius)
+        size = (span, span, tall)
+        # Slip on the four sides and an outflow on the axis the jet leaves by. Six
+        # outflows is what this case was first written with, and `Domain` now refuses
+        # it: an outflow imposes no density, so a box of nothing but outflows around a
+        # momentum source has a free mean density, and a weakly compressible lattice
+        # with a free mean density diverges -- measured, inside fifteen coupling steps.
+        # A slip face conserves the mass that crosses it and pins it. The free-air
+        # reference opens the floor as well as the ceiling, which is what "free air"
+        # means: no ground.
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                        faces={"-x": "slip", "+x": "slip",
+                               "-y": "slip", "+y": "slip",
+                               "-z": "outlet" if is_free else "wall",
+                               "+z": "outlet"})
+        scaling, substeps = Scaling.for_coupling(
+            dx, 2.0e-3, "air", peak_velocity=4.0 * v_free, scheme=collision,
+            les=smagorinsky > 0)
+        world = FluidWorld(domain=domain, dx=dx, fluid="air", scaling=scaling,
+                           substeps=substeps, collision=collision,
+                           smagorinsky=smagorinsky, device=device)
+        centre = (size[0] / 2.0, size[1] / 2.0, height)
+        world.add_rotor(-1, centre, (0.0, 0.0, 1.0), radius, thickness=2.0 * dx)
+        world.set_rotor_thrust(0, thrust)
+        world.initialise()
+
+        # The jet has to cross the box once for the flow to be established, plus a
+        # window to average over.
+        crossing = tall / max(v_free, 1e-9) / world.dt
+        total = int(steps if steps else math.ceil(2.5 * crossing))
+        samples: list[float] = []
+        node_z = world.node_coordinates(2)
+        plane = int(np.argmin(np.abs(node_z - height)))
+        xs = world.node_coordinates(0)
+        ys = world.node_coordinates(1)
+        disk = ((xs[:, None] - centre[0]) ** 2
+                + (ys[None, :] - centre[1]) ** 2) <= radius * radius
+
+        def take(_index: int, world=world, samples=samples, plane=plane, disk=disk):
+            w = world.fields()["u"][:, :, plane, 2]
+            samples.append(float(np.nanmean(np.where(disk, w, np.nan))))
+
+        _advance(world, total, sample_every=max(1, total // 60), sample=take,
+                 settle=0.6, progress=progress)
+        induced = abs(float(np.mean(samples[-max(1, len(samples) // 3):]))) \
+            if samples else 0.0
+        rows.append({"z_over_r": z_over_r, "height": height, "induced": induced,
+                     "free": is_free, "nodes": world.nodes, "steps": total,
+                     "substeps": substeps, "tau": scaling.tau_plus})
+        drawn.append(figures.slice_figure(
+            world, out / f"live-ground-effect-z{z_over_r:g}.png", axis=1,
+            component=2,
+            title=f"actuator disk at Z/R {z_over_r:g}, mean w through the disk "
+                  f"{induced:.3f} m/s"))
+
+    free = next(r for r in rows if r["free"])
+    graded = [r for r in rows if not r["free"]]
+    limit = REFERENCES["cheeseman_bennett"]["tolerance"]
+    checks = []
+    for row in graded:
+        measured = row["induced"] / free["induced"] if free["induced"] else float("nan")
+        model = _induced_ratio(radius, row["height"])
+        row["ratio"] = measured
+        row["model"] = model
+        row["thrust_ratio_model"] = _cheeseman_bennett(radius, row["height"])
+        error = measured / model - 1.0 if model else float("nan")
+        row["error"] = error
+        checks.append(Check(
+            f"induced velocity ratio at Z/R {row['z_over_r']:g}", measured,
+            f"{model:.4f} +/- {limit:.0%} (1 - (R/4Z)^2)",
+            abs(error) <= limit))
+    checks.append(Check("free-air induced velocity", free["induced"],
+                        f"{v_free:.4f} m/s from momentum theory, T = 2 rho A v^2",
+                        None,
+                        "reported, not graded: an actuator disk of finite thickness on "
+                        "a lattice does not have to reproduce the inviscid "
+                        "momentum-theory value, and the graded quantity is a ratio in "
+                        "which it cancels"))
+
+    sweep = np.linspace(0.7, 3.2, 50)
+    drawn.append(figures.profile_figure(
+        out / "live-ground-effect.png",
+        [{"x": [r["z_over_r"] for r in graded], "y": [r["ratio"] for r in graded],
+          "label": "lattice Boltzmann", "style": "o"},
+         {"x": sweep,
+          "y": [_induced_ratio(radius, z * radius) for z in sweep],
+          "label": "1 - (R/4Z)^2, Cheeseman and Bennett (1955)"}],
+        title="ground effect on an actuator disk",
+        xlabel="Z/R", ylabel="v_ground / v_free"))
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# ground effect: one actuator disk, R {radius * 1e3:g} mm, "
+             f"T {thrust:g} N, {cells_per_r} cells per radius",
+             f"  model:      {REFERENCES['cheeseman_bennett']['formula']}, and the "
+             f"induced-velocity form 1 - (R/4Z)^2 this grades against",
+             f"  reference:  {REFERENCES['cheeseman_bennett']['source']}",
+             f"  caveat:     {REFERENCES['cheeseman_bennett']['caveat']}",
+             f"  free air:   v {free['induced']:.4f} m/s measured, "
+             f"{v_free:.4f} m/s from momentum theory",
+             f"  subgrid:    ON (Cs = {smagorinsky:g}); tau_plus "
+             f"{free['tau']:.5f}, so this is an under-resolved large-eddy run"]
+    for row in graded:
+        lines.append(f"  Z/R {row['z_over_r']:>4g}:  v/v_free {row['ratio']:.4f} "
+                     f"against {row['model']:.4f} ({row['error']:+.2%}); the model's "
+                     f"thrust ratio at constant power is "
+                     f"{row['thrust_ratio_model']:.4f}")
+    return _result("ground_effect", checks, lines, drawn, rows=rows,
+                   free_induced=free["induced"], momentum_theory=v_free)
+
+
+# -- 9. the quadrotor demo --------------------------------------------------------------
+
+
+def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
+                  mass: float = 1.2, heights: Sequence[float] = (1.0, 2.5),
+                  cells_per_r: int = 8, collision: str = "regularized",
+                  smagorinsky: float = 0.12, device: str | None = None,
+                  out_dir: str | Path = ".", steps: int | None = None,
+                  animate: bool = True, wall: bool = True,
+                  progress: Callable[[str], None] | None = None,
+                  **_: Any) -> dict[str, Any]:
+    """A quadrotor held in hover by its own rotors, feeling its own downwash.
+
+    The demo the whole extension exists for: four actuator disks driven by a controller,
+    an airframe Newton integrates with its MuJoCo Warp solver, and the fluid wrench on
+    that airframe computed from the flow the rotors made. Run at two heights over a
+    ground plane and, by default, beside a wall.
+
+    **Graded for bookkeeping and stability, not against a published number.** The
+    ground-effect model is graded in `ground_effect`, on one disk, because
+    Sanchez-Cuevas, Heredia and Ollero (2017) measured that a complete multirotor does
+    not follow Cheeseman and Bennett -- the fountain under the airframe makes the effect
+    larger and longer-ranged. What is checked here is what can be checked: that the
+    thrust the controller needs falls as the vehicle approaches the ground, that the
+    wrench the airframe feels is a real fraction of its weight rather than noise, that
+    the altitude is held, and that a long run does not diverge.
+
+    **The airframe is primitives, not the Crazyflie USD.**
+    `newton/examples/assets/crazyflie.usd` is in Newton's assets and carries no
+    `RigidBodyAPI`, no mass and no joints -- loading it gives twelve visual-only meshes,
+    zero bodies and zero total mass, and no Newton example loads it either (the drone
+    example's own line reads `# TODO: Use drone path to load USD asset`). It would need
+    `usd-core` and `newton-usd-schemas` as well, and voxelising twelve meshes every
+    coupling step would cost more than the rest of the step. A box and four disks is the
+    same physics for this purpose; `DECISIONS_LIVE.md` D10 records it.
+    """
+    import warp as wp
+
+    try:
+        import newton
+    except Exception as exc:
+        raise UnphysicalScaling(
+            "this case needs the Newton physics engine, which the [live] extra "
+            f"declares:\n    pip install 'openreynolds[live]'\n(the import said: {exc})"
+        ) from exc
+
+    from .couple import NewtonCoupling
+    from .units import FLUIDS
+    from .world import Domain, FluidWorld
+
+    air = FLUIDS["air"]
+    gravity = 9.81
+    weight = mass * gravity
+    hover_each = weight / 4.0
+    area = math.pi * rotor_radius ** 2
+    v_hover = math.sqrt(hover_each / (2.0 * air.rho * area))
+    dx = rotor_radius / cells_per_r
+    out = Path(out_dir)
+    rows = []
+    drawn = []
+
+    for index, z_over_r in enumerate(heights):
+        height = z_over_r * rotor_radius
+        if progress:
+            progress(f"  quadrotor hovering at Z/R {z_over_r:g} "
+                     f"({index + 1} of {len(heights)})")
+        span = 20.0 * rotor_radius
+        tall = max(height + 10.0 * rotor_radius, 14.0 * rotor_radius)
+        # The ground is a wall, the ceiling an outflow, and the sides slip -- see
+        # `run_ground_effect` for why they are not outflows. `wall` on -x adds the
+        # vertical surface the wall-effect half of this demo needs.
+        faces = {"-x": "wall" if wall else "slip", "+x": "slip",
+                 "-y": "slip", "+y": "slip", "-z": "wall", "+z": "outlet"}
+        size = (span, span, tall)
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces=faces)
+        scaling, substeps = Scaling.for_coupling(
+            dx, 2.0e-3, "air", peak_velocity=4.0 * v_hover, scheme=collision,
+            les=smagorinsky > 0)
+        world = FluidWorld(domain=domain, dx=dx, fluid="air", scaling=scaling,
+                           substeps=substeps, collision=collision,
+                           smagorinsky=smagorinsky, device=device)
+
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        centre = (size[0] / 2.0, size[1] / 2.0, height)
+        body = builder.add_body(
+            xform=wp.transform(wp.vec3(*centre), wp.quat_identity()), label="airframe")
+        half = (arm * 0.55, arm * 0.55, 0.02)
+        shape_cfg = builder.default_shape_cfg.copy()
+        shape_cfg.density = mass / (8.0 * half[0] * half[1] * half[2])
+        shape_cfg.has_shape_collision = False
+        builder.add_shape_box(body, hx=half[0], hy=half[1], hz=half[2], cfg=shape_cfg)
+        model = builder.finalize()
+        model.set_gravity((0.0, 0.0, -gravity))
+        engine = newton.solvers.SolverMuJoCo(model, disable_contacts=True,
+                                             solver="newton",
+                                             integrator="implicitfast", iterations=10)
+        world.initialise()
+        for sign_x, sign_y in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
+            world.add_rotor(body, (sign_x * arm, sign_y * arm, 0.03),
+                            (0.0, 0.0, 1.0), rotor_radius, thickness=2.0 * dx)
+        link = NewtonCoupling(model, engine, world, dt=world.dt, buoyancy=False)
+
+        crossing = tall / max(v_hover, 1e-9) / world.dt
+        total = int(steps if steps else math.ceil(2.0 * crossing))
+        target = height
+        thrusts: list[float] = []
+        wrenches: list[float] = []
+        times: list[float] = []
+        altitudes: list[float] = []
+        frames: list[np.ndarray] = []
+        integral = 0.0
+
+        for step_index in range(total):
+            pose = link.state.body_q.numpy()[body]
+            qd = link.state.body_qd.numpy()[body]
+            error = target - float(pose[2])
+            integral += error * world.dt
+            # A plain PID on altitude plus the hover feedforward. Deliberately simple:
+            # the point of the demo is the fluid, and a controller carrying a fluid
+            # model would hide whether the fluid did anything.
+            command = (weight + 6.0 * mass * error
+                       + 4.0 * mass * (-float(qd[2])) + 0.5 * mass * integral)
+            command = float(np.clip(command, 0.0, 3.0 * weight))
+            for rotor_index in range(4):
+                world.set_rotor_thrust(rotor_index, command / 4.0)
+            link.step()
+            if step_index % max(1, total // 300) == 0:
+                force, _ = world.wrench(body)
+                times.append(step_index * world.dt)
+                thrusts.append(command)
+                wrenches.append(float(force[2]))
+                altitudes.append(float(pose[2]))
+                if animate and len(frames) < 200:
+                    frames.append(figures.slice_frame(world, axis=1, component=2))
+            if progress and (step_index + 1) % max(1, total // 8) == 0:
+                progress(f"    {step_index + 1:>8,}/{total:,} steps  "
+                         f"z {float(pose[2]):.4f} m  thrust {command:.3f} N "
+                         f"({command / weight:.3f} of weight)")
+
+        keep = max(1, len(thrusts) // 3)
+        mean_thrust = float(np.mean(thrusts[-keep:])) if thrusts else float("nan")
+        mean_wrench = float(np.mean(wrenches[-keep:])) if wrenches else float("nan")
+        rows.append({
+            "z_over_r": z_over_r, "height": height, "thrust": mean_thrust,
+            "thrust_over_weight": mean_thrust / weight,
+            "fluid_wrench_z": mean_wrench,
+            "wrench_over_weight": mean_wrench / weight,
+            "altitude": float(np.mean(altitudes[-keep:])) if altitudes else float("nan"),
+            "nodes": world.nodes, "steps": total, "substeps": substeps,
+            "realtime": world.dt * world.steps / max(world.seconds, 1e-9),
+            "tau": scaling.tau_plus,
+        })
+        drawn.append(figures.slice_figure(
+            world, out / f"live-quadrotor-z{z_over_r:g}.png", axis=1, component=2,
+            title=f"quadrotor hovering at Z/R {z_over_r:g}, thrust "
+                  f"{mean_thrust / weight:.3f} of weight"))
+        if frames:
+            gif = figures.animate(frames, out / f"live-quadrotor-z{z_over_r:g}.gif",
+                                  fps=20, component=True)
+            if gif:
+                drawn.append(gif)
+        if times:
+            drawn.append(figures.profile_figure(
+                out / f"live-quadrotor-z{z_over_r:g}-history.png",
+                [{"x": times, "y": [t / weight for t in thrusts],
+                  "label": "commanded thrust / weight"},
+                 {"x": times, "y": [w / weight for w in wrenches],
+                  "label": "fluid wrench on the airframe / weight", "panel": 1}],
+                title=f"Z/R {z_over_r:g}", xlabel="t (s)",
+                ylabel="fraction of weight", panels=2))
+
+    low = min(rows, key=lambda r: r["z_over_r"])
+    high = max(rows, key=lambda r: r["z_over_r"])
+    checks = [
+        Check("thrust needed to hover falls nearer the ground",
+              f"{low['thrust_over_weight']:.4f} at Z/R {low['z_over_r']:g} against "
+              f"{high['thrust_over_weight']:.4f} at Z/R {high['z_over_r']:g}",
+              "the lower one is the smaller",
+              low["thrust_over_weight"] <= high["thrust_over_weight"],
+              "the sign of the ground effect, which is all a two-height run can "
+              "establish; ground_effect grades the magnitude on one disk"),
+        Check("fluid wrench on the airframe, as a fraction of weight",
+              f"{low['wrench_over_weight']:+.4f} at Z/R {low['z_over_r']:g}",
+              "finite and under 1",
+              bool(abs(low["wrench_over_weight"]) < 1.0
+                   and math.isfinite(low["wrench_over_weight"]))),
+        Check("altitude held",
+              f"{low['altitude']:.4f} m against a target of {low['height']:.4f} m",
+              "within a tenth of a rotor radius",
+              abs(low["altitude"] - low["height"]) < 0.1 * rotor_radius),
+        Check("real time, simulated seconds per wall-clock second",
+              f"{low['realtime']:.4f}x at {low['nodes']:,} nodes",
+              "reported; the brief's 0.5x target is a device claim", None),
+    ]
+    lines = [f"# quadrotor: {mass:g} kg, {arm * 1e3:g} mm arms, "
+             f"R {rotor_radius * 1e3:g} mm, {cells_per_r} cells per radius",
+             f"  hover:      {weight:.3f} N total, {hover_each:.3f} N a rotor, "
+             f"induced {v_hover:.3f} m/s from momentum theory",
+             f"  subgrid:    ON (Cs = {smagorinsky:g}); tau_plus {low['tau']:.5f}, "
+             f"an under-resolved large-eddy run",
+             "  walls:      ground at z = 0" + (", and a wall at x = 0" if wall else "")]
+    for row in rows:
+        lines.append(
+            f"  Z/R {row['z_over_r']:>4g}:  thrust {row['thrust']:.4f} N "
+            f"({row['thrust_over_weight']:.4f} of weight), fluid wrench "
+            f"{row['fluid_wrench_z']:+.4f} N ({row['wrench_over_weight']:+.4f}), "
+            f"{row['realtime']:.4f}x real time at {row['nodes']:,} nodes, "
+            f"{row['substeps']} substeps")
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    return _result("quadrotor", checks, lines, drawn, rows=rows)
+
+
+# -- 10. an underwater body, whose drag has to be the sphere's ---------------------------
+
+
+def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 16,
+                   length_ratio: float = 3.0, collision: str = "trt",
+                   smagorinsky: float = 0.0, device: str | None = None,
+                   out_dir: str | Path = ".", steps: int | None = None,
+                   progress: Callable[[str], None] | None = None,
+                   **_: Any) -> dict[str, Any]:
+    """A capsule towed through water, graded against the sphere it reduces to.
+
+    The brief asks for "an underwater body or simple swimmer whose drag matches M2", and
+    the way to make that a real check rather than a plausible picture is to grade the
+    body against a shape whose answer is known. A capsule of zero length **is** a
+    sphere, so the same geometry code, the same voxelisation, the same boundary
+    treatment and the same force sum have to reproduce the sphere's drag coefficient at
+    zero length -- and that is what is graded, against Schiller-Naumann.
+
+    The elongated hull is then reported rather than graded, because no published drag
+    coefficient for a capsule of arbitrary fineness ratio has been read for this
+    repository. What is said about it is the one thing that can be said honestly: it is
+    lower than the sphere's on frontal area, which is what streamlining does, and here
+    is by how much.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    curve = sphere_drag()
+    diameter = 0.01
+    radius = diameter / 2.0
+    dx = diameter / cells_per_d
+    out = Path(out_dir)
+    rows = []
+    drawn = []
+    scaling = None
+
+    for index, ratio in enumerate([0.0, float(length_ratio)]):
+        half_height = ratio * radius
+        if progress:
+            progress(f"  capsule of fineness {1.0 + ratio:g} ({index + 1} of 2)")
+        scaling = Scaling.for_reynolds(dx, diameter, reynolds, "water",
+                                       u_lattice=0.04, scheme=collision,
+                                       les=smagorinsky > 0)
+        u_inf = scaling.reference_velocity
+        size = (24.0 * diameter, 12.0 * diameter, 12.0 * diameter)
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                        faces={"-x": "inlet", "+x": "outlet", "-y": "slip",
+                               "+y": "slip", "-z": "slip", "+z": "slip"},
+                        face_velocity={"-x": (u_inf, 0.0, 0.0)})
+        world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                           substeps=1, collision=collision, smagorinsky=smagorinsky,
+                           device=device)
+        position = (6.0 * diameter, size[1] / 2.0, size[2] / 2.0)
+        body = world.add_body(position=position, label="capsule")
+        # A capsule's axis is its local z (Newton's convention, measured in
+        # couple.py), so the hull is turned to lie along the stream: a quarter turn
+        # about y takes z to x.
+        turn = (0.0, math.sin(math.pi / 4.0), 0.0, math.cos(math.pi / 4.0))
+        world.add_shape("capsule", body=body, position=position, orientation=turn,
+                        scale=(radius, half_height, 0.0))
+        world.initialise(velocity=(u_inf, 0.0, 0.0))
+
+        crossing = size[0] / dx / 0.04
+        total = int(steps if steps else 3.0 * crossing)
+        samples: list[float] = []
+
+        def take(_index: int, world=world, samples=samples, body=body) -> None:
+            force, _ = world.wrench(body)
+            samples.append(float(force[0]))
+
+        _advance(world, total, sample_every=max(1, total // 300), sample=take,
+                 settle=0.75, progress=progress)
+        area = math.pi * radius * radius
+        force = float(np.mean(samples[-max(1, len(samples) // 4):])) if samples else 0.0
+        cd = 2.0 * force / (scaling.fluid.rho * u_inf * u_inf * area)
+        rows.append({"fineness": 1.0 + ratio, "cd": cd, "nodes": world.nodes,
+                     "steps": total})
+        drawn.append(figures.slice_figure(
+            world, out / f"live-underwater-f{1.0 + ratio:g}.png", axis=2,
+            title=f"capsule, fineness {1.0 + ratio:g}, Re {reynolds:g}, Cd {cd:.4f}"))
+
+    expected = curve.schiller_naumann_cd(reynolds)
+    limit = REFERENCES["schiller_naumann"]["tolerance"]
+    sphere_like, elongated = rows[0], rows[1]
+    saved = 1.0 - elongated["cd"] / sphere_like["cd"] if sphere_like["cd"] else float("nan")
+    checks = [
+        Check("Cd of the zero-length capsule, which is a sphere", sphere_like["cd"],
+              f"{expected:.4f} +/- {limit:.0%} (Schiller-Naumann)",
+              abs(sphere_like["cd"] / expected - 1.0) <= limit,
+              "the same code path as the elongated hull, on a shape with a known answer"),
+        Check(f"Cd of the fineness-{elongated['fineness']:g} hull", elongated["cd"],
+              "reported, not graded", None,
+              "no published drag coefficient for a capsule of this fineness ratio has "
+              "been read for this repository, so there is nothing honest to grade it "
+              f"against; it should be below the sphere's, and it is by {saved:.1%}"),
+    ]
+    lines = [f"# underwater body: a towed capsule at Re {reynolds:g}, "
+             f"{cells_per_d} cells per diameter",
+             *_official("underwater", scaling, smagorinsky),
+             f"  sphere:     Cd {sphere_like['cd']:.4f} against Schiller-Naumann "
+             f"{expected:.4f} ({sphere_like['cd'] / expected - 1.0:+.2%})",
+             f"  hull:       Cd {elongated['cd']:.4f} at fineness "
+             f"{elongated['fineness']:g}, {saved:.1%} below the sphere"]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    return _result("underwater", checks, lines, drawn, rows=rows)
+
+
+# -- 11. a smoke case small enough for the main test suite ------------------------------
+
+
+def run_smoke(*, cells: int = 12, steps: int = 40, collision: str = "trt",
+              smagorinsky: float = 0.0, device: str | None = "cpu",
+              out_dir: str | Path = ".", figure: bool = False,
+              progress: Callable[[str], None] | None = None,
+              **_: Any) -> dict[str, Any]:
+    """The smallest run that exercises every kernel. Seconds on a CPU, in the test suite.
+
+    Not a validation: twelve cells a side resolves nothing. What it checks is that every
+    kernel launches, that the lattice stays finite, that a body gets a non-zero wrench
+    whose sign is the stream's, and that mass is conserved -- which between them catch
+    the whole class of failure where a kernel does not compile, an array is the wrong
+    shape, or a layout change was applied to one accessor and not the other.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    diameter = 0.01
+    dx = diameter / 4.0
+    scaling = Scaling.for_reynolds(dx, diameter, 20.0, "water", u_lattice=0.05,
+                                   scheme=collision, les=smagorinsky > 0)
+    u_inf = scaling.reference_velocity
+    size = (cells * dx, cells * dx, cells * dx)
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size,
+                    faces={"-x": "inlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                           "-z": "periodic", "+z": "periodic"},
+                    face_velocity={"-x": (u_inf, 0.0, 0.0)})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    centre = tuple(v / 2.0 for v in size)
+    body = world.add_body(position=centre, label="sphere")
+    world.add_shape("sphere", body=body, position=centre,
+                    scale=(diameter / 2.0, 0.0, 0.0))
+    world.initialise(velocity=(u_inf, 0.0, 0.0))
+    _advance(world, steps, progress=progress)
+    force, torque = world.wrench(body)
+
+    # -- mass, in a closed box, because the box above is not closed --------------------
+    #
+    # The world above has an inlet and an outflow, and neither conserves mass by
+    # construction: the inlet overwrites its nodes with f_eq(1, u_in) whatever the
+    # pressure there is, and the outflow copies its neighbour. Measured on the first run
+    # of this case, the drift over forty steps was 1.0%, which is the inlet doing its
+    # job and not a defect -- and a check that called it one would have had every future
+    # reader looking for a streaming bug that was not there.
+    #
+    # So the mass check is a second, closed world: every face periodic, no body, no
+    # force. There, mass is conserved exactly by the streaming step (every population
+    # that leaves a node arrives at another) and the only thing that can break it is a
+    # real bug -- a layout accessor applied to a read and not a write, a wrapped index
+    # off by one, a population written twice. That is worth catching, and it is only
+    # catchable where the answer is exactly zero.
+    closed_domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces="periodic")
+    closed = FluidWorld(domain=closed_domain, dx=dx, fluid="water", scaling=scaling,
+                        substeps=1, collision=collision, smagorinsky=smagorinsky,
+                        device=device)
+    closed.initialise(velocity=(u_inf, 0.5 * u_inf, -0.3 * u_inf))
+    mass_before = float(np.nansum(closed.fields()["rho"]))
+    _advance(closed, steps)
+    mass_after = float(np.nansum(closed.fields()["rho"]))
+    drift = abs(mass_after / mass_before - 1.0) if mass_before else float("nan")
+
+    checks = [
+        Check("lattice finite and positive", world.stable(), "True", world.stable()),
+        Check("drag on the sphere is downstream", force[0], "> 0", force[0] > 0.0),
+        Check("mass drift in a closed periodic box", drift, "<= 1e-5",
+              drift <= 1.0e-5,
+              "conserved exactly by streaming, so the bound is single precision and not "
+              "physics: a population is read, multiplied and written once a step in "
+              f"float32, and {steps} steps of that accumulate about "
+              "sqrt(steps)*eps = 1e-6, which is what this measures. The bound is 1e-5 "
+              "for that reason and would be 1e-14 in double precision. The "
+              "inlet/outlet box this case also runs drifts about a percent and is "
+              "supposed to"),
+        Check("torque finite", f"{torque[0]:+.3e}, {torque[1]:+.3e}, {torque[2]:+.3e}",
+              "finite", all(math.isfinite(v) for v in torque)),
+    ]
+    drawn = []
+    if figure:
+        drawn.append(figures.slice_figure(world, Path(out_dir) / "live-smoke.png"))
+        figures.ensure_rgb(drawn[0])
+    lines = [f"# smoke: {cells}^3, {steps} steps, every kernel once",
+             *world.report()[:3],
+             f"  drag:       {force[0]:+.4e} N downstream",
+             f"  mass drift: {drift:.2e} in a closed periodic box of the same size"]
+    return _result("smoke", checks, lines, drawn, force=[float(v) for v in force],
+                   drift=drift)
+
+
+# -- the cross-check against this repository's own OpenFOAM run --------------------------
+
+
+def _openfoam_cylinder() -> dict[str, Any]:
+    """The committed OpenFOAM cylinder, read by the grader that already grades it.
+
+    `benchmarks/moving_mesh/grade.py` is run as a subprocess on
+    `tests/data/moving_mesh/viv_fixed/` -- a finished `pimpleFoam` run, committed, with
+    its `postProcessing/forceCoeffs/*/coefficient.dat` intact -- and its JSON is read.
+
+    **Not a constant in this file, on purpose.** The alternative is to copy St and Cd
+    into `REFERENCES` and compare against the copy, and then the cross-check is between
+    the live backend and a number somebody typed. Going through the grader means the
+    comparison is against whatever the OpenFOAM files actually say today: if that run is
+    ever re-trimmed, or the grader's windowing changes, the cross-check moves with it.
+    The copies in `REFERENCES["openfoam_cylinder"]` are kept anyway and asserted equal
+    to what comes back, so a drift is reported rather than silently absorbed.
+
+    The grader's `viv` mode wants a released case beside the fixed one; `viv_loose` is
+    the one committed next to it. Only the `fixed` block is read.
+    """
+    import subprocess
+    import sys
+
+    grader = REPO / "benchmarks" / "moving_mesh" / "grade.py"
+    fixed = REPO / "tests" / "data" / "moving_mesh" / "viv_fixed"
+    loose = REPO / "tests" / "data" / "moving_mesh" / "viv_loose"
+    if not grader.is_file() or not fixed.is_dir():
+        raise UnphysicalScaling(
+            f"the cross-check reads this repository's own OpenFOAM run through "
+            f"{grader}, and one of {grader} or {fixed} is not there. It is committed in "
+            f"a source checkout and is NOT part of the installed wheel "
+            f"(pyproject excludes benchmarks/ and the tests), so this case runs from a "
+            f"checkout only"
+        )
+    done = subprocess.run(
+        [sys.executable, str(grader), "viv", str(fixed), str(loose), "--json"],
+        capture_output=True, text=True, timeout=600,
+    )
+    try:
+        payload = json.loads(done.stdout)
+    except json.JSONDecodeError as exc:
+        raise UnphysicalScaling(
+            f"benchmarks/moving_mesh/grade.py did not return JSON "
+            f"(exit {done.returncode}): {done.stderr.strip()[:400]}"
+        ) from exc
+    return payload["fixed"]
+
+
+def crosscheck(*, cells_per_d: int = 20, collision: str = "trt",
+               smagorinsky: float = 0.0, device: str | None = None,
+               out_dir: str | Path = ".", periods: float = 30.0,
+               steps: int | None = None, animate: bool = True,
+               progress: Callable[[str], None] | None = None,
+               **_: Any) -> dict[str, Any]:
+    """The same cylinder on both backends: this one, and the committed OpenFOAM run.
+
+    A cylinder at Re 100 in water, D = 10 mm, U = 10 mm/s, 2.5% blockage -- the case
+    `tests/data/moving_mesh/viv_fixed/` holds a finished `pimpleFoam` solution of. The
+    geometry, the speed and the viscosity are read out of that run's own constants
+    rather than written here, so the two backends are given the same case by
+    construction.
+
+    This is the brief's cross-check and it is the most useful single number in the
+    suite, for two reasons. It needs no OpenFOAM installation, no cluster and no
+    network -- the OpenFOAM side ran once, in September, and is committed. And it is a
+    comparison between two completely independent discretisations of the same physics:
+    a finite-volume pressure-correction solver on a body-fitted mesh, and a lattice
+    Boltzmann scheme on a uniform grid with an interpolated boundary. They share no
+    code, no mesh and no boundary treatment. Agreement between them is evidence of a
+    kind that agreement with a published table is not.
+
+    Strouhal is graded both ways: against the OpenFOAM run, and against Williamson's
+    0.164 for an unconfined cylinder -- which this case should sit about a percent above,
+    because `benchmarks/moving_mesh/` records that 2.5% blockage raises it by about
+    that, and the OpenFOAM run's +1.31% is what that looks like. Drag is graded against
+    the OpenFOAM run only, because there is no canonical published Cd at Re 100.
+    """
+    import warp  # noqa: F401
+
+    from .world import Domain, FluidWorld
+
+    foam = _openfoam_cylinder()
+    constants = foam["constants"]
+    diameter = float(constants["D"])
+    speed = float(constants["U"])
+    reference = REFERENCES["openfoam_cylinder"]
+    tolerances = reference["tolerance"]
+    blockage = reference["geometry"]["blockage"]
+
+    # The copies in REFERENCES are the documented ones; the grader's are the live ones.
+    drift = {
+        "strouhal": abs(foam["strouhal"] - reference["strouhal"]),
+        "cd": abs(foam["mean_cd"] - reference["cd"]),
+    }
+
+    height = diameter / blockage
+    length = 4.0 * height
+    dx = diameter / cells_per_d
+    nz = 3
+    reynolds = speed * diameter / float(constants.get("nu", 1.0e-6) or 1.0e-6)
+    scaling = Scaling.for_reynolds(dx, diameter, 100.0, "water", u_lattice=0.04,
+                                   scheme=collision, les=smagorinsky > 0)
+    u_mean = scaling.reference_velocity
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
+                    faces={"-x": "inlet", "+x": "outlet", "-y": "slip", "+y": "slip",
+                           "-z": "periodic", "+z": "periodic"},
+                    face_velocity={"-x": (u_mean, 0.0, 0.0)})
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, collision=collision, smagorinsky=smagorinsky,
+                       device=device)
+    centre = (height, height / 2.0 + dx / 2.0, nz * dx / 2.0)
+    # Half a cell off the centreline, which is what the OpenFOAM case does: a cylinder
+    # exactly on the axis sheds only when the symmetry is broken by round-off, and the
+    # transient takes an order of magnitude longer. benchmarks/README.md records the
+    # same 5 mm offset in the Schafer-Turek 2D-1 case for the same reason.
+    body = world.add_body(position=centre, label="cylinder")
+    world.add_shape("cylinder", body=body, position=centre,
+                    scale=(diameter / 2.0, nz * dx, 0.0))
+    world.initialise(velocity=(u_mean, 0.0, 0.0))
+
+    period = cells_per_d / (foam["strouhal"] * 0.04)
+    total = int(steps if steps else periods * period)
+    depth = nz * dx
+    coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
+    times: list[float] = []
+    cd: list[float] = []
+    cl: list[float] = []
+    frames: list[np.ndarray] = []
+
+    def take(index: int) -> None:
+        force, _ = world.wrench(body)
+        times.append(world.steps * scaling.dt)
+        cd.append(float(force[0]) * coefficient)
+        cl.append(float(force[1]) * coefficient)
+        if animate and len(frames) < 240 and index % max(1, total // 240) == 0:
+            frames.append(figures.slice_frame(world, axis=2))
+
+    _advance(world, total, sample_every=1, sample=take, settle=0.5, progress=progress)
+
+    cd_array = np.asarray(cd)
+    cl_array = np.asarray(cl)
+    spectral = figures.strouhal(times, cl_array, diameter, u_mean)
+    live_cd = float(cd_array.mean()) if cd_array.size else float("nan")
+    live_st = spectral["strouhal"]
+    cd_error = live_cd / foam["mean_cd"] - 1.0
+    st_error = live_st / foam["strouhal"] - 1.0
+    williamson = 0.164
+    st_vs_williamson = live_st / williamson - 1.0
+
+    checks = [
+        Check("mean Cd, live backend against the OpenFOAM run", live_cd,
+              f"{foam['mean_cd']:.6f} +/- {tolerances['cd']:.0%} (OpenFOAM, "
+              f"benchmarks/moving_mesh/grade.py on the committed run)",
+              abs(cd_error) <= tolerances["cd"]),
+        Check("Strouhal, live backend against the OpenFOAM run", live_st,
+              f"{foam['strouhal']:.6f} +/- {tolerances['strouhal']:.0%} (OpenFOAM)",
+              abs(st_error) <= tolerances["strouhal"]),
+        Check("Strouhal against Williamson (1996), unconfined", live_st,
+              f"{williamson} +/- {tolerances['strouhal']:.0%}; both runs should sit "
+              f"about a percent above it on 2.5% blockage",
+              abs(st_vs_williamson) <= tolerances["strouhal"]),
+        Check("Cl RMS, live against OpenFOAM",
+              f"{float(cl_array.std()):.4f} against {foam['cl_rms']:.4f}",
+              "reported, not graded", None,
+              "the lift is a small difference of two large surface integrals; "
+              "benchmarks/README.md reports and does not grade it on the sibling case"),
+        Check("the OpenFOAM numbers have not drifted from the documented ones",
+              f"St {drift['strouhal']:.2e}, Cd {drift['cd']:.2e}",
+              "< 1e-5 on both",
+              drift["strouhal"] < 1e-5 and drift["cd"] < 1e-5,
+              "REFERENCES['openfoam_cylinder'] carries copies for documentation; the "
+              "graded comparison uses what the grader reads today"),
+        Check("cycles sampled", f"{spectral['cycles']:.1f} by {spectral['method']}",
+              f"the OpenFOAM window held {foam['cycles']} cycles", None),
+    ]
+    out = Path(out_dir)
+    drawn = [figures.slice_figure(
+        world, out / "live-crosscheck-cylinder.png", axis=2,
+        title=f"cylinder Re 100: live Cd {live_cd:.4f} / St {live_st:.5f} against "
+              f"OpenFOAM {foam['mean_cd']:.4f} / {foam['strouhal']:.5f}")]
+    drawn.append(figures.profile_figure(
+        out / "live-crosscheck-history.png",
+        [{"x": times, "y": cd, "label": "Cd, live backend"},
+         {"x": [times[0], times[-1]] if times else [0, 1],
+          "y": [foam["mean_cd"]] * 2, "label": "mean Cd, OpenFOAM", "style": "--"},
+         {"x": times, "y": cl, "label": "Cl, live backend", "panel": 1}],
+        title=f"two backends, one case: Cd {cd_error:+.2%}, St {st_error:+.2%}",
+        xlabel="t (s)", ylabel="coefficient", panels=2))
+    if frames:
+        gif = figures.animate(frames, out / "live-crosscheck-cylinder.gif", fps=20)
+        if gif:
+            drawn.append(gif)
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+
+    lines = [
+        f"# cross-check: a cylinder at Re {reynolds:g} on both backends",
+        f"  case:       D {diameter * 1e3:g} mm, U {speed * 1e3:g} mm/s, water, "
+        f"{blockage:.1%} blockage, read from the OpenFOAM run's own constants",
+        f"  openfoam:   Cd {foam['mean_cd']:.6f}, St {foam['strouhal']:.6f} over "
+        f"{foam['cycles']} cycles ({reference['source']})",
+        f"  live:       Cd {live_cd:.6f} ({cd_error:+.2%}), St {live_st:.6f} "
+        f"({st_error:+.2%}), {spectral['cycles']:.1f} cycles",
+        f"  williamson: St {williamson} unconfined; live is {st_vs_williamson:+.2%} on "
+        f"it, OpenFOAM is {foam['strouhal'] / williamson - 1.0:+.2%}",
+        f"  caveat:     {reference['caveat']}",
+        *scaling.report(), *_official("cylinder", scaling, smagorinsky),
+        *world.report()[-2:],
+    ]
+    return _result("crosscheck", checks, lines, drawn, live_cd=live_cd,
+                   live_strouhal=live_st, openfoam=foam, cd_error=cd_error,
+                   st_error=st_error)
+
+
+# -- the catalogue ----------------------------------------------------------------------
+
+
+CASES: dict[str, Case] = {
+    "smoke": Case(
+        "smoke", "every kernel once on a 12-cube: the cheapest thing that fails if the "
+        "solver is broken. Seconds on a CPU; in the main test suite",
+        run_smoke, {"cells": 12, "steps": 40}, milestone="M0"),
+    "poiseuille": Case(
+        "poiseuille", "a force-driven channel against the exact parabola, which the "
+        "two-relaxation-time wall makes exact rather than second-order",
+        run_poiseuille, {"cells": 32}, milestone="M1"),
+    "cavity": Case(
+        "cavity", "the lid-driven cavity at Re 100 and Re 1000 against Ghia, Ghia and "
+        "Shin (1982) Tables I and II",
+        run_cavity, {"cells": 128, "reynolds": 100.0}, milestone="M1", heavy=True),
+    "cylinder": Case(
+        "cylinder", "Schafer and Turek's 2D-2 cylinder at Re 100 at three resolutions, "
+        "with the observed order of convergence on the drag error",
+        run_cylinder, {"resolutions": (20, 30, 40)}, milestone="M1", heavy=True),
+    "sphere": Case(
+        "sphere", "drag on a fixed sphere at four Reynolds numbers against "
+        "Schiller-Naumann", run_sphere, {}, milestone="M1", heavy=True),
+    "crosscheck": Case(
+        "crosscheck", "the same cylinder on both backends: this one and the OpenFOAM "
+        "run committed at tests/data/moving_mesh/viv_fixed",
+        crosscheck, {}, milestone="M1", heavy=True),
+    "translating_sphere": Case(
+        "translating_sphere", "a sphere moving through still fluid: the moving-boundary "
+        "and fresh-node refilling check, against Galilean invariance",
+        run_translating_sphere, {}, milestone="M2", heavy=True),
+    "falling_sphere": Case(
+        "falling_sphere", "a sphere released in water, two-way coupled to Newton, "
+        "against the Schiller-Naumann terminal velocity",
+        run_falling_sphere, {}, milestone="M2", needs_newton=True, heavy=True),
+    "momentum": Case(
+        "momentum", "a closed periodic box with one moving body: the momentum the fluid "
+        "gained against the impulse the solver reported",
+        run_momentum, {}, milestone="M2", heavy=True),
+    "ground_effect": Case(
+        "ground_effect", "one actuator disk at five heights over a ground plane against "
+        "Cheeseman and Bennett (1955)",
+        run_ground_effect, {}, milestone="M3", heavy=True),
+    "quadrotor": Case(
+        "quadrotor", "a quadrotor hovering on four actuator disks, Newton-coupled, with "
+        "ground and wall effects; graded for bookkeeping and stability",
+        run_quadrotor, {}, milestone="M3", needs_newton=True, heavy=True),
+    "underwater": Case(
+        "underwater", "a towed capsule in water, graded at zero length against the "
+        "sphere it reduces to", run_underwater, {}, milestone="M3", heavy=True),
+}
+
+
+def describe_cases() -> list[str]:
+    """One line a case, for `openreynolds live cases` and for the agent's tool."""
+    width = max(len(name) for name in CASES)
+    return [
+        f"{case.name.ljust(width)}  {case.milestone or '--':>3}  {case.about}"
+        f"{'  [needs a GPU to be quick]' if case.heavy else ''}"
+        for case in CASES.values()
+    ]
+
+
+def run_case(name: str, *, out_dir: str | Path = ".", device: str | None = None,
+             progress: Callable[[str], None] | None = None,
+             **overrides: Any) -> dict[str, Any]:
+    """Run one case by name and return its result. Unknown keyword arguments are ignored.
+
+    Ignored rather than refused, deliberately: the CLI and the agent tool both pass a
+    fixed set of options (`resolution`, `steps`, `collision`, `fluid`) and the cases take
+    different subsets of them, so a case that does not take `fluid` should run rather
+    than raise at a caller who had no way to know. Every runner ends its signature with
+    `**_` for that reason. What IS refused is an unknown case name and a laminar case
+    with the subgrid model on.
+    """
+    try:
+        case = CASES[name]
+    except KeyError:
+        raise UnphysicalScaling(
+            f"no case called {name!r}. The cases are: {', '.join(sorted(CASES))}"
+        ) from None
+    settings = dict(case.defaults)
+    # `resolution` is the CLI's and the tool's one knob for the grid, and each case
+    # spends it on whatever its own grid parameter is.
+    resolution = overrides.pop("resolution", None)
+    if resolution:
+        for key in ("cells", "cells_per_d", "cells_per_r"):
+            if key in settings or key in _grid_keys(case):
+                settings[key] = int(resolution)
+                break
+    settings.update({k: v for k, v in overrides.items() if v is not None})
+    settings["out_dir"] = out_dir
+    settings["device"] = device
+    settings["progress"] = progress
+    began = time.perf_counter()
+    result = case.runner(**settings)
+    result["seconds"] = time.perf_counter() - began
+    result["milestone"] = case.milestone
+    result["about"] = case.about
+    return result
+
+
+def _grid_keys(case: Case) -> frozenset[str]:
+    """Which grid parameter a case's runner takes, from its own signature."""
+    import inspect
+
+    return frozenset(inspect.signature(case.runner).parameters) & {
+        "cells", "cells_per_d", "cells_per_r"}
+
+
+# -- a case file, with the backend selector ---------------------------------------------
+
+
+def _parse_case_file(text: str) -> dict[str, Any]:
+    """A tiny YAML subset: `key: value` and `key:` blocks one level deep.
+
+    Not PyYAML, and not because PyYAML is bad. It is not a dependency of this package
+    and this extra should not add one for a dozen scalars; `benchmarks/felix/grade.py`
+    reads Felix's own `case.yaml` the same way and for the same reason, with
+    `_yaml_value` and `_block_value` regexes. A case file that needs more than this is a
+    Python script, which is a perfectly good way to drive `FluidWorld`.
+    """
+    import re
+
+    data: dict[str, Any] = {}
+    block: str | None = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indented = line[:1].isspace()
+        found = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$", line)
+        if not found:
+            continue
+        key, value = found.group(1), found.group(2).strip()
+        if not indented:
+            if value:
+                data[key] = _scalar(value)
+                block = None
+            else:
+                data[key] = {}
+                block = key
+        elif block is not None and value:
+            data[block][key] = _scalar(value)
+    return data
+
+
+def _scalar(text: str) -> Any:
+    """`true`, a number, a bracketed list, or the string as written."""
+    lowered = text.strip().strip("'\"")
+    if lowered.lower() in ("true", "yes", "on"):
+        return True
+    if lowered.lower() in ("false", "no", "off"):
+        return False
+    if lowered.startswith("[") and lowered.endswith("]"):
+        inner = lowered[1:-1].strip()
+        return tuple(_scalar(part) for part in inner.split(",")) if inner else ()
+    try:
+        return int(lowered)
+    except ValueError:
+        pass
+    try:
+        return float(lowered)
+    except ValueError:
+        return lowered
+
+
+OPENFOAM_HINTS = {
+    "cavity": "$FOAM_TUTORIALS/incompressible/icoFoam/cavity",
+    "cylinder": "$FOAM_TUTORIALS/incompressible/pimpleFoam/laminar/cylinder2D "
+                "(or the Schafer-Turek setup in benchmarks/felix/)",
+    "crosscheck": "tests/data/moving_mesh/viv_fixed, which is a finished run of it",
+    "sphere": "$FOAM_TUTORIALS/incompressible/simpleFoam, with a sphere STL and "
+              "snappyHexMesh",
+}
+"""For `backend: openfoam` in a case file: where the same case lives on the other path.
+
+The brief asks for the case format to carry a backend selector, `openfoam | live`. What
+`openfoam` can honestly do from here is say where that case is on the OpenFOAM path and
+stop, because the OpenFOAM backend runs in a workspace with its own image, its own
+mesher and its own dictionaries, and this file cannot conjure one. So the selector picks
+the backend and `openfoam` answers with the case rather than running it -- and
+`crosscheck` is the one place where both backends' answers exist at once, which is what
+makes the selector useful rather than decorative. `DECISIONS_LIVE.md` D2.
+"""
+
+
+def run_case_file(path: str | Path, *, out_dir: str | Path = ".",
+                  device: str | None = None,
+                  progress: Callable[[str], None] | None = None,
+                  **overrides: Any) -> dict[str, Any]:
+    """Run a case described by a small YAML file, with `backend: live | openfoam`.
+
+        case: cylinder
+        backend: live
+        resolution: 30
+        collision: trt
+        smagorinsky: 0
+
+    `backend: openfoam` does not run anything; it reports where the same case is on the
+    OpenFOAM path, which is what this repository can honestly say (see `OPENFOAM_HINTS`
+    and `DECISIONS_LIVE.md` D2). Anything else is refused by name.
+    """
+    source = Path(path)
+    if not source.is_file():
+        raise UnphysicalScaling(f"no case file at {source}")
+    data = _parse_case_file(source.read_text(encoding="utf-8"))
+    name = str(data.pop("case", "") or data.pop("name", "")).strip()
+    backend = str(data.pop("backend", "live")).strip().lower()
+    if not name:
+        raise UnphysicalScaling(
+            f"{source} names no case: it needs a `case:` line. The cases are "
+            f"{', '.join(sorted(CASES))}"
+        )
+    if backend not in ("live", "openfoam"):
+        raise UnphysicalScaling(
+            f"{source} asks for backend {backend!r}; it is `live` or `openfoam`"
+        )
+    if backend == "openfoam":
+        hint = OPENFOAM_HINTS.get(name, "no equivalent is recorded for this case")
+        lines = [
+            f"# {name}: backend openfoam",
+            "  This selector picks the backend and does not start a workspace. The",
+            "  OpenFOAM path runs in a workspace with its own image, mesher and",
+            "  dictionaries; `openreynolds` with no subcommand starts a study that can.",
+            f"  the same case there: {hint}",
+            "  for both answers at once:  openreynolds live crosscheck",
+        ]
+        return _result(name, [Check("backend", "openfoam",
+                                    "reported, not run", None)], lines, [],
+                       backend="openfoam")
+    data.update({k: v for k, v in overrides.items() if v is not None})
+    result = run_case(name, out_dir=out_dir, device=device, progress=progress, **data)
+    result["backend"] = "live"
+    result["case_file"] = str(source)
+    return result
+
+
+# -- the benchmark ----------------------------------------------------------------------
+
+
+def benchmark(*, resolutions: Sequence[int] = (64, 128), steps: int = 200,
+              collision: str = "trt", smagorinsky: float = 0.0,
+              device: str | None = None, layouts: Sequence[str] | None = None,
+              progress: Callable[[str], None] | None = None,
+              **_: Any) -> dict[str, Any]:
+    """D3Q19 lattice updates per second, on whatever device this is, at each resolution.
+
+    Million lattice updates per second, which is the only portable figure of merit an
+    LBM has: nodes times steps divided by seconds. Reported per resolution because the
+    rate is not one number -- a small lattice is launch-bound and a large one is
+    bandwidth-bound, and on this project's own CPU the two differ by a factor of three.
+
+    `layouts` re-runs the whole sweep with `OPENREYNOLDS_LIVE_LAYOUT` set to each of
+    `soa` and `aos`, in **subprocesses**, because the layout is baked into the generated
+    code at module import and cannot be changed in a running process. That is the
+    measurement that has to pick the per-device default, and it has to be made on the
+    device in question: the node-major layout is three times faster on one CPU core and
+    is the wrong answer on a GPU, where a warp's reads of one direction are coalesced
+    under the direction-major layout and scattered 76 bytes apart under the other.
+    """
+    import warp as wp
+
+    from .world import Domain, FluidWorld
+
+    if layouts:
+        return _benchmark_layouts(resolutions=resolutions, steps=steps,
+                                  collision=collision, smagorinsky=smagorinsky,
+                                  device=device, layouts=layouts, progress=progress)
+
+    from . import lattice as L
+
+    rows = []
+    for cells in (int(c) for c in resolutions):
+        dx = 1.0 / cells
+        nz = max(3, cells // 4)
+        scaling = Scaling.for_reynolds(dx, 1.0, 100.0, "water", u_lattice=0.05,
+                                       scheme=collision, les=smagorinsky > 0)
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=(1.0, 1.0, nz * dx),
+                        faces={"-x": "wall", "+x": "wall", "-y": "wall", "+y": "wall",
+                               "-z": "periodic", "+z": "periodic"},
+                        face_velocity={"+y": (scaling.reference_velocity, 0.0, 0.0)})
+        world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                           substeps=1, collision=collision, smagorinsky=smagorinsky,
+                           device=device)
+        world.initialise()
+        world.step()  # the first launch compiles and allocates; it is not the rate
+        best = 0.0
+        for _ in range(3):
+            began = time.perf_counter()
+            for _ in range(steps):
+                world.step()
+            wp.synchronize_device(world.device)
+            elapsed = time.perf_counter() - began
+            best = max(best, world.nodes * steps / elapsed / 1e6)
+        row = {"cells": cells, "nodes": world.nodes, "steps": steps, "mlups": best,
+               "ms_per_step": world.nodes / best / 1e3, "device": world.device,
+               "layout": L.LAYOUT,
+               "bytes": int(world.f.size * 4 * 2)}
+        rows.append(row)
+        if progress:
+            progress(f"  {cells:>4} cells  {world.nodes:>12,} nodes  "
+                     f"{best:8.1f} MLUPS  {row['ms_per_step']:8.3f} ms a step")
+
+    device_name = rows[0]["device"] if rows else (device or "unknown")
+    checks = [
+        Check(f"D3Q19 MLUPS at {row['cells']} cells ({row['nodes']:,} nodes)",
+              row["mlups"], "reported; the brief's 1000+ target is for an H100-class GPU",
+              None)
+        for row in rows
+    ]
+    best = max((r["mlups"] for r in rows), default=0.0)
+    target_met = best >= 1000.0 and "cuda" in str(device_name)
+    checks.append(Check(
+        "1000+ MLUPS on an H100-class GPU", f"{best:.1f} MLUPS on {device_name}",
+        ">= 1000 on a CUDA device",
+        True if target_met else None if "cuda" not in str(device_name) else False,
+        "not applicable on a CPU device: this is a device claim and a CPU cannot "
+        "answer it" if "cuda" not in str(device_name) else ""))
+    lines = [f"# benchmark: D3Q19 on {device_name}, {L.LAYOUT} layout, "
+             f"{collision} collision",
+             f"  warp:       {wp.config.version}"]
+    for row in rows:
+        lines.append(f"  {row['cells']:>4} cells:  {row['nodes']:>12,} nodes  "
+                     f"{row['mlups']:8.1f} MLUPS  {row['ms_per_step']:8.3f} ms a step  "
+                     f"{row['bytes'] / 2 ** 20:.0f} MiB of populations")
+    return _result("benchmark", checks, lines, [], rows=rows, device=str(device_name),
+                   layout=L.LAYOUT)
+
+
+def _benchmark_layouts(*, resolutions, steps, collision, smagorinsky, device, layouts,
+                       progress) -> dict[str, Any]:
+    """Run `benchmark` once per layout, each in its own process, and compare.
+
+    A subprocess per layout and not a loop, because `lattice.LAYOUT` is read once at
+    import and baked into every kernel's generated code -- which is the whole reason the
+    layout is fast. The processes are sequential so that they do not contend for the one
+    device.
+    """
+    import subprocess
+    import sys
+
+    rows = []
+    for layout in layouts:
+        if progress:
+            progress(f"  measuring the {layout} layout in its own process")
+        environment = dict(os.environ, OPENREYNOLDS_LIVE_LAYOUT=layout,
+                           PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        script = (
+            "import json;from openreynolds.live.cases import benchmark;"
+            f"print(json.dumps(benchmark(resolutions={tuple(resolutions)!r},"
+            f"steps={int(steps)},collision={collision!r},"
+            f"smagorinsky={float(smagorinsky)!r},device={device!r})))"
+        )
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                              text=True, env=environment, timeout=3600)
+        payload = None
+        for line in reversed(done.stdout.splitlines()):
+            if line.startswith("{"):
+                payload = json.loads(line)
+                break
+        if payload is None:
+            raise UnphysicalScaling(
+                f"the {layout} benchmark subprocess returned no JSON "
+                f"(exit {done.returncode}): {done.stderr.strip()[-400:]}"
+            )
+        for row in payload["rows"]:
+            rows.append(dict(row, layout=layout))
+
+    device_name = rows[0]["device"] if rows else (device or "unknown")
+    by_layout: dict[str, float] = {}
+    for row in rows:
+        by_layout[row["layout"]] = max(by_layout.get(row["layout"], 0.0), row["mlups"])
+    fastest = max(by_layout, key=by_layout.get) if by_layout else "unknown"
+    checks = [
+        Check(f"best MLUPS, {layout} layout on {device_name}", rate,
+              "reported; this is the measurement that picks the default for this device",
+              None)
+        for layout, rate in sorted(by_layout.items())
+    ]
+    checks.append(Check(
+        f"fastest layout on {device_name}", fastest,
+        "whatever the measurement says, which is what "
+        "lattice._preferred_layout should return on this device", None))
+    lines = [f"# benchmark: both layouts on {device_name}"]
+    for row in sorted(rows, key=lambda r: (r["layout"], r["cells"])):
+        lines.append(f"  {row['layout']}  {row['cells']:>4} cells:  "
+                     f"{row['nodes']:>12,} nodes  {row['mlups']:8.1f} MLUPS")
+    for layout, rate in sorted(by_layout.items()):
+        lines.append(f"  best {layout}: {rate:.1f} MLUPS")
+    lines.append(f"  fastest on {device_name}: {fastest}")
+    return _result("benchmark", checks, lines, [], rows=rows, device=str(device_name),
+                   by_layout=by_layout, fastest=fastest)
+
+
+# -- the report -------------------------------------------------------------------------
+
+
+def report(result: dict[str, Any]) -> str:
+    """A case's result as a person reads it: the facts, then the checks, then the verdict.
+
+    The layout `benchmarks/*/grade.py` prints and for the same reason: every check on
+    one line with its measured value, its target and its verdict, so that a reader can
+    see which one failed without reading prose.
+    """
+    lines = list(result.get("report", []))
+    checks = result.get("checks", [])
+    if checks:
+        lines.append("")
+        width = max(len(str(c["name"])) for c in checks)
+        for check in checks:
+            measured = check["measured"]
+            if isinstance(measured, float):
+                shown = f"{measured:.6g}"
+            elif isinstance(measured, bool):
+                shown = "yes" if measured else "no"
+            else:
+                shown = str(measured)
+            verdict = {True: "PASS", False: "FAIL", None: "    "}[check["passed"]]
+            lines.append(f"  {verdict}  {str(check['name']).ljust(width)}  "
+                         f"{shown}   against {check['target']}")
+            if check.get("note"):
+                lines.append(f"        {' ' * width}  ({check['note']})")
+    graded = [c for c in checks if c["passed"] is not None]
+    if graded:
+        failed = [c for c in graded if not c["passed"]]
+        lines.append("")
+        lines.append(f"  {len(graded) - len(failed)}/{len(graded)} graded checks passed"
+                     + (f"; failed: {', '.join(c['name'] for c in failed)}"
+                        if failed else ""))
+    if result.get("seconds"):
+        lines.append(f"  took {figures.clock(result['seconds'])}")
+    for figure in result.get("figures", []):
+        lines.append(f"  figure:     {figure}")
+    return "\n".join(lines)

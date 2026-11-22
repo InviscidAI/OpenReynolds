@@ -49,6 +49,7 @@ __all__ = [
     "available", "require", "LiveUnavailable",
     "Domain", "FluidWorld", "Rotor",
     "NewtonCoupling", "Scaling", "Fluid", "FLUIDS", "UnphysicalScaling",
+    "HoverFluidEnv", "HoverFluidEnvCfg",
     "CASES", "run_case", "describe_cases",
 ]
 
@@ -62,6 +63,8 @@ _LAZY = {
     "Fluid": ("units", "Fluid"),
     "FLUIDS": ("units", "FLUIDS"),
     "UnphysicalScaling": ("units", "UnphysicalScaling"),
+    "HoverFluidEnv": ("isaac", "HoverFluidEnv"),
+    "HoverFluidEnvCfg": ("isaac", "HoverFluidEnvCfg"),
     "CASES": ("cases", "CASES"),
     "run_case": ("cases", "run_case"),
     "describe_cases": ("cases", "describe_cases"),

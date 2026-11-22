@@ -132,17 +132,56 @@ cad = [
 #                       which is the difference from XLB that decided D1 in
 #                       DECISIONS_LIVE.md, where JAX is a core requirement.
 #
-# Named directly rather than through `newton[sim]`: that extra pins `mujoco-warp
-# ~=3.17.0`, and the version this was built and measured against is 4.0.1.
+# Named directly rather than through `newton[sim]`: that extra pins `mujoco-warp`
+# itself, and it pins it differently per Newton -- `~=3.12.0` at newton 1.6.1 and
+# `~=3.17.0` at newton 1.8.0 -- while the version this was built and measured against is
+# 4.0.1. Nothing in `openreynolds/live/` imports mujoco: `SolverMuJoCo` is an object the
+# caller constructs and hands to `NewtonCoupling`, so this floor belongs to whoever
+# chooses that solver and the pair that is actually exercised here is
+# newton 1.8.0 + mujoco-warp 4.0.1 (Newton warns about the mismatch and runs). The floor
+# is 3.12 and not 4.0 so that the extra can be installed beside newton 1.6.1 at all.
+#
+# ## The range, and what measured it
+#
+# The bands below are `docs/live-version-matrix.md`, which is two environments run
+# end to end rather than a guess at what might work:
+#
+#   warp-lang 1.19.0 + newton 1.8.0   the development environment
+#   warp-lang 1.17.0 + newton 1.6.1   what Isaac Lab 3.0.0's own metadata pins
+#                                     (`warp-lang==1.17.0`, `newton[sim]==1.6.1`), so
+#                                     what a user running this inside Isaac Lab gets
+#                                     no matter what this table asks for
+#
+# On both: the extension imports, every kernel compiles, the Re 100 lid-driven cavity
+# comes out **bit-identical** (same SHA-1 over the saved velocity plane), a three-step
+# `NewtonCoupling` over a voxelised sphere gives the same 552 solid nodes and the same
+# wrench to the last float, and zero-copy sharing holds by pointer in both directions
+# between Warp, Newton and torch. No source change was needed to reach that: every Warp
+# symbol the kernels use behaves identically on 1.17.0 and 1.19.0, and every Newton
+# field, `GeoType` name, `GeoType` value and `shape_scale` component the adapter reads
+# is unchanged between 1.6.1 and 1.8.0.
+#
+# The upper bounds are exclusive minors, not open ends, because an open end is a claim
+# about releases that do not exist yet. 1.18 was not installed: it sits between two that
+# agree bit for bit, which is weaker than a run and stronger than nothing.
+# `openreynolds/live/units.py::WARP_TESTED` carries the same band in code, and
+# `tests/test_live_versions.py` asserts the two agree so the declared range and the
+# tested range cannot drift apart.
+#
+# What is *not* claimed: no GPU was available, so the CUDA path is untested on either
+# (`DECISIONS_LIVE.md` D7). The one measured difference is speed, not answers -- the
+# step loop runs at 1.11 MLUPS on warp 1.17.0 against 3.51 on 1.19.0 on the same CPU,
+# which is 1.17.0's code generation for the two large kernels and not `max_unroll` (the
+# option is honoured by both) and not launch overhead (8.06 against 8.52 us a launch).
 #
 # numpy and matplotlib are the extension's own, not borrowed from `dev`: `live/world.py`
 # and `live/lattice.py` import numpy when they are read, and every case draws its
 # figure. The floors are the ones the rest of this table already uses, so one
 # environment can serve the toolbox and the live backend together.
 live = [
-    "warp-lang>=1.19",
-    "newton>=1.8",
-    "mujoco-warp>=4.0",
+    "warp-lang>=1.17,<1.20",
+    "newton>=1.6,<1.9",
+    "mujoco-warp>=3.12",
     "numpy>=1.24",
     "matplotlib>=3.7",
 ]

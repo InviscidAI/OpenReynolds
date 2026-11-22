@@ -66,6 +66,43 @@ model built with one of each and printed gives:
 `_SCALE` below is that table, and `tests/test_live_couple.py` asserts it against a model
 Newton actually builds, so if a future release changes the packing the test says so
 rather than the sphere quietly becoming a point.
+
+## The same, re-read on newton 1.6.1, because Isaac Lab pins it
+
+Isaac Lab 3.0.0's metadata is `warp-lang==1.17.0` and `newton[sim]==1.6.1`, so a user
+running this inside Isaac Lab gets 1.6.1 whatever `pyproject.toml` asks for. Everything
+above was therefore read again out of 1.6.1, by building the same one-of-each model and
+printing it. `docs/live-version-matrix.md` has the commands and the output. Nothing
+moved, and the parts worth naming because they are the ones that would have been silent:
+
+* **`shape_scale`'s packing is identical on 1.6.1 and 1.8.0**, component for component,
+  for sphere, box, capsule, cylinder, plane and mesh. The sphere is still
+  `(radius, 0, 0)` and not `(r, r, r)`. This is the one that had to be checked rather
+  than trusted: `_SCALE` is the identity, so a changed packing would not raise, it would
+  put the radius in the wrong slot and the body would voxelise as a point or a slab.
+* every field the step loop reads exists on 1.6.1 with the same dtype:
+  `Model.shape_source_ptr` (`uint64`), `shape_type`, `shape_body`, `shape_transform`,
+  `shape_scale`, `body_com`, `body_mass`, `gravity`, the `shape_label` / `body_label`
+  lists, and `State.body_q` / `body_qd` / `body_f` / `clear_forces()`.
+* `newton.GeoType`'s member **names and values** are unchanged across the two, all
+  twelve of them. `GEO_TO_SHAPE` maps by name on purpose and so would have survived a
+  renumbering; it did not have to.
+* `newton.solvers.SolverMuJoCo` exists on both, and so do `SolverXPBD`,
+  `SolverSemiImplicit`, `SolverFeatherstone`, `SolverVBD`, `SolverStyle3D`,
+  `SolverKamino` and `SolverImplicitMPM`. `SolverSteel` is new in 1.8.0 and is not used
+  here.
+* **`solver.step()` gained a keyword-only `observables=None` in 1.8.0.** On 1.6.1 the
+  signature is the five positionals and nothing else. `step()` below passes exactly
+  those five positionally, which is why it works on both -- and why `contacts=None` is
+  still passed explicitly rather than omitted.
+* a three-step `NewtonCoupling` run over a voxelised sphere produces the same 552 solid
+  nodes, the same body pose and the same wrench to the last float on both.
+
+The one thing that is *not* the same is packaging rather than API: `newton[sim]` asks
+for `mujoco-warp ~=3.12.0` at 1.6.1 and `~=3.17.0` at 1.8.0, so the MuJoCo backend's own
+version band moves with Newton. Nothing in this file imports mujoco -- the solver is the
+caller's object -- so that band belongs to whoever chooses `SolverMuJoCo`, and
+`pyproject.toml`'s `live` extra says so.
 """
 
 from __future__ import annotations
@@ -354,6 +391,10 @@ class NewtonCoupling:
             self._push_wrench()
         self.steps += 1
 
+        # Five positionals and no keywords. newton 1.8.0's `step` takes a keyword-only
+        # `observables=None` that 1.6.1 (which Isaac Lab 3.0.0 pins) does not have, so
+        # naming anything here would break on the older one; `contacts` stays an
+        # explicit positional for the same reason, since on 1.6.1 it has no default.
         self.solver.step(self.state_0, self.state_1, self.control, self.contacts,
                          step_dt)
         self.state_0, self.state_1 = self.state_1, self.state_0
@@ -444,10 +485,13 @@ class NewtonCoupling:
             displaced = -self.world.fluid.rho * volume[:, None] * np.asarray(self._gravity)
             extras[:, :3] += displaced.astype(np.float32)
             self.displaced_volume = volume
-        for rotor in self.world.rotors:
-            if 0 <= rotor.body < count:
-                extras[rotor.body, :3] += np.asarray(
-                    self.world.rotor_reaction(rotor.body), dtype=np.float32)
+        for body in {r.body for r in self.world.rotors}:
+            if 0 <= body < count:
+                # All six components: a rotor off the centre of mass applies a moment,
+                # and dropping it leaves a multirotor with no attitude control at all.
+                # `FluidWorld.rotor_reaction` has the history.
+                extras[body] += np.asarray(self.world.rotor_reaction(body),
+                                           dtype=np.float32)
         if not extras.any():
             return
         self._buoyancy.assign(extras)

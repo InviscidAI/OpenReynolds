@@ -58,6 +58,7 @@ __all__ = [
     "CS2", "CS", "LAMBDA", "STIFF_TAU", "MACH_MAX", "U_LATTICE_MAX", "TAU_WINDOW",
     "Fluid", "FLUIDS", "fluid", "Scaling", "UnphysicalScaling", "rates",
     "LiveUnavailable", "require",
+    "WARP_TESTED", "NEWTON_TESTED", "version_note",
 ]
 
 
@@ -98,6 +99,83 @@ def require() -> Any:
             f"(the import said: {exc})"
         ) from exc
     return wp
+
+
+WARP_TESTED = ("1.17", "1.20")
+NEWTON_TESTED = ("1.6", "1.9")
+"""The dependency band this extension was measured across: `[lower, upper)` by minor.
+
+Here and not only in `pyproject.toml` because `pyproject.toml` cannot be enforced where
+it matters. The case this exists for is a user running the extension **inside Isaac
+Lab**: Isaac Lab 3.0.0's own metadata says `warp-lang==1.17.0` and `newton[sim]==1.6.1`,
+so whatever `[live]` asks for, pip has already resolved those and the extension has to
+work on them or say why not. `docs/live-version-matrix.md` is the measurement; the short
+version is that it works, and that nothing in this file, `lattice.py`, `world.py` or
+`couple.py` needed a shim to make it:
+
+* every Warp symbol the kernels use behaves identically on 1.17.0 and 1.19.0, including
+  `wp.where`'s argument order, `wp.set_module_options`' two keys, the 3x19 `wp.constant`
+  matrix, `wp.mesh_query_point_sign_normal`'s result fields and the "mutating a constant
+  inside a dynamic loop" rule that `lattice.stream` is written around;
+* the Re 100 lid-driven cavity comes out **bit-identical** on the two (same SHA-1 over
+  the saved velocity plane), as does a three-step `NewtonCoupling` run;
+* every `newton.Model` / `newton.State` field `couple.py` reads exists on 1.6.1 with the
+  same dtype, `newton.GeoType`'s member names and values are unchanged, and
+  `shape_scale`'s packing -- the one `couple.py::_SCALE` records because Newton's own
+  comments get it wrong -- is the same on both.
+
+So the band is advisory rather than a refusal: there is nothing to refuse. It is carried
+in code anyway for two reasons. `tests/test_live_versions.py` asserts the installed
+versions are inside it and that `pyproject.toml`'s `live` extra agrees with it, so the
+declared range and the tested range cannot drift. And `version_note()` puts one line in
+`FluidWorld.report()` when a run is outside it, so a number measured on an untested
+Warp is labelled as such in the report that carries it, which is the habit
+`benchmarks/README.md` is written around.
+
+The upper bounds are exclusive minors rather than open ends because an open end is a
+claim about software that does not exist yet. 1.18 was not installed; it sits between
+two releases that agree bit for bit, which is weaker evidence than a run and stronger
+than nothing, and the matrix says exactly that.
+"""
+
+
+def version_note() -> str | None:
+    """One line naming a dependency outside `WARP_TESTED` / `NEWTON_TESTED`, or None.
+
+    Reads the versions through `importlib.metadata` rather than through `warp.config`
+    and `newton.__version__`, so this module keeps importing nothing but the standard
+    library -- the property `openreynolds/live/__init__.py`'s lazy `__getattr__` and
+    `require()` both depend on, and the one `tests/test_live_optional.py` checks by
+    hiding Warp from the import system.
+
+    A missing distribution is not reported: `newton` is only needed by `couple.py`, and
+    a pure-fluid run on a machine with no robot simulator is a supported case.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    outside = []
+    for dist, (low, high) in (("warp-lang", WARP_TESTED), ("newton", NEWTON_TESTED)):
+        try:
+            found = version(dist)
+        except PackageNotFoundError:
+            continue
+        parts = tuple(int(p) for p in found.split(".")[:2] if p.isdigit())
+        if len(parts) < 2:
+            continue
+        if not (_minor(low) <= parts < _minor(high)):
+            outside.append(f"{dist} {found} (tested >={low},<{high})")
+    if not outside:
+        return None
+    return (
+        "  NOTE:       outside the tested dependency range: " + ", ".join(outside)
+        + ". The extension may well work; nothing here has measured it. "
+        + "docs/live-version-matrix.md is what was measured"
+    )
+
+
+def _minor(spec: str) -> tuple[int, int]:
+    major, _, minor = spec.partition(".")
+    return int(major), int(minor or 0)
 
 
 CS2 = 1.0 / 3.0

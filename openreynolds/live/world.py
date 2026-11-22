@@ -66,7 +66,7 @@ from .units import Scaling, UnphysicalScaling, fluid as resolve_fluid
 # The move was forced: reading this module imports Warp (through `lattice.py`), so a
 # refusal defined here could only be raised on a machine that did not need it. The
 # names are unchanged, and `from .world import require` still works.
-from .units import LiveUnavailable, require
+from .units import LiveUnavailable, require, version_note
 
 __all__ = ["Domain", "FluidWorld", "Rotor", "LiveUnavailable", "require"]
 
@@ -151,6 +151,7 @@ class Domain:
                     f"{', '.join(sorted(FACE_CODES))}"
                 ) from None
         self._check_periodic_pairs(out)
+        self._check_a_density_reference(out)
         return out
 
     @staticmethod
@@ -171,6 +172,35 @@ class Domain:
                     f"(-{name} is {L.FACE_NAMES[low]}, +{name} is {L.FACE_NAMES[high]}). "
                     f"Periodic is a property of the axis: set both or neither"
                 )
+
+    @staticmethod
+    def _check_a_density_reference(rules: list[int]) -> None:
+        """A box of nothing but zero-gradient outflows has no density to settle to.
+
+        `outlet` copies the populations from one cell inside, which imposes no pressure
+        and no density. With every face doing that and a momentum source inside -- an
+        actuator disk, a moving body -- the mean density is free, and in a weakly
+        compressible scheme a free mean density is a divergence: measured at six
+        outflows round a hovering rotor, the whole lattice went non-finite inside
+        fifteen coupling steps.
+
+        Something has to pin it. A `wall`, a `slip` face or a periodic axis all do,
+        because each conserves the mass that crosses it; an `inlet` does, because it
+        writes `f_eq(1, u)`. So at least one face must be one of those, and the refusal
+        says which to change rather than leaving a diverging run to be diagnosed as a
+        solver defect. The usual fix for an open domain is slip sides and an outflow on
+        the axis the flow leaves by.
+        """
+        if all(rule == L.FACE_OUTLET for rule in rules):
+            raise UnphysicalScaling(
+                "every face of this domain is an outflow, and an outflow imposes no "
+                "density: a weakly compressible lattice with a momentum source in it "
+                "and no reference anywhere diverges, usually within a few dozen steps. "
+                "Pin it with at least one face that conserves what crosses it -- a "
+                "wall, a slip face, a periodic axis, or an inlet. For an open box "
+                "around a rotor or a falling body, slip on the sides and outlet on the "
+                "axis the flow leaves by is the usual answer"
+            )
 
     def resolution(self, dx: float) -> tuple[int, int, int]:
         """Node counts for a cell size, at least 3 a side so D3Q19 has a neighbour.
@@ -663,20 +693,40 @@ class FluidWorld:
             return both
         return tuple(both[body, :3]), tuple(both[body, 3:])
 
-    def rotor_reaction(self, body: int) -> tuple[float, float, float]:
-        """The sum of `thrust * axis` for the rotors on `body`, in world frame, newtons.
+    def rotor_reaction(self, body: int) -> tuple[float, ...]:
+        """The wrench the rotors on `body` owe it: six numbers, force then torque.
 
         The other half of the actuator disk. `disks_to_force` put `-thrust * axis` into
         the fluid; this is what the body is owed, and `couple.py` adds it to `body_f`
         beside the surface wrench.
+
+        **The torque is the half that was missing.** This returned three numbers until
+        2026-11-22, and a quadrotor built on it had one controllable degree of freedom:
+        four rotors on four arms, all of their thrust summed at the centre of mass, and
+        no attitude moment whatever the differential. A rotor at `r` from the centre of
+        mass pushing with force `F` applies `r x F`, and that cross product is the only
+        reason a multirotor can roll. Found by writing the Isaac Lab hover task against
+        it, which could not control attitude and said so.
+
+        The arm is to the centre of mass and not to the body origin, because `body_f` is
+        documented as a wrench referenced to the centre of mass
+        (`newton._src.sim.state.State.body_f`) and the two differ by `omega x (com -
+        origin)` worth of moment on any body whose origin is not its centroid.
         """
-        total = np.zeros(3)
+        force = np.zeros(3)
+        torque = np.zeros(3)
         pose = self._poses[body]
         rotation = _quat_matrix(pose[3:])
+        origin = np.asarray(pose[:3])
+        com = np.asarray(self._coms[body]) if body < len(self._coms) else origin
         for rotor in self.rotors:
-            if rotor.body == body:
-                total += rotation @ np.asarray(rotor.axis) * rotor.thrust
-        return tuple(total)
+            if rotor.body != body:
+                continue
+            thrust = rotation @ np.asarray(rotor.axis) * rotor.thrust
+            where = origin + rotation @ np.asarray(rotor.centre)
+            force += thrust
+            torque += np.cross(where - com, thrust)
+        return tuple(force) + tuple(torque)
 
     def fields(self) -> dict[str, np.ndarray]:
         """Density and velocity over the lattice, in SI, as numpy arrays.
@@ -726,18 +776,41 @@ class FluidWorld:
         return tuple(float(v) for v in mom)
 
     def stable(self) -> bool:
-        """Whether the lattice still holds finite, positive densities.
+        """Whether the lattice still holds finite, positive densities at its fluid nodes.
 
         Checked by the long-run tests rather than every step: it is a full host read of
-        the density field, which at 2 million nodes is 8 MB, and a blow-up does not
+        the density field, which at two million nodes is 8 MB, and a blow-up does not
         need to be caught within one step of happening. What it catches is the only way
-        this solver fails -- a negative or non-finite density, which is what a lattice
-        Boltzmann divergence looks like a step or two before every number becomes a nan.
+        this solver fails -- a non-finite or negative density, which is what a lattice
+        Boltzmann divergence becomes a step or two before every number is a nan.
+
+        **It read the masked field until 2026-11-22 and therefore could not fail.**
+        `fields()` sets solid nodes to `nan` so a figure does not draw the inside of a
+        body as still fluid, and this method then treated `nan` as "that is a solid
+        node" -- so a lattice in which *every* node had gone non-finite read as stable.
+        Found by an under-constrained box (six zero-gradient outflows, no density
+        reference) diverging within fifteen coupling steps while this returned True.
+
+        It now reads the unmasked device field, where `macroscopic` writes a plain 0.0
+        at a solid node, and asks the two questions separately: finite everywhere, and
+        strictly positive wherever `phi` says there is fluid.
         """
-        rho = self.fields()["rho"]
-        finite = np.isfinite(rho) | np.isnan(rho)  # nan is a solid node, not a blow-up
-        positive = np.nan_to_num(rho, nan=self.fluid.rho) > 0.0
-        self._blown_up = not (bool(finite.all()) and bool(positive.all()))
+        import warp as wp
+
+        if self._rho_dev is None:
+            self._rho_dev = wp.zeros(self.shape, dtype=L.DTYPE, device=self.device)
+            self._u_dev = wp.zeros(self.shape, dtype=wp.vec3, device=self.device)
+        body_force = wp.vec3(*[self.scaling.body_force_to_lattice(v)
+                               for v in self._body_force])
+        wp.launch(L.macroscopic, dim=self.shape,
+                  inputs=[self.f, self.phi, self._rho_dev, self._u_dev,
+                          self._force_field, body_force, self._use_field],
+                  device=self.device)
+        rho = self._rho_dev.numpy()
+        fluid = self.phi.numpy() >= 0.0
+        finite = bool(np.isfinite(rho).all())
+        positive = bool((rho[fluid] > 0.0).all()) if fluid.any() else True
+        self._blown_up = not (finite and positive)
         return not self._blown_up
 
     def report(self) -> list[str]:
@@ -759,6 +832,13 @@ class FluidWorld:
             f"substeps of {self.scaling.dt:.6g} s"
             f"{'  (one-way: the bodies do not feel the fluid)' if self.one_way else ''}",
         ]
+        # A run on a Warp or a Newton this extension has not been measured against says
+        # so in its own report, so that a number copied out of here into
+        # PROGRESS_LIVE.md or a benchmark carries that fact with it. The measured range
+        # and its evidence are `units.WARP_TESTED` and `docs/live-version-matrix.md`.
+        outside = version_note()
+        if outside is not None:
+            lines.append(outside)
         if self.steps:
             rate = self.nodes * self.lattice_steps / self.seconds / 1e6
             lines.append(

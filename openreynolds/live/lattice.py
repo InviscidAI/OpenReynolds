@@ -116,6 +116,30 @@ def _preferred_layout() -> str:
     ambiguous about which one produced it. It is a module-level constant and not a
     runtime flag because it is baked into the generated code: a branch per array access
     would cost more than the layout saves.
+
+    **The unroll table above is warp-lang 1.19.0's and does not transfer to 1.17.0.**
+    Isaac Lab 3.0.0 pins 1.17.0, so the whole table was re-measured there (the numbers
+    and the commands are in `docs/live-version-matrix.md`). `max_unroll` is honoured by
+    both -- it is read, applied, and reported back by `get_module_options()` on 1.17.0
+    exactly as on 1.19.0 -- but on 1.17.0 raising it from 16 to 24 measured *slower* on
+    an isolated Q-loop kernel, 43.95 MLUPS against 38.84, where on 1.19.0 it measured
+    faster, 49.71 against 55.29. On the real cavity 1.17.0 runs the step loop at
+    1.11 MLUPS against 1.19.0's 3.51, a factor of 3.2, and that gap is not the unroll
+    option and not launch overhead (8.06 against 8.52 microseconds a launch, which is
+    the same number): it is 1.17.0's CPU code generation for the two large kernels.
+    The value stays 24 because the answers are bit-identical either way and 1.19.0 and
+    every GPU are what the step rate is for. A run on 1.17.0 gets the honest number
+    from `FluidWorld.report`, next to the Warp version that produced it.
+
+    One side effect of this function worth knowing, because something else depends on
+    it: `wp.get_cuda_device_count()` creates Warp's runtime. So importing this module
+    initialises Warp, and `wp.from_torch` / `wp.to_torch` -- which on **both** 1.17.0
+    and 1.19.0 raise `AttributeError: 'NoneType' object has no attribute 'cpu_device'`
+    if they are the first Warp call in a process, the runtime being lazy and
+    `device_from_torch` not forcing it -- work from the moment this package is
+    imported. That is the order an Isaac Lab user hits first and it is why the torch
+    interop in `docs/live-version-matrix.md` is recorded as holding rather than as a
+    trap they have to know about.
     """
     asked = os.environ.get("OPENREYNOLDS_LIVE_LAYOUT", "").strip().lower()
     if asked in ("soa", "aos"):
@@ -133,6 +157,15 @@ wp.set_module_options({
     # Past `Q`, so the direction loop in every kernel here unrolls. See
     # `_preferred_layout` for the measurement: on this CPU it is the difference between
     # 7.9 and 29.8 MLUPS, and it is the single largest factor in the step rate.
+    #
+    # Both keys are accepted by warp-lang 1.17.0 and 1.19.0 -- measured, because Isaac
+    # Lab 3.0.0 pins 1.17.0 and this call is the first thing the module does, so a
+    # rejected key would be an import error rather than a slow kernel. 1.17.0 returns
+    # the same `get_module_options()` dictionary with the same defaults, and neither
+    # version validates the keys at all: an option name that does not exist is accepted
+    # silently by both. That is why there is no try/except here and no per-key probing;
+    # there is nothing to catch. `tests/test_live_versions.py` holds that fact, so if a
+    # future Warp starts rejecting unknown keys the test says so before a user does.
     "max_unroll": 24,
     # Nothing in this extension differentiates through a lattice. The adjoint of every
     # kernel below is generated otherwise, which doubles the compile and the code size
@@ -617,26 +650,56 @@ def stream(
         sk = int(k - C[2, d])
 
         # -- outside the domain: the face's rule --------------------------------------
+        #
+        # **Every axis is examined, not the first one that is out of range.** A diagonal
+        # link from an edge or a corner node leaves the domain on two axes at once --
+        # direction (-1, -1, 0) from node (0, 0, k) is the common case -- and the first
+        # version of this kernel used `if/elif` here, applied only the x rule, and then
+        # fell through to read `phi[si, sj, sk]` with `sj` still -1. Two things were
+        # wrong with that: the wall rule the y face asked for was never applied, and the
+        # read was out of bounds (Warp does not bounds-check an array read in release
+        # mode, so it returned whatever was in memory rather than failing).
+        #
+        # It was not a subtle amount wrong. `cases.run_poiseuille` is the exact case --
+        # a two-relaxation-time wall at Lambda = 3/16 reproduces the analytic parabola
+        # to the convergence residual -- and it came out 2.4% off, on a channel whose
+        # every wall node has four such diagonal links. That is the entire reason an
+        # exact case is worth having: 2.4% on a drag coefficient would have looked like
+        # a resolution problem and been tuned away.
+        #
+        # So: wrap each periodic axis, then take the first axis that is still outside
+        # and apply its face's rule. A link leaving through two *non-periodic* faces at
+        # once (a true corner) is a genuine ambiguity -- the node has two walls and one
+        # population to write -- and the lower axis wins. That is what every lattice
+        # Boltzmann code does with a corner and it is stated rather than hidden.
         outside = int(-1)
         axis = int(-1)
         if not _in_bounds(si, nx):
-            axis = int(0)
-            outside = wp.where(si < 0, int(0), int(1))
-        elif not _in_bounds(sj, ny):
-            axis = int(1)
-            outside = wp.where(sj < 0, int(2), int(3))
-        elif not _in_bounds(sk, nz):
-            axis = int(2)
-            outside = wp.where(sk < 0, int(4), int(5))
+            low = wp.where(si < 0, int(0), int(1))
+            if faces[low] == FACE_PERIODIC:
+                si = (si + nx) % nx
+            else:
+                axis = int(0)
+                outside = low
+        if not _in_bounds(sj, ny):
+            low = wp.where(sj < 0, int(2), int(3))
+            if faces[low] == FACE_PERIODIC:
+                sj = (sj + ny) % ny
+            elif outside < 0:
+                axis = int(1)
+                outside = low
+        if not _in_bounds(sk, nz):
+            low = wp.where(sk < 0, int(4), int(5))
+            if faces[low] == FACE_PERIODIC:
+                sk = (sk + nz) % nz
+            elif outside < 0:
+                axis = int(2)
+                outside = low
 
         handled = int(0)
         if outside >= 0:
             rule = faces[outside]
-            if rule == FACE_PERIODIC:
-                si = (si + nx) % nx
-                sj = (sj + ny) % ny
-                sk = (sk + nz) % nz
-            elif rule == FACE_SLIP:
+            if rule == FACE_SLIP:
                 mirror = int(d)
                 if axis == 0:
                     mirror = int(MIRROR_X[d])
