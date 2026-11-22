@@ -64,7 +64,8 @@ Isaac Lab gets those whatever this package asks for. It works on them, with no s
 the Re 100 cavity comes out bit-identical on 1.19.0 and 1.17.0 (same SHA-1 over the
 saved velocity plane), every Newton field the adapter reads exists on 1.6.1 with the
 same dtype, and `shape_scale`'s component packing is the same. The one real difference
-is speed, a factor of 3.2 against the older Warp on the CPU backend.
+is speed: the older Warp is several times slower on the CPU backend, from its own code
+generation rather than from anything here.
 [`live-version-matrix.md`](live-version-matrix.md) is that measurement in full,
 including the sixteen Warp API probes and what was **not** tested (CUDA on either, warp
 1.18, newton 1.7).
@@ -111,12 +112,14 @@ It prints `-0.20848` against Ghia's `-0.21090`, 1.1% low, which is 24 cells and 
 scheme: the same extraction at 32 cells is `-0.21135`, 0.21% out, and that number and
 the RMS behind it are what `openreynolds live run cavity` grades.
 
-**It takes about 8 s on one CPU core**: 1,728 nodes and 8,000 steps, measured at 2.0
-MLUPS on the machine this was written on, plus a second or two for Warp to load its
-cached kernels. A GPU runs the same kernels much faster; `openreynolds live bench`
-measures the rate on yours. The three runnable examples in
-[`examples/live/`](../examples/live/) are the next step up: the graded cavity, a sphere
-in a stream with its drag coefficient, and a sphere released in water coupled to Newton.
+**It takes about 8 s on one CPU core** -- 1,728 nodes and 8,000 steps, plus a second or
+two for Warp to load its cached kernels -- and a GPU runs the same kernels much faster.
+`openreynolds live bench` measures the rate on yours and names the device.
+
+The three runnable examples in [`examples/live/`](../examples/live/) are the next step
+up, and each says in its own docstring what it costs on a CPU: the graded cavity
+against Ghia, a sphere in a uniform stream with its drag coefficient against
+Schiller-Naumann, and a sphere released in water two-way coupled to Newton.
 
 ## The Python API
 
@@ -201,7 +204,7 @@ want different things (`DECISIONS_LIVE.md` D3):
 | `add_rotor(body, centre, axis, radius, thickness=0.0) -> int` | an actuator disk on `body`, in the body's frame, in metres. `axis` points the way the rotor pushes the **vehicle**; the fluid gets the opposite. `thickness` defaults to two cells rather than to a physical number, because the disk is a numerical device: thinner than two cells and the momentum source falls between nodes and the delivered thrust depends on where the rotor happens to sit |
 | `set_rotor_thrust(index, thrust)` | total thrust in newtons, applied from the next `step()`. Newton's third law in one call: the fluid gets `-thrust * axis` as a momentum source and the body is owed `+thrust * axis`, which `rotor_reaction` returns and `NewtonCoupling` adds. Neither half is hidden in a kernel |
 | `set_inlet_profile(velocity)` | a per-node inflow over the `-x` face, shape `(ny, nz, 3)`, in m/s. The Schafer-Turek channel needs this and nothing else does: its inflow is a parabola, and a uniform inlet at the same mean speed is a different benchmark with a different answer |
-| `set_body_force(force_per_volume)` | a uniform body force in N/m^3, which is how a periodic channel is driven. **Not gravity.** In a weakly compressible solver a hydrostatic gradient is a real density gradient and at these Mach numbers a large one, so gravity is left out of the fluid and a body gets its weight and its buoyancy from `NewtonCoupling` instead (`DECISIONS_LIVE.md` D9) |
+| `set_body_force(force_per_volume)` | a uniform body force in N/m^3, which is how a periodic channel is driven. **Not gravity.** In a weakly compressible solver a hydrostatic gradient is a real density gradient and at these Mach numbers a large one, so gravity is left out of the fluid and a body gets its weight and its buoyancy from `NewtonCoupling` instead. `couple.py`'s header docstring is the argument in full |
 
 The `scale` convention is the one `lattice.py`'s signed distance functions use and the
 one `couple.py` maps Newton's `shape_scale` onto. It is the identity for every supported
@@ -225,7 +228,7 @@ wrong.
 | `initialise(velocity=(0,0,0), density=1.0)` | every node at equilibrium with a uniform state, `velocity` in m/s. It also voxelises once and copies the result into the previous-step fields, so the first `step()` finds no fresh nodes rather than refilling every node inside every body |
 | `step(substeps=None)` | one coupling step, and returns what it cost: `{"step", "lattice_steps", "seconds", "mlups", "shifted"}`. In order: poses in, window shift if the followed body drifted, voxelise, refill fresh nodes, rotor force field, zero the wrench, then `substeps` times collide / stream / apply faces |
 | `wrench(body=None, *, substeps=None)` | the **mean** fluid wrench over the last coupling step, in SI: `(force, torque)` as two 3-tuples for one body, or an `(n, 6)` array for all of them. Mean and not instantaneous, because that is the interval Newton is about to integrate over. A host read, and deliberately not in the step loop: `NewtonCoupling` pushes the wrench into Newton with a kernel and never copies it |
-| `rotor_reaction(body)` | the six numbers the rotors on `body` owe it, force then torque. The arm is to the centre of mass, because `body_f` is documented as a wrench referenced there |
+| `rotor_reaction(body)` | the six numbers the rotors on `body` owe it, force then torque. The arm is meant to be to the centre of mass, because `body_f` is documented as a wrench referenced there, and with a Newton model behind the world it is not: see the last entry under *Limitations* |
 | `fields()` | `{"rho", "u", "solid"}` as numpy arrays in SI: `(nx, ny, nz)` in kg/m^3, `(nx, ny, nz, 3)` in m/s, and the solid mask. Solid nodes are `nan` in the first two, so a figure does not draw the inside of a body as stationary fluid. A host read and not cheap, 32 MB of velocity at two million nodes; cached until the next `step()` |
 | `momentum()` | total fluid momentum in kg m/s, summed over the fluid nodes. The quantity the conservation check is made on: with every face periodic and no body force a closed lattice must hold it constant to round-off, and any drift is the boundary treatment leaking. `shifts` has to be zero for it to mean anything |
 | `stable()` | whether the lattice still holds finite, positive densities at its fluid nodes, which is the only way this solver fails. A full host read of the density field, so it is for the long runs rather than every step |
@@ -260,7 +263,7 @@ the rotors' reaction, `solver.step(state_0, state_1, control, contacts, dt)`, sw
 | `control` | `model.control()` | Newton's control object, which is where `joint_f` lives |
 | `contacts` | `None` | passed straight through, positionally |
 | `one_way` | the world's | the fluid wrench is computed and not applied |
-| `buoyancy` | `True` | add `-rho_fluid * V * g` to each body, with `V` the volume the **voxelisation** encloses rather than the volume the geometry has. Those differ by a few per cent at twenty cells across a sphere, and a falling sphere's terminal velocity is set by the difference between two numbers of the same size, so using the analytic volume for the buoyancy and the voxelised surface for the drag does not balance and the error lands squarely on the quantity being graded (`DECISIONS_LIVE.md` D9). `False` for a body in air, where it is a part in a thousand, or for a caller applying it themselves |
+| `buoyancy` | `True` | add `-rho_fluid * V * g` to each body, with `V` the volume the **voxelisation** encloses rather than the volume the geometry has. The two differ (measured on a sphere at 8 cells per diameter, the voxelised volume is 0.03% below the analytic one), and a near-neutrally-buoyant body's terminal velocity is set by the difference between two numbers of nearly the same size, so using the analytic volume for the buoyancy and the voxelised surface for the drag does not balance and the error lands squarely on the quantity being graded. `False` for a body in air, where it is a part in a thousand, or for a caller applying it themselves |
 | `dt` | the world's | the Newton step |
 
 **Nothing in that loop touches the host** except one `body_count`-sized pose read, and
@@ -377,9 +380,18 @@ and `[needs a GPU to be quick]` where the case is heavy. No options but `--json`
 | `--steps N` | the case's own | lattice steps. The default is what the case's reference measurement needs; fewer answers sooner and measures a flow that has not settled |
 | `--collision trt\|bgk\|regularized` | the case's own | the collision operator |
 | `--fluid air\|water` | the case's own | the fluid, at 20 C |
-| `--out DIR` | `.` | where the figures go |
+| `--out DIR` | `.` | where the figures are meant to go. **It is not honoured today**: see below |
 | `--device STR` | the best one here | a Warp device, `cuda:0` or `cpu` |
 | `--json` | off | one JSON object instead of the report |
+
+**`--out` is dropped on the way through, as of 2026-11-23.** `cli.py` passes it as
+`out=` and `cases.run_case` takes `out_dir=`, so it lands in the `**overrides` that are
+forwarded to the runner, where every runner's trailing `**_` swallows it; `out_dir`
+keeps its default and the figures are written to the working directory. Measured with
+`openreynolds live run cavity --resolution 16 --steps 200 --out <dir>`: both PNGs
+appeared in the current directory and the named one stayed empty. `live crosscheck
+--out` and the agent tool's study-renders directory go the same way. Calling
+`cases.run_case(..., out_dir=...)` from Python does work, which is what the examples do.
 
 **Only the flags you give are passed on.** A case's defaults are part of what it
 validates against (the resolution Ghia's cavity needs in order to agree with Ghia is not
@@ -490,13 +502,16 @@ session:
 > "Show me what the ground effect does to a hovering rotor -- run the live demo and
 > show me the figure."
 
-and the model calls `live_sim` with `case="ground_effect"`, which runs the case, writes
-its figures into the study's own renders directory and hands back the same report
-`openreynolds live run` would have printed: every check's measured value, its target,
-whether it passed, and the figure paths. `case="list"` returns the catalogue and runs
-nothing. The other arguments are `resolution`, `steps`, `collision`, `fluid`, and a free
-text `note` that is recorded with the result and changes nothing, so a figure found
-later says what question it was drawn for.
+and the model calls `live_sim` with `case="ground_effect"`, which runs the case, draws
+its figures and hands back the same report `openreynolds live run` would have printed:
+every check's measured value, its target, whether it passed, and the figure paths.
+`case="list"` returns the catalogue and runs nothing. The other arguments are
+`resolution`, `steps`, `collision`, `fluid`, and a free text `note` that is recorded
+with the result and changes nothing, so a figure found later says what question it was
+drawn for. The figures are meant to land in the study's own renders directory, beside
+every other picture the study made, and today they do not: `live_tool.handler` passes
+that directory as `out=`, which is the same drop described under `live run --out` above,
+so they are written to the directory the session was started in.
 
 **It runs on your machine, in the session's own process, and not in the study's
 workspace.** Every other tool except `fetch` and `cad` runs a command in the workspace;
@@ -594,7 +609,7 @@ measuring it.
 
 - **D3Q19 only.** D3Q27 is not shipped. It is a second instantiation of every kernel for
   42% more memory and no gain at the order the second-order equilibrium is accurate to
-  (`DECISIONS_LIVE.md` D8).
+  (`lattice.py`'s `Q` says so where the constant is set).
 - **Single precision throughout.** A population sits near its weight and the interesting
   part of it is five or six orders of magnitude smaller, which is the classic argument
   for double precision; it is not taken, because double precision doubles the memory and
@@ -651,6 +666,19 @@ measuring it.
   `1/(2 dx)` error into every one of them. The immersed-boundary alternative is better
   for thin membranes and worse for drag on a bluff body; a swimmer with a thin fin is the
   case that would want it (`DECISIONS_LIVE.md` D4).
+- **A rotor's reaction moment is wrong when a Newton model drives the world, as of
+  2026-11-23.** `FluidWorld.rotor_reaction` takes the moment arm from the host body table
+  that `add_body` fills, and `NewtonCoupling` writes the body *poses* into that table
+  every step but leaves the centres of mass at zero, so the arm is measured from the
+  domain's world origin rather than from the body. Measured on one body at
+  `(1, 0, 1)` m carrying four disks on 0.18 m arms with 0.3 N of thrust across them: a
+  pitch moment of 0.309 N m where the moment about the centre of mass is 0.009 N m. The
+  error scales with how far the vehicle is from the origin and vanishes at the origin.
+  `openreynolds.live.isaac` then adds the correct moment a second time through
+  `control.joint_f`, on the belief that `rotor_reaction` carries force only, which it
+  did until 2026-11-22. Until both are fixed, treat the attitude moment on a rotor
+  vehicle as unusable with the fluid on. Nothing else in this list is a defect; this one
+  is.
 
 ## Performance
 
@@ -660,27 +688,33 @@ for a solver -- a small lattice is launch-bound and a large one bandwidth-bound,
 `openreynolds live bench` reports it per resolution and names the device and the Warp
 version beside it.
 
-Two things in this extension are measured and reported rather than assumed, and both
-are in `report()`'s output: the array layout (`soa` direction-major on a GPU, `aos`
-node-major on a CPU, chosen from the device and overridable with
-`OPENREYNOLDS_LIVE_LAYOUT`, because the layout that halves the work on one CPU core
-multiplies it by up to sixteen on a GPU), and the Warp version, because 1.17.0 and
-1.19.0 produce identical answers at a factor of 3.2 in speed on the CPU backend.
+Two things in this extension are measured rather than assumed, and both are in
+`report()`'s output so that no rate is ambiguous about what produced it. The **array
+layout** (`soa` direction-major, `aos` node-major) is chosen from the device and can be
+overridden with `OPENREYNOLDS_LIVE_LAYOUT`; `openreynolds live bench --resolution a
+--resolution b` run with both layouts is the measurement that picks the default, and it
+has to be made on the device in question, because the node-major layout is several times
+faster on one CPU core and the two came out within a couple of per cent of each other on
+both GPUs tested -- which is **not** what the coalescing argument predicts, and is the
+kind of thing this repository would rather measure than argue. The **Warp version** is
+there because 1.17.0 and 1.19.0 produce identical answers at several times the
+difference in speed on the CPU backend.
 
-**The measured rates live in `PROGRESS_LIVE.md` and are not copied here.** A number in
-two places is a number that will disagree with itself, and a performance figure is
-exactly the kind that goes stale silently. What that file also records is the shape of
-the gap: no CUDA device was available when this extension was written (`nvidia-smi`
-absent, Warp reporting one device, `cpu`), so every rate in it is Warp's CPU backend,
-and the two end-to-end **device** targets -- 1000+ MLUPS on an H100-class GPU, and the
-drone demo at half real time -- are recorded as **not measured** rather than estimated
-from a scaling argument (`DECISIONS_LIVE.md` D7). `benchmarks/live/grade.py` prints
-MLUPS on whatever device it is run on, so the moment this is run on a GPU the number
-exists.
+**The measured rates live in [`PROGRESS_LIVE.md`](../PROGRESS_LIVE.md) and are not
+copied here.** A number in two places is a number that will disagree with itself, and a
+performance figure is exactly the kind that goes stale silently. Every rate in that file
+names the device that produced it, which matters more than usual here: the extension was
+written on a machine with no CUDA device at all (`nvidia-smi` absent, Warp reporting one
+device, `cpu`), and the GPU numbers came later, from one-shot Modal jobs with pinned
+dependency versions, through `benchmarks/live/modal_run.py`. That file is also where the
+brief's 1000+ MLUPS target is settled, on the device it is a claim about.
 
-What that does not compromise is the physics. The same Warp kernels compile for CUDA
+What a device does not change is the physics. The same Warp kernels compile for CUDA
 from the same source, and the validations are resolution-limited rather than
 device-limited: a cavity that agrees with Ghia on the CPU agrees with Ghia on an H100.
-The one caveat worth carrying is that `lattice._preferred_layout` flips to `soa` on a
-GPU, so the GPU code path is a *different* generated kernel from the one measured on the
-CPU, and the bit-identical result across Warp versions does not transfer to it.
+The one caveat worth carrying is that the layout choice makes the GPU code path a
+*different* generated kernel from the one measured on the CPU, so the bit-identical
+result across Warp versions does not transfer to it.
+[`benchmarks/live/README.md`](../benchmarks/live/README.md) is the case family in this
+repository's benchmark format, and its grader **solves** rather than reading a finished
+run.

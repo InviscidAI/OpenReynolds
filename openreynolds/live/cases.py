@@ -2012,6 +2012,7 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
                          f"z {float(pose[2]):.4f} m  thrust {command:.3f} N "
                          f"({command / weight:.3f} of weight)")
 
+        airframe_cells = int(world.solid_cells(body))
         keep = max(1, len(thrusts) // 3)
         mean_thrust = float(np.mean(thrusts[-keep:])) if thrusts else float("nan")
         mean_wrench = float(np.mean(wrenches[-keep:])) if wrenches else float("nan")
@@ -2023,7 +2024,7 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
             "altitude": float(np.mean(altitudes[-keep:])) if altitudes else float("nan"),
             "nodes": world.nodes, "steps": total, "substeps": substeps,
             "realtime": world.dt * world.steps / max(world.seconds, 1e-9),
-            "tau": scaling.tau_plus,
+            "tau": scaling.tau_plus, "airframe_cells": airframe_cells,
         })
         drawn.append(figures.slice_figure(
             world, out / f"live-quadrotor-z{z_over_r:g}.png", axis=1, component=2,
@@ -2054,10 +2055,19 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
               low["thrust_over_weight"] <= high["thrust_over_weight"],
               "the sign of the ground effect, which is all a two-height run can "
               "establish; ground_effect grades the magnitude on one disk"),
+        Check("the airframe is voxelised at all",
+              f"{low['airframe_cells']:,} solid nodes",
+              "> 0, or the lattice cannot see the body",
+              low["airframe_cells"] > 0,
+              "a slab thinner than a cell passes between the nodes and voxelises to "
+              "nothing, and the symptom is a wrench of exactly zero -- which reads as a "
+              "coupling that is not wired up. At two cells per rotor radius this case "
+              "measured 0 nodes for a 40 mm airframe on a 60 mm lattice"),
         Check("fluid wrench on the airframe, as a fraction of weight",
               f"{low['wrench_over_weight']:+.4f} at Z/R {low['z_over_r']:g}",
-              "finite and under 1",
+              "finite, non-zero and under 1",
               bool(abs(low["wrench_over_weight"]) < 1.0
+                   and low["wrench_over_weight"] != 0.0
                    and math.isfinite(low["wrench_over_weight"]))),
         Check("altitude held",
               f"{low['altitude']:.4f} m against a target of {low['height']:.4f} m",
@@ -2080,7 +2090,7 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
             f"({row['thrust_over_weight']:.4f} of weight), fluid wrench "
             f"{row['fluid_wrench_z']:+.4f} N ({row['wrench_over_weight']:+.4f}), "
             f"{row['realtime']:.4f}x real time at {row['nodes']:,} nodes, "
-            f"{row['substeps']} substeps")
+            f"{row['substeps']} substeps, airframe {row['airframe_cells']:,} nodes")
     for figure in drawn:
         figures.ensure_rgb(figure)
     return _result("quadrotor", checks, lines, drawn, rows=rows)
@@ -2089,7 +2099,7 @@ def run_quadrotor(*, arm: float = 0.18, rotor_radius: float = 0.12,
 # -- 10. an underwater body, whose drag has to be the sphere's ---------------------------
 
 
-def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 16,
+def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
                    length_ratio: float = 3.0, collision: str = "trt",
                    smagorinsky: float = 0.0, device: str | None = None,
                    out_dir: str | Path = ".", steps: int | None = None,

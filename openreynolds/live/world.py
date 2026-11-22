@@ -760,6 +760,25 @@ class FluidWorld:
     _rho_dev = None
     _u_dev = None
 
+    def solid_cells(self, body: int | None = None):
+        """How many lattice nodes each body occupies: the volume the solver can see.
+
+        The diagnostic a body too small for its lattice needs. A shape thinner than a
+        cell can voxelise to **nothing** -- `phi` is sampled at the nodes, so a slab that
+        passes between two of them is not there at all -- and the symptom is a wrench of
+        exactly zero, which reads as a coupling that is not wired up rather than as a
+        resolution that cannot see the body. Measured on the quadrotor at two cells per
+        rotor radius: a 40 mm airframe on a 60 mm lattice, 0.67 cells thick, no solid
+        nodes, no force.
+
+        A host read of `owner`, so it is a diagnostic and not for the step loop.
+        `couple.NewtonCoupling` computes the same counts on the device for the buoyancy.
+        """
+        owner = self.owner.numpy()
+        count = max(1, len(self._poses))
+        counts = np.bincount(owner[owner >= 0].ravel(), minlength=count)
+        return int(counts[body]) if body is not None else counts
+
     def momentum(self) -> tuple[float, float, float]:
         """Total fluid momentum, kg m/s, summed over the fluid nodes.
 

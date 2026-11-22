@@ -12,36 +12,45 @@ weight of the water it displaces. Nothing about that balance is in the solver.
 Skipped with a message if `newton` is not installed: the fluid half needs Warp only,
 the coupling needs the physics engine as well.
 
-What it costs: 40 x 40 x 80 = 128,000 nodes and 400 coupling steps took **36 s** on one
+What it costs: 40 x 40 x 80 = 128,000 nodes and 400 coupling steps took **37 s** on one
 CPU core of the machine this was written on. A GPU runs the same kernels much faster.
 
-Why these numbers are these numbers, because none of them is free. Three constraints
-have to hold at once and they pull against each other.
+**This is a release transient and not a terminal velocity, and the reason is a
+timescale rather than a budget.** The sphere's own response time is about 14 ms here,
+but the fluid's is `diameter^2 / nu = 0.25 s`, eighteen times longer: the drag cannot
+reach its steady value until the flow around the sphere has, and for *any* particle
+settling in a liquid that ordering holds, because the ratio of the two is about
+`18 / (rho_sphere/rho_fluid)`. So the run below reaches **50.8% of the
+Schiller-Naumann terminal velocity after 37 ms and is still accelerating**, which the
+printed history shows rather than hides. Terminal velocity costs thousands of coupling
+steps on a lattice this size, which is why `cases.run_falling_sphere` -- the graded
+version, at 30 cells per diameter -- is a GPU case. What this file demonstrates is the
+coupling working in the right direction with the right magnitudes: the sphere falls, the
+fluid pushes back, the force grows as the flow establishes.
+
+Why the other numbers are these numbers, because none of them is free.
 
 * **The terminal Reynolds number has to be low enough to resolve at 8 cells per
   diameter.** `nu_lattice = u_lattice * cells_per_diameter / Re`, so a faster sphere
   drives `tau_plus` towards the 1/2 at which the collision stops relaxing, and
   `units.Scaling` refuses the run rather than solving a stiff one. Re 17 here gives
-  `tau_plus = 0.57`, comfortable.
-* **The density ratio is 1.5 and not the graded case's 1.005.** Buoyancy is the volume
-  the voxelisation encloses and not the volume the geometry has, on purpose
-  (`DECISIONS_LIVE.md` D9), and at 8 cells across a sphere those differ by a couple of
-  per cent. At half a per cent excess density that error is larger than the whole
-  driving force and reverses the answer's sign; at 50% excess density it is a few per
-  cent of it. `cases.run_falling_sphere` is the graded version and runs at 30 cells per
-  diameter, where 1.005 is affordable.
+  `tau_plus = 0.572`, comfortable.
+* **The density ratio is 1.5 and not the graded case's 1.005**, because at half a per
+  cent excess density the net driving force is the same size as the spurious fluid force
+  a coarse boundary treatment produces. Measured on a 4 mm sphere at 8 cells per
+  diameter, held still: a net weight-less-buoyancy of 1.6e-06 N against a fluid wrench
+  fluctuating around 1e-06 N. At 50% excess density the driving force is clear of it.
+  (The voxelised volume itself is not the problem at this resolution: it comes out
+  6.543e-11 m3 against 6.545e-11 analytic, 0.03% low, and the run prints both.)
 * **Re 17 at a 50% excess density means a 0.5 mm sphere**, because the terminal Reynolds
-  number goes as `diameter^1.5`. The lattice does not care about the absolute size (a
-  sand grain settling in water is a real problem) but the timestep does: `dt` comes out
-  at 0.09 ms, which is below a robot's. A validation whose timestep is a microsecond
-  proves nothing about a solver that has to run at a millisecond, and this one is nearer
-  the microsecond end than `falling_sphere` is.
+  number goes as `diameter^1.5`. The lattice does not care about the absolute size -- a
+  sand grain settling in water is a real problem -- but the timestep does: `dt` comes
+  out at 0.094 ms, below a robot's. A validation whose timestep is a microsecond proves
+  nothing about a solver that has to run at a millisecond, and this one is nearer that
+  end than `falling_sphere` is.
 
-What the number is worth. 400 steps is about 2.7 settling times, so the sphere reaches
-roughly 90% of its terminal velocity rather than all of it, and the printed history
-shows that instead of averaging it away. The 5-diameter box also adds drag that an
-unconfined sphere does not have. The graded answer is `openreynolds live run
-falling_sphere`.
+The 5-diameter box also adds drag that an unconfined sphere does not have. The graded
+answer is `openreynolds live run falling_sphere`.
 """
 
 import math
@@ -53,9 +62,7 @@ DIAMETER = 0.0005
 DENSITY_RATIO = 1.5
 CELLS_PER_DIAMETER = 8
 U_LATTICE = 0.05
-BOX = (5.0, 5.0, 10.0)
-"""The box in diameters. The sphere starts at 70% of its height and falls about two and
-a half diameters in the run below."""
+BOX = (5.0, 5.0, 10.0)  # in diameters; the sphere starts at 70% of the height
 STEPS = 400
 GRAVITY = 9.81
 
@@ -64,7 +71,7 @@ def terminal_velocity(water, radius: float) -> float:
     """The speed at which Schiller-Naumann's drag balances weight less buoyancy.
 
     Cd falls with Re and Re rises with the speed, so the fixed point converges from
-    below in a handful of passes. Started from the Cd = 1 guess, as `cases.py` does.
+    below. Started from the Cd = 1 guess, as `cases.py` does.
     """
     volume = 4.0 / 3.0 * math.pi * radius ** 3
     area = math.pi * radius ** 2

@@ -113,27 +113,96 @@ found by a check built to find them rather than by reading the code.
 
 ### M1 -- validation against published answers
 
-Status: **running on H100 at the time of writing.** The numbers land in
-`benchmarks/live/results/<case>/result.json` and the summary table at the end of this
-file is filled from them.
+**The first H100 run of this milestone failed four of six, and the diagnosis is the most
+useful thing in this file.** It is recorded here rather than quietly fixed, because the
+check that found it is the one added only because the brief insisted a single coarse-grid
+match can be luck.
 
-What is already measured, on one CPU core, with the subgrid model off:
+The number that identified it was the observed order of convergence on the cylinder's
+drag error: **-0.17**. An error that does not improve with resolution is not resolution
+error. The cylinder was running `30 * shedding_period` and sampling the last half, and
+because that scales with the cell count, every resolution got the same 4.5 flow-throughs
+and sampled from 2.3 -- the same under-developed wake three times over, so the sweep came
+out flat. Cd_max measured 2.52 against the paper's 3.22-3.24 and St 0.241 against
+0.295-0.305, both about 20% low. The cross-check was worse: 1.13 flow-throughs of run,
+sampling from 0.56, which is a wake that had not crossed the domain once.
+
+A cylinder has two timescales. One shedding period, `D/(St U)`, sets how long the
+sampling window has to be. One flow-through, `L/U`, sets how long the establishing window
+has to be, and it is five to seven times the longer -- at 40 cells per diameter a period
+is 3,604 steps and a flow-through is 23,784. Both cases now run a stated number of
+flow-throughs and then sample a stated number of periods, and report both counts.
+
+The cavity failed for the sibling reason and it is a different timescale again: a cavity
+spins up **diffusively**, over `cells^2/nu_lattice` steps, which at 256 cells and Re 1000
+is 4.65 million. The run hit a 4,000,000 step cap less than one diffusive time in with
+its residual plateaued at 3.8e-5 -- and that plateau is not a precision floor, it is the
+slow part of the spin-up. Every quantity came out 8 to 10% short of Ghia (u minimum
+-0.345 against -0.383; v extremes -0.469 and +0.333 against -0.516 and +0.371), which is
+what an unfinished primary vortex looks like. The step budget is now set from the
+timescale, and the stall detector is given a floor of one diffusive time so it cannot
+believe a plateau that arrives before the physics has had time to happen.
+
+The sphere's failure was the units layer doing its job: it asked for a fixed 16 cells per
+diameter across a factor of twenty in Reynolds number, and `Scaling` **refused** Re 100
+and Re 200 at tau_plus 0.5192 and 0.5096. The refusal was right and the case was wrong.
+
+| what failed | first measured | why | what changed |
+|---|---|---|---|
+| cylinder Cd_max, St, and the order | 2.52, 0.241, order -0.17 | 4.5 flow-throughs, sampled from 2.3, identically at every resolution | run length from flow-throughs, not periods: 11.8, sampled from 8 |
+| cross-check Cd and St | -7% and +7% on the OpenFOAM run | 1.13 flow-throughs, sampled from 0.56 | the same, plus the domain cut from four channel heights to two |
+| cavity Re 1000 RMS | u 3.20%, v 3.30% against a 2% bound | less than one diffusive time of spin-up in a 4,000,000 step cap | budget from `cells^2/nu_lattice`; 192 cells, not 256 |
+| sphere at Re 100 and 200 | refused, not run | one resolution asked to serve Re 10 to 200 | `_cells_for` picks the coarsest lattice that is not stiff, per Reynolds number |
+
+What passed on the first run, on an H100, subgrid model off:
 
 | case | target | measured | pass |
 |---|---|---|---|
-| Poiseuille, 32 cells, exact parabola | max error <= 2e-3 of u_max | **4.07e-4**, converged at residual 3.4e-7 | PASS |
+| Poiseuille, 64 cells, exact parabola | max error <= 2e-3 of u_max | see the summary table | PASS |
+| cavity Re 100, 128 cells, Ghia Tables I and II | RMS <= 2% of the lid speed, 15 interior points | see the summary table | PASS |
+
+and on one CPU core, which is where the small cases are graded in the ordinary test job:
+
+| case | target | measured | pass |
+|---|---|---|---|
+| Poiseuille, 32 cells | max error <= 2e-3 of u_max | **4.07e-4**, converged at residual 3.4e-7 | PASS |
 | Poiseuille, u_max against the closed form | 0.05 +/- 1% | **0.0499309**, -0.14% | PASS |
-| cavity Re 100, 32 cells, u on x=0.5 | RMS <= 2% of the lid speed, 15 interior points of Ghia Table I | **0.223%** | PASS |
-| cavity Re 100, 32 cells, v on y=0.5 | RMS <= 2%, 15 interior points of Ghia Table II | **0.265%** | PASS |
-| cavity Re 100 extrema | Ghia: -0.21090, -0.24533, +0.17527 | **-0.21135, -0.24814, +0.17663** (0.21%, 1.15%, 0.78%) | -- |
+| cavity Re 100, 32 cells, u on x = 0.5 | RMS <= 2%, 15 interior points | **0.223%** | PASS |
+| cavity Re 100, 32 cells, v on y = 0.5 | RMS <= 2%, 15 interior points | **0.265%** | PASS |
+| cavity Re 100, extrema | Ghia: -0.21090, -0.24533, +0.17527 | **-0.21135, -0.24814, +0.17663** (0.21%, 1.15%, 0.78%) | -- |
 
 ### M2 -- moving boundaries and two-way coupling
 
-Status: **running on H100 at the time of writing.**
+**Its first H100 run failed three of three, and all three were worth having.**
+
+`NewtonCoupling` called `np.asarray(model.gravity)`, which works on the CPU and is a
+`TypeError` on CUDA: Warp refuses the implicit conversion for a device array. It died
+forty-four seconds in, after the lattice had compiled. That is the one class of bug a
+CPU-only development machine cannot find, and it is why the GPU runs happen before
+anything is called finished.
+
+The falling sphere sat still: **-0.003 mm/s of an expected 13.2**. The density ratio was
+1.005, which makes the net driving force 0.5% of the weight -- while the voxelised
+displaced volume differs from the analytic one by a few per cent at 30 cells per
+diameter. The buoyancy error swamped the force it was being subtracted from, and the sign
+of the residual was free. It is now a ratio of 2 on a 1 mm sphere: terminal Re 112, V_t
+112 mm/s, tau_plus 0.527, and a 2% volume error moves V_t by 1%. The volume check is
+graded rather than reported now, because the answer depends on it. The case also moved
+onto the moving window, which is what the window is for -- terminal velocity arrives in
+1.6 diameters and six settling time constants is twelve more.
+
+The momentum case let the sphere cross the periodic face and reappear, three times in
+four thousand steps, and measured a 7.6% imbalance that was almost all of that. It is now
+two measurements: a still body in a decaying flow, which refills nothing and is graded at
+1%, and a translating body graded at 10% with the refill count beside it -- because
+equilibrium refilling injects momentum that no force on the body accounts for, and
+measuring what that costs is what `DECISIONS_LIVE.md` D5 said this case was for.
+
+Numbers in the summary table.
 
 ### M3 -- the robot demos
 
-Status: queued behind M2.
+Numbers in the summary table.
 
 ### M4 -- performance and docs
 

@@ -11,8 +11,8 @@ that come out of the RMS all live in there and are worth reading rather than cop
 `sphere_in_a_stream.py` is the example that drives `FluidWorld` directly.
 
 What it costs: 32 cells a side is 3,072 nodes (the cavity is quasi-two-dimensional:
-three lattice planes, periodic in z), and 20,000 lattice steps of it took **41 s** on
-one CPU core of the machine this was written on, at 1.7 MLUPS. A GPU runs the same
+three lattice planes, periodic in z), and 20,000 lattice steps of it took **34 s** on
+one CPU core of the machine this was written on, at 2.1 MLUPS. A GPU runs the same
 kernels; `openreynolds live bench` is what measures the rate on yours.
 
 What it is not: 32 cells is not the graded resolution. `CASES["cavity"]` defaults to

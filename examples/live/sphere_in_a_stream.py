@@ -9,18 +9,21 @@ body, a shape on it, `step()`, `wrench()` and `report()`. If you are reading one
 to find out how to drive this solver from your own code, it is this one.
 
 What it costs: 8 cells per diameter in a 6 x 4 x 4 diameter box is 49,152 nodes, and
-the 1,440 lattice steps below took **67 s** on one CPU core of the machine this was
-written on. A GPU runs the same kernels much faster; `openreynolds live bench` measures
-the rate on yours.
+the 1,440 lattice steps below took **40 s** on one CPU core of the machine this was
+written on, at 1.8 MLUPS. A GPU runs the same kernels much faster; `openreynolds live
+bench` measures the rate on yours.
 
 What the number is worth. Eight cells across a sphere is coarse and a four-diameter box
 is narrow, and both errors push the same way: a confined sphere has a higher drag than a
-free one. Measured here at Re 20 the drag comes out **Cd 2.95 against Schiller-Naumann's
-2.6095, +13%**, and the graded case is `openreynolds live run sphere`, which uses 20
-diameters of run, 12 diameters of cross-section and reports the blockage beside the
-answer rather than correcting for it. What this file demonstrates is that the force the
-momentum exchange produces is the right size and sign at a resolution that finishes
-while you watch -- not that the solver agrees with a drag curve to a few per cent.
+free one. Measured here at Re 20 the drag comes out **Cd 3.0992 against
+Schiller-Naumann's 2.6095, +18.8%**, settled to three figures over the last third of the
+run. The box is most of it: the same run in an 8 x 6 x 6 diameter box reads **+11.2%**
+and costs 94 s. The graded case is `openreynolds live run sphere`, which uses 20
+diameters of run and 12 of cross-section and reports the blockage beside the answer
+rather than correcting for it, because a correction applied to a measurement makes the
+measurement unfalsifiable. What this file demonstrates is that the force the momentum
+exchange produces is the right size and sign at a resolution that finishes while you
+watch, not that the solver agrees with a drag curve to a few per cent.
 
 Re 20 and not Re 100, and that is the scheme rather than this example: at a fixed
 lattice velocity `nu_lattice = u_lattice * cells_per_diameter / Re`, so a higher

@@ -163,6 +163,21 @@ is dropped here rather than silently ignored in the kernel.
 """
 
 
+def _rotate(quaternion: Any, vector: Any) -> np.ndarray:
+    """Rotate `vector` by a quaternion in Warp and Newton's `(x, y, z, w)` order.
+
+    Four lines rather than a dependency, and the same arithmetic `world._quat_matrix`
+    does; it is here rather than imported so that this file's one host-side rotation
+    does not reach into another module's private helper.
+    """
+    x, y, z, w = (float(v) for v in quaternion)
+    vector = np.asarray(vector, dtype=np.float64).reshape(3)
+    # v + 2 w (q x v) + 2 q x (q x v), the standard reduced form.
+    axis = np.array([x, y, z])
+    first = np.cross(axis, vector)
+    return vector + 2.0 * w * first + 2.0 * np.cross(axis, first)
+
+
 def _as_numpy(value: Any, length: int) -> tuple[float, ...]:
     """A Newton model attribute as a tuple of floats, whether it is on the host or not.
 
@@ -339,6 +354,26 @@ class NewtonCoupling:
         self.world._poses = [(0.0,) * 3 + (0.0, 0.0, 0.0, 1.0)] * count
         self.world._vels = [(0.0,) * 6] * count
         self.world._coms = [(0.0,) * 3] * count
+        self._com_local = np.asarray(model.body_com.numpy(), dtype=np.float64).reshape(
+            -1, 3).copy()
+        """`Model.body_com`, the centre of mass in BODY-LOCAL coordinates, on the host.
+
+        Read once, because it does not move: a rigid body's centroid is fixed in its own
+        frame. The world centre of mass is `transform_point(body_q, body_com)` and is
+        recomputed every step in `_push_poses` from this and the pose.
+
+        It exists because of a bug it caused by being absent. `world._coms` was seeded
+        with zeros here and never refreshed, and `FluidWorld.rotor_reaction` takes every
+        rotor's moment arm **to the centre of mass** -- so the arm was measured from the
+        world origin instead. For a quadrotor hovering 0.84 m along x from that origin,
+        four rotors whose moments cancel exactly about the true centroid produced
+        `r0 x F_total` about the wrong point: 9.9 N.m on a body with about 0.01 kg.m^2 of
+        inertia, which is a thousand radians per second squared. It tumbled inside a
+        dozen coupling steps, the thrust vector tipped over with it, and the symptom was
+        a drone that fell faster than free fall with its controller railed at three times
+        its weight -- a failure that looks like a controller problem, a solver problem, or
+        a sign error anywhere in the chain, and is none of those.
+        """
         self.world._labels = list(getattr(model, "body_label", []) or
                                   [f"body_{i}" for i in range(count)])
 
@@ -459,6 +494,15 @@ class NewtonCoupling:
             # `buoyancy=False` does not run it at all.
             poses = self.state_0.body_q.numpy()
             self.world._poses = [tuple(float(v) for v in row) for row in poses]
+            # And the centres of mass, which is the half that was missing. Newton's
+            # `body_com` is body-local, so the world one is the pose applied to it; a
+            # rotor's moment arm is measured from it, and a stale or zeroed one puts the
+            # arm at the world origin. See `_com_local`.
+            self.world._coms = [
+                tuple(float(v) for v in (np.asarray(row[:3])
+                                         + _rotate(row[3:], self._com_local[index])))
+                for index, row in enumerate(poses)
+            ]
 
     def _push_wrench(self) -> None:
         """The fluid's wrench, the buoyancy and the rotor reaction, into `body_f`."""
