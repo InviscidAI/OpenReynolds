@@ -152,23 +152,65 @@ def test_module_options_tolerate_a_key_this_warp_does_not_know():
         warp.set_module_options({k: before[k] for k in ("max_unroll", "enable_backward")})
 
 
-def test_max_unroll_is_honoured_and_is_past_Q():
-    """`max_unroll` survives into the module options, and the value is past `Q`.
+def test_max_unroll_follows_the_measurement_on_this_warp():
+    """`max_unroll` survives into the module options, at the value measured on this Warp.
 
     Warp unrolls a constant-bound `range` only up to `max_unroll`, whose default is 16,
-    and `Q` is 19 -- so without this the direction loop in every kernel in `lattice.py`
-    is a dynamic loop. Both the setting and the arithmetic are checked: a future Warp
-    that renamed the key would still pass a `hasattr`-style check and would silently cost
-    the step rate, which is the kind of regression nobody notices.
+    and `Q` is 19 -- so at the default the direction loop in every kernel in `lattice.py`
+    is a dynamic loop with a counter and a bounds check. Raising the limit past `Q` is
+    the single largest factor in the CPU step rate: 7.9 to 29.8 MLUPS on a streaming
+    kernel.
+
+    **And it is the wrong move on warp-lang 1.17, which is what Isaac Lab 3.0.0 pins.**
+    Measured on the same machine, same kernel, best of three: 1.17 runs 43.95 MLUPS at
+    the default and 38.84 unrolled, where 1.19 runs 49.71 and 55.29. So 1.17 is 12%
+    slower unrolled and 1.19 is 11% faster, and `lattice._max_unroll` follows the
+    measurement on each rather than picking the one that suits the version this was
+    developed on.
+
+    This test asserted `>= Q` unconditionally, which was true on 1.19 and false on 1.17
+    by deliberate choice -- so it failed in the one environment an Isaac Lab user has.
+    It now checks the rule and the reason, which is the thing that would actually be a
+    regression: an unroll limit that does not match the measurement for the Warp in
+    front of it.
     """
     from openreynolds.live import lattice as L
 
     options = L.wp.get_module_options(L)
-    assert options["max_unroll"] >= L.Q, (
-        f"max_unroll is {options['max_unroll']} and Q is {L.Q}: the direction loop in "
-        f"every kernel is a dynamic loop. See lattice._preferred_layout for the cost"
-    )
+    major, minor = (int(part) for part in L.wp.config.version.split(".")[:2])
+    if (major, minor) <= (1, 17):
+        assert options["max_unroll"] == 16, (
+            f"warp {L.wp.config.version} measured SLOWER with the direction loop "
+            f"unrolled (43.95 MLUPS at the default against 38.84 at 24), so the limit "
+            f"should be Warp's own default of 16 and it is "
+            f"{options['max_unroll']}"
+        )
+    else:
+        assert options["max_unroll"] >= L.Q, (
+            f"max_unroll is {options['max_unroll']} and Q is {L.Q}: the direction loop "
+            f"in every kernel is a dynamic loop. See lattice._max_unroll for the cost"
+        )
     assert options["enable_backward"] is False
+
+
+def test_the_unroll_override_is_honoured():
+    """`OPENREYNOLDS_LIVE_UNROLL` is how the table in `_max_unroll` was measured, and how
+    it would be re-measured when a new Warp lands. A knob that is documented and does
+    not work is worse than no knob."""
+    from openreynolds.live import lattice as L
+
+    assert L._max_unroll.__doc__ and "OPENREYNOLDS_LIVE_UNROLL" in L._max_unroll.__doc__
+    import os
+
+    was = os.environ.get("OPENREYNOLDS_LIVE_UNROLL")
+    try:
+        os.environ["OPENREYNOLDS_LIVE_UNROLL"] = "7"
+        assert L._max_unroll() == 7
+    finally:
+        if was is None:
+            os.environ.pop("OPENREYNOLDS_LIVE_UNROLL", None)
+        else:
+            os.environ["OPENREYNOLDS_LIVE_UNROLL"] = was
 
 
 # -- 3. the Warp symbols whose behaviour would be invisible if it changed --------------
