@@ -638,14 +638,10 @@ def refill_vacated(
     * no wet neighbour at all -- the cell is in the air, or inside the hull still. `GAS`,
       no mass, and nothing else to do.
     * wet neighbours -- their mean density and velocity become this cell's equilibrium,
-      and their mean fill becomes its mass. A cell that opens up deep in the water gets
-      a full cell of water; one that opens up at the surface gets the fraction its
-      neighbours have, and the ordinary conversion machinery takes it from there.
-
-    The mass handed back is accumulated into `returned`, because
-    `FreeSurfaceWorld.displaced_by_solids` is charged for the water the hull carried off
-    and has to be credited for the water it gives back. A hull that moves and stops
-    should owe nothing.
+      so nothing streams garbage, and the cell becomes an **empty interface cell**. The
+      mass exchange fills it from the water around it over the next few steps. It is
+      deliberately not given mass here; the comment at that line has the measurement
+      that settled it.
     """
     i, j, k = wp.tid()
     if phi[i, j, k] < DTYPE(0.0):
@@ -692,14 +688,23 @@ def refill_vacated(
         velocity = mom / rho
     for q in range(Q):
         L.set_pop(f, q, i, j, k, L._equilibrium(q, density, velocity))
-    share = wp.clamp(filled / found, DTYPE(0.0), DTYPE(1.0))
-    given = density * share
-    mass[i, j, k] = given
-    wp.atomic_add(returned, 0, given)
-    if share >= DTYPE(1.0) - FILL_EPSILON:
-        flags[i, j, k] = CELL_FLUID
-    else:
-        flags[i, j, k] = CELL_INTERFACE
+    # **Populations yes, mass no.** The cell becomes an empty interface cell and the
+    # ordinary mass exchange fills it over the next few steps from the water around it.
+    #
+    # The first version handed it a full cell of water -- `mass = density * mean
+    # neighbour fill` -- on the reasoning that a cell vacated deep under a hull is
+    # plainly full. It is, eventually, and creating it here is a mass source at every
+    # cell a hull vacates on every step. A heaving hull vacates and re-occupies cells
+    # continuously, so that is a pump, and it measured as one: the floating box went
+    # from a correct draft (+1.9% of Archimedes, then non-finite late) to diverging
+    # outright at all three resolutions. Letting the exchange do the filling costs a few
+    # steps of a slightly empty wake behind the hull and conserves mass exactly.
+    #
+    # An interface cell is legal beside both fluid and gas, so this closes the invariant
+    # either way, which was the whole point of the kernel.
+    wp.atomic_add(returned, 0, DTYPE(0.0))
+    mass[i, j, k] = DTYPE(0.0)
+    flags[i, j, k] = CELL_INTERFACE
 
 
 @wp.kernel

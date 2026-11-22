@@ -885,3 +885,80 @@ def test_no_case_builds_a_dict_key_out_of_chr_39():
         f"for a quote inside an f-string, it is a different string than intended -- "
         f"assign the value to a name and interpolate the name"
     )
+
+
+@needs_warp
+def test_the_host_side_poses_are_not_conditional_on_which_feature_is_on():
+    """`world._poses` must hold the body's real position, whatever else is enabled.
+
+    It feeds three consumers -- an actuator disk's pose, the buoyancy's moment arm, and
+    `FluidWorld._maybe_shift`, which re-centres a moving window on the body it follows --
+    and it used to be filled only when `rotors or buoyancy`, which covers the first two
+    and silently drops the third.
+
+    A run with `follow` set, no rotors and `buoyancy=False` therefore measured its
+    body's drift from the **origin** instead of from the body, fired one spurious shift
+    of half the domain, and re-centred the window on empty water. The hull's
+    voxelisation then eroded from 2,176 cells to 68 as it left the window, and an
+    independent measurement on a larger hull saw `solid_cells` reach zero and the wrench
+    return exactly 0.0 -- a body accelerating at `T/m` to four figures, flying through
+    vacuum, with no error anywhere.
+
+    This asserts the position, with every optional feature off, which is the
+    configuration the old condition missed.
+    """
+    newton = pytest.importorskip("newton", reason="needs the Newton physics engine")
+    import warp as wp
+
+    from openreynolds.live.couple import NewtonCoupling
+    from openreynolds.live.units import Scaling
+    from openreynolds.live.world import Domain, FluidWorld
+
+    # 16 cells a diameter, not 8: at Re 100 and u_lattice 0.05 the coarser lattice puts
+    # tau_plus at 0.512, under `units.STIFF_TAU`, and the scaling refuses it.
+    diameter, cells_per_d = 0.01, 16
+    dx = diameter / cells_per_d
+    scaling = Scaling.for_reynolds(dx, diameter, 100.0, "water", u_lattice=0.05)
+    size = (8 * diameter, 6 * diameter, 6 * diameter)
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=size, faces="slip")
+    world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                       substeps=1, device="cpu", follow=0, follow_slack=0.12)
+    centre = tuple(v / 2.0 for v in size)
+
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+    body = builder.add_body(
+        xform=wp.transform(wp.vec3(*centre), wp.quat_identity()), label="sphere")
+    shape_cfg = builder.default_shape_cfg.copy()
+    shape_cfg.density = 3000.0
+    shape_cfg.has_shape_collision = False
+    builder.add_shape_sphere(body, radius=diameter / 2.0, cfg=shape_cfg)
+    model = builder.finalize()
+    model.set_gravity((0.0, 0.0, 0.0))
+    engine = newton.solvers.SolverFeatherstone(model)
+
+    # No rotors, buoyancy off: exactly the case the old condition skipped.
+    link = NewtonCoupling(model, engine, world, dt=scaling.dt, buoyancy=False)
+    assert not world.rotors
+    assert link.buoyancy is False
+
+    held = np.asarray(world._poses[0][:3])
+    assert held == pytest.approx(np.asarray(centre), abs=1e-9), (
+        f"world._poses[0] is {held}, not the body's position {centre}. _maybe_shift "
+        f"measures drift against this, so a zero here moves the window to the wrong "
+        f"place on the first step"
+    )
+
+    world.initialise()
+    before = int(world.solid_cells(0))
+    assert before > 0
+    for _ in range(40):
+        link.step()
+    assert world.shifts == 0, (
+        f"{world.shifts} window shifts on a body sitting still at the centre; the "
+        f"drift it measured was not zero"
+    )
+    after = int(world.solid_cells(0))
+    assert after == pytest.approx(before, rel=0.05), (
+        f"the voxelised body went from {before} cells to {after}: it is leaving the "
+        f"window, which is what a wrongly re-centred window looks like"
+    )

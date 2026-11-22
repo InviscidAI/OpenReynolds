@@ -497,30 +497,43 @@ class NewtonCoupling:
                     self._shape_pose, origin, inv_dx],
             device=self.world.device)
 
-        if self.world.rotors or self.buoyancy:
-            # An actuator disk's position and axis are the body's, and the thrust that
-            # drives it comes from the host -- whatever is flying the vehicle sets it
-            # every step. So the host needs this body's pose anyway, and reading
-            # `body_count` transforms back is the cheapest way to get it: 28 bytes a
-            # body, once per coupling step.
-            #
-            # This is the one readback in the loop and it does not weaken the rule the
-            # rule is for. "No host round trips inside the step loop" is about the
-            # lattice: the substeps, the voxelisation and the wrench never leave the
-            # device, and those are the three things whose cost scales with the grid.
-            # This one scales with the body count, and a model with no rotors and
-            # `buoyancy=False` does not run it at all.
-            poses = self.state_0.body_q.numpy()
-            self.world._poses = [tuple(float(v) for v in row) for row in poses]
-            # And the centres of mass, which is the half that was missing. Newton's
-            # `body_com` is body-local, so the world one is the pose applied to it; a
-            # rotor's moment arm is measured from it, and a stale or zeroed one puts the
-            # arm at the world origin. See `_com_local`.
-            self.world._coms = [
-                tuple(float(v) for v in (np.asarray(row[:3])
-                                         + _rotate(row[3:], self._com_local[index])))
-                for index, row in enumerate(poses)
-            ]
+        # **Unconditional, and it was conditional until 2026-11-23.** The host needs
+        # these poses for three things: an actuator disk's position and axis, the
+        # buoyancy's moment arm, and `FluidWorld._maybe_shift`, which re-centres a
+        # moving window on the body it follows. The condition used to be
+        # `rotors or buoyancy`, which covers the first two and silently drops the third.
+        #
+        # What that cost: a run with `follow=0`, no rotors and `buoyancy=False` -- a
+        # submarine, say -- left `world._poses` at the identity transform. `_maybe_shift`
+        # then measured the body's drift from the ORIGIN rather than from its real
+        # position, fired one spurious shift of the whole half-domain on the first step,
+        # and re-centred the window on the wrong place. Measured: the hull's voxelisation
+        # collapsed from 2,176 cells to 224 and eroded to 68 over 600 steps as it left
+        # the window, and the drag it felt fell from about 3 uN to 0.5. An independent
+        # measurement of the same thing on a 23,184-cell hull saw `solid_cells` reach
+        # **zero** and `world.wrench` return exactly 0.0, with the body then accelerating
+        # at `T/m` to four significant figures -- a submarine flying through vacuum.
+        #
+        # The windowed falling-sphere row is NOT affected and was checked rather than
+        # assumed: it runs `buoyancy=True`, so the old condition happened to cover it.
+        #
+        # The readback does not weaken the rule it was conditioned for. "No host round
+        # trips inside the step loop" is about the lattice -- the substeps, the
+        # voxelisation and the wrench never leave the device, and those are the three
+        # costs that scale with the grid. This one is 28 bytes a body, once per coupling
+        # step, and conditioning it on which feature happens to be enabled traded that
+        # for a silent wrong answer.
+        poses = self.state_0.body_q.numpy()
+        self.world._poses = [tuple(float(v) for v in row) for row in poses]
+        # And the centres of mass, which is the half that was missing. Newton's
+        # `body_com` is body-local, so the world one is the pose applied to it; a
+        # rotor's moment arm is measured from it, and a stale or zeroed one puts the
+        # arm at the world origin. See `_com_local`.
+        self.world._coms = [
+            tuple(float(v) for v in (np.asarray(row[:3])
+                                     + _rotate(row[3:], self._com_local[index])))
+            for index, row in enumerate(poses)
+        ]
 
     def _push_wrench(self) -> None:
         """The fluid's wrench, the buoyancy and the rotor reaction, into `body_f`."""
