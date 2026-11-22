@@ -148,9 +148,19 @@ def test_the_drop_matches_the_coefficients_that_were_written(solved):
     print(f"  the coefficients predict {expected_pa:.4f} Pa at {speed:.4f} m/s", flush=True)
     print(f"  difference {(drop_pa - expected_pa) / expected_pa:+.3%}", flush=True)
 
-    # 12% of the drop. The sink is exact, but the slab sits in a duct: the solved drop
-    # between the two patches also carries the duct's own wall friction over 0.55 m, and
-    # the development length upstream of the slab. Those are real and small, not error.
+    # 12% of the drop, and the reason is mesh, not plumbing.
+    #
+    # This band was first written down with the duct's own wall friction given as the
+    # cause. That explanation is wrong, and a study on the hosted workspace measured it:
+    # study 20261122-101213-bbd1 found the clear-duct friction between the two patches is
+    # about 0.15 m2/s2, 0.04% of the drop, which does not explain a gap of several
+    # percent. What does explain it is the pressure step at the slab's two faces, which
+    # is smeared over roughly one cell, so the inlet-to-outlet drop reads low by an
+    # amount that falls at first order with the mesh. The same study measured that
+    # directly: -2.5% at 80 cells across, -0.82% at 160, with a Richardson extrapolation
+    # of its three finest meshes landing at +0.6% of the closed form. The journey mesh is
+    # coarser than any of those, which is why a band this wide is the right one here and
+    # why refining the mesh is what would tighten it.
     assert abs(drop_pa - expected_pa) / expected_pa < 0.12, (drop_pa, expected_pa)
 
 
