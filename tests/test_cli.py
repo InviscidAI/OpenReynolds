@@ -3104,3 +3104,56 @@ def test_the_note_does_not_accumulate_across_stagings(monkeypatch):
     second = _staged_env(monkeypatch, "native")
     assert first == second
     assert second.count("# Read this first") == 1
+
+
+# -- the whole-disk search guard -----------------------------------------------------
+#
+# A note in ENVIRONMENT.md was tried first and does not work, which is why there is a
+# guard as well. A session looks for a script before it reads the file that says where
+# the script is, so the correction never reaches the command that would have opened it:
+# given the original prompt on the branch carrying only the note, a run still wrote
+# `cd /work; ls .toolbox; find / -name nozzle.py -not -path "*/proc/*"` with the `ls`
+# already successful ahead of it. These pin the guard that replaced it.
+
+
+def _refuses(cmd: str) -> bool:
+    from openreynolds.tools import _root_search_refusal
+    return _root_search_refusal(cmd) is not None
+
+
+def test_a_whole_disk_search_is_refused_on_a_native_workspace(monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    # The command that actually happened, chain and all.
+    assert _refuses('cd /work; ls .toolbox; find / -name nozzle.py '
+                    '-not -path "*/proc/*" 2>/dev/null | head')
+    for cmd in ("find / -name nozzle.py", "sudo find / -name x",
+                "grep -r pattern /", "ls -R /"):
+        assert _refuses(cmd), cmd
+
+
+def test_a_search_that_names_a_directory_is_left_alone(monkeypatch):
+    """The guard must cost nothing to ordinary work, or it will be worked around."""
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    for cmd in ("find /work -name nozzle.py", 'find /work/.toolbox -name "*.py"',
+                "grep -r pattern /work/.toolbox", "ls -R /work", "ls /work/.toolbox",
+                "python3 /work/.toolbox/nozzle.py --check"):
+        assert not _refuses(cmd), cmd
+
+
+def test_the_guard_is_native_only(monkeypatch):
+    """In the image `/` is a small sealed filesystem: the same search is cheap there,
+    and refusing it would be a rule for a problem that does not exist."""
+    for workspace in ("docker", ""):
+        monkeypatch.setenv("OPENREYNOLDS_LOCAL", workspace)
+        assert not _refuses("find / -name nozzle.py"), workspace
+    monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
+    assert not _refuses("find / -name nozzle.py")
+
+
+def test_the_refusal_says_where_the_toolbox_is(monkeypatch):
+    """A refusal that does not answer the question just gets retried another way."""
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    from openreynolds.tools import _root_search_refusal
+    said = _root_search_refusal("find / -name nozzle.py")
+    assert "ls /work/.toolbox" in said
+    assert "README.md" in said
