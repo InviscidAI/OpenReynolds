@@ -467,9 +467,17 @@ before the cause was found, which is a long way from the cause.
 Reaping the ninety-six older than that morning's work freed **2.46 GB** and took the
 process count from 104 to 8, with the running study unaffected.
 
-**Not yet fixed.** The shape of a fix is a stale-owner reap rather than new machinery:
-each kernel already has its own directory, so it can record the session that owns it, and
-a native workspace starting up can take down any kernel whose owner is gone. Worth saying
-plainly that the hosted workspace does not have this problem, because the instance goes
-away and takes everything with it. It is a native-workspace bug, and native is what a
-laptop runs.
+**Fixed, and not the way this paragraph first guessed.** It said the shape of a fix was a
+stale-owner reap: record the owning session in each kernel's directory, and have a
+starting workspace take down any kernel whose owner is gone. That is three moving parts,
+and the size of it is why the fix was put off.
+
+Reading the failure instead of estimating it gave something much smaller. Every request,
+control and reply between a session and its kernel travels through a file in the kernel's
+own directory, so a kernel whose directory is gone cannot be reached by anything, ever.
+It does not need to know who owned it. It only needs to notice, which it now does about
+once a second, and exit. No reaper, no pids, no lifecycle.
+
+Worth saying plainly that the hosted workspace never had this problem, because the
+instance goes away and takes everything with it. It is a native-workspace bug, and native
+is what a laptop runs.
