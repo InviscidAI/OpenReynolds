@@ -274,6 +274,30 @@ class Check:
     passed: bool | None
     note: str = ""
 
+    def __post_init__(self) -> None:
+        """Coerce the verdict and the measurement to Python types.
+
+        Almost every verdict in this file is an expression over numpy values --
+        `error <= tolerance` where `error` came out of an array -- so it is a
+        `numpy.bool_`, which is **not** an instance of `bool`. That is invisible until
+        something serialises it: `json.dumps` refuses it, and a sanitiser that falls
+        back to `str()` writes the string `"True"`, which a consumer then reads as
+        truthy whatever it says. `benchmarks/live/summarise.py` found it by raising
+        `KeyError: 'True'` on a table of results that had already been recorded.
+
+        Fixed here rather than in the serialiser, because there are three consumers --
+        the CLI's `--json`, the agent tool, and the Modal runner -- and a type that is
+        only correct after one of them has touched it is a type that will be wrong in
+        the next one.
+        """
+        if self.passed is not None:
+            self.passed = bool(self.passed)
+        if hasattr(self.measured, "item") and not isinstance(self.measured, str):
+            try:
+                self.measured = self.measured.item()
+            except Exception:
+                self.measured = str(self.measured)
+
     def as_dict(self) -> dict[str, Any]:
         return {"name": self.name, "measured": self.measured, "target": self.target,
                 "passed": self.passed, "note": self.note}
@@ -687,7 +711,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
 # -- 3. the cylinder, Schafer-Turek 2D-2, at three resolutions --------------------------
 
 
-def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.035,
+def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
                    collision: str = "trt", smagorinsky: float = 0.0,
                    device: str | None = None, periods: float = 30.0,
                    settle: float = 0.5, out_dir: str | Path = ".",
@@ -783,7 +807,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.035,
     return out
 
 
-def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (20, 30, 40),
+def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
                  collision: str = "trt", smagorinsky: float = 0.0,
                  device: str | None = None, periods: float = 30.0,
                  out_dir: str | Path = ".", steps: int | None = None,
@@ -805,6 +829,16 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
 
     `cells_per_d` runs one resolution instead of three, which is what the agent tool and
     a quick look use.
+
+    **Why the sweep starts at 24 cells and not 20, and why `u_lattice` is 0.037.** Both
+    bounds bite at once on this case. The inflow is parabolic with a peak half again the
+    mean, so the Mach ceiling applies to `1.5 * u_lattice` and caps the mean at 0.0385;
+    and `nu_lattice = u_lattice * cells / Re` has to clear `units.STIFF_TAU`, which at
+    Re 100 needs about 18 cells at that velocity. Twenty cells and 0.035 gave tau_plus
+    0.521 against a floor of 0.52 -- inside, but close enough that a rounding change
+    refuses the run, which is not a resolution a published number should rest on. At 24
+    cells and 0.037 the peak Mach number is 0.096 and tau_plus is 0.527, both with room,
+    and 24 to 44 is still a refinement ratio of 1.83 for the order estimate.
     """
     reference = REFERENCES["schafer_turek_2d2"]
     cd_interval = reference["cd_max"]
@@ -2207,7 +2241,8 @@ def _openfoam_cylinder() -> dict[str, Any]:
     return payload["fixed"]
 
 
-def crosscheck(*, cells_per_d: int = 20, collision: str = "trt",
+def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
+               collision: str = "trt",
                smagorinsky: float = 0.0, device: str | None = None,
                out_dir: str | Path = ".", periods: float = 30.0,
                steps: int | None = None, animate: bool = True,
@@ -2259,7 +2294,7 @@ def crosscheck(*, cells_per_d: int = 20, collision: str = "trt",
     dx = diameter / cells_per_d
     nz = 3
     reynolds = speed * diameter / float(constants.get("nu", 1.0e-6) or 1.0e-6)
-    scaling = Scaling.for_reynolds(dx, diameter, 100.0, "water", u_lattice=0.04,
+    scaling = Scaling.for_reynolds(dx, diameter, 100.0, "water", u_lattice=u_lattice,
                                    scheme=collision, les=smagorinsky > 0)
     u_mean = scaling.reference_velocity
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
@@ -2278,7 +2313,7 @@ def crosscheck(*, cells_per_d: int = 20, collision: str = "trt",
     world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
     world.initialise(velocity=(u_mean, 0.0, 0.0))
 
-    period = cells_per_d / (foam["strouhal"] * 0.04)
+    period = cells_per_d / (foam["strouhal"] * u_lattice)
     total = int(steps if steps else periods * period)
     depth = nz * dx
     coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
@@ -2391,7 +2426,7 @@ CASES: dict[str, Case] = {
     "cylinder": Case(
         "cylinder", "Schafer and Turek's 2D-2 cylinder at Re 100 at three resolutions, "
         "with the observed order of convergence on the drag error",
-        run_cylinder, {"resolutions": (20, 30, 40)}, milestone="M1", heavy=True),
+        run_cylinder, {"resolutions": (24, 32, 44)}, milestone="M1", heavy=True),
     "sphere": Case(
         "sphere", "drag on a fixed sphere at four Reynolds numbers against "
         "Schiller-Naumann", run_sphere, {}, milestone="M1", heavy=True),
@@ -2684,13 +2719,20 @@ def benchmark(*, resolutions: Sequence[int] = (64, 128), steps: int = 200,
         for row in rows
     ]
     best = max((r["mlups"] for r in rows), default=0.0)
-    target_met = best >= 1000.0 and "cuda" in str(device_name)
+    hardware = _device_name(device_name)
+    flagship = _is_flagship(hardware)
+    # The brief's target names an H100-class GPU, so it is only answerable on one. An
+    # A10 measured 510.8 MLUPS, which is a perfectly good number for a 600 GB/s
+    # inference card and is NOT a failure to reach a target set for a 3.35 TB/s
+    # training card -- the first version of this check reported it as one, which is
+    # grading the wrong device. A CPU cannot answer it either.
     checks.append(Check(
-        "1000+ MLUPS on an H100-class GPU", f"{best:.1f} MLUPS on {device_name}",
-        ">= 1000 on a CUDA device",
-        True if target_met else None if "cuda" not in str(device_name) else False,
-        "not applicable on a CPU device: this is a device claim and a CPU cannot "
-        "answer it" if "cuda" not in str(device_name) else ""))
+        "1000+ MLUPS on an H100-class GPU", f"{best:.1f} MLUPS on {hardware}",
+        ">= 1000, on an H100-class device",
+        (best >= 1000.0) if flagship else None,
+        "" if flagship else
+        f"not applicable: {hardware} is not an H100-class device, so this target is "
+        f"not a claim about it. The rate above is the measurement that stands"))
     lines = [f"# benchmark: D3Q19 on {device_name}, {L.LAYOUT} layout, "
              f"{collision} collision",
              f"  warp:       {wp.config.version}"]
@@ -2700,6 +2742,39 @@ def benchmark(*, resolutions: Sequence[int] = (64, 128), steps: int = 200,
                      f"{row['bytes'] / 2 ** 20:.0f} MiB of populations")
     return _result("benchmark", checks, lines, [], rows=rows, device=str(device_name),
                    layout=L.LAYOUT)
+
+
+FLAGSHIP = ("h100", "h200", "a100", "b100", "b200", "gb200", "mi300", "mi325")
+"""Device names whose bandwidth is in the class the brief's 1000+ MLUPS target names.
+
+A list of substrings and not a bandwidth lookup, because the thing available at run time
+is a name. It is matched case-insensitively against whatever the device reports, and a
+device that is not on it has the target reported as not applicable rather than failed:
+the measurement still stands, it is just not an answer to a question about an H100.
+
+Deliberately short. Adding a part to it is a claim that that part is in the same class,
+and a wrong entry turns a reported number into a failed target.
+"""
+
+
+def _device_name(device: Any) -> str:
+    """The device's own name, for the report, from Warp rather than from the string.
+
+    `device` is `cuda:0`, which says nothing about the hardware. Warp's device object
+    carries the name the driver reports ("NVIDIA H100 80GB HBM3"), which is what a
+    reader needs and what `_is_flagship` matches on.
+    """
+    try:
+        import warp as wp
+
+        return str(wp.get_device(str(device)).name)
+    except Exception:
+        return str(device)
+
+
+def _is_flagship(name: str) -> bool:
+    lowered = str(name).lower()
+    return any(part in lowered for part in FLAGSHIP)
 
 
 def _benchmark_layouts(*, resolutions, steps, collision, smagorinsky, device, layouts,

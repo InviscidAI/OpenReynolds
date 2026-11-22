@@ -133,6 +133,11 @@ def _sanitise(value):
         return {str(k): _sanitise(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_sanitise(v) for v in value]
+    if isinstance(value, np.bool_):
+        # Before `bool`: numpy's bool is not a Python bool and is not an integer
+        # either, so it used to fall all the way through to `str(value)` and arrive
+        # as the string "True". Every consumer then read it as truthy.
+        return bool(value)
     if isinstance(value, (np.integer,)):
         return int(value)
     if isinstance(value, (np.floating,)):
