@@ -55,7 +55,7 @@ THRESHOLDS = {
     # 2D weakly compressible SPH with dynamic boundary particles at dx = h/20 is a
     # percents-level scheme, and the dominant error of each check is named in its note.
     "hydrostatic_rms": 0.05,     # RMS pressure error / rho g h            (measured 2.50%)
-    "hydrostatic_max": 0.12,     # the worst single particle, at the surface (measured 8.61%)
+    "hydrostatic_max": 0.12,     # the worst single particle (measured 8.602%, 17.4 mm below the surface)
     "period_rel": 0.08,          # sloshing period against linear theory   (measured -4.75%)
     "containment": 1.0,          # fluid may not pass a wall by one dx  (measured -0.19 to -0.33)
     "density": 0.05,             # max rho/rho0 - 1, weak compressibility (measured 0.25-1.03%)
@@ -129,14 +129,29 @@ def grade_hydrostatic(dx: float | None = None, end: float = 1.0) -> dict[str, An
     worst = float(error.max())
     speed = float(np.abs(run["vel"][run["moving"]]).max())
 
+    # Where the worst particle is, measured rather than asserted. This line used to
+    # say "the worst is at the free surface" as a fixed string, which is a physical
+    # claim the code never checked: it computed the magnitude and never looked at the
+    # position. It happens to be true -- measured 2026-11-22, the worst sat 17.4 mm
+    # below the surface of a 100 mm tank, and all ten worst were in the top fifth --
+    # but a sentence that cannot be wrong cannot be evidence either, and a study that
+    # ran its own tank reported the opposite and had no way to tell which was right.
+    deepest = float(run["depth"])
+    y_worst = float(np.asarray(run["pos"])[int(np.argmax(error))][1])
+    below = deepest - y_worst
+
     checks = [
         _check("RMS pressure error / rho g h", rms,
                f"<= {THRESHOLDS['hydrostatic_rms']}", rms <= THRESHOLDS["hydrostatic_rms"],
                f"{run['sampled']} particles in the middle half of the tank"),
         _check("worst particle pressure error / rho g h", worst,
                f"<= {THRESHOLDS['hydrostatic_max']}", worst <= THRESHOLDS["hydrostatic_max"],
-               "the worst is at the free surface, where the kernel support is "
-               "truncated and there is no fluid above to sum"),
+               f"the worst sits {below * 1000:.1f} mm below the free surface of a "
+               f"{deepest * 1000:.0f} mm tank, {y_worst / deepest:.0%} of the way up"
+               + (", where the kernel support is truncated and there is no fluid above "
+                  "to sum" if below <= 0.25 * deepest else
+                  ", which is not the surface truncation a settled run shows: at this "
+                  "resolution and end time the error has not yet collected at the top")),
         _density_check(sph, run),
         _containment_check(sph, run),
     ]
