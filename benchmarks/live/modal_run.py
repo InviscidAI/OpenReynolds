@@ -318,7 +318,7 @@ a budget it can actually finish.
 def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
          steps: int = 0, collision: str = "", layout: str = "",
          window: bool = False, label: str = "", reynolds: float = 0.0,
-         u_lattice: float = 0.0) -> None:
+         u_lattice: float = 0.0, extra: str = "") -> None:
     """Run one case on one GPU and write the result under `benchmarks/live/results/`.
 
     `--label` names the directory, so a variant of a case can be recorded beside it
@@ -327,6 +327,13 @@ def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
     graded one losing its.
     """
     settings: dict = {}
+    if extra:
+        # A JSON passthrough for a case's own knobs, so that probing one of them does
+        # not need a new flag. `--extra '{"amplitude": 0.0005}'` is how the sloshing
+        # tank's wave steepness was swept to separate a finite-amplitude period shift
+        # from a solver error -- linear theory is an expansion in steepness, and the
+        # measured period sitting ABOVE it is what a finite amplitude does.
+        settings.update(json.loads(extra))
     if window:
         settings["window"] = True
     if reynolds:

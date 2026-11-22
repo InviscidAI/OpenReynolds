@@ -176,22 +176,63 @@ failed and was in fact a camera aimed by hand with `rotateXYZ` at nothing in par
 `render_stddev` and `render_unique_colours` beside the image, so that "it rendered" is a
 measurement.
 
-The capture path that works headless:
+### The capture path that works headless
 
 ```python
+import omni.replicator.core as rep
+
 camera  = rep.create.camera(position=(2.3, -2.7, 1.45), look_at=(0.05, 0.05, 0.22),
                             focal_length=33.0)
 product = rep.create.render_product(camera, (1280, 720))
 annot   = rep.AnnotatorRegistry.get_annotator("rgb")
-annot.attach([product])          # attach BEFORE world.reset()
+annot.attach([product])                      # attach BEFORE world.reset()
 ...
-for _ in range(steps): world.step(render=True)   # render=True, or Hydra never syncs
-for _ in range(24):    world.render()            # let RTX accumulation settle
-rgb = np.asarray(annot.get_data())               # (H, W, 4) uint8, in process
+for _ in range(steps):
+    world.step(render=True)                  # render=True, or Hydra never syncs
+
+rep.orchestrator.step(rt_subframes=8)        # Replicator's own sync point
+rep.orchestrator.wait_until_complete()
+rgb = np.asarray(annot.get_data())           # (720, 1280, 4) uint8, in process
 ```
+
+Three things in that are load-bearing and each one cost a run.
+
+**`rep.create.camera(position=..., look_at=...)`, not a hand-placed `UsdGeom.Camera`.**
+Aiming by `rotateXYZ` is arithmetic with no feedback, and a camera that misses produces
+an image indistinguishable from a renderer that failed.
+
+**`world.step(render=True)`.** With `render=False` the physics is identical and Hydra
+never syncs the stage, so the renderer has nothing to draw.
+
+**`rep.orchestrator.step()` plus `wait_until_complete()`, not `world.render()`.**
+`world.render()` is not a synchronisation point. Twenty-four calls to it produced a good
+138 KB render once and a completely empty annotator twice more on the same code path,
+with the physics loop finishing in 2.7 s instead of 105 s. `annot.get_data()` then
+returns a zero-length array and Pillow raises `ValueError: cannot write empty image`
+several frames downstream of the real problem. `demo` wraps the orchestrator call in a
+bounded retry and measures the result, and has not produced an empty frame since.
 
 `omni.kit.viewport.utility.capture_viewport_to_file` is the path every tutorial shows
 and is the wrong one here: a headless Kit has no viewport window to capture.
+
+### The numbers from the final run
+
+A10G, 100 physics steps at `physics_dt` 1/60 on the CUDA pipeline, three rigid bodies,
+1280x720:
+
+| | |
+| --- | --- |
+| Kit startup | 18.8 s |
+| whole job, startup to PNG | 118.7 s |
+| render shape | (720, 1280, 4) uint8 |
+| orchestrator attempts needed | 1 |
+| pixel standard deviation | 46.39 |
+| distinct sampled colours | 1,417 |
+| PNG | 202,822 bytes |
+
+The image is `benchmarks/live/results/isaacsim/isaacsim_cubes.png`: three coloured
+boxes at rest on a lit ground plane with cast shadows, after being dropped, settled and
+pushed sideways.
 
 ## 4. Living beside Warp and Newton
 
@@ -346,7 +387,64 @@ The Warp frontend has to be asked for, either through
 `tensors.create_simulation_view("warp")` or by using the experimental prims, whose
 annotations return `wp.array` unconditionally.
 
-<!-- MEASURED-ZERO-COPY -->
+### Measured: yes, with two settings that are easy to miss
+
+Both have to be right, and each one silently degrades the other if it is not.
+
+**1. `World(device="cuda")`.** Without it the physics pipeline is on the host, and then
+every view it hands out is on the host *however it is labelled*. A run with the Warp
+frontend selected and a default `World` returned genuine `wp.array` and
+`wp.indexedarray` objects whose `.device` was `cpu` and whose `.ptr` was `None`.
+**The frontend chooses the array type; the pipeline chooses where the memory lives.**
+
+**2. `SimulationManager.set_backend("warp")`.** Asking for a CUDA `World` on its own
+does not give you Warp, it gives you torch -- Isaac Sim switches the frontend itself and
+says so:
+
+```
+[isaacsim.core.simulation_manager] Changing backend from 'numpy' to 'torch'
+since NumPy cannot be used with GPU piplines
+```
+
+That is worth knowing for a second reason: after the switch, passing a numpy array to
+`apply_forces_and_torques_at_pos` fails deep in the wrapper with `'numpy.ndarray' object
+has no attribute 'to'`, because `move_data` calls `.to(device)` on whatever it is given.
+**The inputs have to follow the frontend the manager actually chose, not the one you
+asked for.**
+
+With both set, measured on an A10G over three bodies:
+
+| call | type | device | pointer |
+| --- | --- | --- | --- |
+| `isaacsim.core.prims.RigidPrim.get_world_poses(clone=False)` | `warp.types.indexedarray` (3, 3) | `cuda:0` | none (index-mapped) |
+| `.get_velocities(clone=False)` | `warp.types.array` (3, 6) | `cuda:0` | - |
+| `isaacsim.core.experimental.prims.RigidPrim.get_world_poses()` | `warp.types.array` (3, 3) | `cuda:0` | `0x302000e00` |
+
+`SimulationManager.get_backend()` reads back `warp` and `get_device()` reads back
+`cuda:0`. `apply_forces_and_torques_at_pos` accepts a `wp.array` on the device.
+
+**The verdict: a Warp fluid can read PhysX rigid-body state without a host round trip.**
+The experimental prims are the cleaner half of it -- a plain `wp.array` on `cuda:0`
+carrying a real device pointer, which a Warp kernel can take directly.
+
+Two honest caveats, both measured rather than assumed:
+
+- The deprecated wrapper returns a `wp.indexedarray`, not a `wp.array`. That is an
+  index-mapped view with no single base pointer, so it is zero-copy in the sense that
+  matters -- no device-to-host transfer -- but it is not a flat buffer and a kernel has
+  to take it as an `indexedarray`.
+- The pointer was **not** stable across two consecutive `get_world_poses(clone=False)`
+  calls. So treat each call as producing a handle to read from now, not a buffer to
+  cache across steps.
+
+What was *not* measured: whether a Warp kernel writing through that array is seen by
+PhysX on the next step. Reading is established; writing through the array rather than
+through `apply_forces_and_torques_at_pos` is not.
+
+One dead end worth recording so it is not retried: `tensors.create_simulation_view("warp")`
+raises `Exception: Failed to create simulation view with backend 'physx'` when a `World`
+already exists, because the backend will not hand out a second view.
+`SimulationManager.set_backend` is the supported route.
 
 ## 7. Visualising a field inside Isaac Sim
 
@@ -399,7 +497,31 @@ pin" is a question about pip metadata.
 The layer beneath it takes five minutes to build and nothing in this file needs the
 repository at image build time, so editing `openreynolds/live/` must not invalidate it.
 
-## 9. What is still unknown
+## 9. What this cost, and the runs it took
+
+21 ephemeral `openreynolds-isaacsim` apps, all stopped. The image built once, for
+304.84 s (`im-JFAgqSC5xLEu3ipnp1AVp9`); every run after that reused the layer.
+
+The ones worth naming:
+
+| app | what it established |
+| --- | --- |
+| `ap-pxMxpTwkTXJHLvK4Fv0EW3` | first `vulkan`: NVIDIA ICD present, only llvmpipe enumerates |
+| `ap-1CnnXb1DvHRjnjmGDQesQg` | first `probe`: the USD SONAME collision, fatal |
+| `ap-jYZPMB6ZhU4Ncwynlzvnco` | `deplist`: warp 1.19.0, newton 1.6.1, `pxr` from `usd-exchange` |
+| `ap-mryUxy8hbT5FzOam6XKPXh` | `vulkan` on Ubuntu 24.04 and L40S: identical failure, hypothesis dead |
+| `ap-cthLZSwXfawjSCNJLgL9tP` | `probe` reaching `app ready` in 17.1 s, then lost on `close()` |
+| `ap-Tuxb2uOo8pyR18IsHDmhux` | `coexistence`: all three subprocesses returncode 0 |
+| `ap-qfgsTPblLOb1hEaoL3uggJ` | first `demo`: physics correct, render a blank gradient |
+| `ap-PJOefbbg05fRsxuTlg7HSR` | `demo` on the CUDA pipeline: the render, and `wp.array` on `cuda:0` |
+| `ap-vDKz5hbIfFw3TOjewFrpaB` | `probe` end to end, including the `openreynolds.live` check |
+
+Everything ran on A10G except two `vulkan` runs on L40S. No H100 was used. Adding up the
+GPU container time across all of it gives roughly 45 to 60 minutes, which at A10G list
+price is **order of one to two dollars**. That is arithmetic over counted runs, not a
+billing figure read from the dashboard.
+
+## 10. What is still unknown
 
 - Whether `openreynolds/live/` **runs**, rather than merely imports, on Kit's Warp 1.17.0
   and Newton 1.6.1. It imports. That is all that was measured.

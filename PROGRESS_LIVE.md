@@ -216,6 +216,99 @@ Numbers in the summary table.
 | CPU-runnable small-grid tests in the main suite | `tests/test_live_cases.py`, 49 passed / 3 GPU skipped |
 | GPU tests behind a marker | `needs_a_gpu` skipif plus a registered `gpu` marker |
 
+### M5 -- the free surface
+
+`openreynolds/live/freesurface.py`, written from Korner et al. (2005) and Thurey's
+thesis. **No code was taken from FluidX3D or any other GPL or non-commercial
+implementation**, as the brief requires; the module header says so where someone will
+read it.
+
+The mass field and three cell types sit beside the existing arrays, and the gas-cell
+skip and the gas-side reconstruction went into `lattice.collide` and `lattice.stream`
+behind a `use_flags` switch rather than into copies of them (D11), so this extension
+still has exactly one collision operator and one Bouzidi boundary.
+`test_a_fully_flooded_free_surface_run_matches_the_single_phase_one` holds the two paths
+equal to one part in 1e5.
+
+**Free-surface runs match Froude, not Reynolds, and say so every time.** A free surface's
+timestep comes from gravity -- `g_lattice = g dt^2 / dx` has to stay near 1e-4 -- and
+water's viscosity at that timestep is a `tau_plus` of 0.50002, which no resolution fixes
+(`dt` goes as `sqrt(dx)`, so `nu dt/dx^2` goes as `dx^-1.5` and refining makes it
+worse). So `Scaling.for_froude` chooses the lattice viscosity for stability and reports
+the Reynolds number it actually achieved beside the one real water would have had.
+`Re_eff = Ma c_s N / nu_lattice` with `N` the cells across the depth, which is why every
+number below improves with resolution and why the affordable ones are low.
+
+| case | measured | against | verdict |
+| --- | --- | --- | --- |
+| hydrostatic, 20 cells | volume 150.0000 mL; surface flat to 0.0011 of the depth; `d(rho)/dz` 0.9952 of `-rho g / c_s^2`; drift 1.4e-4 over 5,000 steps | exact; `4 h0/9`-free | **passes** |
+| sloshing, 240 cells | period 443.2 ms by FFT (+6.3%), 407.0 ms by zero crossings (-2.4%) | 417.09 ms from `omega^2 = g k tanh(k h)` | **brackets theory**, FFT outside 5% |
+| dam break, 650 cells | `h(dam)` 26.32 mm (1.185x); profile RMS 7.5% of h0 | Ritter's `4 h0 / 9` = 22.22 mm | **converging**, outside 15% |
+
+The hydrostatic case is the one that matters most and it is the one that passes cleanly.
+A floating body floats on the pressure gradient, so `d(rho)/dz` agreeing with
+`-rho g / c_s^2` to 0.5% is the result M6 rests on; a solver that got a draft right
+without this would be getting it right by accident.
+
+**Both dynamic cases converge toward their references and neither has arrived.**
+
+```
+sloshing period / theory      dam break h(dam) / Ritter        drift
+  80 cells   1.255  (FFT)       120 cells   1.294              -3.7e-2  (120 cells)
+ 120 cells   1.047              325 cells   1.244              -4.4e-3  (240 cells)
+ 240 cells   1.063              650 cells   1.185              +2.6e-2  (650 cells)
+```
+
+The sloshing estimators also close on each other as the lattice refines -- 523/363 ms at
+80 cells, 437/396 at 120, 443/407 at 240 -- which is the shape of a converging
+measurement rather than a wrong one. The measured period sits **above** linear theory at
+every resolution, and that is the direction a finite amplitude pushes it: the default
+release is 6.7% of the depth and linear theory is an expansion in that. An amplitude
+sweep at fixed resolution is running to separate the two, and until it reports, the 5%
+tolerance is **not met and not widened**.
+
+The dam break's residual is a Reynolds-number effect rather than a discretisation one:
+Ritter is inviscid, `Re_eff` is 37, 101 and 202 at the three resolutions, and the ratio
+falls as the viscosity does. Reaching 15% looks like it needs roughly another doubling.
+
+**Mass drift is the one defect of the algorithm itself, and it is localised, not
+guessed.** Summing the tracked mass between every phase of a single substep shows the
+conversions and the redistribution are exactly conservative -- the mass banked by
+`apply_conversions` equals the mass `redistribute` hands out, to the last digit -- and the
+whole imbalance lives in the pairing of `exchange_mass` with `sync_fluid_mass`, which
+nearly cancel and do not quite: -0.0396 against +0.0394 on one step, growing to -0.0261
+against +0.0351 six steps later. It falls by a factor of ten from 120 to 240 cells, so it
+behaves like a discretisation error in that pairing rather than a leak, but it has not
+been explained and the cases fail on it at the tolerance they state.
+
+**Bugs this milestone found in its own code, each with what made it visible.**
+
+* A fill level landing exactly on a cell boundary left **no interface layer at all** --
+  every cell fluid or gas -- so the reconstruction, which is conditioned on a cell being
+  an interface cell, never fired. The surface could not move, and the run reported a
+  flatness of 6e-08 mm and zero conversions over 800 steps, which reads like an
+  excellent result. `close_interface` now enforces the invariant and ten fill levels are
+  swept for it.
+* One interface cell filling while its neighbour empties in the same step left a fluid
+  cell adjacent to a gas cell. Neither of the two is a gas or a fluid cell, so neither
+  existing promotion rule looked at them; two such cells appeared after 120,000
+  conversions. A third rule covers it.
+* `faces="wall"` made the thin direction no-slip as well, so the quasi-two-dimensional
+  tank was a three-cell slot with walls on both sides and no throughflow. **The sloshing
+  tank did not slosh at all** -- a first mode released at 2.00 mm decayed monotonically to
+  0.03 mm without crossing zero -- and hours went into the free-surface algorithm before
+  the geometry. A damped oscillator never fails to cross zero; that should have been the
+  first thing read off the trace. Decided once in the world builder now (D13).
+* A linear tilt is the wrong thing to release in a walled tank: constant slope fights
+  the wall condition and beats the odd modes together. The cases release the cosine mode
+  the theory is about.
+
+### M6 and M7 -- not started
+
+Floating bodies and the carried cup are not begun. M5's hydrostatic result is the
+precondition for M6 and it holds; the mass drift under motion is the precondition that
+does not, since a boat run is long and a cup run is violent.
+
 ## What is not measured, and will not be claimed
 
 - **The drone demo at 0.5x real time or better.** It is a device claim. The rate is

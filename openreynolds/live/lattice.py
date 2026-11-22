@@ -953,11 +953,11 @@ def apply_faces(
 ):
     """Inlet and outlet, imposed on the face node after streaming.
 
-    `inlet` is an equilibrium condition at the prescribed velocity and the **density
-    extrapolated from the node inside**: the node is overwritten with
-    `f^eq(rho_inward, u_in)`. First order at the boundary and unconditionally stable, which is
-    the right trade for a face that is a long way from anything being measured -- every
-    case here puts its inlet several body diameters upstream. `use_profile` takes `u_in`
+    `inlet` is the Zou-He velocity condition: the density at the face is computed from
+    the populations that streamed in from the interior and the velocity being imposed,
+    and the populations that would have come from outside are filled by non-equilibrium
+    bounce-back. The code below has the formula, the citation, and measurements against
+    the two simpler conditions that preceded it. `use_profile` takes `u_in`
     from a two-dimensional array over the -x face instead of from `face_velocity`, which
     is what the Schafer-Turek channel needs: its inflow is a parabola, and a uniform
     inlet would be a different benchmark.
@@ -1014,30 +1014,61 @@ def apply_faces(
     u = face_velocity[face]
     if use_profile != 0 and face == 0:
         u = inlet_profile[j, k]
-    # **The density is taken from the node inside, not fixed at 1.** A velocity inlet
-    # prescribes the velocity; the density is whatever the flow needs it to be, and
-    # fixing both over-determines the boundary.
+    # **Zou-He, and the two things it replaced both have measurements against them.**
     #
-    # It was `_equilibrium(d, 1.0, u)` until 2026-11-23, and that is a pressure inlet
-    # wearing a velocity inlet's clothes: it pins `p = rho c_s^2` at the inflow plane,
-    # so a channel that needs a pressure gradient to push its flow past an obstruction
-    # cannot have one, and the flow simply slows down instead. Measured on the
-    # Schafer-Turek 2D-2 cylinder, which is a 24% blockage: the mid-channel mean
-    # velocity fell 3% in the first 300 steps and kept going, and over a 300,000-step
-    # run the drag coefficient decayed monotonically from 1.70 to 1.30 with the lift
-    # amplitude decaying beside it. Both were read as an under-developed wake twice
-    # before the force history made it unmistakable -- a transient settles, and this
-    # did not.
+    # `_equilibrium(d, 1.0, u)` came first and is a pressure inlet: it pins
+    # `p = rho c_s^2` at the inflow plane, so a channel needing a pressure gradient to
+    # push past an obstruction cannot have one and the flow slows instead. Measured on
+    # Schafer-Turek 2D-2, a 24% blockage: the mid-channel velocity fell 3% in 300 steps
+    # and kept falling, and Cd decayed from 1.70 to 1.30 over 300,000 steps.
     #
-    # The cross-check case did not notice, which is the useful part of the story: its
-    # blockage is 2.5% and its side walls are slip, so the pressure it needs at the
-    # inlet is within a part in a thousand of `rho = 1` and pinning it costs nothing.
-    # One case agreeing is not evidence that a boundary condition is right.
-    rho_in = DTYPE(0.0)
+    # Extrapolating the whole density from the node inside came second, and is worse. It
+    # holds the velocity -- the probe stayed at 0.997 to 1.000 -- and it wrecks the
+    # forces: on the OpenFOAM cross-check, which the pinned version PASSED at
+    # Cd 1.3299 (-1.9%) and St 0.16281 (-2.0%), it gave Cd 1.500 (+10.7%) and
+    # St 1.113 against 0.166, reporting 163 shedding cycles where OpenFOAM has 7. The
+    # mechanism is a feedback loop: the face node copies its neighbour's density, the
+    # neighbour responds to the face node, and the pair rings with a one-cell delay.
+    #
+    # So this is the textbook condition instead (Zou, Q. and He, X. (1997), 'On pressure
+    # and velocity boundary conditions for the lattice Boltzmann BGK model', Physics of
+    # Fluids 9:1591-1598). Its one idea is that the density at the face is **not free and
+    # not borrowed**: the populations that streamed in from the interior already
+    # determine it, given the velocity being imposed. With `n` the inward normal and the
+    # populations split by `c_d . n`,
+    #
+    #     rho = ( sum_{c.n=0} f_d + 2 sum_{c.n<0} f_d ) / (1 - u.n)
+    #
+    # and then each unknown population -- the ones that would have come from outside --
+    # is filled by non-equilibrium bounce-back against its opposite,
+    #
+    #     f_d = f_opp + f_d^eq(rho, u) - f_opp^eq(rho, u).
+    #
+    # Local, no neighbour, nothing to ring against, and second order in the normal
+    # component.
+    axis = face / 2
+    inward = DTYPE(1.0)
+    if face % 2 == 1:
+        inward = DTYPE(-1.0)
+    u_normal = u[axis] * inward
+
+    parallel = DTYPE(0.0)
+    incoming = DTYPE(0.0)
     for d in range(Q):
-        rho_in += pop(f, d, inward_i, inward_j, inward_k)
+        along = DTYPE(C[axis, d]) * inward
+        if along == DTYPE(0.0):
+            parallel += pop(f, d, i, j, k)
+        elif along < DTYPE(0.0):
+            incoming += pop(f, d, i, j, k)
+    rho_in = (parallel + DTYPE(2.0) * incoming) / (DTYPE(1.0) - u_normal)
+
     for d in range(Q):
-        set_pop(f, d, i, j, k, _equilibrium(d, rho_in, u))
+        if DTYPE(C[axis, d]) * inward > DTYPE(0.0):
+            back = int(OPP[d])
+            set_pop(f, d, i, j, k,
+                    pop(f, back, i, j, k)
+                    + _equilibrium(d, rho_in, u)
+                    - _equilibrium(back, rho_in, u))
 
 
 # -- 4. the solid, rebuilt every coupling step -----------------------------------------

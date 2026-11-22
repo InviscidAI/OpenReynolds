@@ -486,7 +486,11 @@ def _probe() -> dict:
         import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
         from isaacsim.simulation_app import SimulationApp
 
-        sim_app = SimulationApp({"headless": True})
+        # Bound to a name and then never used again, deliberately. Nothing calls
+        # `close()` any more (see the end of this function), but the reference has to
+        # stay alive for the rest of the call: let the only handle to the app go out of
+        # scope and Kit is free to be collected under the probe that is interrogating it.
+        sim_app = SimulationApp({"headless": True})  # noqa: F841  -- keeps Kit alive
         emit("simulationapp_seconds", round(time.time() - started, 1))
         emit("simulationapp", "started")
     except Exception:
@@ -824,7 +828,9 @@ def _demo(steps: int = 100, width: int = 1280, height: int = 720) -> dict:
         import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
         from isaacsim.simulation_app import SimulationApp
 
-        sim_app = SimulationApp({
+        # Held for the life of the call, not used again. Same reason as in `_probe`: the
+        # reference is what keeps Kit from being collected, and nothing closes it.
+        sim_app = SimulationApp({  # noqa: F841  -- keeps Kit alive
             "headless": True,
             "width": width,
             "height": height,

@@ -51,6 +51,39 @@ normal; gravity through the Guo forcing the single-phase solver already has; and
 same momentum-exchange wrench on rigid bodies, which at a waterline is what gives a
 floating body its buoyancy without anyone having to compute a displaced volume.
 
+## The mass drift, and where it comes from
+
+Mass conservation here is **not** exact, and the honest account of why is worth more than
+the hope that it is. Measured: a part in 1e4 over 5,000 steps of still water, and
+anywhere from -4e-3 to +7e-2 under violent motion, falling by a factor of ten from 120 to
+240 cells on the sloshing tank.
+
+Summing the tracked mass between every phase of a single substep localises it exactly.
+The conversions and the redistribution are **precisely** conservative -- the mass
+`apply_conversions` banks equals the mass `redistribute` hands out, to the last digit --
+and the whole imbalance lives in the pairing of `exchange_mass` with `sync_fluid_mass`,
+which nearly cancel and do not quite: -0.039560 against +0.039448 on one step, and
+-0.026100 against +0.035067 six steps later.
+
+The mechanism follows from what the two kernels assume about each other. `exchange_mass`
+credits an interface cell with the populations that crossed each link to a fluid
+neighbour, and does **not** debit the fluid neighbour, because a fluid cell's mass is its
+density and streaming has already taken the same amount out of it. That argument is
+sound for every link between water and water. It is not sound for the gas side: the
+reconstruction in `lattice.stream` **creates and destroys populations** at an interface
+cell, since it imposes a pressure rather than conserving a flux, and those populations
+then stream on into fluid cells and raise or lower their density. `sync_fluid_mass` sets
+a fluid cell's mass to that density -- and so turns an atmospheric boundary condition into
+tracked water.
+
+That is intrinsic to this formulation rather than a slip in it, which is why the drift
+scales with how hard the interface is working and shrinks as the lattice refines. **No
+correction is applied.** Rescaling the field to close the books every step would make the
+number look like zero while changing nothing about the error, and `mass_drift()` exists
+to report this, not to hide it. What it does separate out is the part that is not the
+algorithm's fault: mass that rigid bodies carried off (`displaced`) and excess that had
+no interface neighbour to go to (`unplaceable`) are counted on their own.
+
 Not here: surface tension. The brief has it as optional and it is not shipped;
 `DECISIONS_LIVE.md` D12 says why, and the short version is that the curvature estimate a
 one-cell interface supports is noisy enough to need its own validation, and nothing in
