@@ -376,6 +376,31 @@ class Scaling:
     peak_velocity: float
     """The largest speed expected anywhere in the domain, in m/s."""
     scheme: str = "trt"
+    nu_lattice_override: float = 0.0
+    """A lattice viscosity chosen for stability rather than derived from the fluid.
+
+    Zero means "derive it", which is what every single-phase case does:
+    `nu_lattice = nu dt / dx^2` and the fluid decides. A free-surface case cannot work
+    that way and the reason is arithmetic, not taste.
+
+    A free-surface run's timestep is set by **gravity**, because gravity is what drives
+    it: `g_lattice = g dt^2 / dx` has to stay small (of order 1e-5 to 1e-4) or the
+    scheme goes unstable within a few hundred steps. That fixes `dt` at
+    `sqrt(g_lattice dx / g)`, which for a 3 mm cell is about 6e-5 s -- and water's
+    viscosity at that timestep is `nu dt / dx^2 = 5e-6` in lattice units, a tau_plus of
+    0.500016. There is no resolution that fixes it: `dt` goes as `sqrt(dx)`, so
+    `nu dt/dx^2` goes as `dx^-1.5` and refining makes it worse.
+
+    So a free-surface run matches the **Froude** number, which is the one that governs a
+    gravity-driven free surface, and accepts a Reynolds number lower than the real
+    fluid's. That is standard for this method and it is what `for_froude` does. What
+    this repository insists on is that the number be said out loud: `reynolds_effective`
+    computes it, `report` prints it beside the physical one, and every free-surface case
+    carries both. A dam break at Re 200 against an experiment at Re 50,000 is a
+    defensible comparison for a front position, which is Froude-scaled; it is not a
+    defensible comparison for anything viscous, and the way to keep that distinction
+    alive is to print both numbers every time.
+    """
     les: bool = False
     """Whether a subgrid (Smagorinsky) viscosity will be added on top of `nu_lattice`.
 
@@ -391,8 +416,44 @@ class Scaling:
 
     @property
     def nu_lattice(self) -> float:
-        """nu * dt / dx^2. The one number that is not a choice."""
+        """nu * dt / dx^2, or the override a free-surface run chose instead.
+
+        "The one number that is not a choice" is what this said, and for a single-phase
+        run it is still true. `nu_lattice_override` is the free surface's exception and
+        its docstring is the argument for it.
+        """
+        if self.nu_lattice_override:
+            return float(self.nu_lattice_override)
         return self.fluid.nu * self.dt / (self.dx * self.dx)
+
+    @property
+    def nu_effective(self) -> float:
+        """The physical viscosity this lattice is actually running, in m^2/s.
+
+        `nu_lattice dx^2 / dt`. Equal to the fluid's own viscosity whenever nothing was
+        overridden, and larger -- usually by orders of magnitude -- when a free-surface
+        run has chosen its lattice viscosity for stability.
+        """
+        return self.nu_lattice * self.dx * self.dx / self.dt
+
+    @property
+    def viscosity_ratio(self) -> float:
+        """How many times the fluid's own viscosity this run is using. 1.0 if none."""
+        return self.nu_effective / self.fluid.nu if self.fluid.nu else float("nan")
+
+    def reynolds_effective(self, length: float) -> float:
+        """The Reynolds number this lattice actually achieves on a physical length."""
+        return abs(self.reference_velocity) * abs(length) / self.nu_effective
+
+    def froude(self, length: float, gravity: float = 9.81) -> float:
+        """`u / sqrt(g L)`, the number a gravity-driven free surface is governed by.
+
+        Matched exactly by construction in a `for_froude` run, because the timestep is
+        derived from gravity and the velocity scale from the same length -- which is
+        the whole point of giving up on the Reynolds number.
+        """
+        denominator = math.sqrt(abs(gravity) * abs(length))
+        return abs(self.reference_velocity) / denominator if denominator else float("nan")
 
     @property
     def tau_plus(self) -> float:
@@ -565,7 +626,10 @@ class Scaling:
             f"  lattice:    dx {self.dx:.6g} m   dt {self.dt:.6g} s   "
             f"dx/dt {self.dx / self.dt:.6g} m/s",
             f"  viscosity:  nu_lattice {self.nu_lattice:.6g}   "
-            f"tau_plus {self.tau_plus:.5f}   tau_minus {self.tau_minus:.5f}",
+            f"tau_plus {self.tau_plus:.5f}   tau_minus {self.tau_minus:.5f}"
+            + ("" if not self.nu_lattice_override else
+               f"   (chosen, not derived: nu_eff {self.nu_effective:.4g} m2/s is "
+               f"{self.viscosity_ratio:.0f}x the fluid's)"),
             f"  relaxation: {self.scheme}"
             f"{' + smagorinsky' if self.les else ''}  "
             f"omega_plus {omega_plus:.6f}  omega_minus {omega_minus:.6f}",
@@ -661,6 +725,80 @@ class Scaling:
         return cls.from_dt(dx, dt, medium, reference_velocity=u_ref,
                            peak_velocity=u_ref * float(peak_factor), scheme=scheme,
                            les=les, check=check)
+
+    @classmethod
+    def for_froude(cls, dx: float, length: float, fluid_spec: str | Fluid = "water", *,
+                   gravity: float = 9.81, g_lattice: float | None = None,
+                   mach: float = 0.07, tau: float = 0.53, scheme: str = "trt",
+                   les: bool = False, check: bool = True) -> Scaling:
+        """The scaling a free-surface case needs: gravity sets the step, tau sets the rest.
+
+        Two numbers are chosen and everything follows:
+
+            g_lattice   gravity in lattice units, `g dt^2 / dx`. The stability limit of
+                        a free-surface LBM, and 1e-4 is the usual working value; at 1e-3
+                        the interface starts to ring and at 1e-2 it diverges.
+            tau         the relaxation time, chosen for stability rather than derived
+                        from the fluid, for the reason `nu_lattice_override` gives.
+
+        then
+
+            dt    = sqrt(g_lattice * dx / g)
+            nu_l  = (tau - 1/2) c_s^2
+            u_ref = sqrt(g L)                 the gravity-wave speed on `length`
+
+        and the Froude number comes out matched while the Reynolds number comes out
+        whatever it comes out -- `reynolds_effective` says what, and the report prints
+        it next to what the real fluid would have been.
+
+        `u_ref` is `sqrt(g L)` because that is the velocity scale of every case this
+        constructor is for: a dam break's front, a sloshing tank's wave, a hull's bow
+        wave all move at the shallow-water speed, and it is the right thing to check the
+        Mach ceiling against.
+
+        **`g_lattice` defaults to whatever holds the Mach number, and that is not a
+        convenience.** Substituting the two definitions gives
+
+            Ma = u_ref dt / (dx c_s) = sqrt(L g_lattice / dx) / c_s
+
+        so the lattice Mach number **rises** as the lattice is refined at a fixed
+        `g_lattice` -- the opposite of every single-phase case here, where refining
+        lowers it. A 30-cell tank at `g_lattice = 1e-4` sits at Ma 0.0735 and the same
+        tank at 60 cells sits at 0.104 and is refused. Anyone refining a free-surface
+        case has to halve `g_lattice` when they halve `dx`, and a default that does the
+        arithmetic is better than a footnote that says to. Pass `g_lattice` explicitly
+        to override it; `mach` sets the target the default aims at.
+
+        The compensation is worth stating because it is the reason refining is still
+        worth doing: `dt` falls as `sqrt(g_lattice dx)`, so the effective viscosity
+        `nu_l dx^2/dt` falls as `dx^1.5` and the **Reynolds number rises**. A 30-cell
+        tank runs at Re 76 and a 60-cell one at Re 153.
+        """
+        medium = fluid(fluid_spec)
+        dx = float(dx)
+        if dx <= 0 or length <= 0 or gravity <= 0:
+            raise UnphysicalScaling(
+                f"for_froude needs positive dx, length and gravity; got "
+                f"{dx}, {length}, {gravity}"
+            )
+        if g_lattice is None:
+            # Ma = sqrt(L g_lattice / dx) / c_s, inverted.
+            g_lattice = (float(mach) * CS) ** 2 * dx / float(length)
+        if g_lattice <= 0:
+            raise UnphysicalScaling(f"g_lattice must be positive, got {g_lattice}")
+        if tau <= 0.5:
+            raise UnphysicalScaling(
+                f"tau must exceed 1/2, got {tau}: at 1/2 the collision stops relaxing"
+            )
+        dt = math.sqrt(g_lattice * dx / gravity)
+        nu_lattice = (float(tau) - 0.5) * CS2
+        u_ref = math.sqrt(gravity * float(length))
+        made = cls(
+            dx=dx, dt=dt, fluid=medium, reference_velocity=u_ref,
+            peak_velocity=2.0 * u_ref, scheme=scheme,
+            nu_lattice_override=nu_lattice, les=bool(les),
+        )
+        return made.check() if check else made
 
     @classmethod
     def for_coupling(cls, dx: float, dt_robot: float, fluid_spec: str | Fluid = "air", *,

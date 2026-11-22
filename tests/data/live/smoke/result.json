@@ -1,0 +1,56 @@
+{
+  "case": "smoke",
+  "passed": true,
+  "checks": [
+    {
+      "name": "lattice finite and positive",
+      "measured": true,
+      "target": "True",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "drag on the sphere is downstream",
+      "measured": 5.435251750895986e-07,
+      "target": "> 0",
+      "passed": "True",
+      "note": ""
+    },
+    {
+      "name": "mass drift in a closed periodic box",
+      "measured": 1.0132790217998178e-06,
+      "target": "<= 1e-5",
+      "passed": true,
+      "note": "conserved exactly by streaming, so the bound is single precision and not physics: a population is read, multiplied and written once a step in float32, and 40 steps of that accumulate about sqrt(steps)*eps = 1e-6, which is what this measures. The bound is 1e-5 for that reason and would be 1e-14 in double precision. The inlet/outlet box this case also runs drifts about a percent and is supposed to"
+    },
+    {
+      "name": "torque finite",
+      "measured": "+4.493e-15, -7.675e-15, +9.266e-15",
+      "target": "finite",
+      "passed": true,
+      "note": ""
+    }
+  ],
+  "report": [
+    "# smoke: 12^3, 40 steps, every kernel once",
+    "  device:     cuda:0  (warp 1.19.0, soa layout)",
+    "  lattice:    12 x 12 x 12 = 1,728 nodes, D3Q19, 0 MiB of populations",
+    "  domain:     0.03 x 0.03 x 0.03 m from (0.0, 0.0, 0.0)",
+    "  drag:       +5.4353e-07 N downstream",
+    "  mass drift: 1.01e-06 in a closed periodic box of the same size"
+  ],
+  "figures": [],
+  "force": [
+    5.435251750895986e-07,
+    6.551915260333274e-12,
+    1.9468547867579344e-12
+  ],
+  "drift": 1.0132790217998178e-06,
+  "seconds": 11.825446844100952,
+  "milestone": "M0",
+  "about": "every kernel once on a 12-cube: the cheapest thing that fails if the solver is broken. Seconds on a CPU; in the main test suite",
+  "report_text": "# smoke: 12^3, 40 steps, every kernel once\n  device:     cuda:0  (warp 1.19.0, soa layout)\n  lattice:    12 x 12 x 12 = 1,728 nodes, D3Q19, 0 MiB of populations\n  domain:     0.03 x 0.03 x 0.03 m from (0.0, 0.0, 0.0)\n  drag:       +5.4353e-07 N downstream\n  mass drift: 1.01e-06 in a closed periodic box of the same size\n\n  PASS  lattice finite and positive          yes   against True\n  PASS  drag on the sphere is downstream     5.435252e-07   against > 0\n  PASS  mass drift in a closed periodic box  1.01328e-06   against <= 1e-5\n                                             (conserved exactly by streaming, so the bound is single precision and not physics: a population is read, multiplied and written once a step in float32, and 40 steps of that accumulate about sqrt(steps)*eps = 1e-6, which is what this measures. The bound is 1e-5 for that reason and would be 1e-14 in double precision. The inlet/outlet box this case also runs drifts about a percent and is supposed to)\n  PASS  torque finite                        +4.493e-15, -7.675e-15, +9.266e-15   against finite\n\n  4/4 graded checks passed\n  took 11.8 s",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA A10, 23028 MiB, 610.57.04"
+}

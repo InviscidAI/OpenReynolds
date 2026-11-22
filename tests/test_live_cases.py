@@ -506,7 +506,7 @@ def test_every_case_carries_a_milestone_and_a_sentence():
     for name, case in cases.CASES.items():
         assert case.name == name
         assert case.about and len(case.about) > 30, f"{name} has no useful description"
-        assert case.milestone in ("M0", "M1", "M2", "M3"), name
+        assert case.milestone in ("M0", "M1", "M2", "M3", "M5", "M6", "M7"), name
         assert callable(case.runner)
 
 

@@ -1,0 +1,105 @@
+{
+  "case": "quadrotor",
+  "passed": true,
+  "checks": [
+    {
+      "name": "thrust needed to hover falls nearer the ground",
+      "measured": "0.9496 at Z/R 1 against 0.9610 at Z/R 2.5",
+      "target": "the lower one is the smaller",
+      "passed": true,
+      "note": "the sign of the ground effect, which is all a two-height run can establish; ground_effect grades the magnitude on one disk"
+    },
+    {
+      "name": "the airframe is voxelised at all",
+      "measured": "438 solid nodes",
+      "target": "> 0, or the lattice cannot see the body",
+      "passed": true,
+      "note": "a slab thinner than a cell passes between the nodes and voxelises to nothing, and the symptom is a wrench of exactly zero -- which reads as a coupling that is not wired up. At two cells per rotor radius this case measured 0 nodes for a 40 mm airframe on a 60 mm lattice"
+    },
+    {
+      "name": "fluid wrench on the airframe, as a fraction of weight",
+      "measured": "+0.0487 at Z/R 1",
+      "target": "finite, non-zero and under 1",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "altitude settled",
+      "measured": "spread 0.049 R over the last third of the run",
+      "target": "< 0.1 R, which is what a stable loop looks like",
+      "passed": true,
+      "note": "the graded property is that the loop is STABLE, not that it is accurate: a vehicle still oscillating is a coupling that has not settled, and a vehicle holding a wrong height steadily is a controller that has not been tuned"
+    },
+    {
+      "name": "altitude offset from target",
+      "measured": "+0.506 R (0.1807 m against 0.1200 m)",
+      "target": "reported, not graded",
+      "passed": null,
+      "note": "the size of the disturbance the controller had to reject, which is the ground effect it does not model. It is the measurement, not the error"
+    },
+    {
+      "name": "real time, simulated seconds per wall-clock second",
+      "measured": "0.0167x at 2,867,200 nodes",
+      "target": "reported; the brief's 0.5x target is a device claim",
+      "passed": null,
+      "note": ""
+    }
+  ],
+  "report": [
+    "# quadrotor: 1.2 kg, 180 mm arms, R 120 mm, 8 cells per radius",
+    "  hover:      11.772 N total, 2.943 N a rotor, induced 5.198 m/s from momentum theory",
+    "  subgrid:    ON (Cs = 0.12); tau_plus 0.50001, an under-resolved large-eddy run",
+    "  walls:      ground at z = 0, and a wall at x = 0",
+    "  Z/R    1:  thrust 11.1788 N (0.9496 of weight), fluid wrench +0.5731 N (+0.0487), 0.0167x real time at 2,867,200 nodes, 56 substeps, airframe 438 nodes",
+    "  Z/R  2.5:  thrust 11.3124 N (0.9610 of weight), fluid wrench +0.3550 N (+0.0302), 0.0168x real time at 2,867,200 nodes, 56 substeps, airframe 471 nodes"
+  ],
+  "figures": [
+    "live-quadrotor-z1-history.png",
+    "live-quadrotor-z1.gif",
+    "live-quadrotor-z1.png",
+    "live-quadrotor-z2.5-history.png",
+    "live-quadrotor-z2.5.gif",
+    "live-quadrotor-z2.5.png"
+  ],
+  "rows": [
+    {
+      "z_over_r": 1.0,
+      "height": 0.12,
+      "thrust": 11.178800522836642,
+      "thrust_over_weight": 0.9496092866833709,
+      "fluid_wrench_z": 0.5731227400678175,
+      "wrench_over_weight": 0.04868524805197226,
+      "altitude": 0.1807432592742973,
+      "altitude_spread": 0.0058659762144088745,
+      "nodes": 2867200,
+      "steps": 647,
+      "substeps": 56,
+      "realtime": 0.016749217691105184,
+      "tau": 0.500007219047619,
+      "airframe_cells": 438
+    },
+    {
+      "z_over_r": 2.5,
+      "height": 0.3,
+      "thrust": 11.312435000896734,
+      "thrust_over_weight": 0.9609611791451523,
+      "fluid_wrench_z": 0.35503496367622306,
+      "wrench_over_weight": 0.030159273163117825,
+      "altitude": 0.33795763552188873,
+      "altitude_spread": 0.007732272148132324,
+      "nodes": 2867200,
+      "steps": 647,
+      "substeps": 56,
+      "realtime": 0.0167617422165042,
+      "tau": 0.500007219047619,
+      "airframe_cells": 471
+    }
+  ],
+  "seconds": 283.00293707847595,
+  "milestone": "M3",
+  "about": "a quadrotor hovering on four actuator disks, Newton-coupled, with ground and wall effects; graded for bookkeeping and stability",
+  "report_text": "# quadrotor: 1.2 kg, 180 mm arms, R 120 mm, 8 cells per radius\n  hover:      11.772 N total, 2.943 N a rotor, induced 5.198 m/s from momentum theory\n  subgrid:    ON (Cs = 0.12); tau_plus 0.50001, an under-resolved large-eddy run\n  walls:      ground at z = 0, and a wall at x = 0\n  Z/R    1:  thrust 11.1788 N (0.9496 of weight), fluid wrench +0.5731 N (+0.0487), 0.0167x real time at 2,867,200 nodes, 56 substeps, airframe 438 nodes\n  Z/R  2.5:  thrust 11.3124 N (0.9610 of weight), fluid wrench +0.3550 N (+0.0302), 0.0168x real time at 2,867,200 nodes, 56 substeps, airframe 471 nodes\n\n  PASS  thrust needed to hover falls nearer the ground         0.9496 at Z/R 1 against 0.9610 at Z/R 2.5   against the lower one is the smaller\n                                                               (the sign of the ground effect, which is all a two-height run can establish; ground_effect grades the magnitude on one disk)\n  PASS  the airframe is voxelised at all                       438 solid nodes   against > 0, or the lattice cannot see the body\n                                                               (a slab thinner than a cell passes between the nodes and voxelises to nothing, and the symptom is a wrench of exactly zero -- which reads as a coupling that is not wired up. At two cells per rotor radius this case measured 0 nodes for a 40 mm airframe on a 60 mm lattice)\n  PASS  fluid wrench on the airframe, as a fraction of weight  +0.0487 at Z/R 1   against finite, non-zero and under 1\n  PASS  altitude settled                                       spread 0.049 R over the last third of the run   against < 0.1 R, which is what a stable loop looks like\n                                                               (the graded property is that the loop is STABLE, not that it is accurate: a vehicle still oscillating is a coupling that has not settled, and a vehicle holding a wrong height steadily is a controller that has not been tuned)\n        altitude offset from target                            +0.506 R (0.1807 m against 0.1200 m)   against reported, not graded\n                                                               (the size of the disturbance the controller had to reject, which is the ground effect it does not model. It is the measurement, not the error)\n        real time, simulated seconds per wall-clock second     0.0167x at 2,867,200 nodes   against reported; the brief's 0.5x target is a device claim\n\n  4/4 graded checks passed\n  took 4 m 42 s\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z1.png\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z1.gif\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z1-history.png\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z2.5.png\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z2.5.gif\n  figure:     /tmp/tmp50v3x08z/live-quadrotor-z2.5-history.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04"
+}

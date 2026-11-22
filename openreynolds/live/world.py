@@ -419,6 +419,18 @@ class FluidWorld:
         self._use_field = 0
         self._rho = None
         self._u = None
+        # One-element stand-ins for the free-surface arrays. Warp needs a real array for
+        # every parameter even when the flag beside it says not to read one, and a
+        # `(1, 1, 1)` allocation is three floats rather than another copy of the
+        # lattice. `freesurface.FreeSurfaceWorld` replaces both and sets `_use_flags`.
+        self._flags = wp.zeros((1, 1, 1), dtype=wp.int32, device=self.device)
+        self._normals = wp.zeros((1, 1, 1), dtype=wp.vec3, device=self.device)
+        self._use_flags = 0
+        self.gas_density = 1.0
+        """The density the free surface is held at, in lattice units. 1.0 is one
+        atmosphere by construction: the lattice's reference density IS the ambient
+        pressure, so a free surface at `rho = 1` is a free surface at the pressure the
+        rest of the domain is referenced to."""
 
         self.steps = 0
         """Coupling steps taken."""
@@ -625,13 +637,15 @@ class FluidWorld:
             wp.launch(L.collide, dim=self.shape,
                       inputs=[self.f, self.phi, self._force_field, body_force,
                               self._use_field, L.DTYPE(omega_plus),
-                              L.DTYPE(omega_minus), scheme, smag],
+                              L.DTYPE(omega_minus), scheme, smag,
+                              self._flags, self._use_flags],
                       device=self.device)
             wp.launch(L.stream, dim=self.shape,
                       inputs=[self.f, self.f_next, self.phi, self.owner,
                               self.body_pose, self.body_vel, self.body_com,
                               self._wrench, self.faces, self.face_velocity,
-                              self._fallbacks, moving],
+                              self._fallbacks, moving, self._flags, self._normals,
+                              L.DTYPE(self.gas_density), self._use_flags],
                       device=self.device)
             self.f, self.f_next = self.f_next, self.f
             if self._needs_faces:

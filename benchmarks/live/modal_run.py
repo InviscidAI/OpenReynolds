@@ -317,7 +317,8 @@ a budget it can actually finish.
 @app.local_entrypoint()
 def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
          steps: int = 0, collision: str = "", layout: str = "",
-         window: bool = False, label: str = "") -> None:
+         window: bool = False, label: str = "", reynolds: float = 0.0,
+         u_lattice: float = 0.0) -> None:
     """Run one case on one GPU and write the result under `benchmarks/live/results/`.
 
     `--label` names the directory, so a variant of a case can be recorded beside it
@@ -328,6 +329,15 @@ def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
     settings: dict = {}
     if window:
         settings["window"] = True
+    if reynolds:
+        settings["reynolds"] = float(reynolds)
+    if u_lattice:
+        # The lattice velocity, which is the Mach number: `Ma = u_lattice / c_s`. A flag
+        # because it is the one knob that separates a compressibility error from a
+        # resolution error -- the same case at the same cells and a lower `u_lattice` is
+        # the same discretisation at a lower Mach number, and if the disagreement moves
+        # it was `O(Ma^2)` all along.
+        settings["u_lattice"] = float(u_lattice)
     if resolution:
         settings["resolution"] = int(resolution)
     if steps:

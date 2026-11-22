@@ -341,3 +341,136 @@ own airframe's geometry in the flow has to give `FluidWorld` a mesh -- which it 
 through Newton's `shape_source_ptr`, and which `couple.py` documents. What is kept: the
 physics the demo exists to show, which is a vehicle feeling the downwash its own rotors
 made, off a geometry the lattice can actually see.
+
+---
+
+## D11. The free surface reuses `collide` and `stream` rather than copying them
+
+**2026-11-23.** `freesurface.py` needs a collision that skips gas cells and a streaming
+step that reconstructs what arrives from them. The obvious implementation is a second
+copy of each kernel with those two changes, and the obvious objection is that there
+would then be two collisions to keep correct.
+
+So instead `lattice.collide` and `lattice.stream` each took two extra parameters -- a
+flag field and an integer that says whether to read it -- and a single-phase run passes
+`use_flags = 0` and a one-element dummy array. The cost is two parameters and one
+comparison per node in a kernel that already does nineteen of everything. The gain is
+that there is exactly one collision operator in this extension and exactly one Bouzidi
+boundary, so a fix to either reaches both paths, and the validated single-phase results
+in `benchmarks/live/` are evidence about the free-surface path as well.
+
+**Held by a test, not by intention.**
+`tests/test_live_freesurface.py::test_a_fully_flooded_free_surface_run_matches_the_single_phase_one`
+runs the same case both ways -- once as a `FluidWorld` and once as a `FreeSurfaceWorld`
+whose every cell is flagged fluid -- and requires the fields to agree to single
+precision. If the two paths ever diverge, that is what says so.
+
+What this rules out: a free-surface-specific collision operator, which some
+implementations use (a different `tau` at the interface, for instance). If one is ever
+wanted, it belongs as a `scheme` value in `units.rates` rather than as a second kernel.
+
+---
+
+## D12. Surface tension is not shipped
+
+**2026-11-23.** The addendum has it as "optional via curvature" and the option is not
+taken. Three reasons, in the order they decided it.
+
+**Nothing in M6 or M7 is surface-tension dominated.** The number that decides is the
+Bond number, `Bo = rho g L^2 / sigma`: the ratio of gravity to surface tension on a
+length `L`. For water, `sigma = 0.072 N/m`, so `Bo = 1` at `L = 2.7 mm` -- the capillary
+length. A cup of water is 70 mm across (`Bo` about 650), a boat hull is hundreds of
+millimetres (`Bo` in the tens of thousands), a dam break is a tank. Surface tension
+changes the shape of a meniscus a few millimetres wide at the wall and changes nothing
+about whether the cup spills or the boat floats.
+
+**The curvature a one-cell interface supports is noisy.** The standard estimate takes
+the divergence of the normal, and the normal is already a finite difference of a fill
+fraction that is piecewise constant across a cell. Differentiating it twice on a lattice
+where the interface is one cell thick gives a curvature whose noise is comparable to its
+signal unless it is smoothed, and the smoothing is itself a parameter nobody can
+validate against anything in this repository. A term that needs its own validation
+before it can be trusted is a term that needs its own milestone.
+
+**The cases that would need it are the ones not asked for.** Droplets, bubbles, foams,
+jets breaking up, and thin films are where it matters -- and the Korner paper this
+implementation follows is a *foaming* paper for exactly that reason. None of those is in
+M5 to M7.
+
+**What is lost, stated so nobody has to discover it:** a free surface here will not form
+a meniscus at a wall, will not hold a droplet together below the capillary length, and
+will let a thin film tear where a real one would not. `FreeSurfaceWorld`'s unplaceable
+mass counter (`mass_drift()["unplaceable"]`) is where a tearing film shows up as a
+number, which is the closest this can come to warning about its own absence.
+
+**What it would take:** a curvature field from the smoothed fill fraction, and a
+modified gas density at the interface, `rho_gas -> rho_gas - 2 sigma kappa / c_s^2`,
+which is a change to one argument of the reconstruction in `lattice.stream` and a new
+kernel for the curvature. The validation it would need is a static droplet obeying the
+Young-Laplace law, `dp = 2 sigma / r`, which is exact and cheap -- so the work is the
+curvature estimate and its smoothing, not the plumbing.
+
+---
+
+## D13. A thin direction is periodic, decided once, in the world builder
+
+**2026-11-23.** Several cases here are quasi-two-dimensional: a few lattice planes deep,
+with no dependence on the thin direction, so that the three-dimensional kernels compute
+the two-dimensional answer. The cavity has done this from the start and `run_cavity` has
+the argument for why it is exact under D3Q19.
+
+The free-surface cases want the same thing, and the first two asked for it by passing
+`faces="wall"` -- "a closed tank", which is what a tank is. That sets **all six** faces to
+no-slip, including the two ends of a three-cell-wide slot, and a three-cell slot with
+walls on both sides has a Stokes layer thicker than the slot. There is no throughflow at
+all.
+
+**What it looked like.** The sloshing tank did not slosh. Released in its first natural
+mode at 2.00 mm, the surface decayed monotonically to 0.03 mm without ever crossing zero
+-- a damped oscillator never does that, so the thing being measured was not an oscillator
+-- and the solver converted 102,455 cells trying. Hours went into the free-surface
+algorithm looking for the dissipation: the mass exchange, the flag conversions, the
+hysteresis band, the gas reconstruction. The same tank with those two faces periodic
+oscillates, converts 13,026, and brackets linear theory.
+
+So `_free_surface_world` takes a zero in `size` to mean "thin", gives it `thin` cells,
+and **sets those two faces periodic itself**, overriding whatever the case asked for. The
+alternative is each case spelling out a six-entry face dictionary and one of them getting
+it wrong, which is what happened.
+
+What this rules out: a genuinely wall-bounded narrow slot, which no case here wants and
+which would now need to state its faces without a zero in `size`.
+
+---
+
+## D14. The dam break is graded on Ritter's profile, never on the front position
+
+**2026-11-23.** The addendum asks for "dam break vs Martin & Moyce (1952)".
+`benchmarks/README.md` already records, for the SPH dam break, that **the paper could not
+be read** -- the publisher refuses the request -- and that the two non-dimensionalisations
+in circulation, `t sqrt(g/a)` and `t sqrt(2g/a)`, differ by 1.414 at every point.
+Quoting a number through a secondary source is the error this repository argues hardest
+against. So the comparison is computed and printed in both conventions and **graded in
+neither**, and the grading goes to Ritter's (1892) shallow-water solution, which is three
+lines of characteristics and needs no paper.
+
+Then two further things had to change, and both were measurements.
+
+**Not the front position.** Ritter's front is a tongue that thins to zero depth, so
+"where the front is" is entirely a question of how little water still counts as water.
+Working it out on paper: the place where Ritter's own profile reaches half a lattice cell
+of depth sits at 0.168 m when the true front is at 0.220 m, a 24% difference that is the
+reference's and not the solver's. The front is reported at a quarter, a half and one full
+cell so the spread is visible, and graded nowhere. What is graded is the depth at the dam
+-- which Ritter fixes at exactly `4 h0 / 9`, independent of time, needing no threshold and
+no fit -- and the RMS of the profile where Ritter exceeds two cells.
+
+**Not a square column.** The first version released a column as tall as it was wide, and
+that geometry cannot be graded against Ritter at all. Shallow-water theory assumes
+hydrostatic pressure, which a collapsing square column violates while it is still
+accelerating vertically: measured, the depth at the dam ran 2.07 times Ritter's at
+`T = 0.5` and settled to 1.08 by `T = 2`. But the depression wave reaches the back wall
+at `T = a/h0` and returns to the dam at `T = 2 a/h0`, so for a square column Ritter
+expires at `T = 2` -- exactly when the agreement arrives, which makes the agreement
+worthless. The reservoir is now four depths wide, which buys a valid window of `T` in
+[2, 8], and the case grades over [2, 4] inside it.

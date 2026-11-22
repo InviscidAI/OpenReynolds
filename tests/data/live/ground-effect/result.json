@@ -1,0 +1,161 @@
+{
+  "case": "ground_effect",
+  "passed": true,
+  "checks": [
+    {
+      "name": "induced velocity ratio at Z/R 0.75",
+      "measured": 0.8974835444227085,
+      "target": "0.8889 +/- 10% (1 - (R/4Z)^2)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "induced velocity ratio at Z/R 1",
+      "measured": 0.9905696754481609,
+      "target": "0.9375 +/- 10% (1 - (R/4Z)^2)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "induced velocity ratio at Z/R 1.5",
+      "measured": 1.0471832913834958,
+      "target": "0.9722 +/- 10% (1 - (R/4Z)^2)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "induced velocity ratio at Z/R 2",
+      "measured": 1.0562065121944362,
+      "target": "0.9844 +/- 10% (1 - (R/4Z)^2)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "induced velocity ratio at Z/R 3",
+      "measured": 1.030770798178851,
+      "target": "0.9931 +/- 10% (1 - (R/4Z)^2)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "free-air induced velocity",
+      "measured": 3.702907326421207,
+      "target": "4.9969 m/s from momentum theory, T = 2 rho A v^2",
+      "passed": null,
+      "note": "reported, not graded: an actuator disk of finite thickness on a lattice does not have to reproduce the inviscid momentum-theory value, and the graded quantity is a ratio in which it cancels"
+    }
+  ],
+  "report": [
+    "# ground effect: one actuator disk, R 120 mm, T 2.72 N, 12 cells per radius",
+    "  model:      T_g/T_inf = 1 / (1 - R^2/(16 Z^2)), and the induced-velocity form 1 - (R/4Z)^2 this grades against",
+    "  reference:  Cheeseman, I.C. and Bennett, W.E. (1955), 'The effect of the ground on a helicopter rotor in forward flight', ARC R&M 3021, equation (2)",
+    "  caveat:     Three things the usual quotation drops. The ratio is derived AT CONSTANT POWER. Z is the height of the rotor above the ground. The report states no numeric lower bound on Z/R -- only that small Z/R gives 'large errors' and is 'of no practical interest' -- and its one number is in the conclusions, that flight results agree for Z/R greater than 0.6; the Z/R >= 0.25 figure that circulates could not be traced to it. Sanchez-Cuevas, Heredia and Ollero (2017), Int. J. Aerospace Eng. 1823056, measured that a single small rotor follows Cheeseman and Bennett but a complete multirotor does not: the effect is much larger and reaches to about 5R rather than 2R, because of a fountain under the airframe. That is why the graded case here is ONE actuator disk and the quadrotor is a demo rather than a graded comparison",
+    "  free air:   v 3.7029 m/s measured, 4.9969 m/s from momentum theory",
+    "  subgrid:    ON (Cs = 0.12); tau_plus 0.50001, so this is an under-resolved large-eddy run",
+    "  Z/R 0.75:  v/v_free 0.8975 against 0.8889 (+0.97%); the model's thrust ratio at constant power is 1.1250",
+    "  Z/R    1:  v/v_free 0.9906 against 0.9375 (+5.66%); the model's thrust ratio at constant power is 1.0667",
+    "  Z/R  1.5:  v/v_free 1.0472 against 0.9722 (+7.71%); the model's thrust ratio at constant power is 1.0286",
+    "  Z/R    2:  v/v_free 1.0562 against 0.9844 (+7.30%); the model's thrust ratio at constant power is 1.0159",
+    "  Z/R    3:  v/v_free 1.0308 against 0.9931 (+3.80%); the model's thrust ratio at constant power is 1.0070"
+  ],
+  "figures": [
+    "live-ground-effect-z0.75.png",
+    "live-ground-effect-z1.5.png",
+    "live-ground-effect-z1.png",
+    "live-ground-effect-z2.png",
+    "live-ground-effect-z3.png",
+    "live-ground-effect-z6.png",
+    "live-ground-effect.png"
+  ],
+  "rows": [
+    {
+      "z_over_r": 0.75,
+      "height": 0.09,
+      "induced": 3.32329839198532,
+      "free": false,
+      "nodes": 5308416,
+      "steps": 361,
+      "substeps": 80,
+      "tau": 0.50001137,
+      "ratio": 0.8974835444227085,
+      "model": 0.8888888888888888,
+      "thrust_ratio_model": 1.125,
+      "error": 0.00966898747554712
+    },
+    {
+      "z_over_r": 1.0,
+      "height": 0.12,
+      "induced": 3.667987708547672,
+      "free": false,
+      "nodes": 5308416,
+      "steps": 361,
+      "substeps": 80,
+      "tau": 0.50001137,
+      "ratio": 0.9905696754481609,
+      "model": 0.9375,
+      "thrust_ratio_model": 1.0666666666666667,
+      "error": 0.05660765381137156
+    },
+    {
+      "z_over_r": 1.5,
+      "height": 0.18,
+      "induced": 3.87762268176982,
+      "free": false,
+      "nodes": 5308416,
+      "steps": 361,
+      "substeps": 80,
+      "tau": 0.50001137,
+      "ratio": 1.0471832913834958,
+      "model": 0.9722222222222222,
+      "thrust_ratio_model": 1.0285714285714287,
+      "error": 0.07710281399445273
+    },
+    {
+      "z_over_r": 2.0,
+      "height": 0.24,
+      "induced": 3.9110348322185677,
+      "free": false,
+      "nodes": 5308416,
+      "steps": 361,
+      "substeps": 80,
+      "tau": 0.50001137,
+      "ratio": 1.0562065121944362,
+      "model": 0.984375,
+      "thrust_ratio_model": 1.0158730158730158,
+      "error": 0.0729716949276813
+    },
+    {
+      "z_over_r": 3.0,
+      "height": 0.36,
+      "induced": 3.8168487404375027,
+      "free": false,
+      "nodes": 5308416,
+      "steps": 361,
+      "substeps": 80,
+      "tau": 0.50001137,
+      "ratio": 1.030770798178851,
+      "model": 0.9930555555555556,
+      "thrust_ratio_model": 1.0069930069930069,
+      "error": 0.03797898557870316
+    },
+    {
+      "z_over_r": 6.0,
+      "height": 0.72,
+      "induced": 3.702907326421207,
+      "free": true,
+      "nodes": 6193152,
+      "steps": 421,
+      "substeps": 80,
+      "tau": 0.50001137
+    }
+  ],
+  "free_induced": 3.702907326421207,
+  "momentum_theory": 4.996892752258827,
+  "seconds": 755.1195938587189,
+  "milestone": "M3",
+  "about": "one actuator disk at five heights over a ground plane against Cheeseman and Bennett (1955)",
+  "report_text": "# ground effect: one actuator disk, R 120 mm, T 2.72 N, 12 cells per radius\n  model:      T_g/T_inf = 1 / (1 - R^2/(16 Z^2)), and the induced-velocity form 1 - (R/4Z)^2 this grades against\n  reference:  Cheeseman, I.C. and Bennett, W.E. (1955), 'The effect of the ground on a helicopter rotor in forward flight', ARC R&M 3021, equation (2)\n  caveat:     Three things the usual quotation drops. The ratio is derived AT CONSTANT POWER. Z is the height of the rotor above the ground. The report states no numeric lower bound on Z/R -- only that small Z/R gives 'large errors' and is 'of no practical interest' -- and its one number is in the conclusions, that flight results agree for Z/R greater than 0.6; the Z/R >= 0.25 figure that circulates could not be traced to it. Sanchez-Cuevas, Heredia and Ollero (2017), Int. J. Aerospace Eng. 1823056, measured that a single small rotor follows Cheeseman and Bennett but a complete multirotor does not: the effect is much larger and reaches to about 5R rather than 2R, because of a fountain under the airframe. That is why the graded case here is ONE actuator disk and the quadrotor is a demo rather than a graded comparison\n  free air:   v 3.7029 m/s measured, 4.9969 m/s from momentum theory\n  subgrid:    ON (Cs = 0.12); tau_plus 0.50001, so this is an under-resolved large-eddy run\n  Z/R 0.75:  v/v_free 0.8975 against 0.8889 (+0.97%); the model's thrust ratio at constant power is 1.1250\n  Z/R    1:  v/v_free 0.9906 against 0.9375 (+5.66%); the model's thrust ratio at constant power is 1.0667\n  Z/R  1.5:  v/v_free 1.0472 against 0.9722 (+7.71%); the model's thrust ratio at constant power is 1.0286\n  Z/R    2:  v/v_free 1.0562 against 0.9844 (+7.30%); the model's thrust ratio at constant power is 1.0159\n  Z/R    3:  v/v_free 1.0308 against 0.9931 (+3.80%); the model's thrust ratio at constant power is 1.0070\n\n  PASS  induced velocity ratio at Z/R 0.75  0.897484   against 0.8889 +/- 10% (1 - (R/4Z)^2)\n  PASS  induced velocity ratio at Z/R 1     0.99057   against 0.9375 +/- 10% (1 - (R/4Z)^2)\n  PASS  induced velocity ratio at Z/R 1.5   1.04718   against 0.9722 +/- 10% (1 - (R/4Z)^2)\n  PASS  induced velocity ratio at Z/R 2     1.05621   against 0.9844 +/- 10% (1 - (R/4Z)^2)\n  PASS  induced velocity ratio at Z/R 3     1.03077   against 0.9931 +/- 10% (1 - (R/4Z)^2)\n        free-air induced velocity           3.70291   against 4.9969 m/s from momentum theory, T = 2 rho A v^2\n                                            (reported, not graded: an actuator disk of finite thickness on a lattice does not have to reproduce the inviscid momentum-theory value, and the graded quantity is a ratio in which it cancels)\n\n  5/5 graded checks passed\n  took 12 m 35 s\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z0.75.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z1.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z1.5.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z2.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z3.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect-z6.png\n  figure:     /tmp/tmplazb3a8r/live-ground-effect.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04"
+}

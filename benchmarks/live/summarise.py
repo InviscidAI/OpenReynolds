@@ -45,6 +45,7 @@ MILESTONE_OF = {
     "falling-sphere-windowed": "M2",
     "ground-effect": "M3", "quadrotor": "M3", "underwater": "M3",
     "smoke": "M0", "benchmark-soa": "M4", "benchmark-aos": "M4",
+    "hydrostatic": "M5", "dam-break": "M5", "sloshing": "M5",
 }
 
 

@@ -47,7 +47,7 @@ from typing import Any
 
 __all__ = [
     "available", "require", "LiveUnavailable",
-    "Domain", "FluidWorld", "Rotor",
+    "Domain", "FluidWorld", "FreeSurfaceWorld", "Rotor",
     "NewtonCoupling", "Scaling", "Fluid", "FLUIDS", "UnphysicalScaling",
     "HoverFluidEnv", "HoverFluidEnvCfg",
     "CASES", "run_case", "describe_cases",
@@ -55,6 +55,7 @@ __all__ = [
 
 _LAZY = {
     "Domain": ("world", "Domain"),
+    "FreeSurfaceWorld": ("freesurface", "FreeSurfaceWorld"),
     "FluidWorld": ("world", "FluidWorld"),
     "Rotor": ("world", "Rotor"),
     "LiveUnavailable": ("units", "LiveUnavailable"),

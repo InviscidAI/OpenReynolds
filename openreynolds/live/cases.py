@@ -221,6 +221,12 @@ REFERENCES: dict[str, dict[str, Any]] = {
 LAMINAR = frozenset({
     "poiseuille", "cavity", "cylinder", "sphere", "translating_sphere",
     "falling_sphere", "momentum", "smoke",
+    # The free-surface cases. Every one of them is gravity-driven and laminar at the
+    # Reynolds numbers a free surface can afford (`units.Scaling.for_froude` has the
+    # arithmetic: a few hundred, against tens of thousands for the real fluid), so a
+    # subgrid model has nothing to model and would only add viscosity to a run that
+    # already has more than it should.
+    "hydrostatic", "dam_break", "sloshing",
 })
 """The cases whose official numbers are measured with no subgrid model.
 
@@ -1595,7 +1601,12 @@ def run_falling_sphere(*, cells_per_d: int = 20, density_ratio: float = 2.0,
              f"({error:+.2%})",
              *link.report()[:2], *world.report()[-2:]]
     return _result("falling_sphere", checks, lines, drawn, terminal=measured,
-                   expected=terminal, reynolds=measured_re, error=error,
+                   # NOT `error=`: the runner and `tests/test_benchmark_live.py` use
+                   # that key for "this run raised", so a case that reports a numeric
+                   # error under it makes a passing run look like a crashed one. It did:
+                   # two recorded falling-sphere runs failed the suite with "did not
+                   # complete: -0.038", which was the terminal-velocity error.
+                   expected=terminal, reynolds=measured_re, velocity_error=error,
                    times=times, speeds=speeds)
 
 
@@ -2684,6 +2695,764 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
                    st_error=st_error)
 
 
+
+
+# ======================================================================================
+# M5: the free surface
+# ======================================================================================
+#
+# Three cases, and the choice of what each is graded against is the whole design.
+#
+# This repository has already decided, in `benchmarks/README.md`'s SPH dam-break row,
+# that **Martin and Moyce (1952) cannot be quoted here**: the paper could not be read,
+# the publisher refuses the request, and the two non-dimensionalisations in circulation
+# -- `t sqrt(g/a)` and `t sqrt(2g/a)` -- differ by a factor of 1.414 at every point. That
+# decision binds this family too. So the dam break is graded against **Ritter's (1892)
+# shallow-water solution**, which is a closed form that needs no paper, and the Martin
+# and Moyce comparison is reported in both conventions and graded in neither.
+#
+# The sloshing tank is graded against linear theory, `omega^2 = g k tanh(k h)`, which
+# the SPH family already uses and attributes to Lamb's *Hydrodynamics* 6th edition
+# article 228. Exact, and derivable from first principles in half a page.
+#
+# The hydrostatic case is graded against `p = rho g h`, which is exact and is the only
+# one of the three that tests the thing a floating body depends on: that the pressure
+# really does increase with depth, because that is what buoyancy is.
+
+
+_FREE_SURFACE_REFERENCES = {
+    "ritter": {
+        "source": (
+            "Ritter, A. (1892), 'Die Fortpflanzung der Wasserwellen', Zeitschrift des "
+            "Vereines Deutscher Ingenieure 36(33):947-954, as the standard shallow-water "
+            "dam-break solution"
+        ),
+        "read": (
+            "not read; the solution is re-derived rather than quoted -- it is the "
+            "characteristics solution of the shallow-water equations for a dry bed and "
+            "is three lines, which is why it is safe to use without the paper"
+        ),
+        "formula": "x_front(t) = 2 t sqrt(g h0),  on a dry horizontal bed",
+        "caveat": (
+            "**Inviscid, hydrostatic and dry-bed.** Ritter's front moves at exactly "
+            "2 sqrt(g h0) from the instant the dam goes, which no real dam break does: "
+            "a real front is slowed by bed friction and by the vertical acceleration the "
+            "shallow-water equations neglect, and measurements run 10-30% below Ritter "
+            "at late time. It is quoted here as an EARLY-TIME bound, over the first "
+            "half-height of travel, where the discrepancy is smallest, and the measured "
+            "front is reported against it rather than fitted to it. Ritter also assumes "
+            "the dam is removed instantaneously; a lattice removes it in one step, which "
+            "is the closest any method gets"
+        ),
+        "tolerance": 0.15,
+        "tolerance_is": (
+            "a grading choice, and a loose one on purpose: it brackets the gap between "
+            "an inviscid shallow-water front and a viscous three-dimensional one at the "
+            "Reynolds number a free-surface lattice can afford (see "
+            "`units.Scaling.for_froude`). A run outside 15% is not resolving the "
+            "collapse at all; a run inside it has not proved it is accurate"
+        ),
+    },
+    "linear_sloshing": {
+        "source": (
+            "linear water-wave theory: omega^2 = g k tanh(k h) with k = pi/L for the "
+            "first mode of a rectangular tank. Lamb, 'Hydrodynamics', 6th ed., art. 228, "
+            "which is the attribution benchmarks/sph/ already uses for the same formula"
+        ),
+        "read": "the formula is standard and is re-derived rather than quoted",
+        "formula": "omega^2 = g k tanh(k h),  k = pi / L,  period T = 2 pi / omega",
+        "caveat": (
+            "**Linear, so the amplitude has to be small.** The theory is the first term "
+            "of an expansion in wave steepness, and a 5%-of-depth initial displacement "
+            "is where benchmarks/sph/ puts it for the same reason. Larger amplitudes "
+            "lengthen the period (a real tank's first mode softens), so a measured "
+            "period above the linear one at large amplitude is physics and not error. "
+            "It is also inviscid: the measured oscillation decays and the linear period "
+            "does not, so the frequency is taken from the first few cycles"
+        ),
+        "tolerance": 0.05,
+        "tolerance_is": "5% on the first-mode period, measured over the first cycles",
+    },
+    "hydrostatic": {
+        "source": "p = rho g h, exact; no paper",
+        "read": "n/a",
+        "formula": "p(z) = rho g (h - z),  and the surface stays flat",
+        "caveat": (
+            "**Exact, and the one thing in this family that a floating body depends on.** "
+            "Archimedes is nothing but this pressure integrated over a hull, so a solver "
+            "that gets a draft right while getting this wrong is getting it right by "
+            "accident. The measured surface sits slightly BELOW the level it was filled "
+            "to, and that is not an error: the scheme is weakly compressible, so the "
+            "column compresses under its own weight. The deficit is `rho g h / (2 rho "
+            "c_s^2)` in physical units, which the case computes and checks the residual "
+            "against rather than absorbing into a tolerance"
+        ),
+        "tolerance": 0.02,
+        "tolerance_is": (
+            "2% on the mean surface height after the predicted compression is accounted "
+            "for, and on the flatness as a fraction of the depth"
+        ),
+    },
+}
+
+
+REFERENCES.update(_FREE_SURFACE_REFERENCES)
+"""The free surface's references, folded into the one dictionary the graders read.
+
+Kept as a separate literal above purely so the free-surface block reads as a unit; a
+second dictionary would be a second place for `_official` and `report` to forget to
+look."""
+
+
+def _free_surface_world(*, cells: int, size: Sequence[float], depth: float,
+                        faces: Any, collision: str, smagorinsky: float,
+                        device: str | None, tau: float = 0.53,
+                        gravity: float = 9.81, thin: int = 0):
+    """A `FreeSurfaceWorld` sized from a cell count and a tank, with the Froude scaling.
+
+    One helper for the three cases, so that "how a free-surface case is set up" is one
+    thing rather than three. `cells` counts across the LONGEST side, which is what
+    `Domain.spacing` means everywhere else in this file.
+    """
+    from .freesurface import FreeSurfaceWorld
+    from .world import Domain
+
+    # A zero in `size` means "thin": `thin` cells deep, periodic, so the case is the
+    # two-dimensional answer computed by the three-dimensional kernels. The cavity does
+    # the same thing and `run_cavity` has the argument for why it is exact.
+    size = list(size)
+    spanning = max(v for v in size if v > 0)
+    dx = spanning / cells
+    thinned = [index for index, v in enumerate(size) if v <= 0]
+    size = [v if v > 0 else max(int(thin), 1) * dx for v in size]
+    # **A thin direction has to be periodic (DECISIONS_LIVE.md D13).** A
+    # free-surface case asks for `faces="wall"` meaning "a closed tank", and that sets
+    # all six faces to no-slip -- including the two ends of a three-cell-wide slot, which
+    # then has wall friction on both sides of every cell and no throughflow at all. The
+    # sloshing tank did not slosh: a cosine first mode decayed monotonically from 2.00 mm
+    # to 0.03 mm without crossing zero, and converted 102,455 cells trying. The same
+    # tank with these two faces periodic oscillates, and its period brackets linear
+    # theory. So a `size` entry of zero means "thin", and thin means periodic, here,
+    # once, rather than in each case's face dictionary where one of them will forget.
+    if thinned:
+        names = ("-x", "+x", "-y", "+y", "-z", "+z")
+        faces = ({name: faces for name in names} if isinstance(faces, str)
+                 else dict(faces))
+        for index in thinned:
+            faces[("-x", "-y", "-z")[index]] = "periodic"
+            faces[("+x", "+y", "+z")[index]] = "periodic"
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=tuple(size), faces=faces)
+    scaling = Scaling.for_froude(dx, depth, "water", gravity=gravity, tau=tau,
+                                 scheme=collision, les=smagorinsky > 0)
+    world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
+                             substeps=1, collision=collision,
+                             smagorinsky=smagorinsky, device=device,
+                             gravity=(0.0, 0.0, -gravity))
+    return world, scaling
+
+
+def _free_surface_lines(world: Any, scaling: Scaling, length: float,
+                        gravity: float = 9.81) -> list[str]:
+    """The two numbers every free-surface report must carry, every time.
+
+    The Froude number, which is matched, and the Reynolds number, which is not -- and
+    by how much. `units.Scaling.nu_lattice_override` is the argument for why that pair
+    has to be printed rather than assumed, and this is the function that makes sure no
+    case forgets.
+    """
+    return [
+        f"  froude:     {scaling.froude(length, gravity):.4f} on {length:g} m, matched "
+        f"by construction",
+        f"  reynolds:   {scaling.reynolds_effective(length):.0f} achieved, against "
+        f"{scaling.reference_velocity * length / scaling.fluid.nu:.0f} for real water: "
+        f"this lattice runs {scaling.viscosity_ratio:.0f}x the fluid's viscosity, "
+        f"because a free surface's timestep is set by gravity and water's viscosity at "
+        f"that timestep is a tau of 0.50002",
+    ]
+
+
+def run_hydrostatic(*, cells: int = 32, depth_fraction: float = 0.6,
+                    height: float = 0.1, steps: int = 0, collision: str = "trt",
+                    smagorinsky: float = 0.0, device: str | None = None,
+                    out_dir: str | Path = ".",
+                    progress: Callable[[str], None] | None = None,
+                    **_: Any) -> dict[str, Any]:
+    """Still water in a closed tank: does it stay still, and does it weigh the right amount?
+
+    The first thing to ask of a free surface and the easiest to get wrong. Three graded
+    properties:
+
+    * the **volume** is the volume it was filled with, which tests that a partly filled
+      interface cell counts as its fraction and not as a whole cell or as nothing;
+    * the surface stays **flat**, which tests that the atmospheric reconstruction does
+      not push the surface around;
+    * the **mass drift** is nothing, over as long a run as the case is given.
+
+    And the surface height is checked against a prediction rather than against the level
+    it was filled to, because those differ and the difference is physics. The scheme is
+    weakly compressible, so a column of water compresses under its own weight: the
+    density at the bottom is higher by `rho g h / c_s^2`, the mean by half that, and the
+    same mass therefore occupies a column shorter by `h rho g h / (2 rho c_s^2)`. On the
+    first run of this case that predicted 0.245% and the measurement was 0.26%.
+    """
+    import warp  # noqa: F401
+
+    gravity = 9.81
+    depth = depth_fraction * height
+    world, scaling = _free_surface_world(
+        cells=cells, size=(height * 0.5, height * 0.5, height), depth=depth,
+        faces="wall", collision=collision, smagorinsky=smagorinsky, device=device,
+        gravity=gravity)  # fully three-dimensional: a still tank has nothing to thin
+    world.initialise_free_surface(level=depth)
+
+    exact_volume = world.domain.size[0] * world.domain.size[1] * depth
+    start_volume = world.water_volume()
+    total = int(steps if steps else 5000)
+    heights: list[tuple[float, float, float]] = []
+
+    def take(index: int) -> None:
+        surface = world.surface_height()
+        heights.append((world.steps * scaling.dt, float(np.nanmean(surface)),
+                        float(np.nanstd(surface))))
+
+    _advance(world, total, sample_every=max(1, total // 120), sample=take,
+             progress=progress)
+
+    surface = world.surface_height()
+    mean_height = float(np.nanmean(surface))
+    flatness = float(np.nanstd(surface))
+    drift = world.mass_drift()
+    bad_neighbours = world.fluid_touching_gas()
+    # The hydrostatic gradient, fitted over the fluid cells rather than taken from two
+    # of them: a two-point slope on a field that is still ringing acoustically is mostly
+    # the ringing.
+    node_z, density = world.density_profile()
+    usable = np.isfinite(density)
+    slope = (float(np.polyfit(node_z[usable], density[usable], 1)[0])
+             if usable.sum() > 3 else float("nan"))
+
+    # The compressible deficit, predicted rather than fitted. c_s in physical units is
+    # the lattice speed of sound carried into metres per second by the scaling.
+    sound = CS * scaling.dx / scaling.dt
+    exact_slope = -world.fluid.rho * gravity / (sound * sound)
+    compression = gravity * depth / (2.0 * sound * sound)
+    predicted = depth * (1.0 - compression)
+    limit = FREE_SURFACE_REFERENCES["hydrostatic"]["tolerance"]
+    height_error = (mean_height - predicted) / depth
+
+    checks = [
+        Check("water volume at the start", start_volume * 1e6,
+              f"{exact_volume * 1e6:.4f} mL +/- {limit:.0%}",
+              abs(start_volume / exact_volume - 1.0) <= limit,
+              "a partly filled interface cell has to count as its fraction; counting it "
+              "as a whole cell or as none is a whole cell of error on every surface"),
+        Check("surface height against the compressible prediction", mean_height * 1e3,
+              f"{predicted * 1e3:.4f} mm +/- {limit:.0%} of the depth "
+              f"(filled to {depth * 1e3:.2f} mm, less {compression:.3%} compression)",
+              abs(height_error) <= limit),
+        Check("surface flatness", flatness / depth,
+              f"<= {limit:.0%} of the depth", flatness / depth <= limit,
+              "the standard deviation of the free surface over the tank; still water "
+              "that is not flat is the atmospheric reconstruction pushing on it"),
+        Check("hydrostatic pressure gradient", slope / exact_slope,
+              f"1.0 +/- 10% ({exact_slope:+.4f} kg/m4 exact)",
+              abs(slope / exact_slope - 1.0) <= 0.10,
+              "d(rho)/dz against `-rho g / c_s^2`, fitted over the fluid cells. **The "
+              "most important number in this case**: pressure rising with depth at the "
+              "right rate is what buoyancy IS, so a solver that gets a draft right "
+              "while getting this wrong gets it right by accident. It rings acoustically "
+              "for the first few hundred steps and settles; at 600 steps it read 0.94x "
+              "and by 5,000 it reads 0.995x"),
+        Check("fluid cells touching gas cells", bad_neighbours, "exactly 0",
+              bad_neighbours == 0,
+              "the invariant the whole algorithm rests on: the interface is a closed "
+              "layer one cell thick, and a hole in it means the cells around it stream "
+              "in populations nothing ever wrote. A tank filled to a level that lands "
+              "on a cell boundary used to produce exactly that, with no interface cells "
+              "at all and a free surface that could not move"),
+        Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
+              abs(drift["drift"]) <= 1e-3,
+              f"over {total:,} steps and {drift['conversions']:,} cell conversions"),
+        Check("lattice finite", world.stable(), "True", world.stable()),
+        Check("predicted compression", f"{compression:.4%}",
+              "reported, not graded", None,
+              "rho g h / (2 rho c_s^2) with c_s the lattice speed of sound in physical "
+              f"units, {sound:.2f} m/s here"),
+    ]
+    out = Path(out_dir)
+    drawn = [
+        figures.slice_figure(world, out / "live-hydrostatic.png", axis=1,
+                             title=f"still tank, {cells} cells, surface "
+                                   f"{mean_height * 1e3:.3f} mm"),
+        figures.profile_figure(
+            out / "live-hydrostatic-pressure.png",
+            [{"x": density[usable], "y": node_z[usable] * 1e3,
+              "label": "measured density", "style": "o"},
+             {"x": [world.fluid.rho + exact_slope * (z - node_z[usable][-1])
+                    for z in node_z[usable]], "y": node_z[usable] * 1e3,
+              "label": "rho_0 - rho g z / c_s^2"}],
+            title=f"hydrostatic: slope {slope / exact_slope:.4f} of exact",
+            xlabel="density (kg/m3)", ylabel="height (mm)"),
+        figures.profile_figure(
+            out / "live-hydrostatic-surface.png",
+            [{"x": [h[0] for h in heights], "y": [h[1] * 1e3 for h in heights],
+              "label": "mean surface height (mm)"},
+             {"x": [heights[0][0], heights[-1][0]] if heights else [0, 1],
+              "y": [predicted * 1e3] * 2, "label": "compressible prediction",
+              "style": "--"}],
+            title=f"still water: drift {drift['drift']:+.2e}, flatness "
+                  f"{flatness * 1e3:.4f} mm",
+            xlabel="t (s)", ylabel="mm"),
+    ]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# hydrostatic: {depth * 1e3:g} mm of water in a {height * 1e3:g} mm "
+             f"tank, {cells} cells",
+             *scaling.report(),
+             *_free_surface_lines(world, scaling, depth, gravity),
+             *_official("hydrostatic", scaling, smagorinsky),
+             f"  volume:     {start_volume * 1e6:.4f} mL against an exact "
+             f"{exact_volume * 1e6:.4f} mL",
+             f"  surface:    {mean_height * 1e3:.4f} mm against a predicted "
+             f"{predicted * 1e3:.4f} ({height_error:+.3%} of the depth), flat to "
+             f"{flatness * 1e3:.4f} mm",
+             f"  pressure:   d(rho)/dz {slope:+.4f} against an exact "
+             f"{exact_slope:+.4f} kg/m4 ({slope / exact_slope:.4f}x)",
+             f"  interface:  {bad_neighbours} fluid cells touching gas (must be 0)",
+             *world.report()[-3:]]
+    return _result("hydrostatic", checks, lines, drawn, volume=start_volume,
+                   surface=mean_height, flatness=flatness, drift=drift,
+                   gradient_ratio=slope / exact_slope if exact_slope else float("nan"))
+
+
+
+
+def _front_position(world: Any, threshold_cells: float = 0.5) -> float:
+    """The furthest x a front of water has reached, in metres, by a depth threshold.
+
+    **The threshold is the measurement's weak point and is reported, not hidden.**
+    Ritter's front is a tongue that thins to zero depth, so "where the front is" depends
+    on how little water still counts as water: the exact solution has no leading edge at
+    all. Half a cell of depth is the choice here -- the smallest amount a lattice can
+    represent without it being a single interface cell's rounding -- and the case reports
+    the front at a quarter, a half and one full cell so the sensitivity is on the page
+    rather than in a footnote.
+
+    Returns the far edge of the furthest wet column, not its centre: the front is an
+    edge, and a cell that holds water is wet all the way across.
+    """
+    depth = world.surface_height(axis=2)
+    wet = np.nan_to_num(depth.mean(axis=1)) > threshold_cells * world.dx
+    if not wet.any():
+        return float("nan")
+    last = int(np.flatnonzero(wet)[-1])
+    return float(world.domain.origin[0] + (last + 1) * world.dx)
+
+
+def run_dam_break(*, cells: int = 325, height: float = 0.05, reservoir: float = 4.0,
+                  tank: float = 0.0,
+                  collision: str = "trt", smagorinsky: float = 0.0,
+                  device: str | None = None, out_dir: str | Path = ".",
+                  steps: int = 0, gif: bool = True,
+                  progress: Callable[[str], None] | None = None,
+                  **_: Any) -> dict[str, Any]:
+    """A column of water collapses: the surge front against Ritter's shallow-water speed.
+
+    A column of water `height` deep and `reservoir * height` wide, released at `t = 0`
+    on a dry horizontal bed. Quasi-two-dimensional, three planes periodic in the thin
+    direction, for the same reason the cavity is.
+
+    **The reservoir is four depths wide and that is a measurement, not a preference.** A
+    square column was tried first and cannot be graded against Ritter at all. Ritter is
+    the shallow-water solution, so it needs the hydrostatic assumption to hold, and a
+    column as tall as it is wide violates it for the first couple of time scales while
+    the collapse is still vertically accelerating -- measured, the depth at the dam ran
+    2.07 times Ritter's at `T = 0.5` and settled to 1.08 by `T = 2`. But the depression
+    wave reaches the back wall at `T = a/h0` and returns to the dam at `T = 2 a/h0`, so
+    for a square column Ritter expires at `T = 2` -- exactly when the agreement arrives,
+    which makes the agreement worthless. Four depths of reservoir buys a valid window of
+    `T` in [2, 8] and the case grades inside it.
+
+    **Graded on the depth profile, not on the front position** (DECISIONS_LIVE.md D14).
+    Ritter's front is a
+    tongue that thins to zero depth, so where it is depends entirely on how little water
+    still counts as water -- and the profile is what has physical content. Two numbers:
+    the depth at the dam, which Ritter fixes at exactly `4 h0 / 9` for as long as the
+    solution holds, and the RMS of the whole profile where Ritter is thicker than two
+    cells. The front is reported at three thresholds so its spread is visible.
+
+    **Graded against Ritter (1892), not against Martin and Moyce.** This repository's own
+    `benchmarks/README.md` already records, for the SPH dam break, that the Martin and
+    Moyce paper could not be read -- the publisher refuses the request -- and that its two
+    non-dimensionalisations, `t sqrt(g/a)` and `t sqrt(2g/a)`, differ by 1.414 at every
+    point. Quoting a number through a secondary source is the error this repository
+    argues hardest against, so the addendum's "dam break vs Martin & Moyce (1952)" is
+    answered the only honest way available: the comparison is **computed and printed in
+    both conventions** and **graded in neither**, and what is graded is a closed form
+    that needs no paper.
+
+    Ritter's front advances at `2 sqrt(g h0)` from the instant the dam goes. The measured
+    front speed is fitted over the window where that is defensible -- after the start-up
+    transient and before the depression wave has reflected off the back wall and reached
+    the front again -- and `REFERENCES` has the caveat about why an inviscid
+    hydrostatic front is an upper bound on a real one.
+    """
+    import warp  # noqa: F401
+
+    gravity = 9.81
+    thin = 3
+    dam = reservoir * height
+    # Long enough that the front has not reached the far wall by the end of the graded
+    # window: Ritter's front is at `2 T h0` past the dam, so `T = 4` needs eight depths.
+    length = tank if tank > 0 else dam + 9.0 * height
+    world, scaling = _free_surface_world(
+        cells=cells, size=(length, 0.0, 2.0 * height), depth=height, faces="wall",
+        collision=collision, smagorinsky=smagorinsky, device=device, gravity=gravity,
+        thin=thin)
+    world.initialise_column((0.0, -1.0, 0.0), (dam, 1.0, height))
+
+    celerity = math.sqrt(gravity * height)
+    time_scale = math.sqrt(height / gravity)
+    graded_from, graded_to = 2.0, 4.0
+    total = int(steps if steps else math.ceil(graded_to * time_scale / scaling.dt))
+    node_x = world.node_coordinates(0) - dam        # measured from the dam
+    exact_at_dam = 4.0 * height / 9.0
+    samples: list[tuple[float, float, float]] = []
+    track: list[tuple[float, float, float, float]] = []
+    frames: list[Any] = []
+    out = Path(out_dir)
+
+    def ritter(elapsed: float) -> np.ndarray:
+        """Ritter's depth profile at time `elapsed`, on this lattice's x nodes.
+
+        `h = (2 sqrt(g h0) - x/t)^2 / (9 g)` between the upstream edge of the depression
+        wave at `x = -c0 t` and the front at `x = 2 c0 t`, undisturbed upstream of it and
+        dry beyond. Re-derived rather than quoted: it is the characteristics solution of
+        the shallow-water equations on a dry bed, which is why it is safe to use without
+        the 1892 paper.
+        """
+        if elapsed <= 0:
+            return np.where(node_x <= 0.0, height, 0.0)
+        inside = (node_x >= -celerity * elapsed) & (node_x <= 2.0 * celerity * elapsed)
+        wave = (2.0 * celerity - node_x / elapsed) ** 2 / (9.0 * gravity)
+        return np.where(inside, wave,
+                        np.where(node_x < -celerity * elapsed, height, 0.0))
+
+    def take(index: int) -> None:
+        elapsed = world.steps * scaling.dt
+        track.append((elapsed, _front_position(world, 0.25),
+                      _front_position(world, 0.5), _front_position(world, 1.0)))
+        depth = np.nan_to_num(world.surface_height(axis=2).mean(axis=1))
+        exact = ritter(elapsed)
+        usable = exact > 2.0 * world.dx
+        if usable.sum() > 4 and elapsed >= graded_from * time_scale:
+            samples.append((
+                elapsed / time_scale,
+                float(np.interp(0.0, node_x, depth)),
+                float(np.sqrt(((depth[usable] - exact[usable]) ** 2).mean()))))
+        if gif and len(frames) < 60:
+            frames.append(figures.slice_frame(world, axis=1))
+
+    _advance(world, total, sample_every=max(1, total // 80), sample=take,
+             progress=progress)
+
+    times = np.array([row[0] for row in track])
+    fronts = np.array([row[2] for row in track])
+    dimensionless_t = times / time_scale
+    dimensionless_x = (fronts - dam) / height
+    window = (dimensionless_t >= graded_from) & (dimensionless_t <= graded_to) & np.isfinite(
+        dimensionless_x)
+    if window.sum() >= 3:
+        measured_slope = float(np.polyfit(dimensionless_t[window],
+                                          dimensionless_x[window], 1)[0])
+    else:
+        measured_slope = float("nan")
+    at_dam = float(np.mean([row[1] for row in samples])) if samples else float("nan")
+    profile_rms = float(np.mean([row[2] for row in samples])) if samples else float("nan")
+    limit = REFERENCES["ritter"]["tolerance"]
+    drift = world.mass_drift()
+
+    # The Martin and Moyce comparison, computed in both conventions and graded in
+    # neither, for the reason in this function's docstring.
+    both = {
+        "T = t sqrt(g/a)": float(dimensionless_t[-1]) if len(dimensionless_t) else
+        float("nan"),
+        "T = t sqrt(2g/a)": float(dimensionless_t[-1] * math.sqrt(2.0))
+        if len(dimensionless_t) else float("nan"),
+    }
+
+    checks = [
+        Check("depth at the dam against Ritter's 4 h0 / 9", at_dam * 1e3,
+              f"{exact_at_dam * 1e3:.4f} mm +/- {limit:.0%}",
+              abs(at_dam / exact_at_dam - 1.0) <= limit
+              if np.isfinite(at_dam) else False,
+              f"Ritter fixes the depth at the dam at exactly `4 h0 / 9` for as long as "
+              f"the solution holds, independent of time -- which makes it the one number "
+              f"in a dam break that needs no threshold and no fit. Averaged over T in "
+              f"[{graded_from:g}, {graded_to:g}], the window where the shallow-water "
+              f"assumption holds and the back wall has not answered yet"),
+        Check("depth profile against Ritter, RMS", profile_rms / height,
+              f"<= {limit:.0%} of h0",
+              profile_rms / height <= limit if np.isfinite(profile_rms) else False,
+              "over the cells where Ritter's own depth exceeds two lattice cells, so "
+              "that the comparison is not dominated by the vanishing tongue near the "
+              "front, where Ritter tends to zero and no lattice can follow it"),
+        Check("front speed against Ritter, dX/dT", measured_slope,
+              "2.0, reported, not graded", None,
+              f"`x_front = 2 t sqrt(g h0)`, fitted over T in [{graded_from:g}, "
+              f"{graded_to:g}]. Not graded because Ritter's front has zero depth: the "
+              f"measured front is wherever the depth threshold is put, and the three "
+              f"thresholds below show how much that moves it"),
+        Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
+              abs(drift["drift"]) <= 1e-3,
+              f"over {total:,} steps and {drift['conversions']:,} conversions, while the "
+              f"surface is moving fast -- which is the case mass conservation is worth "
+              f"testing on"),
+        Check("fluid cells touching gas cells", world.fluid_touching_gas(), "exactly 0",
+              world.fluid_touching_gas() == 0),
+        Check("lattice finite", world.stable(), "True", world.stable()),
+        Check("front at a quarter, a half and one cell of depth",
+              f"{track[-1][1]:.4f} / {track[-1][2]:.4f} / {track[-1][3]:.4f} m"
+              if track else "n/a", "reported, not graded", None,
+              "how much the measured front moves with the depth threshold that defines "
+              "it. Ritter's front thins to zero depth, so this spread is the honest "
+              "width of the measurement"),
+        Check("non-dimensional time at the end of the run", both,
+              "reported, not graded", None,
+              "both of the conventions in circulation for Martin and Moyce (1952), "
+              "because the paper could not be read and they differ by 1.414. "
+              "benchmarks/README.md records the same refusal for the SPH dam break"),
+        Check("unplaceable mass", drift["unplaceable"], "reported, not graded", None,
+              "excess mass from a converting cell with no interface neighbour -- a "
+              "tearing film or a one-cell droplet. A collapsing column makes some, and "
+              "counting it is the only way the drift above means anything"),
+    ]
+    drawn = [
+        figures.slice_figure(world, out / "live-dam-break.png", axis=1,
+                             title=f"dam break at T = {dimensionless_t[-1]:.2f}, "
+                                   f"{cells} cells"),
+        figures.profile_figure(
+            out / "live-dam-break-front.png",
+            [{"x": dimensionless_t.tolist(), "y": dimensionless_x.tolist(),
+              "label": "measured front (half a cell of depth)", "style": "o"},
+             {"x": [0.0, float(dimensionless_t.max()) if len(dimensionless_t) else 2.0],
+              "y": [0.0, 2.0 * (float(dimensionless_t.max())
+                                if len(dimensionless_t) else 2.0)],
+              "label": "Ritter, X = 2T", "style": "--"}],
+            title=f"dam break: dX/dT {measured_slope:.3f} against Ritter's 2.0",
+            xlabel="T = t sqrt(g/h0)", ylabel="X = (x_front - a) / h0"),
+    ]
+    if gif and frames:
+        drawn.append(figures.animate(frames, out / "live-dam-break.gif", fps=12))
+    for figure in drawn:
+        if str(figure).endswith(".png"):
+            figures.ensure_rgb(figure)
+    lines = [f"# dam break: {height * 1e3:g} mm deep, {reservoir:g} deep wide, in a "
+             f"{length * 1e3:g} mm tank, {cells} cells",
+             *scaling.report(),
+             *_free_surface_lines(world, scaling, height, gravity),
+             *_official("dam_break", scaling, smagorinsky),
+             f"  celerity:   sqrt(g h0) = {celerity:.4f} m/s, so Ritter's front runs at "
+             f"{2 * celerity:.4f} m/s",
+             f"  measured:   h(dam) {at_dam * 1e3:.4f} mm against {exact_at_dam * 1e3:.4f} "
+             f"({at_dam / exact_at_dam:.4f}x), profile RMS {profile_rms / height:.3%} "
+             f"of h0, dX/dT {measured_slope:.4f} against 2.0",
+             f"  window:     graded over T in [{graded_from:g}, {graded_to:g}]; the "
+             f"reservoir is {reservoir:g} depths so the reflection reaches the dam at "
+             f"T = {2 * reservoir:g}",
+             f"  reference:  {REFERENCES['ritter']['source']}",
+             f"  caveat:     {REFERENCES['ritter']['caveat']}",
+             *world.report()[-3:]]
+    return _result("dam_break", checks, lines, drawn, slope=measured_slope,
+                   at_dam=at_dam, exact_at_dam=exact_at_dam, profile_rms=profile_rms,
+                   celerity=celerity, drift=drift,
+                   track=[list(row) for row in track])
+
+
+def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
+                 amplitude: float = 0.002, periods: float = 4.0, collision: str = "trt",
+                 smagorinsky: float = 0.0, device: str | None = None,
+                 out_dir: str | Path = ".", steps: int = 0,
+                 progress: Callable[[str], None] | None = None,
+                 **_: Any) -> dict[str, Any]:
+    """A tilted tank is released: the first-mode period against linear wave theory.
+
+    `omega^2 = g k tanh(k h)` with `k = pi / L`, which is exact for small amplitudes and
+    is the formula `benchmarks/sph/` already uses for the same measurement, attributed
+    to Lamb's *Hydrodynamics* 6th edition article 228.
+
+    The initial condition is `amplitude cos(pi x / L)` released from rest: the first
+    natural mode itself, which has zero slope at both walls the way the wall boundary
+    condition wants. A linear tilt was tried first, because tilting a tank and letting
+    go is how the experiment is done, and it is the wrong thing to release here -- a ramp
+    has a constant slope that fights the walls and excites the odd modes together, and
+    the trace is their beat rather than a period.
+
+    The period is taken from an FFT of the elevation at one wall and cross-checked
+    against zero crossings, and **both numbers are reported** because they fail
+    differently: the two bracketed linear theory at 363 ms and 487 ms against 417 ms on
+    the first run that worked, which is the honest width of this measurement at this
+    resolution.
+
+    `amplitude` is 2 mm on a 30 mm depth by default, which is 6.7% of it. Linear theory
+    is a small-amplitude expansion and a larger amplitude lengthens the period -- a real
+    tank's first mode softens -- so a measured period above the linear one at large
+    amplitude is physics rather than error. `REFERENCES` has it.
+    """
+    import warp  # noqa: F401
+
+    gravity = 9.81
+    thin = 3
+    world, scaling = _free_surface_world(
+        cells=cells, size=(length, 0.0, 3.0 * depth), depth=depth, faces="wall",
+        collision=collision, smagorinsky=smagorinsky, device=device, gravity=gravity,
+        thin=thin)
+    world.initialise_free_surface(level=depth, amplitude=amplitude, mode=1.0,
+                                  along_axis=0)
+
+    wavenumber = math.pi / length
+    omega = math.sqrt(gravity * wavenumber * math.tanh(wavenumber * depth))
+    period = 2.0 * math.pi / omega
+    total = int(steps if steps else math.ceil(periods * period / scaling.dt))
+
+    trace: list[tuple[float, float]] = []
+
+    def take(index: int) -> None:
+        surface = world.surface_height(axis=2)
+        column = np.nan_to_num(surface.mean(axis=1))
+        trace.append((world.steps * scaling.dt, float(column[0] - depth)))
+
+    # Sample often enough to resolve the period: at least 40 points a cycle, which an
+    # FFT needs far more than Nyquist to put a peak in the right bin.
+    every = max(1, int(period / scaling.dt / 60))
+    _advance(world, total, sample_every=every, sample=take, progress=progress)
+
+    times = np.array([row[0] for row in trace])
+    elevation = np.array([row[1] for row in trace])
+    measured_period, how = _period_of(times, elevation)
+    crossings_period, _ = _period_of(times, elevation, method="crossings")
+    limit = REFERENCES["linear_sloshing"]["tolerance"]
+    drift = world.mass_drift()
+
+    checks = [
+        Check("first-mode period", measured_period,
+              f"{period:.5f} s +/- {limit:.0%}",
+              abs(measured_period / period - 1.0) <= limit
+              if np.isfinite(measured_period) else False,
+              f"`omega^2 = g k tanh(k h)`, k = pi/L = {wavenumber:.4f} 1/m, "
+              f"kh = {wavenumber * depth:.4f}, from an FFT of the elevation at the "
+              f"-x wall ({how})"),
+        Check("the same period from zero crossings", crossings_period,
+              f"{period:.5f} s, reported as a cross-check", None,
+              "a second estimator on the same trace. An FFT puts the peak in a bin and "
+              "a zero crossing does not, so two numbers that agree are worth more than "
+              "either alone; they disagree when the oscillation is decaying fast"),
+        Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
+              abs(drift["drift"]) <= 1e-3,
+              f"over {total:,} steps and {drift['conversions']:,} conversions"),
+        Check("fluid cells touching gas cells", world.fluid_touching_gas(), "exactly 0",
+              world.fluid_touching_gas() == 0),
+        Check("lattice finite", world.stable(), "True", world.stable()),
+        Check("wave steepness", amplitude / depth,
+              "reported, not graded", None,
+              f"the initial elevation at the wall as a fraction of the depth "
+              f"({amplitude * 1e3:.2f} mm on {depth * 1e3:g} mm). Linear theory is the "
+              f"first term of an expansion in this, and a larger one lengthens the "
+              f"measured period rather than spoiling it"),
+    ]
+    out = Path(out_dir)
+    drawn = [
+        figures.profile_figure(
+            out / "live-sloshing.png",
+            [{"x": times.tolist(), "y": (elevation * 1e3).tolist(),
+              "label": "elevation at the -x wall (mm)"},
+             {"x": times.tolist(),
+              "y": (amplitude * 1e3 * np.cos(2 * math.pi * times / period)).tolist(),
+              "label": f"linear theory, T = {period * 1e3:.1f} ms", "style": "--"}],
+            title=f"sloshing: measured {measured_period * 1e3:.2f} ms against "
+                  f"{period * 1e3:.2f} ms",
+            xlabel="t (s)", ylabel="mm"),
+        figures.slice_figure(world, out / "live-sloshing-field.png", axis=1,
+                             title=f"sloshing tank, {cells} cells, t = "
+                                   f"{times[-1] if len(times) else 0:.3f} s"),
+    ]
+    for figure in drawn:
+        figures.ensure_rgb(figure)
+    lines = [f"# sloshing: {depth * 1e3:g} mm of water in a {length * 1e3:g} mm tank, "
+             f"{cells} cells, first mode at {amplitude * 1e3:g} mm",
+             *scaling.report(),
+             *_free_surface_lines(world, scaling, depth, gravity),
+             *_official("sloshing", scaling, smagorinsky),
+             f"  theory:     k = pi/L = {wavenumber:.4f} 1/m, kh = "
+             f"{wavenumber * depth:.4f}, omega = {omega:.4f} rad/s, T = "
+             f"{period * 1e3:.3f} ms",
+             f"  measured:   {measured_period * 1e3:.3f} ms by FFT "
+             f"({measured_period / period:.4f}x), {crossings_period * 1e3:.3f} ms by "
+             f"zero crossings",
+             f"  reference:  {REFERENCES['linear_sloshing']['source']}",
+             *world.report()[-3:]]
+    return _result("sloshing", checks, lines, drawn, period=measured_period,
+                   theory=period, crossings=crossings_period, drift=drift,
+                   trace=[list(row) for row in trace])
+
+
+def _period_of(times: np.ndarray, signal: np.ndarray,
+               method: str = "fft") -> tuple[float, str]:
+    """The dominant period of a sampled oscillation, by FFT or by zero crossings.
+
+    Two estimators because they fail differently and the cases report both. An FFT is
+    robust to noise and quantises the answer into a bin whose width is `1 / T_total`;
+    zero crossings are exact in time but are pulled around by any drift in the mean and
+    by the higher modes a tilt excites. Agreement between them is the evidence that
+    either is right.
+
+    `figures.strouhal` does this for a vortex street and is not reused here: it returns a
+    frequency non-dimensionalised by a diameter and a free-stream speed, neither of which
+    a sloshing tank has.
+    """
+    if len(times) < 8:
+        return float("nan"), "too few samples"
+    centred = np.asarray(signal, dtype=float)
+    centred = centred - centred.mean()
+    span = float(times[-1] - times[0])
+    if method == "crossings":
+        sign = np.signbit(centred)
+        changes = np.flatnonzero(sign[:-1] != sign[1:])
+        if len(changes) < 3:
+            return float("nan"), "fewer than three zero crossings"
+        # Interpolate each crossing, then take twice the mean gap: a full period is two.
+        moments = []
+        for index in changes:
+            a, b = centred[index], centred[index + 1]
+            if a == b:
+                continue
+            fraction = a / (a - b)
+            moments.append(times[index] + fraction * (times[index + 1] - times[index]))
+        if len(moments) < 3:
+            return float("nan"), "fewer than three usable crossings"
+        return float(2.0 * np.mean(np.diff(moments))), f"{len(moments)} crossings"
+    sampling = span / (len(times) - 1)
+    spectrum = np.abs(np.fft.rfft(centred * np.hanning(len(centred))))
+    frequencies = np.fft.rfftfreq(len(centred), d=sampling)
+    spectrum[0] = 0.0
+    peak = int(np.argmax(spectrum))
+    if peak == 0 or frequencies[peak] <= 0:
+        return float("nan"), "no spectral peak"
+    # Parabolic interpolation on the log spectrum, so the answer is not quantised to the
+    # bin width -- which is `1/span` and would be 25% of the period over four cycles.
+    if 0 < peak < len(spectrum) - 1:
+        left, middle, right = (math.log(max(spectrum[peak + offset], 1e-30))
+                               for offset in (-1, 0, 1))
+        shift = 0.5 * (left - right) / (left - 2 * middle + right)
+        shift = max(-0.5, min(0.5, shift))
+    else:
+        shift = 0.0
+    frequency = (peak + shift) / (len(centred) * sampling)
+    return (1.0 / frequency if frequency > 0 else float("nan"),
+            f"FFT peak at bin {peak} + {shift:+.2f}, {span / (1.0 / frequency):.1f} "
+            f"cycles sampled")
+
+
 # -- the catalogue ----------------------------------------------------------------------
 
 
@@ -2731,6 +3500,19 @@ CASES: dict[str, Case] = {
         "quadrotor", "a quadrotor hovering on four actuator disks, Newton-coupled, with "
         "ground and wall effects; graded for bookkeeping and stability",
         run_quadrotor, {}, milestone="M3", needs_newton=True, heavy=True),
+    "hydrostatic": Case(
+        "hydrostatic", "still water in a closed tank: the volume it was filled with, a "
+        "flat surface, and no mass drift. The free surface's first check",
+        run_hydrostatic, {"cells": 32}, milestone="M5"),
+    "dam_break": Case(
+        "dam_break", "a column of water collapses on a dry bed: the surge front against "
+        "Ritter's shallow-water speed, with Martin and Moyce reported in both "
+        "conventions and graded in neither",
+        run_dam_break, {"cells": 325}, milestone="M5"),
+    "sloshing": Case(
+        "sloshing", "a tilted tank is released: the first-mode period against "
+        "`omega^2 = g k tanh(k h)`",
+        run_sloshing, {"cells": 120}, milestone="M5"),
     "underwater": Case(
         "underwater", "a towed capsule in water, graded at zero length against the "
         "sphere it reduces to", run_underwater, {}, milestone="M3", heavy=True),

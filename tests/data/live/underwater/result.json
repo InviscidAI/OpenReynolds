@@ -1,0 +1,51 @@
+{
+  "case": "underwater",
+  "passed": true,
+  "checks": [
+    {
+      "name": "Cd of the zero-length capsule, which is a sphere",
+      "measured": 1.1034799134410274,
+      "target": "1.0917 +/- 5% (Schiller-Naumann)",
+      "passed": true,
+      "note": "the same code path as the elongated hull, on a shape with a known answer"
+    },
+    {
+      "name": "Cd of the fineness-4 hull",
+      "measured": 1.7993062094466816,
+      "target": "reported, not graded",
+      "passed": null,
+      "note": "no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against; it should be below the sphere's, and it is by -63.1%"
+    }
+  ],
+  "report": [
+    "# underwater body: a towed capsule at Re 100, 20 cells per diameter",
+    "  graded:     subgrid model ON (Cs = 0): this case is a rotor flow at a Reynolds number no affordable lattice resolves, so the answer away from a wall is the model's",
+    "  sphere:     Cd 1.1035 against Schiller-Naumann 1.0917 (+1.08%)",
+    "  hull:       Cd 1.7993 at fineness 4, -63.1% below the sphere"
+  ],
+  "figures": [
+    "live-underwater-f1.png",
+    "live-underwater-f4.png"
+  ],
+  "rows": [
+    {
+      "fineness": 1.0,
+      "cd": 1.1034799134410274,
+      "nodes": 27648000,
+      "steps": 36000
+    },
+    {
+      "fineness": 4.0,
+      "cd": 1.7993062094466816,
+      "nodes": 27648000,
+      "steps": 36000
+    }
+  ],
+  "seconds": 1556.2239608764648,
+  "milestone": "M3",
+  "about": "a towed capsule in water, graded at zero length against the sphere it reduces to",
+  "report_text": "# underwater body: a towed capsule at Re 100, 20 cells per diameter\n  graded:     subgrid model ON (Cs = 0): this case is a rotor flow at a Reynolds number no affordable lattice resolves, so the answer away from a wall is the model's\n  sphere:     Cd 1.1035 against Schiller-Naumann 1.0917 (+1.08%)\n  hull:       Cd 1.7993 at fineness 4, -63.1% below the sphere\n\n  PASS  Cd of the zero-length capsule, which is a sphere  1.10348   against 1.0917 +/- 5% (Schiller-Naumann)\n                                                          (the same code path as the elongated hull, on a shape with a known answer)\n        Cd of the fineness-4 hull                         1.79931   against reported, not graded\n                                                          (no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against; it should be below the sphere's, and it is by -63.1%)\n\n  1/1 graded checks passed\n  took 25 m 56 s\n  figure:     /tmp/tmp63y_qlow/live-underwater-f1.png\n  figure:     /tmp/tmp63y_qlow/live-underwater-f4.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04"
+}

@@ -349,6 +349,28 @@ SHAPE_NAMES = {
 future Newton release changes one dictionary there and nothing here. Newton's integers
 are not part of its documented API and this file should not depend on them."""
 
+CELL_GAS = 0
+CELL_INTERFACE = 1
+CELL_FLUID = 2
+CELL_SOLID = 3
+CELL_NAMES = {CELL_GAS: "gas", CELL_INTERFACE: "interface", CELL_FLUID: "fluid",
+              CELL_SOLID: "solid"}
+"""Free-surface cell types (`freesurface.py`; Korner et al. 2005).
+
+Here rather than in `freesurface.py` (DECISIONS_LIVE.md D11) because `collide` and `stream` read them: a single
+-phase run passes `use_flags = 0` and never looks, and a free-surface run passes the
+flag field and the same two kernels serve both. One implementation of the collision and
+one of the streaming is worth more than the two parameters it costs -- a second copy is
+a second thing to fix when the first is wrong, and
+`tests/test_live_freesurface.py::test_a_fully_flooded_free_surface_run_matches_the_single_phase_one`
+is what holds them equal.
+
+`CELL_SOLID` is carried for completeness and is not what marks a solid: that is still
+`phi < 0`, because the solid is a signed distance and not a flag (see this module's
+header). A free-surface run sets the flag too, so that one field answers "what is this
+cell" without a second array lookup.
+"""
+
 SCHEME_TRT = 0
 SCHEME_BGK = 1
 SCHEME_REGULARIZED = 2
@@ -441,6 +463,8 @@ def collide(
     omega_minus: DTYPE,
     scheme: wp.int32,
     smagorinsky: DTYPE,
+    flags: wp.array3d(dtype=wp.int32),
+    use_flags: wp.int32,
 ):
     """Relax every fluid node towards equilibrium, in place. Nothing streams.
 
@@ -482,6 +506,12 @@ def collide(
     i, j, k = wp.tid()
     if phi[i, j, k] < DTYPE(0.0):
         return  # a solid node does not collide; `stream` reflects what arrives at it
+    if use_flags != 0:
+        # A free-surface run: a gas cell holds no fluid and has no populations to relax.
+        # An interface cell does collide -- it is a real, if partly filled, fluid cell --
+        # and `stream` is where its gas-facing populations are reconstructed.
+        if flags[i, j, k] == CELL_GAS:
+            return
 
     fl = _vec_q()
     rho = DTYPE(0.0)
@@ -640,6 +670,10 @@ def stream(
     face_velocity: wp.array(dtype=wp.vec3),
     fallbacks: wp.array(dtype=wp.int32),
     moving: wp.int32,
+    flags: wp.array3d(dtype=wp.int32),
+    normals: wp.array3d(dtype=wp.vec3),
+    gas_density: DTYPE,
+    use_flags: wp.int32,
 ):
     """Pull the post-collision lattice into `f_new`, reflecting where it meets a solid.
 
@@ -696,6 +730,31 @@ def stream(
         # (Bouzidi reads only fluid nodes), and `refill` will build them from scratch if
         # it becomes fluid, so leaving them is correct and writing them is bandwidth.
         return
+
+    # -- a free-surface interface cell needs its own velocity, once --------------------
+    #
+    # The gas-side reconstruction below writes an equilibrium at the ATMOSPHERIC density
+    # and the cell's OWN velocity, which is what imposes a constant pressure on the free
+    # surface while letting the surface move with the fluid. So the velocity has to be
+    # known before the direction loop starts. It costs a 19-sum, on interface cells only
+    # -- a few per cent of the lattice in any of the cases here, and nothing at all in a
+    # single-phase run, where `use_flags` is 0 and this block does not exist.
+    interface = int(0)
+    u_here = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+    normal_here = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+    if use_flags != 0:
+        if flags[i, j, k] == CELL_INTERFACE:
+            interface = int(1)
+            rho_here = DTYPE(0.0)
+            mom_here = wp.vec3(DTYPE(0.0), DTYPE(0.0), DTYPE(0.0))
+            for q in range(Q):
+                value = pop(f_post, q, i, j, k)
+                rho_here += value
+                mom_here += wp.vec3(DTYPE(C[0, q]), DTYPE(C[1, q]),
+                                    DTYPE(C[2, q])) * value
+            if rho_here > DTYPE(1.0e-9):
+                u_here = mom_here / rho_here
+            normal_here = normals[i, j, k]
 
     # `continue` is avoided throughout: `range(Q)` with Q = 19 is past Warp's unroll
     # limit, so this is a dynamic loop, and the branches are written as nested ifs with
@@ -783,8 +842,42 @@ def stream(
         if handled == 0:
             phi_there = phi[si, sj, sk]
             if phi_there >= DTYPE(0.0):
-                set_pop(f_new, d, i, j, k,
-                        pop(f_post, d, si, sj, sk))
+                # -- the free surface: what arrives from the gas has to be invented ----
+                #
+                # A gas cell carries no populations, so `f_d(x)` streaming in from one
+                # is undefined. Korner et al. (2005) reconstruct it as an equilibrium at
+                # the atmospheric density with the interface cell's own velocity, in the
+                # anti-bounce-back form
+                #
+                #     f_d(x) = f_eq_opp(rho_gas, u) + f_eq_d(rho_gas, u) - f_opp*(x)
+                #
+                # which imposes `p = rho_gas c_s^2` on the surface while leaving the
+                # surface free to move with the fluid.
+                #
+                # **And it is applied to more directions than the gas-facing ones.**
+                # Korner's second condition reconstructs every direction whose source
+                # lies on the gas side of the interface normal, `c_d . n < 0` with `n`
+                # pointing out of the fluid, even where that neighbour is still flagged
+                # interface. Without it the reconstruction follows the lattice's own
+                # axes rather than the surface, and a curved surface picks up a spurious
+                # tangential stress from the inconsistency.
+                reconstruct = int(0)
+                if interface == 1:
+                    if flags[si, sj, sk] == CELL_GAS:
+                        reconstruct = int(1)
+                    else:
+                        cd = wp.vec3(DTYPE(C[0, d]), DTYPE(C[1, d]), DTYPE(C[2, d]))
+                        if wp.dot(cd, normal_here) < DTYPE(0.0):
+                            reconstruct = int(1)
+                if reconstruct == 1:
+                    back = int(OPP[d])
+                    set_pop(f_new, d, i, j, k,
+                            _equilibrium(back, gas_density, u_here)
+                            + _equilibrium(d, gas_density, u_here)
+                            - pop(f_post, back, i, j, k))
+                else:
+                    set_pop(f_new, d, i, j, k,
+                            pop(f_post, d, si, sj, sk))
             else:
                 # -- the source node is solid: Bouzidi --------------------------------
                 opp = int(OPP[d])
