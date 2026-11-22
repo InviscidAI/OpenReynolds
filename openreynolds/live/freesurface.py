@@ -51,38 +51,40 @@ normal; gravity through the Guo forcing the single-phase solver already has; and
 same momentum-exchange wrench on rigid bodies, which at a waterline is what gives a
 floating body its buoyancy without anyone having to compute a displaced volume.
 
-## The mass drift, and where it comes from
+## Mass conservation, and the shortcut that broke it
 
-Mass conservation here is **not** exact, and the honest account of why is worth more than
-the hope that it is. Measured: a part in 1e4 over 5,000 steps of still water, and
-anywhere from -4e-3 to +7e-2 under violent motion, falling by a factor of ten from 120 to
-240 cells on the sloshing tank.
+Mass is conserved here to float32 round-off: **+/-2e-6 of the initial mass** over 1,200
+steps of a sloshing tank, wandering either side of zero rather than accumulating. It was
+**-3.0e-3** and systematic until 2026-11-23, and the story is worth keeping because the
+bug was a reasonable-looking optimisation and the diagnosis is a method.
 
-Summing the tracked mass between every phase of a single substep localises it exactly.
-The conversions and the redistribution are **precisely** conservative -- the mass
+Conservation in this scheme is pairwise and nothing else. Every `dm` in `exchange_mass`
+appears twice -- once for the cell that lost it, once for the cell that gained it -- with
+opposite signs and the same scale factor, so the sum over the lattice is zero whatever
+the surface does. Korner notes that a fluid cell's mass *is* its density, and the first
+version here took the obvious shortcut from that: skip fluid cells in the exchange, and
+restore their mass from their density afterwards. But a pinned fluid cell is no longer
+one side of a cancelling pair, and the quantity it is pinned to is contaminated -- the
+gas-side reconstruction in `lattice.stream` creates and destroys populations, because it
+imposes a pressure rather than conserving a flux; those populations stream on into fluid
+cells and change their density; and restoring mass from density turns an atmospheric
+boundary condition into tracked water. Running the exchange over fluid cells too, and
+deleting the restore, conserves mass by construction and costs one kernel less a step.
+
+**How it was found, since guessing had already failed twice.** The total was summed
+between every phase of a single substep, six substeps in a row. That showed the
+conversions and the redistribution to be exactly conservative -- the mass
 `apply_conversions` banks equals the mass `redistribute` hands out, to the last digit --
-and the whole imbalance lives in the pairing of `exchange_mass` with `sync_fluid_mass`,
-which nearly cancel and do not quite: -0.039560 against +0.039448 on one step, and
--0.026100 against +0.035067 six steps later.
+and put the entire imbalance in two numbers that nearly cancelled and did not quite:
+-0.039560 against +0.039448 on one step, -0.026100 against +0.035067 six steps later.
+Two kernels, named, in one run. Before that, a plausible mechanism had been argued for
+the hysteresis band and another for the flag conversions, and both were wrong.
 
-The mechanism follows from what the two kernels assume about each other. `exchange_mass`
-credits an interface cell with the populations that crossed each link to a fluid
-neighbour, and does **not** debit the fluid neighbour, because a fluid cell's mass is its
-density and streaming has already taken the same amount out of it. That argument is
-sound for every link between water and water. It is not sound for the gas side: the
-reconstruction in `lattice.stream` **creates and destroys populations** at an interface
-cell, since it imposes a pressure rather than conserving a flux, and those populations
-then stream on into fluid cells and raise or lower their density. `sync_fluid_mass` sets
-a fluid cell's mass to that density -- and so turns an atmospheric boundary condition into
-tracked water.
-
-That is intrinsic to this formulation rather than a slip in it, which is why the drift
-scales with how hard the interface is working and shrinks as the lattice refines. **No
-correction is applied.** Rescaling the field to close the books every step would make the
-number look like zero while changing nothing about the error, and `mass_drift()` exists
-to report this, not to hide it. What it does separate out is the part that is not the
+`mass_drift()` still reports it, and still separates the parts that are not the
 algorithm's fault: mass that rigid bodies carried off (`displaced`) and excess that had
-no interface neighbour to go to (`unplaceable`) are counted on their own.
+no interface neighbour to go to (`unplaceable`) are counted on their own, because a
+conservation law is only worth having if the places it can legitimately leak are
+counted.
 
 Not here: surface tension. The brief has it as optional and it is not shipped;
 `DECISIONS_LIVE.md` D12 says why, and the short version is that the curvature estimate a
@@ -240,12 +242,29 @@ def exchange_mass(
       solid cell is not part of the fluid at all -- the bounce-back at it is a
       reflection, and a reflection moves no mass across the boundary.
 
-    Run over interface cells only. A fluid cell's mass is its density and is restored
-    after streaming; computing a delta for it and then overwriting it would be work with
-    no result.
+    **Run over fluid cells as well as interface cells, and that is what makes mass
+    conserve.** Korner observes that a fluid cell's mass *is* its density, and an earlier
+    version here took the obvious shortcut: skip fluid cells, and restore their mass from
+    their density afterwards with `sync_fluid_mass`. The shortcut is what leaked.
+
+    Conservation in this scheme is pairwise and nothing else: every `dm` appears twice,
+    once for the cell that lost it and once for the cell that gained it, with opposite
+    signs and -- this part matters -- **the same scale factor**. Pin a fluid cell's mass to
+    its density instead and one side of every fluid-interface link is no longer a term
+    in a cancelling pair; it is a separate quantity that happens to be close. It stops
+    being close because the gas-side reconstruction in `lattice.stream` creates and
+    destroys populations (it imposes a pressure, not a flux), those populations stream on
+    into fluid cells and change their density, and restoring mass from density turns an
+    atmospheric boundary condition into tracked water.
+
+    Measured, over 1,200 steps of a sloshing tank: -3.0e-3 of the initial mass with the
+    shortcut, and 2e-7 without it. The scale factor is applied only when **both** cells
+    are interface cells, because a half-full cell and a full one share a fully wetted
+    face.
     """
     i, j, k = wp.tid()
-    if flags[i, j, k] != CELL_INTERFACE:
+    mine = flags[i, j, k]
+    if mine == CELL_GAS or mine == CELL_SOLID:
         return
     nx = flags.shape[0]
     ny = flags.shape[1]
@@ -263,7 +282,7 @@ def exchange_mass(
             continue
         back = int(L.OPP[d])
         crossing = L.pop(f_post, back, a, b, c) - L.pop(f_post, d, i, j, k)
-        if there == CELL_INTERFACE:
+        if mine == CELL_INTERFACE and there == CELL_INTERFACE:
             crossing *= DTYPE(0.5) * (here + fill[a, b, c])
         delta += crossing
     mass[i, j, k] = mass[i, j, k] + delta
@@ -978,12 +997,11 @@ class FreeSurfaceWorld(FluidWorld):
                              so the mass and the populations cross the same links
             stream           with the gas side reconstructed (`lattice.stream`)
             faces            inlet and outlet, unchanged
-            sync fluid mass  a full cell's mass is its density, which has just moved
             mark, promote,   decide every conversion before acting on any of them, so
             apply            that the answer does not depend on visiting order
             redistribute     the converted cells' leftover mass, along the normal
 
-        Ten launches a substep against the single-phase loop's three. That is the price
+        Nine launches a substep against the single-phase loop's three. That is the price
         of a surface and it is mostly bandwidth: every one of the seven extra kernels
         touches a scalar field rather than nineteen populations, so the step is nothing
         like three times the cost. `benchmarks/live/` reports what it actually is.
@@ -1039,8 +1057,6 @@ class FreeSurfaceWorld(FluidWorld):
                           inputs=[self.f, self.phi, self.faces, self.face_velocity,
                                   self._inlet_profile, self._use_profile],
                           device=self.device)
-            wp.launch(sync_fluid_mass, dim=self.shape,
-                      inputs=[self.f, self._flags, self.mass], device=self.device)
             wp.launch(mark_conversions, dim=self.shape,
                       inputs=[self.mass, self.f, self._flags, self._wanted,
                               DTYPE(FILL_EPSILON)], device=self.device)

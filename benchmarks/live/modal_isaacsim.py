@@ -184,7 +184,7 @@ ubuntu_probe_image = (
     .env(KIT_ENV)
 )
 
-image = (
+_base = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install(*APT)
     .pip_install(TORCH, index_url=TORCH_INDEX)
@@ -194,18 +194,39 @@ image = (
     )
     .pip_install("pillow>=10", "numpy>=1.24")
     .env(KIT_ENV)
-    # Not `copy=True`, unlike `modal_run.py`. There the repository is baked in so that a
-    # benchmark image is a single immutable thing; here the layer under it takes tens of
-    # minutes to build and a runtime mount means editing `openreynolds/live/` never
-    # touches it. Nothing in this file needs the repository at build time.
-    .add_local_dir(
-        str(REPO), remote_path="/repo",
-        ignore=[
-            "studies/**", ".git/**", "**/__pycache__/**", "*.log", "launcher/**",
-            ".pytest_cache/**", "benchmarks/live/results/**", "docker/**",
-        ],
-    )
 )
+"""Everything expensive, and nothing that changes. Both images below derive from it, so
+the 7.5 GiB layer is built once and neither the test dependencies nor the repository
+mount can invalidate it."""
+
+# Not `copy=True`, unlike `modal_run.py`. There the repository is baked in so that a
+# benchmark image is a single immutable thing; here the layer under it takes five minutes
+# to build and a runtime mount means editing `openreynolds/live/` never touches it.
+# Nothing in this file needs the repository at image build time.
+_REPO_MOUNT = dict(
+    remote_path="/repo",
+    ignore=[
+        "studies/**", ".git/**", "**/__pycache__/**", "*.log", "launcher/**",
+        ".pytest_cache/**", "benchmarks/live/results/**", "docker/**",
+    ],
+)
+
+image = _base.add_local_dir(str(REPO), **_REPO_MOUNT)
+
+# `tests/conftest.py` imports `anthropic`, `rich` and four `openreynolds` modules that
+# are nothing to do with the live backend, and pytest loads it for anything under
+# `tests/`. So running the live tests needs the package's own runtime dependencies, which
+# are listed here from `pyproject.toml` rather than installed with `pip install -e /repo`
+# -- an editable install would also run the build backend and re-resolve numpy and torch
+# inside an image whose numpy and torch are the ones Isaac Sim pinned.
+TEST_DEPS = [
+    "pytest>=8.0.0", "pytest-asyncio>=0.24",
+    "anthropic>=1.0,<2", "openai>=1.50,<4", "httpx2[socks]>=2.0.0",
+    "rich>=13.0.0", "click>=8.1.0", "textual>=8.0", "mcp>=2.2,<3",
+    "matplotlib>=3.7", "pandas>=2.0",
+]
+
+tests_image = _base.pip_install(*TEST_DEPS).add_local_dir(str(REPO), **_REPO_MOUNT)
 
 app = modal.App("openreynolds-isaacsim")
 
@@ -1248,6 +1269,493 @@ def demo_l40s(steps: int = 100) -> dict:
     return _demo(steps)
 
 
+# -- 4. does the extension RUN on Kit's own Warp, not just import -----------------------
+
+
+def _cases() -> dict:
+    """The live test suite and two graded free-surface cases, inside a running Kit.
+
+    The point is narrow and worth stating, because an earlier session already answered
+    the near-miss version of it. `openreynolds/live/` is known to work across Warp
+    1.17-1.19 and Newton 1.6-1.8 with no shim, and the Isaac Lab virtualenv -- Warp
+    1.17.0, Newton 1.6.1 -- ran 52 of 52 of `tests/test_live_cases.py`. **That is a
+    different install from this one.** Kit does not use the pip `warp-lang` at all; it
+    imports `omni.warp.core`, its own extension, which carries its own build of the Warp
+    kernel cache and its own CUDA toolchain resolution. Whether the extension's kernels
+    compile and run *there* is a question only this container can answer, and the whole
+    reason the app started before any of this runs is that Kit has to win the `libusd`
+    SONAME before Newton is imported.
+
+    So: Kit first, then pytest in this very interpreter rather than in a subprocess,
+    because a subprocess would get the pip Warp back and measure the thing that was
+    already known.
+    """
+    import io
+    import json
+    import os
+    import sys
+    import time
+    import traceback
+    from contextlib import redirect_stderr, redirect_stdout
+
+    out: dict = {"gpu": _gpu_name()}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("CASES " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print(f'CASES {{"{key}": "unserialisable: {exc}"}}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({"headless": True})  # noqa: F841  -- keeps Kit alive
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("kit", traceback.format_exc()[-4000:])
+        return out
+
+    sys.path.insert(0, "/repo")
+    # And in the environment too, not only in `sys.path`.
+    # `test_both_array_layouts_give_the_same_field` is the one test in the suite that
+    # re-execs `sys.executable -c ...` in a subprocess, because the array layout is baked
+    # into the generated kernels at import and the only way to compare two layouts is two
+    # interpreters. That child inherits the environment and not the parent's `sys.path`,
+    # so with `/repo` only in `sys.path` it fails with `ModuleNotFoundError: No module
+    # named 'openreynolds'` -- which looks exactly like a broken extension and is in fact
+    # a broken harness. Measured: 62 passed, 1 failed, and the one was this.
+    os.environ["PYTHONPATH"] = "/repo" + os.pathsep + os.environ.get("PYTHONPATH", "")
+    import warp as wp
+
+    # The two facts that make the rest of this meaningful. If `file::warp` is not under
+    # `isaacsim/extscache/omni.warp.core`, the run proved nothing: it measured the pip
+    # Warp and the answer was already known.
+    emit("warp_version", wp.config.version)
+    emit("warp_file", wp.__file__)
+    try:
+        wp.init()
+        emit("warp_cuda_devices", wp.get_cuda_device_count())
+    except Exception:
+        emit("warp_init", traceback.format_exc()[-2000:])
+
+    # -- the suite ---------------------------------------------------------------------
+    import pytest
+
+    buffer = io.StringIO()
+    suite_started = time.time()
+    try:
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            code = pytest.main([
+                "/repo/tests/test_live_cases.py",
+                "/repo/tests/test_live_freesurface.py",
+                "-q", "--no-header", "-p", "no:cacheprovider",
+                "--rootdir=/repo",
+            ])
+        emit("pytest_returncode", int(code))
+    except Exception:
+        emit("pytest_returncode", "raised")
+        emit("pytest_exception", traceback.format_exc()[-4000:])
+    emit("pytest_seconds", round(time.time() - suite_started, 1))
+    text = buffer.getvalue()
+    # The tail carries the summary line and, when something failed, the assertion. Kept
+    # whole rather than parsed into a count, because a count is the one part of a test
+    # report that is easy to get right and useless when it is wrong.
+    emit("pytest_tail", text[-6000:])
+    emit("pytest_summary", [ln for ln in text.splitlines()
+                            if "passed" in ln or "failed" in ln or "error" in ln][-6:])
+
+    # -- the two graded cases ----------------------------------------------------------
+    #
+    # Run after the suite and each in its own `try`, so that a kernel that will not
+    # compile on Kit's Warp names itself instead of taking the whole job down. The brief
+    # is explicit that a failure here is to be reported, not worked around.
+    import tempfile
+
+    from openreynolds.live import cases as case_module
+
+    device = "cuda:0" if wp.get_cuda_device_count() else "cpu"
+    emit("device", device)
+    for label, settings in (("hydrostatic", {"cells": 20}),
+                            ("sloshing", {"cells": 80, "periods": 1.5})):
+        case_started = time.time()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = case_module.run_case(label, out_dir=tmp, device=device,
+                                              progress=None, **settings)
+            emit(f"case::{label}", {
+                "passed": bool(result.get("passed")),
+                "seconds": round(time.time() - case_started, 1),
+                "settings": settings,
+                "checks": [
+                    {"name": c.get("name"), "measured": c.get("measured"),
+                     "target": c.get("target"), "passed": c.get("passed"),
+                     "note": (c.get("note") or "")[:200]}
+                    for c in result.get("checks", [])
+                ],
+                "report": [str(line) for line in result.get("report", [])][:40],
+            })
+        except Exception:
+            emit(f"case::{label}", {
+                "passed": False,
+                "seconds": round(time.time() - case_started, 1),
+                "error": traceback.format_exc()[-5000:],
+            })
+    return out
+
+
+@app.function(image=tests_image, gpu="L40S", timeout=5400, memory=32768)
+def cases_l40s() -> dict:
+    return _cases()
+
+
+@app.function(image=tests_image, gpu="A10G", timeout=5400, memory=32768)
+def cases_a10g() -> dict:
+    return _cases()
+
+
+# -- 5. the free surface, solved by our kernels and rendered by RTX ---------------------
+
+
+def _freesurface_demo(cells: int = 144, frames: int = 44, seconds: float = 0.52,
+                      width: int = 1280, height: int = 720) -> dict:
+    """A dam break in a closed tank, solved by `FreeSurfaceWorld`, rendered by Isaac Sim.
+
+    This is the join the whole file exists to find: our Warp kernels advancing a free
+    surface, and Kit's RTX renderer drawing it, in one process, on one GPU, with one copy
+    of Warp between them -- Kit's own `omni.warp.core`, not the pip `warp-lang`.
+
+    ## What is drawn, and why a heightfield
+
+    `FreeSurfaceWorld.surface_height(axis=2)` returns the depth of water over each
+    column of the lattice, in metres, sub-cell accurate because a partly filled
+    interface cell contributes its fill fraction, and `nan` where a column is dry. That
+    is exactly a heightfield, so the water is **one `UsdGeom.Mesh` whose `points` are
+    rewritten every frame** and whose topology never changes.
+
+    The alternatives were considered and are worse here. A `UsdGeomPointInstancer` over
+    the interface cells draws the surface as beads and needs tens of thousands of
+    instances to stop looking like beads. A `UsdVol` OpenVDB volume is the only way to
+    draw the interior, and the USD schema animates it by time-sampling a `filePath`, one
+    `.vdb` per frame, so a live loop would be writing files to a container filesystem and
+    reading them back. Marching cubes over `world.fill` would give a true isosurface with
+    overturning waves, which a heightfield cannot represent -- but it rebuilds the
+    topology every frame and nothing in this repository needs it yet.
+
+    So: a heightfield, stated plainly, with the limitation stated too. **A heightfield
+    cannot show a wave that curls over itself.** It shows one depth per column. For a dam
+    break against a wall that is most of the motion and all of the readable part.
+
+    ## The two things that make it look like water rather than a graph
+
+    **Vertex normals, computed from the height field.** Without a `normals` primvar the
+    renderer uses face normals and 9,000 quads read as 9,000 facets. The normal of a
+    heightfield is `(-dh/dx, -dh/dy, 1)` normalised, which numpy gradients give for the
+    whole grid in two lines, and with it the surface shades smoothly.
+
+    **Dry columns are pushed below the floor, not flattened to it.** `surface_height` is
+    `nan` on a dry column. Setting those to zero puts a sheet of water in the same plane
+    as the tank floor, which z-fights and reads as a wet film over the entire bed. They
+    go to a small negative height instead, inside the floor slab, where they are simply
+    not seen -- which is what a dry bed looks like.
+    """
+    import io
+    import json
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name(), "cells": cells, "frames": frames}
+    blobs: dict[str, bytes] = {}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("FSDEMO " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print(f'FSDEMO {{"{key}": "unserialisable: {exc}"}}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({  # noqa: F841  -- keeps Kit alive
+            "headless": True, "width": width, "height": height,
+            "renderer": "RaytracedLighting",
+        })
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("error", traceback.format_exc()[-4000:])
+        return {"result": out, "blobs": blobs}
+
+    sys.path.insert(0, "/repo")
+    try:
+        import numpy as np
+        import omni.replicator.core as rep
+        import omni.usd
+        import warp as wp
+        from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, Vt
+
+        emit("warp_version", wp.config.version)
+        emit("warp_file", wp.__file__)
+
+        # -- the solver ----------------------------------------------------------------
+        #
+        # Built through `cases._free_surface_world`, the repository's own helper, rather
+        # than by constructing `FreeSurfaceWorld` here. The Froude scaling, the tau, the
+        # "a zero in `size` means thin and thin means periodic" rule and the gravity sign
+        # are all decisions that live in `cases.py` with the argument for each, and a
+        # demo that re-derived them would be a second opinion nobody asked for. This tank
+        # is fully three dimensional, so no axis is thin and that rule does not fire.
+        from openreynolds.live.cases import _free_surface_world
+
+        tank = (0.36, 0.16, 0.16)
+        column_height = 0.12
+        fluid, scaling = _free_surface_world(
+            cells=cells, size=tank, depth=0.06, faces="wall",
+            collision="trt", smagorinsky=0.0, device="cuda:0", gravity=9.81)
+        fluid.initialise_column((0.0, 0.0, 0.0), (0.12, tank[1], column_height))
+        emit("lattice_shape", list(fluid.shape))
+        emit("dx", fluid.dx)
+        emit("dt", scaling.dt)
+        emit("initial_water_volume_m3", float(fluid.water_volume()))
+
+        # How many solver steps between rendered frames, from the physical time asked
+        # for rather than from a guessed stride. `scaling.dt` is seconds per lattice
+        # step, so this is arithmetic and not a tuning knob.
+        total_steps = max(int(seconds / scaling.dt), frames)
+        stride = max(total_steps // frames, 1)
+        emit("steps_per_frame", stride)
+        emit("total_steps", stride * frames)
+        emit("physical_seconds", round(stride * frames * scaling.dt, 4))
+
+        # -- the stage -----------------------------------------------------------------
+        stage = omni.usd.get_context().get_stage()
+        world_prim = UsdGeom.Xform.Define(stage, "/World")  # noqa: F841
+
+        nx, ny, _ = fluid.shape
+        xs = (np.arange(nx) + 0.5) * fluid.dx
+        ys = (np.arange(ny) + 0.5) * fluid.dx
+        grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+
+        water = UsdGeom.Mesh.Define(stage, "/World/water")
+        # Topology once. Only `points` and `normals` are rewritten per frame, which is
+        # the whole reason a heightfield is the cheap choice: the renderer never has to
+        # rebuild an acceleration structure for changed connectivity.
+        counts, indices = [], []
+        for i in range(nx - 1):
+            for j in range(ny - 1):
+                counts.append(4)
+                indices += [i * ny + j, (i + 1) * ny + j,
+                            (i + 1) * ny + j + 1, i * ny + j + 1]
+        water.CreateFaceVertexCountsAttr(counts)
+        water.CreateFaceVertexIndicesAttr(indices)
+        water.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
+        water.CreateDoubleSidedAttr(True)
+        emit("mesh_vertices", nx * ny)
+        emit("mesh_faces", len(counts))
+
+        def water_material() -> UsdShade.Material:
+            """Blue, glossy, slightly translucent. Water, not a surface plot."""
+            material = UsdShade.Material.Define(stage, "/World/looks/water")
+            shader = UsdShade.Shader.Define(stage, "/World/looks/water/surface")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+                Gf.Vec3f(0.06, 0.26, 0.45))
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.12)
+            shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(0.88)
+            shader.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(1.33)
+            material.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface")
+            return material
+
+        UsdShade.MaterialBindingAPI(water).Bind(water_material())
+
+        # The tank: a floor slab and three low walls, visual only -- the solver's walls
+        # are its boundary conditions and owe nothing to this geometry. The slab has real
+        # thickness so that the dry columns, which sit just below z = 0, are inside it.
+        floor = UsdGeom.Cube.Define(stage, "/World/floor")
+        floor.CreateSizeAttr(1.0)
+        floor_xform = UsdGeom.Xformable(floor.GetPrim())
+        floor_xform.AddTranslateOp().Set(
+            Gf.Vec3d(tank[0] / 2, tank[1] / 2, -0.012))
+        floor_xform.AddScaleOp().Set(Gf.Vec3f(tank[0] * 1.06, tank[1] * 1.06, 0.024))
+        floor_shader = UsdShade.Shader.Define(stage, "/World/looks/floor/surface")
+        floor_material = UsdShade.Material.Define(stage, "/World/looks/floor")
+        floor_shader.CreateIdAttr("UsdPreviewSurface")
+        floor_shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+            Gf.Vec3f(0.62, 0.60, 0.57))
+        floor_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
+        floor_material.CreateSurfaceOutput().ConnectToSource(
+            floor_shader.ConnectableAPI(), "surface")
+        UsdShade.MaterialBindingAPI(floor).Bind(floor_material)
+
+        sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+        sun.CreateIntensityAttr(3200.0)
+        sun.CreateAngleAttr(0.8)
+        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(
+            Gf.Vec3f(-50.0, 20.0, 20.0))
+        sky = UsdLux.DomeLight.Define(stage, "/World/sky")
+        sky.CreateIntensityAttr(420.0)
+
+        camera = rep.create.camera(
+            position=(0.56, -0.34, 0.20), look_at=(0.17, 0.08, 0.035),
+            focal_length=35.0)
+        product = rep.create.render_product(camera, (width, height))
+        annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        annotator.attach([product])
+
+        points_attr = water.GetPointsAttr()
+        normals_attr = water.CreateNormalsAttr()
+        water.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+
+        def push_surface() -> float:
+            """Read the solver's surface onto the mesh. Returns the wet-column fraction."""
+            depth = fluid.surface_height(axis=2)
+            wet = np.isfinite(depth)
+            # Dry columns go below the floor slab rather than to zero. See the docstring.
+            z = np.where(wet, np.nan_to_num(depth), -0.006).astype(np.float64)
+            pts = np.stack([grid_x, grid_y, z], axis=-1).reshape(-1, 3)
+            points_attr.Set(Vt.Vec3fArray.FromNumpy(pts.astype(np.float32)))
+            # Vertex normals from the height gradient: n = (-dh/dx, -dh/dy, 1).
+            dzdx, dzdy = np.gradient(z, fluid.dx, fluid.dx)
+            normals = np.stack([-dzdx, -dzdy, np.ones_like(z)], axis=-1)
+            normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+            normals_attr.Set(
+                Vt.Vec3fArray.FromNumpy(normals.reshape(-1, 3).astype(np.float32)))
+            return float(wet.mean())
+
+        def grab() -> "np.ndarray":
+            """One rendered frame, through Replicator's own sync. See `_demo`."""
+            for _ in range(6):
+                rep.orchestrator.step(rt_subframes=6)
+                try:
+                    rep.orchestrator.wait_until_complete()
+                except Exception:
+                    pass
+                arr = np.asarray(annotator.get_data())
+                if arr.size and float(arr[..., :3].astype("float32").std()) > 1.0:
+                    return arr
+            return np.asarray(annotator.get_data())
+
+        # -- the loop ------------------------------------------------------------------
+        captured: list = []
+        trace: list = []
+        solver_seconds = 0.0
+        render_seconds = 0.0
+        push_surface()
+        for frame in range(frames):
+            mark = time.time()
+            for _ in range(stride):
+                fluid.step()
+            wp.synchronize()
+            solver_seconds += time.time() - mark
+            wet = push_surface()
+            mark = time.time()
+            arr = grab()
+            render_seconds += time.time() - mark
+            if not arr.size:
+                emit("render_error", f"empty annotator at frame {frame}")
+                break
+            captured.append(arr[..., :3].astype("uint8").copy())
+            depth = fluid.surface_height(axis=2)
+            trace.append({
+                "frame": frame,
+                "t": round((frame + 1) * stride * scaling.dt, 4),
+                "wet_fraction": round(wet, 4),
+                "max_depth_m": round(float(np.nanmax(depth)), 5),
+                "volume_m3": round(float(fluid.water_volume()), 9),
+            })
+        emit("trace", trace)
+        emit("solver_seconds", round(solver_seconds, 1))
+        emit("render_seconds", round(render_seconds, 1))
+        if solver_seconds > 0:
+            emit("solver_mlups", round(
+                stride * frames * float(np.prod(fluid.shape)) / solver_seconds / 1e6, 1))
+        try:
+            emit("mass_drift", {k: float(v) for k, v in fluid.mass_drift().items()})
+        except Exception as exc:
+            emit("mass_drift", f"FAILED: {exc}")
+        emit("fluid_touching_gas", int(fluid.fluid_touching_gas()))
+        emit("final_water_volume_m3", float(fluid.water_volume()))
+
+        # -- the artifacts -------------------------------------------------------------
+        if not captured:
+            emit("render_error", "no frames captured")
+            return {"result": out, "blobs": blobs}
+
+        from PIL import Image
+
+        # The hero is the most dynamic frame rather than the last one, measured as the
+        # spread of the surface height: a dam break ends flat, and a picture of flat
+        # water is a picture of nothing happening.
+        spreads = [row["max_depth_m"] for row in trace]
+        hero_index = int(np.argmax(spreads[: max(len(spreads) // 2, 1)])) if spreads else 0
+        hero = captured[hero_index]
+        emit("hero_frame", hero_index)
+        emit("render_shape", list(hero.shape))
+        rgb = hero.astype("float32")
+        emit("render_stddev", round(float(rgb.std()), 2))
+        emit("render_unique_colours",
+             int(len(np.unique(rgb.reshape(-1, 3)[::97], axis=0))))
+        emit("render_nonzero_fraction", float((rgb > 8).mean()))
+
+        buf = io.BytesIO()
+        Image.fromarray(hero, "RGB").save(buf, format="PNG", optimize=True)
+        blobs["freesurface_hero.png"] = buf.getvalue()
+        emit("hero_png_bytes", len(blobs["freesurface_hero.png"]))
+
+        # The GIF at half resolution. 44 frames of 1280x720 is about 120 MB of PNG and
+        # Modal has to pickle the return value; 640x360 keeps the whole payload inside
+        # the 16 MB an artifact is allowed and is still legible at the size anyone will
+        # view it.
+        small = [Image.fromarray(f, "RGB").resize((width // 2, height // 2),
+                                                  Image.LANCZOS).quantize(
+                     colors=128, method=Image.MEDIANCUT) for f in captured]
+        buf = io.BytesIO()
+        small[0].save(buf, format="GIF", save_all=True, append_images=small[1:],
+                      duration=70, loop=0, optimize=True)
+        blobs["freesurface.gif"] = buf.getvalue()
+        emit("gif_bytes", len(blobs["freesurface.gif"]))
+        emit("gif_frames", len(small))
+
+        # Four stills across the run, so the sequence survives even if the GIF does not
+        # travel well.
+        for pick in sorted({0, len(captured) // 4, len(captured) // 2,
+                            len(captured) - 1}):
+            buf = io.BytesIO()
+            Image.fromarray(captured[pick], "RGB").save(buf, format="PNG",
+                                                        optimize=True)
+            blobs[f"freesurface_{pick:03d}.png"] = buf.getvalue()
+        emit("ok", True)
+    except Exception:
+        emit("error", traceback.format_exc()[-6000:])
+        emit("ok", False)
+    finally:
+        # No `sim_app.close()`. See the end of `_probe`.
+        out["total_seconds"] = round(time.time() - started, 1)
+    return {"result": out, "blobs": blobs}
+
+
+@app.function(image=image, gpu="L40S", timeout=5400, memory=32768)
+def freesurface_l40s(cells: int = 144, frames: int = 44) -> dict:
+    return _freesurface_demo(cells=cells, frames=frames)
+
+
+@app.function(image=image, gpu="A10G", timeout=5400, memory=32768)
+def freesurface_a10g(cells: int = 144, frames: int = 44) -> dict:
+    return _freesurface_demo(cells=cells, frames=frames)
+
+
 # -- the local side ---------------------------------------------------------------------
 
 PROBES = {"a10g": probe_a10g, "l40s": probe_l40s}
@@ -1328,6 +1836,78 @@ def probe(gpu: str = "a10g") -> None:
           f"in {got.get('simulationapp_seconds')} s")
     print(f"  kit version: {got.get('kit_version')}  renderer: {got.get('renderer')}")
     _save(f"probe-{gpu}", got)
+
+
+@app.local_entrypoint()
+def cases(gpu: str = "l40s") -> None:
+    """Run the live suite and two graded free-surface cases on Kit's own Warp."""
+    runner = {"l40s": cases_l40s, "a10g": cases_a10g}[gpu.lower()]
+    got = runner.remote()
+    print(f"\ngpu: {got.get('gpu')}")
+    print(f"kit startup: {got.get('kit_startup_seconds')} s")
+    print(f"warp in Kit: {got.get('warp_version')}")
+    print(f"  from: {got.get('warp_file')}")
+    print(f"  cuda devices: {got.get('warp_cuda_devices')}   device: {got.get('device')}")
+    print(f"\npytest: returncode {got.get('pytest_returncode')} "
+          f"in {got.get('pytest_seconds')} s")
+    for line in got.get("pytest_summary", []):
+        print(f"  {line}")
+    if got.get("pytest_returncode") not in (0, "0"):
+        print(got.get("pytest_tail", ""))
+    for label in ("hydrostatic", "sloshing"):
+        row = got.get(f"case::{label}")
+        if not row:
+            continue
+        verdict = "PASSED" if row.get("passed") else "FAILED"
+        print(f"\n{label}: {verdict} in {row.get('seconds')} s  {row.get('settings')}")
+        if row.get("error"):
+            print(row["error"])
+            continue
+        for check in row.get("checks", []):
+            mark = {True: "ok", False: "FAIL", None: "--"}[check.get("passed")]
+            print(f"  [{mark:>4}] {check['name']}: measured {check['measured']} "
+                  f"against {check['target']}")
+    _save(f"cases-{gpu}", got)
+    ok = (got.get("pytest_returncode") in (0, "0")
+          and all(got.get(f"case::{n}", {}).get("passed") for n in
+                  ("hydrostatic", "sloshing")))
+    if not ok:
+        sys.exit(1)
+
+
+@app.local_entrypoint()
+def freesurface(gpu: str = "l40s", cells: int = 144, frames: int = 44) -> None:
+    """Solve a dam break with our own kernels and render it with Isaac Sim's RTX."""
+    runner = {"l40s": freesurface_l40s, "a10g": freesurface_a10g}[gpu.lower()]
+    got = runner.remote(cells, frames)
+    payload = got.get("result", got)
+    blobs = got.get("blobs", {})
+    print(f"\ngpu: {payload.get('gpu')}")
+    print(f"warp in Kit: {payload.get('warp_version')}")
+    print(f"lattice: {payload.get('lattice_shape')}  dx {payload.get('dx')} m  "
+          f"dt {payload.get('dt')} s")
+    print(f"mesh: {payload.get('mesh_vertices')} vertices, "
+          f"{payload.get('mesh_faces')} quads")
+    print(f"ran {payload.get('total_steps')} steps "
+          f"({payload.get('physical_seconds')} s of water) in "
+          f"{payload.get('solver_seconds')} s solver + "
+          f"{payload.get('render_seconds')} s render; "
+          f"{payload.get('solver_mlups')} MLUPS")
+    print(f"volume: {payload.get('initial_water_volume_m3')} -> "
+          f"{payload.get('final_water_volume_m3')} m3")
+    print(f"mass drift: {payload.get('mass_drift')}")
+    print(f"fluid cells touching gas: {payload.get('fluid_touching_gas')}")
+    for row in (payload.get("trace") or [])[::8]:
+        print(f"  t {row['t']:.4f} s   wet {row['wet_fraction']:.3f}   "
+              f"max depth {row['max_depth_m']:.4f} m")
+    print(f"hero frame {payload.get('hero_frame')}: {payload.get('render_shape')} "
+          f"stddev {payload.get('render_stddev')} "
+          f"colours {payload.get('render_unique_colours')}")
+    if payload.get("error"):
+        print(payload["error"])
+    _save(f"freesurface-{gpu}", payload, blobs)
+    if not payload.get("ok"):
+        sys.exit(1)
 
 
 @app.local_entrypoint()

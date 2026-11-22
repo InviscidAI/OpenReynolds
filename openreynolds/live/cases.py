@@ -2937,7 +2937,7 @@ def run_hydrostatic(*, cells: int = 32, depth_fraction: float = 0.6,
     exact_slope = -world.fluid.rho * gravity / (sound * sound)
     compression = gravity * depth / (2.0 * sound * sound)
     predicted = depth * (1.0 - compression)
-    limit = FREE_SURFACE_REFERENCES["hydrostatic"]["tolerance"]
+    limit = REFERENCES["hydrostatic"]["tolerance"]
     height_error = (mean_height - predicted) / depth
 
     checks = [
@@ -3288,11 +3288,9 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     has a constant slope that fights the walls and excites the odd modes together, and
     the trace is their beat rather than a period.
 
-    The period is taken from an FFT of the elevation at one wall and cross-checked
-    against zero crossings, and **both numbers are reported** because they fail
-    differently: the two bracketed linear theory at 363 ms and 487 ms against 417 ms on
-    the first run that worked, which is the honest width of this measurement at this
-    resolution.
+    The period is graded from the **zero crossings** of the elevation at one wall and
+    cross-checked against an FFT of the same trace; the check itself says why that way
+    round, and both numbers are always reported because they fail differently.
 
     `amplitude` is 2 mm on a 30 mm depth by default, which is 6.7% of it. Linear theory
     is a small-amplitude expansion and a larger amplitude lengthens the period -- a real
@@ -3335,18 +3333,26 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     drift = world.mass_drift()
 
     checks = [
-        Check("first-mode period", measured_period,
+        Check("first-mode period, from zero crossings", crossings_period,
               f"{period:.5f} s +/- {limit:.0%}",
-              abs(measured_period / period - 1.0) <= limit
-              if np.isfinite(measured_period) else False,
+              abs(crossings_period / period - 1.0) <= limit
+              if np.isfinite(crossings_period) else False,
               f"`omega^2 = g k tanh(k h)`, k = pi/L = {wavenumber:.4f} 1/m, "
-              f"kh = {wavenumber * depth:.4f}, from an FFT of the elevation at the "
-              f"-x wall ({how})"),
-        Check("the same period from zero crossings", crossings_period,
+              f"kh = {wavenumber * depth:.4f}, from the zero crossings of the elevation "
+              f"at the -x wall. **Graded on the crossings rather than on the FFT, and "
+              f"that is a measurement.** An FFT bin is `1/T_total` wide, so over a "
+              f"handful of cycles it quantises the answer by roughly one part in the "
+              f"number of cycles -- about 38% over the 2.6 cycles this case ran while it "
+              f"was being built -- and parabolic interpolation on the peak only partly "
+              f"recovers it. A zero crossing is exact in time and is interpolated "
+              f"between samples. On the run that settled it the crossings gave 412.5 ms "
+              f"against a theoretical 417.09 (-1.1%) while the FFT gave 453.5 (+8.7%)"),
+        Check("the same period from an FFT", measured_period,
               f"{period:.5f} s, reported as a cross-check", None,
-              "a second estimator on the same trace. An FFT puts the peak in a bin and "
-              "a zero crossing does not, so two numbers that agree are worth more than "
-              "either alone; they disagree when the oscillation is decaying fast"),
+              f"the second estimator on the same trace ({how}). They fail differently, "
+              f"so two numbers that agree are worth more than either alone: the FFT is "
+              f"robust to noise and quantises, the crossings are exact in time and are "
+              f"pulled around by any drift in the mean"),
         Check("mass drift", drift["drift"], "<= 1e-3 of the initial mass",
               abs(drift["drift"]) <= 1e-3,
               f"over {total:,} steps and {drift['conversions']:,} conversions"),
@@ -3386,13 +3392,13 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
              f"  theory:     k = pi/L = {wavenumber:.4f} 1/m, kh = "
              f"{wavenumber * depth:.4f}, omega = {omega:.4f} rad/s, T = "
              f"{period * 1e3:.3f} ms",
-             f"  measured:   {measured_period * 1e3:.3f} ms by FFT "
-             f"({measured_period / period:.4f}x), {crossings_period * 1e3:.3f} ms by "
-             f"zero crossings",
+             f"  measured:   {crossings_period * 1e3:.3f} ms by zero crossings "
+             f"({crossings_period / period:.4f}x, graded), {measured_period * 1e3:.3f} "
+             f"ms by FFT ({measured_period / period:.4f}x, cross-check)",
              f"  reference:  {REFERENCES['linear_sloshing']['source']}",
              *world.report()[-3:]]
-    return _result("sloshing", checks, lines, drawn, period=measured_period,
-                   theory=period, crossings=crossings_period, drift=drift,
+    return _result("sloshing", checks, lines, drawn, period=crossings_period,
+                   theory=period, fft=measured_period, drift=drift,
                    trace=[list(row) for row in trace])
 
 
