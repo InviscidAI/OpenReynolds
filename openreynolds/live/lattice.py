@@ -1047,6 +1047,7 @@ def apply_faces(
     face_velocity: wp.array(dtype=wp.vec3),
     inlet_profile: wp.array2d(dtype=wp.vec3),
     use_profile: wp.int32,
+    outlet_rho: DTYPE,
 ):
     """Inlet and outlet, imposed on the face node after streaming.
 
@@ -1101,9 +1102,35 @@ def apply_faces(
         return
 
     if rule == FACE_OUTLET:
+        # **An extrapolating outlet does not conserve mass, and the channel fills up.**
+        # Copying the inward node's populations is the "do nothing" outflow -- first
+        # order, unconditionally stable, and what XLB calls it too. With a velocity inlet
+        # at the other end, nothing anchors the mass or the pressure level: the inlet
+        # sets momentum and the outlet extrapolates whatever arrives. Measured on the
+        # 2D-1 channel at 10 cells per diameter, total mass rose **+0.99% by 2,000 steps,
+        # +4.61% by 8,000 and +7.06% by 12,000**, mean density 1008 -> 1079 kg/m3, and
+        # the drag rose with it and never settled -- Cd 5.29 at 500 steps, 6.11 at
+        # 12,000, and 17.75 after 704,000 on an H100 against a reference of 5.5795.
+        #
+        # `outlet_rho > 0` anchors it: the copied populations are rescaled so the face
+        # node's density is exactly that value. **A uniform scaling leaves the velocity
+        # alone** -- `u = sum(c f) / rho` scales by `s/s` -- so this fixes the pressure
+        # level without imposing a velocity, which is the one thing an outlet must not
+        # do. `outlet_rho <= 0` keeps the old behaviour exactly, so every case that
+        # passes today is untouched until it opts in.
+        if outlet_rho <= DTYPE(0.0):
+            for d in range(Q):
+                set_pop(f, d, i, j, k, pop(f, d, inward_i, inward_j, inward_k))
+            return
+        rho_in = DTYPE(0.0)
+        for d in range(Q):
+            rho_in += pop(f, d, inward_i, inward_j, inward_k)
+        scale = DTYPE(1.0)
+        if rho_in > DTYPE(1.0e-9):
+            scale = outlet_rho / rho_in
         for d in range(Q):
             set_pop(f, d, i, j, k,
-                    pop(f, d, inward_i, inward_j, inward_k))
+                    pop(f, d, inward_i, inward_j, inward_k) * scale)
         return
 
     u = face_velocity[face]

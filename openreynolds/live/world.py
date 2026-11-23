@@ -321,6 +321,7 @@ class FluidWorld:
         peak_velocity: float | None = None,
         collision: str = "trt",
         smagorinsky: float = 0.0,
+        outlet_rho: float = 0.0,
         scaling: Scaling | None = None,
         device: str | None = None,
         one_way: bool = False,
@@ -385,6 +386,14 @@ class FluidWorld:
 
         if scaling is not None:
             self.scaling = scaling
+            # **0 keeps the extrapolating outlet, which does not conserve mass.** A velocity
+            # inlet with a "do nothing" outflow has nothing anchoring the channel's mass or
+            # its pressure level, and the 2D-1 channel gained +7.06% of its mass in 12,000
+            # steps while its drag climbed and never settled. Setting this to the rest density
+            # in lattice units (1.0) rescales the outlet node's populations to that density,
+            # which fixes the pressure level and leaves the velocity alone. Off by default so
+            # that no case which passes today changes without opting in.
+            self.outlet_rho = float(outlet_rho)
             self.substeps = int(substeps or 1)
             self.dt = self.scaling.dt * self.substeps
         elif dt is None:
@@ -708,7 +717,8 @@ class FluidWorld:
             if self._needs_faces:
                 wp.launch(L.apply_faces, dim=self.shape,
                           inputs=[self.f, self.phi, self.faces, self.face_velocity,
-                                  self._inlet_profile, self._use_profile],
+                                  self._inlet_profile, self._use_profile,
+                                  L.DTYPE(self.outlet_rho)],
                           device=self.device)
             self.lattice_steps += 1
 

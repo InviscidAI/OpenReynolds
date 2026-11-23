@@ -824,6 +824,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
 
 def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
                    collision: str = "trt", smagorinsky: float = 0.0,
+                   outlet_rho: float = 0.0,
                    device: str | None = None, periods: float = 30.0,
                    establish_flows: float = 8.0, sample_periods: float = 25.0,
                    settle: float = 0.5, out_dir: str | Path = ".",
@@ -879,9 +880,13 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
                     faces={"-x": "inlet", "+x": "outlet", "-y": "wall", "+y": "wall",
                            "-z": "periodic", "+z": "periodic"})
+    # `outlet_rho` defaults to 0 here, the extrapolating outlet this case's +11.73%
+    # was measured with, so that number stays reproducible. Pass 1.0 to anchor the
+    # density instead -- see `crosscheck_2d1`, where doing so took the drag from
+    # +9.6% to +2.4% and stopped the domain gaining 7% of its mass in 12,000 steps.
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                        substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device)
+                       outlet_rho=outlet_rho, device=device)
 
     # The parabolic inflow, which is the case. 4 U_max y (H - y) / H^2 peaks at U_max on
     # the centreline and averages 2/3 of it, so U_mean = 1.0 against U_max = 1.5 is the
@@ -2649,6 +2654,7 @@ def _try_draw(label: str, make: Callable[[], Any]) -> tuple[Any, str | None]:
 
 
 def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
+                   outlet_rho: float = 1.0,
                    steps: int | None = None, device: str | None = None,
                    out_dir: str | Path = ".", animate: bool = True,
                    tolerance_scale: float = 1.0,
@@ -2717,8 +2723,15 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
                            # shallow 3D duct instead of a 2D plane (DECISIONS_LIVE.md
                            # D13 is the same choice for the free-surface cases).
                            "-z": "periodic", "+z": "periodic"})
+    # **The outlet anchors the density, which the extrapolating one does not.** With a
+    # velocity inlet at the other end nothing holds the channel's mass: measured here,
+    # the extrapolating outlet gained +7.06% of the domain's mass in 12,000 steps and the
+    # drag climbed with it and never settled. Anchored, the same run holds mass to
+    # -0.64% and reads Cd 5.713 against the paper's 5.5795 at 10 cells per diameter,
+    # where the extrapolating one read 6.114.
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                       substeps=1, collision="trt", smagorinsky=0.0, device=device)
+                       substeps=1, collision="trt", smagorinsky=0.0,
+                       outlet_rho=outlet_rho, device=device)
 
     # The parabolic inflow, which is the case: `4 U_max y (H - y) / H^2`. A uniform inlet
     # at the same mean is a different problem, and this project has had the inlet
