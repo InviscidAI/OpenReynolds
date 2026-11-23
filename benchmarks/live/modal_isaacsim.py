@@ -1408,6 +1408,92 @@ def _cases() -> dict:
     return out
 
 
+def _isaac_suite(paths: str = "tests/test_live_isaac.py", extra: str = "") -> dict:
+    """One or more test files, inside Kit, with pytest's output NOT captured.
+
+    Two differences from `_cases`, both because of what happened the first time this was
+    asked for. `_cases` runs the lattice suites first and on `release/v0.1` that pytest
+    call takes the container down with SIGSEGV -- five attempts, two L40S driver builds,
+    always at the same point -- so a job that runs the lattice files first can never
+    reach this one. And `_cases` wraps pytest in `redirect_stdout` into a buffer it emits
+    afterwards, which means a segfault loses the buffer and the report says only that the
+    runner died. Here pytest writes straight to the container log, so the last line
+    before a crash names the test that caused it.
+
+    `isaac.HoverFluidEnv` is the only thing in the tree that builds
+    `FluidWorld(..., dt=...)` -- the constructor branch the graded cases never take --
+    which is why this file's in-Kit result is not implied by the other two.
+    """
+    import json
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name()}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("ISAAC " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print(f'ISAAC {{"{key}": "unserialisable: {exc}"}}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({"headless": True})  # noqa: F841  -- keeps Kit alive
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("kit", traceback.format_exc()[-4000:])
+        return out
+
+    sys.path.insert(0, "/repo")
+    os.environ["PYTHONPATH"] = "/repo" + os.pathsep + os.environ.get("PYTHONPATH", "")
+    import warp as wp
+
+    emit("warp_version", wp.config.version)
+    emit("warp_file", wp.__file__)
+    try:
+        wp.init()
+        emit("warp_cuda_devices", wp.get_cuda_device_count())
+    except Exception:
+        emit("warp_init", traceback.format_exc()[-2000:])
+
+    # Which of the three skip gates in the file are open here decides whether the run
+    # means anything: `test_a_short_rollout_returns_a_conformant_five_tuple` is gated on
+    # warp *and* torch *and* newton, and it is the test the `outlet_rho` bug fails.
+    import importlib.util
+    emit("has", {name: importlib.util.find_spec(name) is not None
+                 for name in ("warp", "torch", "newton", "isaaclab")})
+
+    import pytest
+
+    suite_started = time.time()
+    print("ISAAC --- pytest begins, output unbuffered ---", flush=True)
+    argv = [f"/repo/{p}" for p in paths.split(",") if p.strip()]
+    argv += ["-v", "--no-header", "-p", "no:cacheprovider", "--rootdir=/repo"]
+    argv += [a for a in extra.split(",") if a.strip()]
+    emit("argv", argv)
+    try:
+        code = pytest.main(argv)
+        emit("pytest_returncode", int(code))
+    except Exception:
+        emit("pytest_returncode", "raised")
+        emit("pytest_exception", traceback.format_exc()[-4000:])
+    emit("pytest_seconds", round(time.time() - suite_started, 1))
+    return out
+
+
+@app.function(image=tests_image, gpu="L40S", timeout=3600, memory=32768, retries=0)
+def isaac_l40s(paths: str = "tests/test_live_isaac.py", extra: str = "") -> dict:
+    return _isaac_suite(paths, extra)
+
+
 @app.function(image=tests_image, gpu="L40S", timeout=5400, memory=32768)
 def cases_l40s() -> dict:
     return _cases()
