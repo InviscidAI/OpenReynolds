@@ -1,0 +1,78 @@
+# Tests the pre-commit hook deselects, and why.
+#
+# One node id per line; `#` and blank lines are comments. `scripts/precommit_tests.py`
+# deselects these from the suite it runs, and then runs exactly this list again on its
+# own, with no deselect, so a line that has started passing is reported at every commit.
+# When you see `BASELINE STALE`, delete the line. Nothing else maintains this file.
+#
+# Enumerated by node id, not by file, deliberately. Every file named below also holds
+# tests that pass, so deselecting the file instead would hide those -- and would hide a
+# new failure in it, which is the whole thing this file exists to prevent.
+#
+# A line belongs here only when the cause is this machine's installed packages rather
+# than this repo, and only with the command that clears it. A real failure goes in a
+# fix, not in here.
+
+# -- 2026-11-23: a drifted CAD install, three separate symptoms ----------------------
+#
+# Measured on this box:
+#
+#     build123d           0.13.0      pinned 0.11.1
+#     cadquery-ocp-novtk  8.0.1.0.0   pinned 7.9.3.1.1
+#
+# pyproject's `cad` extra and docker/workspace/Dockerfile's ARGs pin the lower pair and
+# are asserted equal to each other by a test, so the hosted image is unaffected. This is
+# one developer box installed past its pins. Clears with:
+#
+#     python -m pip install -e ".[cad]"
+#
+# Out of scope for the hook, and not a reason for the hook to be silent about every
+# other test file in the suite.
+#
+# (a) `ImportError: cannot import name 'TopTools_IndexedMapOfShape' from 'OCP.TopTools'`
+#     -- the symbol is gone from the installed build. 15 tests.
+tests/test_buildup_cad_export.py::test_export_patches_welds_the_same_geometry
+tests/test_buildup_cad_export.py::test_the_report_says_what_the_union_is
+tests/test_buildup_cad_export.py::test_the_refusals[foreign-not a face of the shape]
+tests/test_buildup_cad_export.py::test_the_refusals[doubled-in both]
+tests/test_buildup_cad_export.py::test_the_refusals[unclaimed-are in no patch]
+tests/test_buildup_cad_export.py::test_the_refusals[empty-was given no faces]
+tests/test_buildup_cad_export.py::test_a_file_from_an_abandoned_route_is_cleared
+tests/test_buildup_cad_export.py::test_the_manifest_is_the_one_the_coverage_probe_reads
+tests/test_buildup_cad_export.py::test_binary_and_ascii_carry_the_same_triangles
+tests/test_buildup_cad_export.py::test_the_printed_topology_is_the_topology_on_disk
+tests/test_buildup_cad_export.py::test_a_sphere_does_not_manufacture_open_edges
+tests/test_buildup_cad_export.py::test_a_face_from_an_earlier_build_is_named_as_such
+tests/test_buildup_cad_export.py::test_the_export_is_idempotent
+tests/test_buildup_cad_export.py::test_ascii_and_binary_are_the_same_surface
+tests/test_buildup_cad_export.py::test_the_directory_argument_answers_to_the_name_the_desk_reaches_for
+
+# (b) A different cause, in the same install: `Bnd_Box.Get()` now returns
+#     `Bnd_Box::Limits`, which the binding cannot convert --
+#     `TypeError: Unable to convert function return value to a Python type!`
+#     Both tests reach it through the HealShapes round trip. 2 tests.
+#
+#     Worth keeping separate: the "OCP dropped TopTools_IndexedMapOfShape" story
+#     accounts for 15 of the 17, and whoever fixes the install should expect two
+#     distinct symptoms, not one.
+tests/test_toolbox_export_patches.py::test_repair_and_a_step_round_trip_conserve_the_assembly
+tests/test_toolbox_export_patches.py::test_the_round_trip_gate_bites_on_healshapes_at_its_defaults
+
+# (c) The third symptom, and one `-x` had never let anybody see. `b123d_api.py` takes
+#     its content off the *installed* build123d, and the test regenerates the shipped
+#     `b123d_api.md` and demands they match. The whole diff is the version line --
+#     `build123d 0.13.0` against the shipped `0.11.1` -- so there is nothing stale about
+#     the shipped file and re-running the generator here would be wrong: it would commit
+#     0.13.0's number for a workspace that ships 0.11.1. Same remedy as above. 1 test.
+tests/test_cad_brief.py::test_the_shipped_index_is_what_the_generator_produces
+
+# -- 2026-11-23: `socksio` missing from this install ---------------------------------
+#
+# `pyproject` declares `httpx2[socks]`, but the extra was never resolved here, so
+# `httpx2.HTTPTransport(proxy="socks5://...")` raises ImportError. A correct install has
+# it; this one does not. Also new -- `-x` had never reached test_llm.py. Clears with:
+#
+#     python -m pip install socksio
+#
+# 1 test.
+tests/test_llm.py::test_a_socks_proxy_does_not_stop_the_model_client_from_starting
