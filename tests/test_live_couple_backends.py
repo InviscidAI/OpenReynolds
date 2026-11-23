@@ -90,3 +90,41 @@ def test_the_boundary_particle_guard_does_not_fire_on_a_valid_world() -> None:
         "boundary_from_domain() ran, so the guard in NewtonCoupling must see boundary "
         "particles here; if it sees none it will refuse a valid world"
     )
+
+
+def test_a_particle_body_lands_where_it_was_put_not_half_a_metre_away() -> None:
+    """The device pose must be the world pose on the particle path.
+
+    `poses_from_newton` subtracts half a cell, because lattice node `i` sits at
+    `origin + (i+0.5) dx`. That offset used to be the constant `0.5`, and a particle
+    backend works in SI with `inv_dx = 1`, so it subtracted **half a metre**: a hull
+    placed at `(0.06, 0.06, 0.04)` arrived on the device at `(-0.44, -0.44, -0.46)`,
+    500 mm outside a 120 mm tank.
+
+    Its boundary particles then touched no fluid and every body read a wrench of
+    **exactly zero**, which reads as a coupling that runs and finds no force rather than
+    as a unit error -- so four GPU validation runs reported it as a physics result. The
+    tell was available for the price of printing one array.
+    """
+    sph = pytest.importorskip("openreynolds.live.sph")
+    pytest.importorskip("newton")
+    import numpy as np
+
+    from openreynolds.live.world import Domain
+    sph_cases = pytest.importorskip("openreynolds.live.sph_cases")
+
+    placed = (0.06, 0.06, 0.04)
+    domain = Domain(origin=(0.0, 0.0, 0.0), size=(0.12, 0.12, 0.12), faces="wall")
+    world = sph.SphWorld(domain=domain, particle_radius=0.005, fluid="water",
+                         gravity=(0.0, 0.0, -9.81), surface_tension=0.0, device="cpu")
+    world.boundary_from_domain()
+    world.fill_below(0.08)
+    box = sph_cases._Box(beam=0.032, length=0.032, height=0.032, density_ratio=1.0)
+    sph_cases._float_rig(box, world, start_z=placed[2], solver="mujoco")
+
+    on_device = np.asarray(world.body_pose.numpy())[0][:3]
+    assert np.allclose(on_device, placed, atol=1e-4), (
+        f"the hull was placed at {placed} and reached the device at {tuple(on_device)}. "
+        f"A particle backend takes no node offset: it works in metres, so subtracting "
+        f"half a cell with inv_dx = 1 subtracts half a metre"
+    )

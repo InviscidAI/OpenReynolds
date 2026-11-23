@@ -551,16 +551,18 @@ class NewtonCoupling:
 
         origin = wp.vec3(*[float(v) for v in self.world.domain.origin])
         inv_dx = L.DTYPE(1.0 / self._to_solver)
+        # Half a cell for the lattice, nothing for particles. See `poses_from_newton`.
+        node_offset = L.DTYPE(0.5 if self._style == "lattice" else 0.0)
         wp.launch(
             L.poses_from_newton, dim=int(self.model.body_count),
             inputs=[self.state_0.body_q, self.state_0.body_qd, self.model.body_com,
                     self.world.body_pose, self.world.body_vel, self.world.body_com,
-                    origin, inv_dx, L.DTYPE(self._step_seconds)],
+                    origin, inv_dx, L.DTYPE(self._step_seconds), node_offset],
             device=self.world.device)
         wp.launch(
             L.shapes_from_newton, dim=int(self.model.shape_count),
             inputs=[self._shape_body, self._shape_local, self.state_0.body_q,
-                    self._shape_pose, origin, inv_dx],
+                    self._shape_pose, origin, inv_dx, node_offset],
             device=self.world.device)
 
         # **Unconditional, and it was conditional until 2026-11-23.** The host needs

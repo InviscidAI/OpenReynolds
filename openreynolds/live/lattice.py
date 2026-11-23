@@ -1371,6 +1371,7 @@ def poses_from_newton(
     origin: wp.vec3,
     inv_dx: DTYPE,
     dt: DTYPE,
+    node_offset: DTYPE,
 ):
     """Newton's body state, in metres and seconds, to the lattice's own units.
 
@@ -1400,12 +1401,21 @@ def poses_from_newton(
     pose = body_q[b]
     position = wp.transform_get_translation(pose)
     rotation = wp.transform_get_rotation(pose)
-    lattice_p = (position - origin) * inv_dx - wp.vec3(DTYPE(0.5), DTYPE(0.5), DTYPE(0.5))
+    # `node_offset` is 0.5 for the lattice, because node `i` sits at
+    # `origin + (i+0.5) dx`, and **0 for a particle backend, which has no nodes**. A
+    # parameter and not a constant, because the constant was wrong by half a metre:
+    # SPH works in SI, so `inv_dx` is 1 there, and a hard-coded `- 0.5` moved a hull
+    # 500 mm out of a 120 mm tank. Its boundary particles touched no fluid and every
+    # body read a wrench of **exactly zero** -- which reads as a coupling that runs
+    # and finds no force, not as a unit error. Four GPU validation runs reported that
+    # zero before the device pose was printed and came back `(-0.44, -0.44, -0.46)`
+    # for a hull at `(0.06, 0.06, 0.04)`.
+    shift = wp.vec3(node_offset, node_offset, node_offset)
+    lattice_p = (position - origin) * inv_dx - shift
     pose_out[b] = wp.transform(lattice_p, rotation)
 
     com_world = wp.transform_point(pose, body_com_local[b])
-    com_out[b] = (com_world - origin) * inv_dx - wp.vec3(DTYPE(0.5), DTYPE(0.5),
-                                                         DTYPE(0.5))
+    com_out[b] = (com_world - origin) * inv_dx - shift
 
     vel = body_qd[b]
     scale = dt * inv_dx
@@ -1423,6 +1433,7 @@ def shapes_from_newton(
     pose_out: wp.array(dtype=wp.transform),
     origin: wp.vec3,
     inv_dx: DTYPE,
+    node_offset: DTYPE,
 ):
     """Compose each shape's world pose from its body's, in lattice units, on the device.
 
@@ -1439,7 +1450,17 @@ def shapes_from_newton(
     if body >= 0:
         world = wp.transform_multiply(body_q[body], local)
     position = wp.transform_get_translation(world)
-    lattice_p = (position - origin) * inv_dx - wp.vec3(DTYPE(0.5), DTYPE(0.5), DTYPE(0.5))
+    # `node_offset` is 0.5 for the lattice, because node `i` sits at
+    # `origin + (i+0.5) dx`, and **0 for a particle backend, which has no nodes**. A
+    # parameter and not a constant, because the constant was wrong by half a metre:
+    # SPH works in SI, so `inv_dx` is 1 there, and a hard-coded `- 0.5` moved a hull
+    # 500 mm out of a 120 mm tank. Its boundary particles touched no fluid and every
+    # body read a wrench of **exactly zero** -- which reads as a coupling that runs
+    # and finds no force, not as a unit error. Four GPU validation runs reported that
+    # zero before the device pose was printed and came back `(-0.44, -0.44, -0.46)`
+    # for a hull at `(0.06, 0.06, 0.04)`.
+    shift = wp.vec3(node_offset, node_offset, node_offset)
+    lattice_p = (position - origin) * inv_dx - shift
     pose_out[s] = wp.transform(lattice_p, wp.transform_get_rotation(world))
 
 
