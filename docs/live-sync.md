@@ -1,4 +1,4 @@
-# Live sync: a GPU lattice Boltzmann fluid in lockstep with Newton
+# Live sync: a GPU fluid in lockstep with Newton
 
 A robot simulator integrates rigid bodies. It does not know what the air or the water
 around them is doing, so a quadrotor in most simulators does not feel its own downwash,
@@ -11,9 +11,18 @@ Newton step, handing each body the force and the torque the flow actually produc
 
     from openreynolds.live import Domain, FluidWorld, NewtonCoupling
 
+**There are two solvers behind that extra and they are not at the same level of
+validation.** The lattice Boltzmann backend is the supported one, for single-phase flow
+-- air, and water with no surface in the picture. A free surface -- a boat, a cup, a
+tank that pours -- is the SPH backend, which is **beta**: it is new, its unit checks are
+good, and its validation cases have not returned numbers yet. Everything on this page
+that does not say SPH is about the lattice. [The next section](#two-backends-and-which-one-is-supported)
+is the whole split in one table, and nothing in this document is more important than it.
+
 Everything below is in `openreynolds/live/`. `ARCHITECTURE_LIVE.md` is where it plugs
 into the rest of OpenReynolds and what it reuses; `DECISIONS_LIVE.md` is every choice
-taken while building it, with the evidence.
+taken while building it, with the evidence; [Known issues at v0.1](#known-issues-at-v01)
+is what does not work, with the measurement for each.
 
 ## What this is not
 
@@ -26,7 +35,7 @@ cores, and is still the thing to use when the answer has to be defensible.
 | use | reach for |
 |---|---|
 | a steady external aerodynamics answer you will put in a report | the OpenFOAM path: body-fitted mesh, a turbulence model, mesh convergence, `benchmarks/` |
-| a transonic aerofoil, a 20-million-cell hull, heat transfer, combustion, a multiphase free surface | the OpenFOAM path. None of them is in this extension and none is planned |
+| a transonic aerofoil, a 20-million-cell hull, heat transfer, combustion, a **two-phase** flow where the gas matters (sloshing with trapped air, cavitation, a breaking wave's entrainment) | the OpenFOAM path. None of them is in this extension and none is planned. The SPH backend here is a **single**-phase free surface: the gas above the water is an atmospheric pressure boundary and nothing else |
 | a robot that has to feel the fluid **while it is being controlled**, at a 1 to 5 ms timestep, in the same process as the physics engine | this extension |
 | a flow in an awkward passage at Re in the hundreds, on a machine with nothing installed | `openreynolds/toolbox/lbm.py`, the D2Q9 numpy solver that reaches every workspace with no image and no GPU |
 | **a 10^9-cell static aerodynamics run** | **Autodesk XLB**, by name. It has a multi-resolution grid, out-of-core arrays, a KBC collision and a distributed multi-GPU path; this extension has none of those and will not have them soon. `DECISIONS_LIVE.md` D1 is the full evaluation, including the three reasons it is not a dependency here: JAX is a hard requirement of it and Warp is optional, its force operator copies to the host and returns one aggregate vector with no torque and no split by body, and its boundary data is organised around a mask built from a fixed mesh rather than around N bodies whose poses change every step |
@@ -34,6 +43,64 @@ cores, and is still the thing to use when the answer has to be defensible.
 The dividing line is not accuracy, it is what the solver is for. The OpenFOAM path
 answers one question carefully. This one answers a cheaper question 500 times a second
 while a controller is in the loop.
+
+## Two backends, and which one is supported
+
+| | lattice Boltzmann (`lbm`) | SPH (`sph`) |
+|---|---|---|
+| what it is for | single-phase flow: air, and water with no surface in the picture (a submerged hull, an internal passage) | a free surface: a boat, a cup, a tank that pours |
+| state at v0.1 | **supported.** 56 of 64 graded checks pass over 17 GPU validation runs, and the eight that fail are named under [Known issues](#known-issues-at-v01) | **beta.** Its unit checks pass; its eight validation cases are running and have **no final numbers** |
+| the scheme | D3Q19, TRT/BGK/regularized collision, Bouzidi interpolated walls, momentum-exchange forces | DFSPH (Bender and Koschier 2015/2017), Akinci et al. (2012) rigid coupling, cubic-spline kernel, Monaghan (1992) viscosity |
+| the sizing knob | `resolution` or `dx` | `particle_radius`; the spacing is twice it |
+| units | SI in and out, lattice units inside the kernels (`units.Scaling` is the conversion) | SI everywhere, on the device included. There is no `Scaling` and there should not be |
+| gravity | **not in the fluid.** A body's weight and buoyancy come from `NewtonCoupling` | **in the fluid.** Buoyancy comes out of the pressure field, so `buoyancy=False` is the default and adding `rho V g` as well would count it twice |
+| file | `openreynolds/live/lattice.py`, `world.py` | `openreynolds/live/sph.py`, interface fixed in [`sph-contract.md`](sph-contract.md) |
+
+`make_world` is the one entry point that knows about both, and it is a function rather
+than a flag on a constructor because the two backends do not share a representation --
+one is a lattice of populations, the other a bag of particles with a hash grid, so they
+are different classes:
+
+```python
+from openreynolds.live import Domain, make_world
+
+make_world(domain=..., free_surface=True, ...)    # SPH
+make_world(domain=..., backend="sph", ...)        # the same, said explicitly
+make_world(domain=..., backend="lbm", ...)        # single phase, and the default
+```
+
+`free_surface=True` selects SPH; `backend=` overrides it; anything other than `lbm` or
+`sph` is refused by name. A caller who wants one specific backend can keep naming the
+class -- `FluidWorld(...)` and `SphWorld(...)` are both exported and `make_world` returns
+exactly those -- and a caller who wants "water with a surface" should ask here.
+
+**`backend="lbm"` with `free_surface=True` raises.** There *is* a lattice free surface in
+this repository, `freesurface.py`, and it is **frozen**: correct for still water, and its
+one-cell interface layer loses its structure within ten steps of a hull being released
+(1.391 interface cells per wet column against the 0.957 the algorithm requires). It is
+kept for its findings, gated behind `experimental=True`, and `freesurface.FROZEN` is the
+sentence anyone who constructs it without the gate gets. `DECISIONS_LIVE.md` D15 is the
+decision and the measurement behind it. Handing that solver quietly to somebody who asked
+for a boat is the thing this refusal exists to prevent.
+
+### What the SPH path needs that the lattice path does not
+
+Three differences will otherwise be found by measuring them:
+
+- **Boundaries are sampled once, at `add_shape` time, not voxelised every step.** A rigid
+  shape's boundary particles never move in its own frame, so `pose_boundary` just
+  transforms them from `body_q`. The consequence for a coupled run is that
+  **`NewtonCoupling` does not turn a Newton model's shapes into boundary particles for
+  you**: call `world.add_shape(...)` once per coupled body, and
+  `world.boundary_from_domain()` for the walls, *before* constructing the coupling. A
+  world with neither is refused at construction, by name, because the alternative is
+  bodies with no wetted surface and a wrench of exactly zero -- which reads as a coupling
+  that is running and finding no force.
+- **`buoyancy=False`** on the coupling, and it is the default on this path.
+- **No periodic axis.** `wp.HashGrid` has no periodic mode, so a quasi-2D case pays for
+  its third dimension. `sph.py`'s own docstring says what to do instead.
+
+`mesh=` shapes are **refused by name** on the SPH path rather than sampled wrongly.
 
 ## Install
 
@@ -76,6 +143,14 @@ report carries the fact that its dependencies were untested.
 
 ## Quickstart
 
+**Both blocks below were run verbatim out of this page for the v0.1 release and both
+exited 0.** The lattice one lands `u_min = -0.20848` against Ghia, Ghia and Shin's
+`-0.21090` -- 1.1% at a resolution chosen to finish in eleven seconds, not a validation
+figure -- and the SPH one reports a 0.56% peak density error over 100 steps. They are
+extracted and run by hand rather than by a test, so a change to either block is a change
+this claim no longer covers.
+
+
 A lid-driven cavity at Re 100 on a 24-cell lattice. It needs no files, no arguments and
 no GPU, and it runs as written:
 
@@ -112,14 +187,52 @@ It prints `-0.20848` against Ghia's `-0.21090`, 1.1% low, which is 24 cells and 
 scheme: the same extraction at 32 cells is `-0.21135`, 0.21% out, and that number and
 the RMS behind it are what `openreynolds live run cavity` grades.
 
-**It takes about 8 s on one CPU core** -- 1,728 nodes and 8,000 steps, plus a second or
+**It takes 8 to 10 s on one CPU core** -- 1,728 nodes and 8,000 steps, plus a second or
 two for Warp to load its cached kernels -- and a GPU runs the same kernels much faster.
 `openreynolds live bench` measures the rate on yours and names the device.
+
+That block above was run exactly as it is printed here on 2026-11-23, copied out of this
+file with nothing added, on warp 1.19.0 with no CUDA device: 9.7 s at 1.4 MLUPS, and it
+printed `-0.20848`. "The documented quickstart runs unmodified" is a check somebody has
+to actually make rather than a thing a document asserts about itself.
 
 The three runnable examples in [`examples/live/`](../examples/live/) are the next step
 up, and each says in its own docstring what it costs on a CPU: the graded cavity
 against Ghia, a sphere in a uniform stream with its drag coefficient against
 Schiller-Naumann, and a sphere released in water two-way coupled to Newton.
+
+### The same thing with a free surface (SPH, beta)
+
+A still tank of water, 500 fluid particles in a 100 mm box filled to half its height.
+Nothing here is graded -- it is the smallest thing that shows the particle backend
+running -- and the numbers it prints are the health checks every SPH case reports:
+
+```python
+from openreynolds.live import Domain, make_world
+
+world = make_world(domain=Domain(origin=(0.0, 0.0, 0.0), size=(0.1, 0.1, 0.1),
+                                 faces="wall"),
+                   free_surface=True, particle_radius=0.005, fluid="water")
+world.boundary_from_domain()
+world.fill_below(0.05)
+for _ in range(100):
+    world.step()
+
+print("\n".join(world.report()))
+print("density error:", world.density_error())
+```
+
+**7.0 s on one CPU core** for 100 steps of 2,244 particles (500 fluid, 1,744 boundary),
+measured the same way and on the same machine as the cavity above. It reports a maximum
+compression of 0.56% and a mean of 0.12% of the rest density, and a surface deficit --
+particles at the free surface having no neighbours above them -- that the report labels
+as expected rather than as an error.
+
+`density_error()` is the number to watch on this backend: it is what a DFSPH run's
+pressure solve is iterating down to, and a case whose compression is growing is a case
+whose timestep or tolerance is wrong. There is no `Scaling` to refuse a bad setup up
+front the way the lattice has, because SPH has none of the three numbers `Scaling`
+exists to reconcile.
 
 ## The Python API
 
@@ -276,7 +389,38 @@ transfers per coupling step, which at a two-millisecond robot step is most of th
 report. `link.displaced_volume` is the per-body voxelised volume in m^3, written each
 step when buoyancy is on.
 
+### `SphWorld` (beta)
+
+[`sph-contract.md`](sph-contract.md) is the interface and it is not restated here, for
+the reason the performance numbers are not either: an interface written out twice is an
+interface that will disagree with itself. What belongs on this page is how it is reached
+and the two places the shipped code is not the contract's own wording:
+
+    SphWorld(domain, *, particle_radius, fluid="water", gravity=(0, 0, -9.81),
+             viscosity=None, surface_tension=0.0, device=None, solver="dfsph",
+             dt=None, substeps=None, tolerance=1e-3, max_iterations=100,
+             boundary_layers=2, check_every=1)
+
+- **`make_world(...)` is the dispatch, not a keyword on `FluidWorld`.** The contract
+  writes `FluidWorld(domain=..., free_surface=True)`; `FluidWorld.__init__` has no
+  `free_surface` argument and a call like that raises `TypeError`. Use
+  `make_world(domain=..., free_surface=True)`, or name `SphWorld` directly. The
+  behaviour the contract fixes -- `free_surface=True` selects SPH, `backend=` overrides,
+  `backend="lbm"` with `free_surface=True` raises naming `freesurface.FROZEN` -- is all
+  there, in `world.py::make_world`.
+- **`surface_tension` must be 0.0.** There is no surface-tension model in this backend,
+  and the knob refuses a non-zero value rather than accepting it and ignoring it. For a
+  tank or a hull at these scales that is the right physics to leave out; for a droplet it
+  is the physics, and this backend is not for droplets.
+
+`world.report()` is where the sizing, the kernel, the solver, the CFL timestep, the
+density error and the one host round trip inside the step are all printed, and it is
+worth reading once rather than skipping: an SPH run has no `Scaling` refusing a bad setup
+at construction, so the report is the setup review.
+
 ### `units.Scaling`
+
+Lattice backend only -- SPH is SI throughout and has none of this.
 
 A lattice Boltzmann scheme has three free numbers and one of them is not free:
 
@@ -369,6 +513,39 @@ and `[needs a GPU to be quick]` where the case is heavy. No options but `--json`
 | `ground_effect` | one actuator disk at five heights over a ground plane against Cheeseman and Bennett (1955). One disk and not four, because Sanchez-Cuevas, Heredia and Ollero (2017) measured that a complete multirotor does not follow that model |
 | `quadrotor` | a quadrotor hovering on four actuator disks, Newton-coupled, with ground and wall effects. Graded for bookkeeping and stability, **not** against a published number. Needs Newton |
 | `underwater` | a towed capsule in water, graded at zero length against the sphere it reduces to, and reported rather than graded for the elongated hull because no published drag coefficient for a capsule of arbitrary fineness ratio has been read for this repository |
+
+Four more cases run the **frozen** lattice free surface (`DECISIONS_LIVE.md` D15). They
+are listed and they run, because their numbers are what froze it:
+
+| case | what it measures, and against what |
+|---|---|
+| `hydrostatic` | still water in a closed tank: the volume, the flatness of the surface, `d(rho)/dz` against `-rho g / c_s^2`, and the mass drift. **7/7 pass**, and it is the one free-surface case on the lattice that passes cleanly |
+| `dam_break` | a column collapsing on a dry bed against Ritter (1892). Converges to +13.8% of Ritter's depth at the dam, inside its 15% bound; the affordable grids are not |
+| `sloshing` | a tank's first mode against `omega^2 = g k tanh(k h)`. Converges to +5.1%, **outside** its 5% bound |
+| `archimedes` | a box of half water's density released at the surface. **Does not produce a reproducible draft**, and that is what D15 is about |
+
+And eight cases run the **SPH** backend. They are **beta**: the solver's unit checks pass
+and these eight have not returned final numbers, so nothing below is a validated claim
+yet (see [Known issues](#known-issues-at-v01)).
+
+| case | what it measures, and against what |
+|---|---|
+| `sph_hydrostatic` | a still column: particle pressures against `rho g h`, and the density error over the run, max and mean |
+| `sph_dam_break` | a column collapsing on a dry bed, graded against Ritter (1892), with Martin and Moyce reported in both conventions and graded in neither |
+| `sph_sloshing` | a tank's first mode released through its velocity field, against `omega^2 = g k tanh(k h)`, from two estimators whose disagreement is itself graded |
+| `sph_static_float` | a box of half water's density released at the surface: the draft against Archimedes within 2%, with no analytic buoyancy term anywhere. This is the case the lattice could not do |
+| `sph_heave_decay` | the same box pushed below its draft and released: the natural period against `2 pi sqrt(d/g)`, graded one-sided because added mass can only lengthen it |
+| `sph_heel_stability` | one hull that cannot float upright and one that can, against the derived metacentric criterion. Bogner and Rude (2013) could not be read and is reported, not graded |
+| `sph_force_noise` | the RMS fluctuation of the force on a static submerged body as a fraction of its mean, against what a 1 kHz controller can use |
+| `sph_convergence` | three particle counts at a constant refinement ratio on the dam break and the static float, with the observed order and a three-point Richardson limit that needs no reference |
+
+**`openreynolds live cases` does not list those eight today, and `live run` runs them.**
+The SPH catalogue is registered into `cases.CASES` lazily, by `cases.load_sph_cases()`,
+which `run_case` calls and `describe_cases` does not -- so `openreynolds live run
+sph_dam_break` works, `openreynolds live cases` prints sixteen cases rather than
+twenty-four, and the agent tool's `case="list"` has the same hole. Measured on
+2026-11-23: `cases.CASES` holds 16 names after `import cases` and 24 after
+`load_sph_cases()`. One call in `describe_cases` closes it.
 
 ### `openreynolds live run CASE`
 
@@ -601,6 +778,127 @@ differently from a point mass, and it is chosen so that `main()` finishes in abo
 a minute on a CPU. A real training run wants `resolution=96` or more (2 mm cells, 11
 cells per rotor radius, the airframe's boundary layer actually on the lattice), which is
 884,736 nodes and about 100 substeps a coupling step: a GPU's work and not a laptop's.
+
+## Known issues at v0.1
+
+*Limitations* below is what this extension does not attempt. **This section is what it
+attempts and does not yet achieve**, with the measurement for each and where the analysis
+lives. Every number here is read off
+[`PROGRESS_LIVE.md`](../PROGRESS_LIVE.md)'s summary table, which
+`benchmarks/live/summarise.py --write` generates from
+`benchmarks/live/results/*/result.json`, or off the file it names.
+
+Where the whole validation stands: **56 of 64 graded checks pass, over 17 validation runs
+on real GPUs.** M0 4/4. **M1 11/17 -- three of its six cases pass** (`poiseuille`,
+`cavity` at Re 100 and at Re 1000). M2 16/16. M3 10/10. M4 reaches 1,478.7 MLUPS on an
+H100 against the brief's 1,000. M5 15/17. Inside a live Isaac Sim Kit process, on Kit's
+own Warp 1.17.0 and Newton 1.6.1, 63 passed and 0 failed.
+
+### The three M1 failures
+
+| | measured | against | what is known |
+|---|---|---|---|
+| `cylinder` Cd_max, 44 cells per diameter | **3.61376 (+11.7%)** | 3.2300 +/- 5% (Schaefer and Turek 2D-2, interval 3.22-3.24) | **largely compressibility, and localised rather than mysterious.** Halving the Mach number at fixed `tau` takes it to +7.16%; extrapolating to zero Mach gives **+2.59%** linear and +5.64% quadratic, and the linear reading has independent support -- moving the inlet four diameters upstream at unchanged Mach gives **+2.4%**, which the linear limit matches to a sixth of a per cent. The graded case still runs the paper's own 2.2 x 0.41 channel and still fails, deliberately: a run in a longer channel is not that benchmark. `run_cylinder(upstream=...)` is the knob. `PROGRESS_LIVE.md`, "The cylinder's +11%, localised" |
+| `cylinder` observed order of convergence on the drag error | **0.297** | >= 1.0 | the same fault seen from the other side: an error dominated by a boundary-condition artefact does not improve with resolution (24/32/44 cells give 3.67, 3.61, 3.61) |
+| `sphere` Cd at Re 10 | **4.38591 (+5.65%)** | 4.1511 +/- 5% (Schiller-Naumann) | **parked for v0.1, and characterised rather than explained.** Five candidates eliminated with a number each: resolution (0.07% over a 50% refinement), confinement (0.28% from 12 to 20 diameters), the reference (Schiller-Naumann and Clift-Gauvin agree to **0.00%** here), `tau` and the Mach number (0.29% over a fourfold change, and *adverse*). The error is monotonic in Reynolds number and changes sign near Re 230, which is the shape of an error in the viscous-dominated limit; the boundary treatment is where that would live. Re 50, 100 and 200 all pass. `PROGRESS_LIVE.md`, "The sphere at Re 10" |
+| `crosscheck` Cd and Strouhal (three checks) | Cd **1.70196 (+25.6%)**; St **1.22262**, about **7x** | Cd 1.355514 +/- 5% and St 0.166141 +/- 3%, both read out of the committed OpenFOAM run by `benchmarks/moving_mesh/grade.py`; St 0.164 +/- 3% (Williamson 1996) | **a transverse acoustic mode in the lift, diagnosed by arithmetic.** The contaminant's period is 361 lattice steps and this domain's transverse quarter-wave is 346 -- within 4% -- where the streamwise mode is at 688 and does not fit. Lift *is* the transverse force, which is why the Strouhal number taken from it is out by seven times while the drag, taken streamwise, is out by a quarter. The fix is absorbing side boundaries, which is a boundary-condition job and not a solver one. The shipped velocity inlet is the cause and the alternative is worse: a pressure inlet passes this cross-check and is **-47%** on Schaefer-Turek, which trades a visible failure for a hidden one. `PROGRESS_LIVE.md`, "The cross-check's Strouhal number" |
+
+### M5 sloshing, on the lattice: converged, and to the wrong value
+
+`slosh-n240` measures a first-mode period of **0.439358 s against 0.41709 s +/- 5%**, so
+it fails its bound. The reason it is listed as a defect rather than as a resolution cost
+is that it **converges**: four grids, an observed order of 3.5 and a limit of 1.0510 of
+linear theory, with 180 and 240 cells differing by 0.3%. A converged solution arriving at
+the wrong value is a property of the scheme and not of the grid. Everything else is ruled
+out with a number -- damping (`zeta` 0.0035 to 0.020, a four-decimal correction), finite
+amplitude (0.4% at this steepness), the depth (0.2%), gravity (0.6% of the period), the
+estimator (both of them and their mean sit above theory) and resolution. What is left is
+the discrete dispersion relation of a one-cell interface at `kh` about 0.94, which linear
+theory is not a statement about. It is the one M5 number with no account of itself.
+`PROGRESS_LIVE.md`, "The sloshing period converges, to five per cent above linear
+theory".
+
+For contrast, the two M5 cases around it: `hydrostatic` passes **7/7**, and `dam_break`'s
+graded row fails on the finest affordable grid (25.7244 mm against 22.2222 +/- 15%) while
+the three-point Richardson limit it converges to, **+13.8%**, is inside that bound. The
+honest reading is that the grid-converged answer is acceptable and the affordable grids
+are not.
+
+### The lattice free surface is frozen, not deleted
+
+`freesurface.py` is correct for still water and does not survive a moving rigid body. The
+mass exchange requires an interface layer exactly one cell thick; measured in interface
+cells per wet column on a released floating box, it is **0.957 with the hull pinned and
+1.391 within ten steps of releasing it**, 1.584 at a hundred, and the run diverges later.
+Ten steps is far too few for the hull to have travelled anywhere, and the trigger is
+measured rather than guessed: the same run with Ladd's moving-wall term disabled holds the
+layer at 0.957. Switching that term off is not an option, because without it a hull feels
+no drag. The `archimedes` case on that solver **does not produce a reproducible draft** --
+the same code at the same commit gave 20.3809 mm and then 20.9591 mm, so the encouraging
++1.9% was one sample of a transient and is withdrawn.
+
+Korner's formulation contains no moving solids, so this is **missing rather than broken**,
+and supplying it is a research task. `DECISIONS_LIVE.md` D15 is the decision;
+`freesurface.FROZEN` is what a caller is told. Free-surface liquids moved to SPH, which is
+the next item.
+
+### The SPH backend is beta, and the word is "unverified"
+
+It is the supported *path* for free-surface liquids and it is **not validated yet**. What
+is measured, on the CPU, in `tests/test_live_sph.py`:
+
+- a tank's floor carries the weight of its own water at a ratio of **0.9999** (686
+  particles, 7.834 N, standard deviation 1.9% over 40 samples) -- which is the sign
+  convention and the magnitude in one number, and the thing that has gone wrong twice in
+  this repository;
+- a submerged box feels **1.0992 `rho V g`** at 4 particles across and **1.0614** at 5,
+  converging towards 1 at roughly first order, through the Akinci coupling and no
+  analytic buoyancy term at all. The equivalent lattice number is -0.48 `rho V g`: the
+  wrong sign and half the magnitude;
+- a bulk lattice of particles reads 0.999972 of its own rest density;
+- 126 tests passed across the live test suite at the commit the backend landed in
+  (`910c66b`, its own measurement). Those are unit tests on a CPU, not validation runs,
+  and the distinction is the point of this section.
+
+What is **not** measured: **all eight `sph_*` validation cases.** They were submitted to
+GPU and have returned no numbers; as of 2026-11-23 `benchmarks/live/results/` contains no
+`sph_*` directory, so there is no graded SPH row anywhere in `PROGRESS_LIVE.md`'s table
+and none of the 56 passing checks is an SPH check. Until those land, a free-surface answer
+out of this backend is a plausible number with a good unit test behind it and no
+validation. That is the whole of what "beta" means here.
+
+Two more things to know before using it: `NewtonCoupling` will not turn a Newton model's
+shapes into boundary particles ([above](#what-the-sph-path-needs-that-the-lattice-path-does-not)),
+and there is no periodic axis.
+
+### One demo GIF animates
+
+Of the animated figures this extension writes, as of 2026-11-23, verified by counting
+frames rather than by looking at the file names:
+
+| | frames |
+|---|---|
+| `live-dam-break.gif` (three resolutions) and `gallery/field-dam-break.gif` | **60** |
+| the Isaac Sim submarine and free-surface renders | **44** and **40** |
+| `live-cylinder-n32/n40/n44.gif`, `live-crosscheck-cylinder.gif`, `live-falling-sphere.gif`, `live-quadrotor-z1/z2.5.gif` | **exactly 1** |
+
+Ten files in `benchmarks/live/results/` are single-frame GIFs. A GIF container with one
+frame in it looks like a GIF to everything except a viewer, which is why
+`PROGRESS_LIVE.md` carried the claim that three of them animated until 2026-11-23, when
+counting the frames showed otherwise. The unsteady cases that most want an animation --
+the cylinder's shedding, the falling sphere, the quadrotor's downwash -- are the ones
+without one.
+
+### Two smaller ones, both documented where they bite
+
+- **`openreynolds live cases` lists sixteen cases and `live run` can run twenty-four**:
+  the SPH catalogue registers lazily and `describe_cases` does not trigger it
+  ([above](#openreynolds-live-cases)).
+- **`--out DIR` is dropped on the way through** on `live run`, `live crosscheck` and the
+  agent tool, so figures land in the working directory ([above](#openreynolds-live-run-case)).
+- **The Isaac Lab hover task applies its rotors' attitude moment twice when the fluid is
+  on**, which is exactly the comparison that task exists to make. It is the last entry
+  under *Limitations* and it is the one entry there that is a defect.
 
 ## Limitations
 

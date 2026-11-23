@@ -8,6 +8,56 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **`openreynolds[live]`: a GPU fluid in lockstep with Newton, with two backends at two
+  different levels of validation.** An optional extra; nothing in the core install changes
+  and core imports without it. `docs/live-sync.md` is the page, and its backend table is
+  the first thing to read.
+
+  **The lattice Boltzmann backend (`backend="lbm"`) is supported** for single-phase
+  flow -- air, and water with no surface in the picture. D3Q19 on NVIDIA Warp, TRT / BGK /
+  regularized collision, Bouzidi interpolated walls, momentum-exchange forces,
+  two-way coupled to Newton's MuJoCo-Warp solver with no host round trips in the step
+  loop. **56 of 64 graded checks pass over 17 GPU validation runs**, and it reaches
+  **1,478 MLUPS on an H100** against a 1,000 target. It runs inside a live Isaac Sim 6.2
+  Kit process on Kit's own Warp 1.17 -- 63 tests passed, 0 failed, no shim -- and the
+  coupling is two-way there, confirmed by two numbers that arrive on different routes
+  (fluid drag / thrust 0.815, momentum balance 0.879 over 347 wrench samples).
+
+  **The SPH backend (`backend="sph"`, or `free_surface=True`) is BETA** and is the path
+  for a free surface: a boat, a cup, a tank that pours. DFSPH (Bender and Koschier
+  2015/2017) with Akinci et al. (2012) boundary particles, a Warp `HashGrid`, and
+  Monaghan (1992) viscosity from a physical `nu`. **Written from the papers and not
+  ported** -- there is no SPlisHSPlasH code in it, so no notice is carried and no
+  `LICENSES` entry is owed, which `openreynolds/live/sph.py`'s header states and this
+  release verified. Its unit numbers are good: the wrench on a tank reads **0.9999** of
+  the weight of its own water, a submerged box **1.0992** of `rho V g` converging to
+  1.0614 at five particles across, `dp/dh` **0.9855 rho g**, density error 0.61% max.
+  **Its eight validation cases do not yet have passing numbers, which is why it ships
+  beta rather than supported.**
+
+  Also in the extra: an agent tool and an `openreynolds live` CLI, 24 validation cases
+  that each carry the reference they are graded against, a `PROGRESS_LIVE.md` summary
+  table generated from the recorded results rather than typed, and `DECISIONS_LIVE.md`
+  for the choices made along the way. Every dependency is permissively licensed and was
+  checked against its installed metadata for this release: warp-lang, newton and
+  mujoco-warp are Apache-2.0, numpy is BSD, matplotlib is PSF.
+
+  **Known issues are documented rather than deferred**, in `docs/live-sync.md` under
+  "Known issues at v0.1", each with its measurement: the 2D-2 cylinder reads +11.7% on
+  Cd (mostly compressibility; two independent routes extrapolate to +2.6%); the sphere at
+  Re 10 reads +5.65% against Schiller-Naumann, which is inside the 3.13% spread of five
+  distinct drag correlations and reads +2.99% against Clift, Grace and Weber; the
+  unsteady backend cross-check's Strouhal number is wrong sevenfold from a transverse
+  acoustic mode that its incompressible reference cannot have; M5 sloshing on the lattice
+  converges, at order 3.5, to +5.1% and so misses a 5% bar by arriving at the wrong
+  value rather than by not converging; and the lattice free surface is **frozen, not
+  deleted** -- correct for still water, and its one-cell interface invariant breaks
+  within ten steps of releasing a moving hull, which is why free-surface liquids moved to
+  SPH. Only one demo renders as a true animation today; the other GIF files hold a single
+  frame each, which this release says rather than implies.
+
+### Added
+
 - **`export_doc.py`: a study's write-up as LaTeX or Word, from the `results.md` it
   already has.** `export_doc.py results.md --tex report.tex --docx report.docx`, or a case
   directory and it finds the markdown. `results.py` writes the working record and

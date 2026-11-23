@@ -627,6 +627,13 @@ same code. Every number in this section comes from the run whose app id is given
 `freesurface` solves a three-dimensional dam break with `FreeSurfaceWorld` and renders it
 with RTX, in one process, on one GPU, through one copy of Warp.
 
+**That solver is now frozen** (`DECISIONS_LIVE.md` D15, and the backend split in
+`docs/live-sync.md`). What this section measures still stands -- a dam break has no moving
+rigid body in it, which is the case the lattice free surface handles and the one that
+froze it is not -- but it is not the supported path for a free surface any more, and a
+reader arriving here looking for a boat wants the SPH backend, which is beta and has not
+been run inside Kit at all.
+
 The tank is 0.36 x 0.16 x 0.16 m closed on all six faces, a 0.12 x 0.16 x 0.12 m column
 of water released at t = 0, built through `cases._free_surface_world` so that the Froude
 scaling, the tau and the gravity sign are the repository's own decisions and not a second
