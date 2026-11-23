@@ -220,7 +220,7 @@ from .world import FACE_ORDER
 # compiles a kernel on its first launch, not on import, and no D3Q19 kernel is ever
 # launched from this file.
 
-__all__ = ["SphWorld", "SOLVERS", "SUPPORT_FACTOR", "CFL"]
+__all__ = ["SphWorld", "SOLVERS", "SUPPORT_FACTOR", "CFL", "QUIET_CFL"]
 
 wp.set_module_options({
     # Same reasoning as `lattice.py`: nothing in this extension differentiates through a
@@ -273,6 +273,18 @@ choice; the `density_error` numbers in `tests/test_live_sph.py` are what it meas
 """
 
 CFL = 0.4
+QUIET_CFL = CFL / 4.0
+"""The CFL number a scene with a coupled body needs, for the force rather than the fluid.
+
+`CFL`'s own docstring carries the measurement. In short: at `CFL` the per-step force on a
+freely floating hull is **104.6% RMS of its weight**, and at `CFL/4` it is **1.3-2.6%**,
+with the transition a **cliff between CFL/2 and CFL/3** rather than a slope -- which is
+why halving the step had been tried and had done nothing. It costs 1.9-2.5x wall clock
+rather than 4x, because the solver's iteration count falls from about nine to two.
+
+Applied automatically when a body is coupled and not otherwise, because the fluid does not
+need it: `CFL` is also the fluid's own stability number, and a scene with no body has no
+wrench to be noisy, so a quarter step there is twice the cost for nothing."""
 """Courant number for the substep: a particle moves at most 0.4 of a spacing per substep.
 
 0.4 and not 0.25 because DFSPH is not acoustically limited -- there is no sound speed in
@@ -1242,7 +1254,7 @@ class SphWorld:
         check_every: int = 1,
         density_diffusion: float = 0.0,
         wrench_filter: float = 0.0,
-        cfl: float = CFL,
+        cfl: float | None = None,
     ) -> None:
         """
         `particle_radius` is the sizing knob, the way `dx` is for the lattice: the
@@ -1324,7 +1336,17 @@ class SphWorld:
         # not the 4x the step implies, because the solver's iteration count falls from about
         # nine to exactly two. The default is unchanged, because `CFL` is also the fluid's own
         # stability number and a fluid-only case has no wrench to be noisy.
-        self.cfl = float(cfl)
+        # `None` means **decide when a body is coupled**, which is the only point at
+        # which this is knowable: `dt` is fixed here, in the constructor, and
+        # `add_shape(body=...)` comes later. A fluid-only scene keeps `CFL`; a scene with
+        # a coupled body -- floating, held, or an M7 cup on an end effector -- drops to
+        # `QUIET_CFL`, because the quantity that needs the shorter step is the **wrench**
+        # and a scene with no body has no wrench. A number passed here is honoured and
+        # never second-guessed.
+        self._cfl_asked = None if cfl is None else float(cfl)
+        self._dt_asked = dt
+        self._substeps_asked = substeps
+        self.cfl = CFL if cfl is None else float(cfl)
         self.wrench_filter = float(wrench_filter)
 
         self.dt, self.substeps, self._peak_estimate = self._substep(dt, substeps)
@@ -1785,7 +1807,47 @@ class SphWorld:
         }
         self._shapes.append(shape)
         self._sample(shape)
+        if int(body) >= 0:
+            self._coupled_body_added(shape)
         return len(self._shapes) - 1
+
+    def _coupled_body_added(self, shape: dict) -> None:
+        """React to the first coupled body: take the quiet step, and check its span.
+
+        **Why here and not in the constructor.** `dt` is fixed in `__init__`, and whether
+        a scene has a coupled body is not known until `add_shape(body=...)` is called. So
+        the choice is made at the moment the fact exists, and the timestep is re-derived.
+        A `cfl` or `dt` the caller passed is left alone -- this only fills in a default.
+
+        The span warning exists because the quiet step's own margin is **thin at coarse
+        resolution**: at 2.5 mm particle radius, 3.2 spacings through a hull's draft, three
+        settles of one configuration read 5.1%, 5.4% and **8.3%** RMS, against 1.3-2.6% at
+        1.5 and 2.0 mm where the spread is within 0.8 points. Four spacings is where that
+        stops being luck, so fewer than four is worth saying out loud rather than leaving
+        in a docstring nobody reads at the moment it matters.
+        """
+        import warnings
+
+        if self._cfl_asked is None and self._dt_asked is None:
+            if self.cfl != QUIET_CFL:
+                self.cfl = QUIET_CFL
+                self.dt, self.substeps, self._peak_estimate = self._substep(
+                    self._dt_asked, self._substeps_asked)
+                self.c0 = self._peak_estimate / math.sqrt(self.tolerance)
+
+        scale = [abs(float(v)) for v in shape.get("scale", ()) if abs(float(v)) > 0.0]
+        if scale:
+            spans = min(scale) * 2.0 / self.spacing
+            if spans < 4.0:
+                warnings.warn(
+                    f"this coupled body is {spans:.1f} particle spacings across its "
+                    f"smallest dimension, and the force on a body thinner than about 4 "
+                    f"is not reliable: at 3.2 spacings three settles of one configuration "
+                    f"read 5.1%, 5.4% and 8.3% RMS of the body's weight, against 1.3-2.6% "
+                    f"at 4 and upward. Lower particle_radius, or treat the wrench as "
+                    f"indicative",
+                    RuntimeWarning, stacklevel=3,
+                )
 
     def _sample(self, shape: dict[str, Any]) -> None:
         """Lattice sites inside the shape: the shell becomes particles, all of them count
