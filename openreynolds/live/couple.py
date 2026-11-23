@@ -407,7 +407,21 @@ class NewtonCoupling:
         # Newton model, hands it here and expects the fluid to find the bodies gets
         # bodies with no wetted surface and a wrench of **exactly zero**, which reads as
         # a coupling that is running and finding no force rather than as a mistake.
-        if self._style == "particles" and not getattr(self.world, "shapes", None):
+        # **Fail open.** The first version of this guard asked for `world.shapes`, an
+        # attribute no `SphWorld` has; `getattr` returned `None`, `not None` was true, and
+        # it raised on every correctly built world -- four H100 validation runs died on it
+        # before anything was simulated. A guard that cannot name the state it checks must
+        # refuse only when it positively establishes the bad case, never when it simply
+        # fails to find what it was looking for.
+        #
+        # The real state: `add_shape` appends to `_shapes`, `boundary_from_domain` appends
+        # to `_bdy_x`, and `n_boundary` is only summed once the world is prepared. So a
+        # world with any of the three is fine, and only one with none of them is the
+        # zero-force trap this is here to catch.
+        _bdy = (len(getattr(self.world, "_shapes", ()) or ())
+                + len(getattr(self.world, "_bdy_x", ()) or ())
+                + int(getattr(self.world, "n_boundary", 0) or 0))
+        if self._style == "particles" and _bdy == 0:
             raise ValueError(
                 "this SPH world has no boundary particles, so every body would feel "
                 "exactly zero force and the run would look like it was working. "
@@ -617,7 +631,10 @@ class NewtonCoupling:
                     1],
             device=self.world.device)
 
-        if self.buoyancy or self.world.rotors:
+        # `rotors` is a lattice-world concept -- a particle world has no actuator disks
+        # -- and the buoyancy branch beside it already refuses on the particle path, so
+        # this must not demand the attribute to decide it is not needed.
+        if self.buoyancy or getattr(self.world, "rotors", ()):
             self._push_extras()
 
     def _push_extras(self) -> None:

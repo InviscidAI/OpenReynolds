@@ -3982,6 +3982,7 @@ def run_case(name: str, *, out_dir: str | Path = ".", device: str | None = None,
     `**_` for that reason. What IS refused is an unknown case name and a laminar case
     with the subgrid model on.
     """
+    load_sph_cases()
     try:
         case = CASES[name]
     except KeyError:
@@ -4388,9 +4389,16 @@ def report(result: dict[str, Any]) -> str:
 # but they are cases like any other and `run_case`, `modal_run.py` and the CLI all reach
 # them through this one registry. Imported at the bottom so `sph_cases` can import `Case`,
 # `Check`, `_result` and the period/damping helpers from here without a cycle.
-from .sph_cases import SPH_CASES as _SPH_CASES  # noqa: E402
+def load_sph_cases() -> None:
+    """Import `sph_cases`, which registers its cases into `CASES` as it loads.
 
-for _name, _case in _SPH_CASES.items():
-    if _name in CASES:
-        raise RuntimeError(f"two cases are called {_name!r}; one would shadow the other")
-    CASES[_name] = _case
+    **Deferred, because a module-level import either way round is a cycle.** `sph_cases`
+    needs `Case`, `Check`, `_result` and the period helpers from this module at import
+    time, to build its own `SPH_CASES` dict. This module used to import it at the bottom,
+    which worked when `cases` was imported first and raised
+    `ImportError: cannot import name 'SPH_CASES' from partially initialized module` when
+    `sph_cases` was -- an order that nothing in the package controls.
+
+    Idempotent, and safe to call from anywhere that is about to look in `CASES`.
+    """
+    from . import sph_cases  # noqa: F401  (registers on import)

@@ -435,18 +435,45 @@ Schaefer-Turek's `Cd_max` error from +11.73% to +7.16%, and takes the sphere's f
 +5.63% to +5.77%. Strongly Mach-dependent there, flat-to-slightly-adverse here. So one
 sentence covering both failures would be wrong about one of them.
 
-**And not the reference.** This repository ships two correlations and at Re 10 they agree
-to **0.00%** -- Schiller-Naumann 4.1511 against Clift-Gauvin 4.1512 -- so the comfortable
-explanation that a 1933 fit carries scatter is not available here. They differ by only
-0.57% even at Re 200. `sphere_drag.py` is still right that its accuracy must be quoted
-from a source rather than from the formula, and that remains unread; what can be said
-without it is that two independent closed forms do not disagree at this Reynolds number,
-and the measurement is 5.65% above both.
+**WITHDRAWN: "and not the reference (0.00%)".** This document claimed that the repository
+ships two correlations which agree to 0.00% at Re 10, and concluded that reference scatter
+was therefore unavailable as an explanation. **That agreement is circular and the
+conclusion does not stand.** `openreynolds/toolbox/references/sphere_drag.py` defines
 
-So five candidates are eliminated with a number each: **resolution** (0.07% over a 50%
+    clift_gauvin_cd(Re) = schiller_naumann_cd(Re) + 0.42 / (1 + 42500 Re**-1.16)
+
+so one correlation **calls the other**. At Re 10 the added term is 1.428e-04, which is
+**0.0034%** of Schiller-Naumann. The two do not agree because two independent fits
+concur; they agree because they are the same formula plus a high-Reynolds plateau that has
+not switched on yet. The repository's own
+`tests/test_toolbox_references.py::test_clift_gauvin_adds_nothing_at_low_reynolds_and_a_plateau_at_high`
+asserts exactly this identity, so the evidence against the claim was already in the suite
+when the claim was written. Checking it cost one `grep` and was not done.
+
+**What the reference spread actually is.** Across five genuinely distinct correlations at
+Re 10 -- Brown & Lawler 4.12751, Clift-Gauvin (1970, as published) 4.13474,
+Schiller-Naumann 4.15107, Cheng (2009) 4.25548, Clift, Grace & Weber (1978) 4.25839 --
+the spread is **3.13% of the mean**, against a discrepancy of 5.65%. Graded on
+Clift, Grace & Weber instead of Schiller-Naumann the lattice reads **+2.99%** and clears
+the same 5% bar it fails on. CGW's low-Reynolds branch,
+`Cd = (24/Re)(1 + 0.1315 Re**(0.82 - 0.05 log10 Re))` for 0.01 < Re < 20, was read from
+two independent transcriptions both citing *Bubbles, Drops, and Particles*; the book
+itself could not be reached, so **that comparison is ungraded**, per this project's rule
+that an unreadable reference is recorded and not rounded into a pass.
+
+**So the honest statement is narrower than the one it replaces.** The measurement sits
+above *every* correlation at Re 10, by +2.99% to +6.26%, so the positive bias is real and
+is not scatter. But "the solver is 5.65% wrong" is an artefact of which correlation the
+case grades against, and the reference uncertainty is a large fraction of the gap rather
+than none of it. The user has parked further runs on this case; this is what the parking
+rests on.
+
+So four candidates are eliminated with a number each: **resolution** (0.07% over a 50%
 refinement), **confinement** (0.28% from 12 to 20 diameters, small because the side faces
-are slip, so the Stokes wall correction does not apply), **the reference** (0.00%),
-**tau** and **the Mach number** (0.29% over a fourfold change, adverse). What is left is the discretisation's own
+are slip, so the Stokes wall correction does not apply), **tau** and **the Mach number**
+(0.29% over a fourfold change, adverse). The fifth, **the reference**, was listed at 0.00%
+and is **withdrawn** -- see above; the real spread is 3.13% and is a material part of the
+5.65%. What is left is the discretisation's own
 behaviour in the viscous limit, and the boundary treatment is where that would live: at
 Re 10 the boundary layer is thick compared with the sphere, and Bouzidi's interpolation
 is being asked for its accuracy across a curved surface in exactly the regime where the

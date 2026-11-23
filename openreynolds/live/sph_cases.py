@@ -3000,3 +3000,14 @@ def _radius_for(case: Case, spacings: int) -> float:
         f"{case.name} has no depth, height or side in its signature to size a particle "
         f"radius against; pass particle_radius directly"
     )
+
+
+# Register into the one registry `run_case`, `modal_run.py`, the CLI and `summarise.py`
+# all read. Done from this side because the dependency runs this way: `sph_cases` imports
+# from `cases`, never the reverse. `cases.load_sph_cases()` triggers this.
+from .cases import CASES as _CASES  # noqa: E402
+
+for _name, _case in SPH_CASES.items():
+    if _name in _CASES and _CASES[_name] is not _case:
+        raise RuntimeError(f"two cases are called {_name!r}; one would shadow the other")
+    _CASES[_name] = _case
