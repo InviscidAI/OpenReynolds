@@ -413,6 +413,35 @@ one. And a re-run of `falling_sphere` and `ground_effect` was launched against t
 while the result labels use hyphens, so exactly the two multi-word cases failed and the
 two single-word ones did not. That is a naming inconsistency in this file worth removing.
 
+### RESOLVED: the cross-check passes too, and my transverse-mode diagnosis was wrong
+
+**Cd 1.34469 against the OpenFOAM run's 1.355514 (-0.80%) and Strouhal 0.166053 against
+0.166141 (-0.053%). 4 of 4 graded checks pass.** This case had read Cd +25.6% and
+Strouhal **+636%** -- 1.2226 against 0.166 -- with 181.5 shedding cycles against
+OpenFOAM's 7. It now samples 24.5.
+
+The fix was the same density-anchored outlet that fixed the cylinder. Nothing about the
+lift, the Strouhal extraction or the inlet needed changing.
+
+**So the transverse acoustic mode was not the cause, and this document said it was.** The
+earlier section recorded: the contaminant's period is 361 lattice steps, the domain's
+transverse quarter-wave is 346, lift *is* the transverse force, and the incompressible
+reference cannot support such a mode. Every one of those statements is still true. The
+inference from them was wrong.
+
+What made it persuasive was a 4% agreement between two numbers, and what should have
+made it suspect is the same thing: **a 4% match between one measured period and one of
+several candidate wave modes in a domain is weak evidence**, and there were enough
+candidate modes to find a match for almost any period. The streamwise mode was checked
+and rejected at a factor of two, which felt like discrimination but was really just the
+first of a family being eliminated.
+
+The actual cause was a mass-conservation defect that this case shared with the cylinder,
+and the thing that would have found it is the thing that eventually did: measuring the
+total mass in the domain over time. That is three cases -- cylinder, cross-check, 2D-1 --
+whose errors all traced to one boundary condition, and in every one of them the error was
+attributed to something else first.
+
 ### RESOLVED: the cylinder passes. The +11.73% was the outlet.
 
 **Cd_max 3.29976 against the paper's 3.22-3.24, which is +2.16% on the midpoint, and

@@ -143,12 +143,17 @@ def _selfcheck() -> None:
 
 
 def _world(cells_per_d: int, u_lattice: float, *, cylinder: bool,
-           inlet_height: str = "effective", device: str | None = None):
+           inlet_height: str = "effective", device: str | None = None,
+           outlet_rho: float = 0.0):
     """The 2D-2 world `_cylinder_once` builds, with the cylinder optional.
 
     `inlet_height` picks which channel height the inlet parabola is computed for:
     `geometric` is 0.41, which is what `cases.py` does, and `effective` is `ny * dx`,
     which is where the bounce-back walls actually are.
+
+    `outlet_rho` is passed straight to `FluidWorld`: 0 is the first-order extrapolating
+    outlet that anchors nothing, and 1.0 rescales the outlet node's populations to the
+    lattice rest density.
     """
     import numpy as np
 
@@ -167,7 +172,8 @@ def _world(cells_per_d: int, u_lattice: float, *, cylinder: bool,
                     faces={"-x": "inlet", "+x": "outlet", "-y": "wall", "+y": "wall",
                            "-z": "periodic", "+z": "periodic"})
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                       substeps=1, collision="trt", smagorinsky=0.0, device=device)
+                       substeps=1, collision="trt", smagorinsky=0.0,
+                       outlet_rho=outlet_rho, device=device)
 
     y = world.node_coordinates(1)
     peak = 1.5 * u_mean
@@ -185,97 +191,225 @@ def _world(cells_per_d: int, u_lattice: float, *, cylinder: bool,
     return world, scaling, body, peak, h
 
 
-def _channel(cells_per_d: int, u_lattice: float, device: str | None,
-             progress, inlets: tuple[str, ...] = ("effective", "geometric")) -> dict:
-    """Deliverable 1: an empty 2D-2 channel, in and out, against the analytic parabola.
+def _probe(world, peak: float, h_eff: float, mu: float, step: int) -> dict:
+    """The five quantities, read off one host copy of the macroscopic fields.
 
-    Runs to a steady outlet profile rather than for a fixed number of steps, and reports
-    the step count it took, because "it has arrived" is the premise of the comparison
-    and a fixed budget would be an assumption about it.
+    **Every reduction is a `nan`-aware one.** `fields()["rho"]` is `nan` at solid nodes,
+    and a plain `mean` or `sum` over it returns `nan` -- which is what made one earlier
+    mass probe report nothing at all. The empty channel has no solid nodes, so the two
+    agree here, but the same function has to survive a body being put back in.
+
+    Pressure comes from the density the solver actually holds: an isothermal lattice has
+    `p = c_s^2 rho` exactly, and in SI `c_s = (dx/dt)/sqrt(3)`, so
+    `p = rho_SI (dx/dt)^2 / 3`. The constant drops out of the difference, which is all
+    that is compared here.
+    """
+    import numpy as np
+
+    got = world.fields()
+    rho, u = got["rho"], got["u"]
+    dx = world.dx
+    cell = dx ** 3
+    area = dx * dx                      # one node's share of an x-plane
+    width = world.nz * dx               # the periodic span, the channel's "depth"
+    c2 = (dx / world.scaling.dt) ** 2 / 3.0
+
+    ux = u[..., 0]
+    inlet_plane, outlet_plane = 0, world.nx - 1
+    first, last = 1, world.nx - 2       # the first and last node no face rule sets
+
+    def flux(i: int) -> float:
+        return float(np.nansum(ux[i]) * area)
+
+    def mass_flux(i: int) -> float:
+        """**The conserved one.** Volume flux is not conserved down a weakly
+        compressible channel and should not be: the density falls along the pressure
+        gradient, so `u` rises to carry the same `rho u`. Reporting only the volume flux
+        would therefore book a correct solver as leaking, and a mass-conserving outlet
+        as leaking by exactly the compressibility. `rho u` summed over the plane is what
+        has to match in and out, and what the drift in total mass has to integrate to.
+        """
+        return float(np.nansum(rho[i] * ux[i]) * area)
+
+    def rho_mean(i: int) -> float:
+        return float(np.nanmean(rho[i]))
+
+    # p(x), averaged over each x-plane, then a least-squares slope over the middle half
+    # of the channel -- away from the inlet node the Zou-He condition sets and the
+    # outlet node the outflow rule sets, neither of which is a Poiseuille node.
+    p_plane = np.nanmean(rho, axis=(1, 2)) * c2
+    x = (np.arange(world.nx) + 0.5) * dx
+    lo, hi = world.nx // 4, 3 * world.nx // 4
+    slope = float(np.polyfit(x[lo:hi], p_plane[lo:hi], 1)[0])
+
+    # The analytic plane-Poiseuille gradient, taken on the flux actually entering:
+    # dp/dx = -12 mu U / h^2 with U the bulk mean speed. Written on the measurement
+    # rather than on the imposed peak so that an inlet not delivering what it was asked
+    # for shows up as a disagreement here instead of as a hidden premise.
+    flux_in = flux(first)
+    u_bulk = flux_in / (h_eff * width)
+    dpdx_exact = -12.0 * mu * u_bulk / h_eff ** 2
+
+    # The outlet profile against the effective-wall parabola.
+    y = world.node_coordinates(1)
+    got_profile = np.asarray(ux[last, :, world.nz // 2], dtype=np.float64)
+    exact = 4.0 * peak * y * (h_eff - y) / h_eff ** 2
+    error = got_profile - exact
+
+    return {
+        "step": int(step),
+        "mass_kg": float(np.nansum(rho) * cell),
+        "rho_mean_kg_m3": float(np.nanmean(rho)),
+        "rho_inlet_plane": rho_mean(inlet_plane),
+        "rho_outlet_plane": rho_mean(outlet_plane),
+        "rho_first_interior": rho_mean(first),
+        "rho_last_interior": rho_mean(last),
+        "flux_inlet_plane_m3_s": flux(inlet_plane),
+        "flux_outlet_plane_m3_s": flux(outlet_plane),
+        "flux_first_interior_m3_s": flux_in,
+        "flux_last_interior_m3_s": flux(last),
+        "mass_flux_inlet_plane_kg_s": mass_flux(inlet_plane),
+        "mass_flux_outlet_plane_kg_s": mass_flux(outlet_plane),
+        "mass_flux_first_interior_kg_s": mass_flux(first),
+        "mass_flux_last_interior_kg_s": mass_flux(last),
+        "seconds_per_step": float(world.scaling.dt),
+        "dpdx_measured_pa_m": slope,
+        "dpdx_poiseuille_pa_m": dpdx_exact,
+        "dp_measured_pa": slope * float(x[hi - 1] - x[lo]),
+        "dp_poiseuille_pa": dpdx_exact * float(x[hi - 1] - x[lo]),
+        "dp_span_m": float(x[hi - 1] - x[lo]),
+        "profile_rms_pct": float(np.sqrt(np.mean(error ** 2)) / peak * 100.0),
+        "profile_max_pct": float(np.max(np.abs(error)) / peak * 100.0),
+        "u_max_m_s": float(np.nanmax(ux)),
+        "finite": bool(np.isfinite(np.nanmax(rho)) and np.nanmin(rho) > 0.0),
+    }
+
+
+def _channel(cells_per_d: int, u_lattice: float, device: str | None,
+             progress, inlets: tuple[str, ...] = ("effective",),
+             steps: int = 0, outlet_rhos: tuple[float, ...] = (0.0, 1.0),
+             samples: int = 140) -> dict:
+    """The empty 2D-2 channel, run long, with and without the anchored outlet.
+
+    Every combination of `outlet_rhos` and `inlets` is a separate run of `steps` lattice
+    steps, probed `samples` times along the way. The probe is the whole point: an outlet
+    profile that looks right says nothing about whether the box is conservative, and the
+    2D-1 cylinder's drag drifted for 704,000 steps while its lift sat still.
+
+    **Lattice steps are batched into `world.step(substeps=k)` between probes.** With no
+    body in the domain nothing moves, so `substeps` is physically the same run -- the
+    collide/stream pair is launched `k` times either way -- with one device
+    synchronise, one voxelise and one refill per probe instead of per step. At this step
+    count that is the difference between a measurement and a host-latency benchmark.
     """
     import numpy as np
 
     rows = []
-    for inlet_height in inlets:
-        world, scaling, _, peak, h_inlet = _world(cells_per_d, u_lattice,
-                                                  cylinder=False,
-                                                  inlet_height=inlet_height,
-                                                  device=device)
-        dx = world.dx
-        h_eff = world.ny * dx
-        y = world.node_coordinates(1)
-        flow_through = int((GEOMETRY["length"] / dx) / u_lattice)
-        chunk = max(1, flow_through // 4)
-        station = world.nx - 2  # one cell inside the outlet, whose own node is a copy
-        previous = None
-        taken = 0
-        residual = float("nan")
-        for _ in range(40):  # 10 flow-throughs at most
-            for _ in range(chunk):
-                world.step()
-            taken += chunk
-            got = world.fields()["u"][station, :, world.nz // 2, 0]
-            if previous is not None:
-                residual = float(np.max(np.abs(got - previous)) / peak)
-                if residual < 1.0e-4:
-                    previous = got
+    for outlet_rho in outlet_rhos:
+        for inlet_height in inlets:
+            world, scaling, _, peak, h_inlet = _world(
+                cells_per_d, u_lattice, cylinder=False, inlet_height=inlet_height,
+                device=device, outlet_rho=outlet_rho)
+            dx = world.dx
+            h_eff = world.ny * dx
+            mu = world.fluid.rho * world.fluid.nu
+            flow_through = int((GEOMETRY["length"] / dx) / u_lattice)
+            budget = int(steps) if steps > 0 else 8 * flow_through
+            chunk = max(1, budget // max(1, samples))
+            tag = f"outlet_rho={outlet_rho:g} inlet={inlet_height}"
+
+            series = [_probe(world, peak, h_eff, mu, 0)]
+            began = time.time()
+            taken = 0
+            while taken < budget:
+                take = min(chunk, budget - taken)
+                world.step(substeps=take)
+                taken += take
+                row = _probe(world, peak, h_eff, mu, taken)
+                row["seconds"] = time.time() - began
+                row["mlups"] = world.nodes * taken / row["seconds"] / 1e6
+                series.append(row)
+                if progress:
+                    # One JSON line per probe, printed as it happens, so that a run cut
+                    # short by a timeout still leaves its numbers in the log rather than
+                    # only in a return value that never arrives.
+                    progress("PROBE " + json.dumps({"tag": tag,
+                                                    "cells": cells_per_d, **row}))
+                if not row["finite"]:
+                    if progress:
+                        progress(f"  {tag}: non-finite at {taken:,} steps")
                     break
-            previous = got
+
+            first_row, last_row = series[0], series[-1]
+            y = world.node_coordinates(1)
+            field = world.fields()["u"][:, :, world.nz // 2, 0]
+            station = world.nx - 2
+            outlet = np.asarray(field[station], dtype=np.float64)
+
+            def against(h: float, got=outlet) -> dict:
+                exact = 4.0 * peak * y * (h - y) / h ** 2
+                error = got - exact
+                return {"height": float(h),
+                        "rms_pct": float(np.sqrt(np.mean(error ** 2)) / peak * 100.0),
+                        "max_pct": float(np.max(np.abs(error)) / peak * 100.0)}
+
+            stations = {}
+            for name, i in (("inlet+1", 1), ("quarter", world.nx // 4),
+                            ("half", world.nx // 2),
+                            ("three-quarter", 3 * world.nx // 4),
+                            ("outlet-1", station)):
+                here = np.asarray(field[i], dtype=np.float64)
+                stations[name] = {"i": int(i), "x": float((i + 0.5) * dx),
+                                  "vs_effective": against(h_eff, here),
+                                  "flux": float(np.sum(here) * dx)}
+
+            rows.append({
+                "outlet_rho": float(outlet_rho),
+                "inlet_parabola_for": inlet_height,
+                "inlet_height_used": float(h_inlet),
+                "effective_height": float(h_eff),
+                "geometric_height": float(GEOMETRY["height"]),
+                "wall_offset_cells": 0.5,
+                "ny": int(world.ny), "nx": int(world.nx), "nodes": int(world.nodes),
+                "steps": int(last_row["step"]),
+                "flow_throughs": last_row["step"] / flow_through,
+                "seconds": last_row.get("seconds", float("nan")),
+                "u_peak": float(peak),
+                "mu_pa_s": float(mu),
+                "mass_start_kg": first_row["mass_kg"],
+                "mass_end_kg": last_row["mass_kg"],
+                "mass_drift_pct": (last_row["mass_kg"] / first_row["mass_kg"] - 1.0)
+                                  * 100.0,
+                "mass_max_drift_pct": max(abs(r["mass_kg"] / first_row["mass_kg"] - 1.0)
+                                          for r in series) * 100.0,
+                "flux_imbalance_pct": (last_row["flux_last_interior_m3_s"]
+                                       / last_row["flux_first_interior_m3_s"] - 1.0)
+                                      * 100.0,
+                "mass_flux_imbalance_pct":
+                    (last_row["mass_flux_last_interior_kg_s"]
+                     / last_row["mass_flux_first_interior_kg_s"] - 1.0) * 100.0,
+                "dpdx_ratio": (last_row["dpdx_measured_pa_m"]
+                               / last_row["dpdx_poiseuille_pa_m"]),
+                "vs_effective": against(h_eff),
+                "vs_geometric": against(GEOMETRY["height"]),
+                "flux_in": float(np.sum(np.asarray(field[1], dtype=np.float64)) * dx),
+                "flux_out": float(np.sum(outlet) * dx),
+                "outlet_profile": outlet.tolist(),
+                "y": y.tolist(),
+                "stations": stations,
+                "final": last_row,
+                "series": series,
+            })
             if progress:
-                progress(f"    channel {inlet_height}: {taken:,} steps "
-                         f"({taken / flow_through:.1f} flow-throughs), "
-                         f"profile moving {residual:.2e}")
-        outlet = np.asarray(previous, dtype=np.float64)
-        inlet = np.asarray(world.fields()["u"][1, :, world.nz // 2, 0], dtype=np.float64)
-
-        def against(h: float, got=outlet) -> dict:
-            exact = 4.0 * peak * y * (h - y) / h ** 2
-            error = got - exact
-            return {"height": float(h),
-                    "rms_pct": float(np.sqrt(np.mean(error ** 2)) / peak * 100.0),
-                    "max_pct": float(np.max(np.abs(error)) / peak * 100.0)}
-
-        # Several stations down the channel, because "the profile decayed in transit"
-        # and "the outlet condition disturbs the last cell" are different findings and a
-        # single station cannot tell them apart.
-        field = world.fields()["u"][:, :, world.nz // 2, 0]
-        stations = {}
-        for name, i in (("inlet+1", 1), ("quarter", world.nx // 4),
-                        ("half", world.nx // 2), ("three-quarter", 3 * world.nx // 4),
-                        ("outlet-1", station)):
-            here = np.asarray(field[i], dtype=np.float64)
-            stations[name] = {"i": int(i), "x": float((i + 0.5) * dx),
-                              "vs_effective": against(h_eff, here),
-                              "flux": float(np.sum(here) * dx)}
-
-        rows.append({
-            "inlet_parabola_for": inlet_height,
-            "inlet_height_used": float(h_inlet),
-            "effective_height": float(h_eff),
-            "geometric_height": float(GEOMETRY["height"]),
-            "wall_offset_cells": 0.5,
-            "ny": int(world.ny),
-            "steps": taken,
-            "flow_throughs": taken / flow_through,
-            "profile_residual": residual,
-            "u_peak": float(peak),
-            "vs_effective": against(h_eff),
-            "vs_geometric": against(GEOMETRY["height"]),
-            # Flux in and out, as a second and independent reading on "unchanged".
-            "flux_in": float(np.sum(inlet) * dx),
-            "flux_out": float(np.sum(outlet) * dx),
-            "flux_drift_pct": float(abs(np.sum(outlet) - np.sum(inlet))
-                                    / np.sum(inlet) * 100.0),
-            "outlet_profile": outlet.tolist(),
-            "y": y.tolist(),
-            "stations": stations,
-        })
-        if progress:
-            row = rows[-1]
-            progress(f"  inlet for the {inlet_height} height: outlet vs the effective "
-                     f"parabola rms {row['vs_effective']['rms_pct']:.3f}% max "
-                     f"{row['vs_effective']['max_pct']:.3f}%, flux drift "
-                     f"{row['flux_drift_pct']:.3f}%, {row['steps']:,} steps")
+                row = rows[-1]
+                progress(f"  {tag}: {row['steps']:,} steps "
+                         f"({row['flow_throughs']:.1f} flow-throughs) -- mass "
+                         f"{row['mass_drift_pct']:+.3f}%, flux in/out "
+                         f"{row['flux_imbalance_pct']:+.3f}%, dp/dx vs Poiseuille "
+                         f"x{row['dpdx_ratio']:.4f}, outlet profile rms "
+                         f"{row['vs_effective']['rms_pct']:.3f}% max "
+                         f"{row['vs_effective']['max_pct']:.3f}%")
+            del world
     return {"cells_per_d": cells_per_d, "u_lattice": u_lattice, "rows": rows,
             "tolerance_pct": 0.5,
             "tolerance_is": ("the user's 0.5%, taken on the peak inflow speed, which is "
@@ -357,7 +491,8 @@ def _rate(cells_per_d: int, u_lattice: float, steps: int, device: str | None,
                if k in ("steps", "updates", "tau_plus", "mach")}}
 
 
-def _remote(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
+def _remote(jobs: str, gpu_steps: int, channel_cells: str, inlets: str,
+            outlet_rhos: str = "0,1.0", samples: int = 140) -> dict:
     """Everything, in one container, so the Warp compile is paid once."""
     import traceback
 
@@ -377,7 +512,11 @@ def _remote(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
             paired = dict(SWEEP)
             out["channel"] = [
                 _channel(int(c), paired[int(c)], device, print,
-                         tuple(i.strip() for i in inlets.split(",") if i.strip()))
+                         tuple(i.strip() for i in inlets.split(",") if i.strip()),
+                         steps=int(gpu_steps),
+                         outlet_rhos=tuple(float(r) for r in outlet_rhos.split(",")
+                                           if r.strip()),
+                         samples=int(samples))
                 for c in channel_cells.split(",") if c.strip()
             ]
         if "rate" in want:
@@ -391,19 +530,25 @@ def _remote(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
     return _sanitise(out)
 
 
-@app.function(image=image, gpu="H100", timeout=5400)
-def on_h100(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
-    return _remote(jobs, gpu_steps, channel_cells, inlets)
+@app.function(image=image, gpu="H100", timeout=21600)
+def on_h100(jobs: str, gpu_steps: int, channel_cells: str, inlets: str,
+          outlet_rhos: str = "0,1.0", samples: int = 140) -> dict:
+    return _remote(jobs, gpu_steps, channel_cells, inlets, outlet_rhos,
+                   samples)
 
 
-@app.function(image=image, gpu="A100-80GB", timeout=5400)
-def on_a100(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
-    return _remote(jobs, gpu_steps, channel_cells, inlets)
+@app.function(image=image, gpu="A100-80GB", timeout=21600)
+def on_a100(jobs: str, gpu_steps: int, channel_cells: str, inlets: str,
+          outlet_rhos: str = "0,1.0", samples: int = 140) -> dict:
+    return _remote(jobs, gpu_steps, channel_cells, inlets, outlet_rhos,
+                   samples)
 
 
-@app.function(image=image, gpu="L40S", timeout=5400)
-def on_l40s(jobs: str, gpu_steps: int, channel_cells: str, inlets: str) -> dict:
-    return _remote(jobs, gpu_steps, channel_cells, inlets)
+@app.function(image=image, gpu="L40S", timeout=21600)
+def on_l40s(jobs: str, gpu_steps: int, channel_cells: str, inlets: str,
+          outlet_rhos: str = "0,1.0", samples: int = 140) -> dict:
+    return _remote(jobs, gpu_steps, channel_cells, inlets, outlet_rhos,
+                   samples)
 
 
 RUNNERS = {"h100": on_h100, "a100": on_a100, "l40s": on_l40s}
@@ -465,9 +610,11 @@ def _print_projection(table: list[dict]) -> None:
 @app.local_entrypoint()
 def main(jobs: str = "channel,rate", gpu: str = "h100", steps: int = 400,
          channel_cells: str = "32", inlets: str = "effective,geometric",
+         outlet_rhos: str = "0,1.0", samples: int = 140,
          label: str = "cylinder-profile") -> None:
     _selfcheck()
-    got = RUNNERS[gpu.lower()].remote(jobs, int(steps), channel_cells, inlets)
+    got = RUNNERS[gpu.lower()].remote(jobs, int(steps), channel_cells, inlets,
+                                      outlet_rhos, int(samples))
     out = RESULTS / label
     out.mkdir(parents=True, exist_ok=True)
     (out / "result.json").write_text(json.dumps(got, indent=2) + "\n", encoding="utf-8")
