@@ -68,7 +68,8 @@ from .units import Scaling, UnphysicalScaling, fluid as resolve_fluid
 # names are unchanged, and `from .world import require` still works.
 from .units import LiveUnavailable, require, version_note
 
-__all__ = ["Domain", "FluidWorld", "Rotor", "LiveUnavailable", "require"]
+__all__ = ["Domain", "FluidWorld", "Rotor", "LiveUnavailable", "require",
+           "make_world"]
 
 
 FACE_CODES = {
@@ -237,6 +238,58 @@ class Rotor:
     thickness: float = 0.0
     thrust: float = 0.0
     """Total thrust in newtons. Set per step by whatever is flying the thing."""
+
+
+def make_world(*args: Any, free_surface: bool = False, backend: str = "",
+               **kwargs: Any):
+    """Build the right fluid for the job: lattice Boltzmann, or SPH for a free surface.
+
+    `docs/sph-contract.md` fixes this and it is the one entry point that knows about
+    both backends:
+
+        make_world(domain=..., free_surface=True, ...)   # SPH
+        make_world(domain=..., backend="sph", ...)       # the same, said explicitly
+        make_world(domain=..., backend="lbm", ...)       # single phase, the default
+
+    **Why a function and not a flag on `FluidWorld.__init__`.** The two backends do not
+    share a representation -- one is a lattice of populations, the other a bag of
+    particles with a hash grid -- so they are different classes, and a constructor cannot
+    return a different class without `__new__` games that make tracebacks lie about what
+    was built. A caller who wants one specific backend should name the class; a caller
+    who wants "water with a surface" should ask here.
+
+    `backend="lbm"` with `free_surface=True` is refused rather than silently given the
+    frozen lattice free surface: `freesurface.FROZEN` says what that code does and does
+    not do (`DECISIONS_LIVE.md` D15), and quietly handing it to someone who asked for a
+    boat would be the opposite of helpful.
+    """
+    chosen = (backend or ("sph" if free_surface else "lbm")).lower()
+    if chosen not in ("lbm", "sph"):
+        raise ValueError(
+            f"backend must be 'lbm' or 'sph', not {backend!r}. 'lbm' is lattice "
+            f"Boltzmann, for single-phase air or fully submerged water; 'sph' is "
+            f"smoothed-particle hydrodynamics, for a free surface"
+        )
+    if chosen == "lbm":
+        if free_surface:
+            from .freesurface import FROZEN
+            raise ValueError(
+                "backend='lbm' cannot give you a free surface that is supported. "
+                + FROZEN
+            )
+        return FluidWorld(*args, **kwargs)
+
+    try:
+        from .sph import SphWorld
+    except ImportError as exc:
+        raise LiveUnavailable(
+            "the SPH backend is not available in this checkout "
+            f"(the import said: {exc}). It is the supported path for free-surface "
+            "liquids -- boats, cups, pouring -- and `docs/sph-contract.md` is its "
+            "interface. The lattice free surface is frozen and is not a substitute; "
+            "see DECISIONS_LIVE.md D15"
+        ) from exc
+    return SphWorld(*args, **kwargs)
 
 
 class FluidWorld:

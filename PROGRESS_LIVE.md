@@ -212,7 +212,7 @@ Numbers in the summary table.
 | both layouts measured on the GPU, GPU default chosen from GPU numbers | done, above |
 | docs page in the existing docs structure | `docs/live-sync.md` |
 | example scripts | `examples/live/` |
-| a rendered figure per case, and a GIF for the unsteady ones | every case draws at least one; the cylinder, the falling sphere and the quadrotor animate |
+| a rendered figure per case, and a GIF for the unsteady ones | **partly.** Every case draws at least one figure. Of the GIFs, only the dam break actually animates (60 frames); `live-cylinder-*.gif`, `live-falling-sphere.gif` and `live-quadrotor-*.gif` contain **exactly one frame each**, verified with PIL and imageio. This row claimed all three animated until 2026-11-23 and that was simply false -- a GIF container with one frame in it looks like a GIF to everything except a viewer. The Isaac Sim renders do animate (40 and 44 RTX frames) |
 | CPU-runnable small-grid tests in the main suite | `tests/test_live_cases.py`, 49 passed / 3 GPU skipped |
 | GPU tests behind a marker | `needs_a_gpu` skipif plus a registered `gpu` marker |
 
@@ -257,6 +257,41 @@ measured wrong along the way: the TRT magic parameter (BGK, with `omega_minus` t
 times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* than Ma
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
+
+### The cross-check's Strouhal number: a transverse acoustic mode in the lift
+
+Under either velocity inlet this case reports **St 1.22 against 0.166** and 181 shedding
+cycles against the OpenFOAM run's 7, while its drag is only +25%. A sevenfold error in
+one and a quarter in the other is not one fault, and the arithmetic says which is which.
+
+First, it is not the peak-picker. `figures.strouhal` prefers the **zero-crossing**
+estimate when it is finite, and zero crossings count real sign changes -- so there is a
+genuine high-frequency oscillation in the lift, not a mis-chosen spectral peak.
+
+Second, it is not the streamwise acoustic mode, which was the obvious guess and is wrong
+by a factor of two:
+
+| | cells | half-wave | quarter-wave |
+| --- | --- | --- | --- |
+| streamwise | 1,590 | 1,377 steps | 688 steps |
+| **transverse** | 800 | 693 steps | **346 steps** |
+| | | | *observed* **361** |
+
+The contaminant's period is 361 lattice steps and the **transverse** quarter-wave of this
+domain is 346 -- within 4% -- where the streamwise mode is at 688 and does not fit. And
+lift **is** the transverse force, which is exactly why the Strouhal number taken from it
+is wrong by seven times while the drag, taken streamwise, is wrong by a quarter.
+
+So the cross-check's side faces are reflecting a transverse acoustic wave that the
+shedding excites, and a stiff inlet is what lets it persist. The fix is absorbing side
+boundaries rather than slip ones, which is a boundary-condition job and not a solver one.
+
+**What this cost, and the cheap check that would have prevented it.** A sponge layer at
+the *outlet* was about to be built on the streamwise reading. One division -- cells over
+the lattice sound speed -- killed that, and it should have been done before proposing the
+fix rather than after. The case now records both Strouhal estimators, the cycle count and
+its force history, because it previously kept only the number it chose and threw away the
+evidence that distinguishes a wrong flow from a wrong peak-pick.
 
 ### The cylinder's +11%, localised: the inlet needs four diameters it is not given
 

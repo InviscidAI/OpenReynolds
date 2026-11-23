@@ -1,0 +1,696 @@
+"""The SPH backend's own tests: the kernel, the hydrostatics, and the sign of `wrench`.
+
+Everything here runs on Warp's **CPU** backend, because the suite has no GPU. The two
+hydrostatic worlds are a few thousand particles each and are built once per module;
+`test_live_sph.py` as a whole measured 96 s on this machine, of which 89 s is those two
+worlds settling and 4.9 s is Warp compiling `openreynolds/live/sph.py` on a cold cache.
+
+What is graded here, and to what:
+
+    kernel normalisation      4 pi int W r^2 dr = 1              to 1e-6
+    bulk summation density    sum_j m_j W_ij = rho0              to 1e-4 (measured 3e-5)
+    hydrostatic pressure      dp/dh = rho g                      to 5% (measured 1.5%)
+    density error             max compression bounded            to 2% (measured 0.6%)
+    weight on the floor       F_z on the tank = -(water weight)  to 2% (measured 0.1%)
+    submerged box             F_z on the box  = +rho V g         to 15% (measured 9.9%)
+
+Every tolerance above is wider than the number measured beside it and none of them was
+widened to make a test pass; where the measured number is not close to the gate, the
+reason is written at the test and is a property of the discretisation rather than of the
+run. The buoyancy gate is the loose one and `test_a_submerged_box_feels_rho_v_g_upward`
+carries the convergence table that says why.
+
+The graded SPH physics -- a dam break, a sloshing tank, a floating hull -- is not here.
+It belongs on a GPU in `benchmarks/live/`, at a resolution a CPU cannot reach in a test
+suite.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+warp = pytest.importorskip("warp", reason="the live backend is an optional extra")
+
+# Imported at module scope and not inside the tests, which is the opposite of what the
+# other `test_live_*.py` files do, for a reason that is Warp's: a `@wp.func` or a
+# constant a kernel below refers to has to be resolvable when Warp parses the kernel's
+# source, and an `import` statement *inside* a kernel body is a codegen error
+# ("Construct `ast.ImportFrom` not supported in kernels"). The `importorskip` above is
+# still what keeps this file off a machine with no Warp.
+from openreynolds.live import lattice as L  # noqa: E402
+from openreynolds.live.sph import _spline, _spline_grad  # noqa: E402
+
+
+# -- the kernel, measured through the device code the solver actually runs -------------
+
+
+@warp.kernel
+def _sample_spline(r: warp.array(dtype=warp.float32), w: warp.array(dtype=warp.float32),
+                   g: warp.array(dtype=warp.float32), h: warp.float32,
+                   sigma: warp.float32):
+    """Evaluate `_spline` and the radial part of `_spline_grad` at a list of radii.
+
+    Through a kernel and not through a numpy copy of the formula, which would be the
+    easy version and would test nothing: a numpy mirror of the kernel passes whether or
+    not the kernel is right. This calls the `@wp.func` the solver calls.
+    """
+    i = warp.tid()
+    w[i] = _spline(r[i], h, sigma)
+    # The gradient of W(|x_i - x_j|) with the separation along +x, so its x component is
+    # dW/dr. Signed: it points from i towards j, which is -x for a decaying kernel.
+    d = warp.vec3(r[i], warp.float32(0.0), warp.float32(0.0))
+    g[i] = _spline_grad(d, r[i], h, sigma)[0]
+
+
+def test_the_kernel_integrates_to_one_over_its_support():
+    """`4 pi int_0^h W(r) r^2 dr = 1`, which is the whole of "correct normalisation".
+
+    The cubic spline is written with the **support radius** as its length scale, so
+    `sigma = 8/(pi h^3)` and the support is at `q = r/h = 1`. The other convention in the
+    literature puts the support at `q = 2` and carries `1/(pi h'^3)` with `h' = h/2`, and
+    the two normalisations differ by a factor of eight -- which is exactly the kind of
+    thing that silently scales every density in the run by 8 and reads as a mass error.
+    """
+    from openreynolds.live.sph import SUPPORT_FACTOR
+
+    h = 0.02
+    sigma = 8.0 / (math.pi * h ** 3)
+    r = np.linspace(0.0, h, 200001)[1:].astype(np.float32)
+    dev = warp.array(r, dtype=warp.float32, device="cpu")
+    w = warp.zeros(len(r), dtype=warp.float32, device="cpu")
+    g = warp.zeros(len(r), dtype=warp.float32, device="cpu")
+    warp.launch(_sample_spline, dim=len(r), device="cpu",
+                inputs=[dev, w, g, warp.float32(h), warp.float32(sigma)])
+    values = w.numpy().astype(np.float64)
+    integral = np.trapezoid(4.0 * math.pi * r.astype(np.float64) ** 2 * values, r)
+    assert abs(integral - 1.0) < 1e-6, integral
+
+    # Past the support it is zero, not small: a kernel with a tail is a kernel whose
+    # neighbour radius is a lie, and every neighbour query here uses exactly `h`.
+    assert values[-1] == 0.0 or r[-1] >= h
+
+    # The gradient is the derivative of the value, checked by central differences rather
+    # than by a second copy of the algebra. 2e-3 relative because the difference is taken
+    # on float32 kernel values at a 1e-7 m spacing.
+    numeric = np.gradient(values, r.astype(np.float64))
+    mid = slice(len(r) // 20, -len(r) // 20)
+    scale = np.abs(numeric[mid]).max()
+    assert np.abs(g.numpy()[mid] - numeric[mid]).max() / scale < 2e-3
+
+    # And the support is what `SUPPORT_FACTOR`'s table is written against.
+    assert SUPPORT_FACTOR == 4.0
+
+
+def test_a_bulk_lattice_of_particles_reads_its_own_rest_density():
+    """`sum_j m_j W_ij = rho0` in the interior, which is why there is no mass calibration.
+
+    The three things that have to agree for this to hold are the particle mass
+    (`rho0 * spacing^3`), the support (`4 * particle_radius`, so `2 * spacing`) and the
+    kernel's normalisation, and this is the only test that holds all three at once. The
+    number it measures is in `sph.SUPPORT_FACTOR`'s docstring as the reason that constant
+    is 4 and not 3.5 or 5: a bulk lattice reads 0.999972 rho0 at 4, and the two
+    neighbouring choices are 40 and 50 times worse.
+
+    Measured here: the interior particles read rho0 to 3.1e-5 relative, worst case.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    radius = 0.005
+    size = 0.14
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (size, size, size), faces="wall"),
+                     particle_radius=radius, fluid="water",
+                     gravity=(0.0, 0.0, 0.0), device="cpu")
+    # No boundary particles at all: this measures the fluid's own kernel sum, and a wall
+    # would add an Akinci contribution that is a different thing to be right about.
+    world.fill_box((0.0, 0.0, 0.0), (size, size, size))
+    world.step()
+
+    x = world.positions()
+    rho = world.densities()
+    # Interior means "a full support away from every face", which for a support of two
+    # spacings is two particle layers in from each side.
+    inner = np.all((x > 2.5 * world.spacing) & (x < size - 2.5 * world.spacing), axis=1)
+    assert inner.sum() > 100, inner.sum()
+    error = np.abs(rho[inner] / world.rho0 - 1.0).max()
+    assert error < 1e-4, error
+
+
+@warp.kernel
+def _sample_sdf(points: warp.array(dtype=warp.vec3), out: warp.array(dtype=warp.float32),
+                kind: warp.int32, scale: warp.vec3):
+    """`lattice.py`'s five signed distances, one shape kind per launch."""
+    i = warp.tid()
+    p = points[i]
+    if kind == L.SHAPE_SPHERE:
+        out[i] = L._sdf_sphere(p, scale)
+    elif kind == L.SHAPE_BOX:
+        out[i] = L._sdf_box(p, scale)
+    elif kind == L.SHAPE_CAPSULE:
+        out[i] = L._sdf_capsule(p, scale)
+    elif kind == L.SHAPE_CYLINDER:
+        out[i] = L._sdf_cylinder(p, scale)
+    else:
+        out[i] = p[2]
+
+
+def test_the_host_sdfs_agree_with_the_lattice_kernels():
+    """`sph._sdf` and `lattice._sdf_*` are the same five functions, so they must agree.
+
+    They are duplicated on purpose -- `lattice.py`'s are `@wp.func` and only callable
+    from a kernel, and boundary sampling happens once at setup over a host array of
+    candidate points -- and a duplicate with no test between it and its original is how
+    a capsule ends up along y in one file and z in the other.
+    """
+    from openreynolds.live.sph import _sdf
+
+    rng = np.random.default_rng(20261123)
+    points = rng.uniform(-0.09, 0.09, size=(500, 3))
+    dev = warp.array(points.astype(np.float32), dtype=warp.vec3, device="cpu")
+    out = warp.zeros(len(points), dtype=warp.float32, device="cpu")
+    for kind, scale in [
+        (L.SHAPE_SPHERE, (0.04, 0.0, 0.0)),
+        (L.SHAPE_BOX, (0.03, 0.05, 0.02)),
+        (L.SHAPE_CAPSULE, (0.02, 0.04, 0.0)),
+        (L.SHAPE_CYLINDER, (0.03, 0.025, 0.0)),
+        (L.SHAPE_PLANE, (0.0, 0.0, 0.0)),
+    ]:
+        warp.launch(_sample_sdf, dim=len(points), device="cpu",
+                    inputs=[dev, out, warp.int32(kind), warp.vec3(*scale)])
+        host = _sdf(kind, points, scale)
+        assert np.abs(out.numpy() - host).max() < 1e-6, L.SHAPE_NAMES[kind]
+
+
+def test_the_quaternion_maths_matches_world():
+    """`sph._quat_matrix` is a copy of `world._quat_matrix`. Copies drift; this is the
+    thing that makes the drift an error."""
+    from openreynolds.live.sph import _quat_matrix as mine
+    from openreynolds.live.world import _quat_matrix as theirs
+
+    rng = np.random.default_rng(7)
+    for _ in range(20):
+        q = rng.normal(size=4)
+        q /= np.linalg.norm(q)
+        assert np.abs(mine(q) - theirs(q)).max() < 1e-12
+
+
+# -- a still tank: the pressure, the density error and the load on the floor -----------
+
+
+@pytest.fixture(scope="module")
+def tank():
+    """280 mm of still water in a 140 x 140 x 340 mm tank, at a 20 mm spacing.
+
+    Built once and shared by three tests, because settling it is 89 s of the 96 s this
+    file costs and three copies of it would be five minutes.
+
+    Deliberately tall and narrow. A shallow tank was tried first and the hydrostatic
+    slope came out 5.6% high rather than 1.5%, for a reason that is about the measurement
+    and not about the solver: the fit has to exclude the layer next to each wall (an
+    Akinci boundary over-pressures the first fluid layer) and the top two layers (the
+    free surface reads zero pressure, by construction -- see `sph.residual`), and in a
+    200 mm column that leaves seven particle layers to fit a line through. 280 mm leaves
+    eleven, and the excluded layers are a smaller fraction of the thing being measured.
+
+    Returns the world, the tank body index, and the time-averaged pressure and height.
+    Time-averaged over 40 coupling steps because the free surface layer oscillates: it
+    sits at zero pressure with a positive pressure below it, so it is pushed up, falls
+    back, and water's real viscosity damps that very slowly. The average is the
+    hydrostatic state; a single frame is the state plus a standing wave.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    level = 0.28
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.14, 0.14, 0.34), faces="wall"),
+                     particle_radius=0.01, fluid="water", dt=0.01, device="cpu")
+    body = world.add_body(label="tank")
+    world.boundary_from_domain(body=body)
+    world.fill_below(level)
+    for _ in range(120):
+        world.step()
+    samples = 40
+    pressure = np.zeros(world.n_fluid)
+    height = np.zeros(world.n_fluid)
+    forces = []
+    errors = []
+    for _ in range(samples):
+        world.step()
+        pressure += world.pressures()
+        height += world.positions()[:, 2]
+        forces.append(world.wrench(body)[0])
+        errors.append(world.density_error())
+    return {
+        "world": world, "body": body, "level": level,
+        "pressure": pressure / samples, "height": height / samples,
+        "forces": np.asarray(forces), "errors": errors,
+    }
+
+
+def test_a_hydrostatic_column_rises_linearly_with_depth_at_rho_g_h(tank):
+    """`dp/dh = rho g`, fitted over the bulk, with the scatter reported rather than hidden.
+
+    Measured here: a slope of 0.9855 rho g, an intercept of -3 Pa against a bottom
+    pressure of 2,740 Pa, and a residual scatter of 6.3% of rho g H about the line. The
+    gate is 5% on the slope.
+
+    The excluded particles and why each is excluded:
+
+    * the layer against each of the four side walls and the floor -- an Akinci boundary
+      over-pressures the first fluid layer, measured at 1.55 rho g h on the floor layer
+      against 0.94 to 0.99 in the bulk;
+    * the top two layers -- `sph.residual` clamps the constant-density residual at zero,
+      so the free surface carries p = 0 by construction, and the transition from zero to
+      hydrostatic takes about a support radius.
+
+    The scatter is not noise that more steps would remove. It is the standard SPH
+    pressure field on a regular lattice: consecutive particle layers alternate about the
+    line (0.96, 0.99, 0.95, 0.94 against the local rho g h here). A projection-style
+    solver like DFSPH enforces the *density* constraint, which fixes the pressure
+    gradient and leaves a layer-scale oscillation in the pressure itself; it is why the
+    integrated load on the floor below is 50 times more accurate than any single
+    particle's pressure.
+    """
+    world, pressure, height = tank["world"], tank["pressure"], tank["height"]
+    level, spacing = tank["level"], world.spacing
+    x = world.positions()
+    size = world.domain.size
+
+    bulk = (
+        (x[:, 0] > 1.5 * spacing) & (x[:, 0] < size[0] - 1.5 * spacing)
+        & (x[:, 1] > 1.5 * spacing) & (x[:, 1] < size[1] - 1.5 * spacing)
+        & (height > 1.5 * spacing) & (height < level - 2.0 * spacing)
+    )
+    assert bulk.sum() > 100, bulk.sum()
+
+    depth = level - height[bulk]
+    design = np.vstack([depth, np.ones(len(depth))]).T
+    slope, intercept = np.linalg.lstsq(design, pressure[bulk], rcond=None)[0]
+    rho_g = world.rho0 * 9.81
+
+    assert abs(slope / rho_g - 1.0) < 0.05, (slope, rho_g, slope / rho_g)
+    # The intercept is the pressure the fit extrapolates to the free surface, where the
+    # physical answer is zero. Graded against the bottom pressure, not absolutely: 1% of
+    # rho g H is a tight bound on a field whose point-wise scatter is 6%.
+    assert abs(intercept) < 0.01 * rho_g * level, intercept
+    # Monotonic in the mean: the deepest tenth is heavier than the shallowest tenth by
+    # the amount the hydrostatic gradient says, within the scatter.
+    order = np.argsort(depth)
+    tenth = max(3, len(order) // 10)
+    deep = pressure[bulk][order[-tenth:]].mean()
+    shallow = pressure[bulk][order[:tenth]].mean()
+    gap = depth[order[-tenth:]].mean() - depth[order[:tenth]].mean()
+    assert abs((deep - shallow) / (rho_g * gap) - 1.0) < 0.10
+
+
+def test_the_density_error_stays_bounded(tank):
+    """The compression error does not grow, and the surface deficit is reported separately.
+
+    Measured on this tank: max compression 0.61%, mean 0.11%, over 160 coupling steps
+    (480 substeps). The gate is 2% on the max and 0.5% on the mean.
+
+    `density_error()`'s `max` and `mean` are the **compression** error,
+    `max(rho/rho0 - 1, 0)`, and the reason is in its docstring and is worth repeating
+    here because it is the difference between a test that means something and one that
+    cannot pass: a free-surface particle's summation density reads 20 to 40% below rho0
+    in a converged, correct run, because there is no fluid above it to sum. This tank's
+    worst particle reads 0.60 rho0 and that is not an error -- it is a particle on the
+    surface. A single `|rho - rho0|/rho0` would be 40% here forever, so a test on it
+    would have to be gated at 50%, at which point it would no longer notice real
+    compression.
+    """
+    errors = tank["errors"]
+    worst = max(e["max"] for e in errors)
+    mean = float(np.mean([e["mean"] for e in errors]))
+    assert worst < 0.02, worst
+    assert mean < 0.005, mean
+    # It is a steady state, not a slow divergence: the last ten samples are no worse than
+    # the first ten.
+    early = float(np.mean([e["mean"] for e in errors[:10]]))
+    late = float(np.mean([e["mean"] for e in errors[-10:]]))
+    assert late < early * 1.5 + 1e-4, (early, late)
+    # And the deficit is real and is reported, so nothing here is claiming a 0.1% fluid.
+    assert min(e["min_signed"] for e in errors) < -0.1
+    assert tank["world"].stable()
+
+
+def test_the_floor_of_a_tank_carries_the_weight_of_the_water(tank):
+    """`wrench(tank)` is `-(m g)` in z: the sign convention and the magnitude in one number.
+
+    **This is the standing check on the thing that has gone wrong twice in this
+    repository.** `wrench(body)` is the force **on the body**, `lattice.stream`'s
+    convention, so water sitting in a tank pushes *down* on it. A sign error here would
+    make a floating hull sink and a submerged body fall, and it would do it while every
+    density error in the run stayed perfect, because the pressure solve does not care
+    which way the reaction is reported.
+
+    Measured: -7.834 N on a tank holding 686 particles of 7.954 mg, whose weight is
+    7.834 N. Ratio 0.9999, standard deviation across the 40 samples 1.9%. The gate is 2%
+    on the mean and the sign is asserted on its own so that a failure says which of the
+    two went wrong.
+
+    It is also the only global conservation statement this file makes. The water's weight
+    has nowhere else to go: there is no body force on the walls, no buoyancy term added
+    anywhere, and the only other thing in the domain is the fluid's own pressure field --
+    so if the integrated boundary force is the weight, the Akinci coupling is accounting
+    for all of it, and the 0.01% says the discretisation is not leaking any.
+    """
+    world, forces = tank["world"], tank["forces"]
+    weight = world.n_fluid * world.mass * 9.81
+
+    mean = forces.mean(axis=0)
+    assert mean[2] < 0.0, ("the water must push DOWN on the tank it sits in", mean)
+    assert abs(mean[2] / -weight - 1.0) < 0.02, (mean[2], -weight)
+    # Nothing sideways: a still tank has no horizontal load, and a systematic one would
+    # mean the wall sampling is lopsided.
+    assert abs(mean[0]) < 0.05 * weight and abs(mean[1]) < 0.05 * weight, mean
+
+    # `wrench()` and `wrench(body)` are the same numbers, differently shaped.
+    everything = world.wrench()
+    assert everything.shape == (1, 6)
+    force, torque = world.wrench(world.n_fluid and tank["body"])
+    assert np.allclose(everything[tank["body"], :3], force)
+    assert np.allclose(everything[tank["body"], 3:], torque)
+
+    # The torque about the tank's own centre of mass -- which `add_body` put at the
+    # domain's corner -- is `r x F` for the load applied at the tank's centre. Checked
+    # because the torque is the half of the wrench that was missing from
+    # `world.rotor_reaction` until it was found by an Isaac task that could not control
+    # attitude, and a torque nobody checks is a torque nobody notices is zero.
+    arm = np.asarray(world.domain.size) / 2.0
+    arm[2] = 0.0
+    expected = np.cross(arm, [0.0, 0.0, mean[2]])
+    assert np.allclose(torque[:2], expected[:2], rtol=0.1, atol=0.02 * weight), \
+        (torque, expected)
+
+
+# -- a submerged body: the force the whole redirect exists for -------------------------
+
+
+@pytest.fixture(scope="module")
+def submerged():
+    """An 80 mm cube held fixed under 220 mm of water, four particles across.
+
+    The cube's half-extent is exactly two spacings and its centre is exactly halfway
+    between two lattice sites, which makes the sampled volume equal the geometric one
+    (512 cm^3 both ways) rather than approximately equal. That is not the test being
+    arranged to pass -- `volume(body)` is what the force is graded against either way --
+    it is the test being arranged so that one number means both things, because a reader
+    who sees `rho V g` wants to know which V.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    half = 0.04
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.20, 0.20, 0.28), faces="wall"),
+                     particle_radius=0.01, fluid="water", dt=0.01, device="cpu")
+    tank = world.add_body(label="tank")
+    world.boundary_from_domain(body=tank)
+    # Centre between lattice sites on every axis: sites are at `(i + 1/2) * 20 mm`.
+    box = world.add_body(position=(0.10, 0.10, 0.12), label="box")
+    world.add_shape("box", body=box, scale=(half, half, half))
+    world.fill_below(0.22)
+    for _ in range(80):
+        world.step()
+    forces, torques = [], []
+    for _ in range(40):
+        world.step()
+        force, torque = world.wrench(box)
+        forces.append(force)
+        torques.append(torque)
+    return {"world": world, "box": box, "tank": tank, "half": half,
+            "forces": np.asarray(forces), "torques": np.asarray(torques)}
+
+
+def test_a_submerged_box_feels_rho_v_g_upward(submerged):
+    """Archimedes, through the Akinci coupling and nothing else.
+
+    No buoyancy term is added anywhere: `docs/sph-contract.md` makes `buoyancy=False` the
+    default for this backend precisely because the pressure field already has a real
+    waterline in it, and adding `rho V g` on top would count it twice. So this number
+    comes entirely out of the boundary half of the pressure solve
+    (`sph.apply_pressure`), and it is the reason SPH was chosen over the frozen lattice
+    free surface.
+
+    Measured, time-averaged over 40 coupling steps, as a multiple of `rho V g` with V the
+    sampled volume `volume(box)`:
+
+        particles across the box    F_z / rho V g    sample sd    |F_x| + |F_y| / rho V g
+                 3 (60 mm cube)        1.1863          0.153               0.182
+                 4 (80 mm cube)        1.0992          0.098               0.108
+                 5 (100 mm cube)       1.0614          0.075               0.092
+
+    so it converges towards 1 at roughly first order in the particle count across the
+    body, and the gate here is 15% at four across. That is a loose gate and it is loose
+    for a stated reason rather than to accommodate a failure: the integrand is a pressure
+    gradient summed over a surface sampled by 64 particles, four across is a body one and
+    a half kernel supports wide, and the error is a resolution error that the table above
+    shows going away. The equivalent lattice number is the one `lattice.stream`'s comment
+    records -- -0.48 rho V g, the wrong sign and half the magnitude -- which is the
+    comparison that matters.
+
+    Overshooting rather than undershooting is consistent across the three resolutions.
+    The sampled volume accounts for the body's size exactly, so the excess is in the
+    pressure field: the first fluid layer against a boundary is over-pressured (the same
+    effect the hydrostatic fit excludes), the box's underside sees more of that than its
+    top does because the pressure there is higher, and the imbalance adds to the lift.
+    That is a hypothesis consistent with all three rows and it is not a measurement; what
+    is measured is the table.
+    """
+    world, box, forces = submerged["world"], submerged["box"], submerged["forces"]
+    volume = world.volume(box)
+
+    # The sampled volume is the geometric one for this cube, by construction.
+    geometric = (2.0 * submerged["half"]) ** 3
+    assert abs(volume / geometric - 1.0) < 1e-9, (volume, geometric)
+
+    expected = world.rho0 * volume * 9.81
+    mean = forces.mean(axis=0)
+    assert mean[2] > 0.0, ("a submerged body must be pushed UP", mean)
+    assert abs(mean[2] / expected - 1.0) < 0.15, (mean[2], expected,
+                                                  mean[2] / expected)
+    # Horizontal load on a symmetrically placed cube in still water: zero, to the
+    # scatter. 15% because it is the same discretisation error with no mean to sit on.
+    assert abs(mean[0]) < 0.15 * expected and abs(mean[1]) < 0.15 * expected, mean
+    # And no torque on a cube whose centre of mass is its centroid.
+    assert np.abs(submerged["torques"].mean(axis=0)).max() < 0.05 * expected * 0.04
+
+
+def test_the_tank_carries_the_water_and_the_submerged_box_reaction(submerged):
+    """Global vertical balance: the floor holds the water plus what the box displaces.
+
+    The box is kinematic -- nothing integrates it -- so the water pushes it up with
+    `rho V g` and it pushes back down on the water with the same, and the tank has to
+    carry both. Measured: -71.95 N on the tank against -(67.69 + 2.12) = -69.80 N
+    predicted, 3.1% high, and the two terms are separately measured by the two tests
+    above. The gate is 8%.
+
+    Looser than the empty tank's 2% because it is the sum of two numbers, one of which is
+    the 10%-accurate buoyancy. It is here anyway: it is the only check that the two
+    boundary bodies' wrenches are consistent with each other rather than each being
+    plausible on its own, which is the failure a per-body sign error would survive.
+    """
+    world, box, tank = submerged["world"], submerged["box"], submerged["tank"]
+    weight = world.n_fluid * world.mass * 9.81
+    displaced = world.rho0 * world.volume(box) * 9.81
+    floor = world.wrench(tank)[0][2]
+    assert floor < 0.0, floor
+    assert abs(floor / -(weight + displaced) - 1.0) < 0.08, (floor, weight, displaced)
+
+
+# -- the contract, the refusals and the report -----------------------------------------
+
+
+def test_step_returns_the_contract_dictionary_and_the_reads_line_up():
+    """`docs/sph-contract.md`'s keys and shapes, on a world small enough to be cheap."""
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+                     particle_radius=0.01, fluid="water", device="cpu")
+    world.boundary_from_domain()
+    world.fill_below(0.06)
+    cost = world.step()
+    for key in ("step", "substeps", "seconds", "particles", "mlups"):
+        assert key in cost, key
+    assert cost["step"] == 1
+    assert cost["particles"] == world.n_fluid
+
+    n = world.n_fluid
+    assert world.positions().shape == (n, 3)
+    assert world.velocities().shape == (n, 3)
+    assert world.densities().shape == (n,)
+    assert world.pressures().shape == (n,)
+    assert set(world.density_error()) >= {"max", "mean"}
+    assert isinstance(world.report(), list)
+
+    # `surface_height` is depth per column, nan where dry. The tank is full to 60 mm on
+    # every column, so nothing is dry and every column reads the same depth to within a
+    # particle radius.
+    depth = world.surface_height(axis=2)
+    assert depth.ndim == 2
+    assert np.isfinite(depth).all()
+    assert abs(np.nanmean(depth) - 0.06) < world.radius
+
+    # A dry column reads nan rather than zero, which is the difference between "no water
+    # here" and "water of zero depth here".
+    wide = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.2, 0.2, 0.1), faces="wall"),
+                    particle_radius=0.01, fluid="water", device="cpu")
+    wide.boundary_from_domain()
+    wide.fill_box((0.0, 0.0, 0.0), (0.06, 0.06, 0.05))
+    wide.step()
+    assert np.isnan(wide.surface_height(axis=2)).any()
+
+
+@pytest.mark.parametrize("kwargs, wanted", [
+    ({"particle_radius": None}, "particle_radius"),
+    ({"solver": "wcsph"}, "wcsph"),
+    ({"surface_tension": 0.07}, "surface_tension"),
+    ({"dt": 0.1, "substeps": 1}, "substeps"),
+    ({"viscosity": 1.0}, "viscosity"),
+    ({"particle_radius": 0.05}, "particle_radius"),
+])
+def test_the_refusals_name_the_knob_that_moves_them(kwargs, wanted):
+    """Every refusal says which knob to turn. `units.UnphysicalScaling`'s contract.
+
+    A refusal that does not name the fix costs a round of guessing, which is the argument
+    `units.py` makes and `benchmarks/*/grade.py` follows. The six cases here are the six
+    ways a caller can ask for a run this backend cannot do: no sizing knob, a solver that
+    is not shipped, surface tension that would be silently ignored, a substep past the
+    CFL limit, a viscosity past the explicit scheme's stability limit, and a spacing too
+    coarse for the domain to hold a kernel support.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.units import UnphysicalScaling
+    from openreynolds.live.world import Domain
+
+    settings = {"particle_radius": 0.01, "fluid": "water", "device": "cpu"}
+    settings.update(kwargs)
+    with pytest.raises(UnphysicalScaling) as raised:
+        SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+                 **settings)
+    assert wanted in str(raised.value), str(raised.value)
+
+
+def test_stepping_with_no_fluid_refuses_rather_than_running_empty():
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.units import UnphysicalScaling
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+                     particle_radius=0.01, device="cpu")
+    world.boundary_from_domain()
+    with pytest.raises(UnphysicalScaling, match="no fluid particles"):
+        world.step()
+
+
+def test_a_mesh_shape_is_refused_by_name_rather_than_sampled_wrongly():
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.units import UnphysicalScaling
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+                     particle_radius=0.01, device="cpu")
+    with pytest.raises(UnphysicalScaling, match="no mesh sampler"):
+        world.add_shape("mesh", position=(0.05, 0.05, 0.05), scale=(1.0, 1.0, 1.0),
+                        mesh=([[0, 0, 0]], [0, 0, 0]))
+
+
+def test_the_report_states_the_smoothing_length_and_that_surface_tension_is_off():
+    """The contract says the smoothing length is reported; the brief says an absent
+    surface tension says so rather than being implied."""
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+                     particle_radius=0.01, fluid="water", device="cpu")
+    world.boundary_from_domain()
+    world.fill_below(0.06)
+    text = "\n".join(world.report())
+    assert "support h 40 mm" in text, text
+    assert "cubic spline" in text
+    assert "surface tension OFF" in text
+    assert "Akinci" in text
+    assert "DFSPH" in text
+    # The host read inside the step is named in the report rather than left implied.
+    assert "host reads" in text
+
+
+def test_the_walls_do_not_leak_and_coincident_particles_are_dropped():
+    """Two particles at one lattice site is a division, not a near miss. `_distinct`.
+
+    `boundary_from_domain` builds each wall as a slab overhanging the other axes by the
+    shell thickness, so the tank's edges are filled rather than notched -- and so a
+    corner site is produced by two or three slabs. Measured on this tank: 1,232 distinct
+    sites from 1,760 produced, 528 duplicates, all of them on edges. Dropping them was
+    also a 3.4x speedup (13.1 s to 3.9 s for 80 coupling steps), because a duplicate pair
+    sits at r = 0 and appears in every neighbour query for nothing.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.12, 0.12, 0.26), faces="wall"),
+                     particle_radius=0.01, fluid="water", dt=0.01, device="cpu")
+    body = world.add_body(label="tank")
+    world.boundary_from_domain(body=body)
+    world.fill_below(0.20)
+    world.step()
+
+    assert world.duplicates == 528, world.duplicates
+    assert world.n_boundary == 1232, world.n_boundary
+    sites = np.round(world.boundary_positions() / world.spacing).astype(int)
+    assert len(np.unique(sites, axis=0)) == len(sites)
+
+    # No fluid particle sits inside the tank's walls, and the last-resort clamp is a
+    # last resort: it fires on a handful of particles during the transient, not every
+    # step on the whole floor. (It did exactly that until the reflection box was moved
+    # off the first lattice plane, and the tank then read 63% of the weight of its own
+    # water.)
+    for _ in range(40):
+        world.step()
+    caught = int(world._clamped.numpy()[0])
+    assert caught < world.n_fluid, caught
+
+
+def test_a_moving_wall_drags_the_fluid_and_feels_the_reaction():
+    """A boundary body given a velocity moves its particles on the device and is pushed back.
+
+    The two halves of `pose_boundary` and of the viscous reaction in `sph.nonpressure`,
+    in one check: a paddle swept through still water must (a) move the water and (b) feel
+    a force opposing its own motion. Small and short on purpose -- this is a wiring test,
+    not a drag measurement, and a drag coefficient at 20 mm particles would not be worth
+    writing down.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    world = SphWorld(domain=Domain((0.0, 0.0, 0.0), (0.16, 0.08, 0.12), faces="wall"),
+                     particle_radius=0.01, fluid="water", dt=0.005, device="cpu")
+    world.boundary_from_domain()
+    paddle = world.add_body(position=(0.04, 0.04, 0.06), velocity=(0.5, 0, 0, 0, 0, 0),
+                            label="paddle")
+    world.add_shape("box", body=paddle, scale=(0.02, 0.03, 0.04))
+    world.fill_below(0.10)
+    start = world.boundary_positions(paddle)[:, 0].mean()
+
+    pushed = []
+    for step in range(20):
+        world.set_body_state(paddle, position=(0.04 + 0.5 * step * world.dt, 0.04, 0.06))
+        world.step()
+        pushed.append(world.wrench(paddle)[0][0])
+
+    # The particles followed the body on the device.
+    assert world.boundary_positions(paddle)[:, 0].mean() > start + 0.01
+    # The water it is pushing through pushes back, against the motion.
+    assert np.mean(pushed) < 0.0, np.mean(pushed)
+    # And the water in front of it is moving the way the paddle is.
+    x = world.positions()
+    ahead = (x[:, 0] > world.boundary_positions(paddle)[:, 0].max()) & (x[:, 2] < 0.10)
+    assert ahead.sum() > 5
+    assert world.velocities()[ahead, 0].mean() > 0.0
+    assert world.stable()

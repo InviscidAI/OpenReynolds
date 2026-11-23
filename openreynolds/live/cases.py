@@ -2758,9 +2758,29 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
         *scaling.report(), *_official("cylinder", scaling, smagorinsky),
         *world.report()[-2:],
     ]
+    # **Both estimators and the cycle count, not just the chosen one.** `strouhal`
+    # computes the zero-crossing and the FFT answers and returns both; this case used to
+    # record only the one it picked, and threw away the thing that identifies a bad run.
+    #
+    # What that cost: under a stiff velocity inlet this case reports St 1.22 against
+    # 0.166 and 181 cycles against OpenFOAM's 7, and the recorded result carried no way
+    # to tell a wrong flow from a wrong peak-pick. It is a wrong flow -- the number came
+    # from zero crossings, which count real sign changes -- and the arithmetic then says
+    # what is oscillating: the contaminant's period is 361 steps, the **transverse**
+    # quarter-wave of this domain is 346 (the cross-section is 800 cells and the lattice
+    # sound speed is 0.577 cells a step), and lift *is* the transverse force. Which is
+    # why St is wrong by seven times while Cd, the streamwise force, is wrong by 25%.
+    #
+    # The streamwise acoustic mode, which was the first guess, is at 688 steps and does
+    # not fit; checking it would have cost one division and saved proposing a fix for it.
     return _result("crosscheck", checks, lines, drawn, live_cd=live_cd,
                    live_strouhal=live_st, openfoam=foam, cd_error=cd_error,
-                   st_error=st_error)
+                   st_error=st_error,
+                   strouhal_crossings=spectral.get("strouhal_crossings"),
+                   strouhal_fft=spectral.get("strouhal_fft"),
+                   cycles=spectral.get("cycles"), method=spectral.get("method"),
+                   force_history=[list(row) for row in zip(times, cl)] if len(times) < 4000
+                   else None)
 
 
 
