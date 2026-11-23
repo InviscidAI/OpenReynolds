@@ -571,6 +571,20 @@ def test_the_static_floats_default_hull_can_actually_float_upright():
     assert "cannot float upright" in said and "6 r (1-r)" in said
 
 
+def test_the_heave_case_refuses_the_same_geometry_for_the_same_reason():
+    """A hull that capsizes has no heave equilibrium to decay about.
+
+    The two cases share a geometry, so a mistake in it has to fail in both -- a heave
+    period measured off a capsizing box is a number with nothing behind it.
+    """
+    from openreynolds.live.sph_cases import run_sph_heave_decay
+    from openreynolds.live.units import UnphysicalScaling
+
+    with pytest.raises(UnphysicalScaling) as raised:
+        run_sph_heave_decay(beam=0.04, height=0.04, density_ratio=0.5)
+    assert "no heave equilibrium" in str(raised.value)
+
+
 # -- the three-point Richardson estimate -------------------------------------------------
 
 

@@ -2123,6 +2123,18 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
     """
     box = _Box(beam=beam, length=beam, height=height, density_ratio=density_ratio)
     hydro = box.hydrostatics()
+    if not hydro["stable"]:
+        # A hull that cannot float upright has no heave decay to measure: it rolls away
+        # from the equilibrium this case oscillates about, and the trace is a capsize.
+        # Same guard and same arithmetic as the static float, because the two cases share
+        # a geometry and a mistake in it should fail in both.
+        raise UnphysicalScaling(
+            f"this geometry cannot float upright, so there is no heave equilibrium to "
+            f"decay about: (b/H)^2 = {hydro['slenderness']:.4f} against the stability "
+            f"criterion 6 r (1-r) = {hydro['criterion']:.4f}, GM = "
+            f"{hydro['GM'] * 1e3:+.3f} mm. Widen the beam, or run "
+            f"run_sph_heel_stability, which is the case for an unstable hull"
+        )
     from .cases import _damping_of, _period_of
 
     world = _floating_tank(box, particle_radius=particle_radius, depth=depth, span=span,

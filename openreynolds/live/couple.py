@@ -446,7 +446,7 @@ class NewtonCoupling:
             wp.array(kinds, dtype=wp.int32, device=device),
             wp.array(bodies, dtype=wp.int32, device=device),
             wp.array(local, dtype=wp.transform, device=device),
-            wp.array(scales / self.world.dx, dtype=wp.vec3, device=device),
+            wp.array(scales / self._to_solver, dtype=wp.vec3, device=device),
         )
 
     # -- the step ----------------------------------------------------------------------
@@ -479,12 +479,35 @@ class NewtonCoupling:
         """The current state: the one `step()` will read next, and the one just written."""
         return self.state_0
 
+    @property
+    def _style(self) -> str:
+        """`"lattice"` or `"particles"`: which backend's units the coupling is talking to.
+
+        **Five lines in this file divided by `world.dx` and that made it a lattice-only
+        file.** The lattice solves in index space, so a shape's scale, a body's pose and
+        the wrench it accumulates all need converting by the spacing; SPH solves in
+        metres, so all three are already SI and every one of those conversions is the
+        identity. Reported by the world rather than sniffed from its type, so a third
+        backend says which arithmetic it wants instead of being guessed at.
+
+        Measured, before this existed: an `SphWorld` reached
+        `AttributeError: 'SphWorld' object has no attribute 'dx'` from
+        `_static_shape_arrays`, which blocked all four floating-body cases on a line that
+        had nothing to do with floating bodies.
+        """
+        return str(getattr(self.world, "coupling_style", "lattice"))
+
+    @property
+    def _to_solver(self) -> float:
+        """Divide an SI length by this to get the solver's own coordinates."""
+        return float(self.world.dx) if self._style == "lattice" else 1.0
+
     def _push_poses(self) -> None:
         """Newton's body state and shape poses to the lattice, on the device."""
         import warp as wp
 
         origin = wp.vec3(*[float(v) for v in self.world.domain.origin])
-        inv_dx = L.DTYPE(1.0 / self.world.dx)
+        inv_dx = L.DTYPE(1.0 / self._to_solver)
         wp.launch(
             L.poses_from_newton, dim=int(self.model.body_count),
             inputs=[self.state_0.body_q, self.state_0.body_qd, self.model.body_com,
@@ -545,11 +568,20 @@ class NewtonCoupling:
         # The wrench accumulated one contribution per lattice substep; Newton wants the
         # mean over the interval it is about to integrate.
         per_substep = 1.0 / max(1, self.world.substeps)
+        if self._style == "lattice":
+            force_scale = rho * self.world.dx ** 4 / dt2
+            torque_scale = rho * self.world.dx ** 5 / dt2
+        else:
+            force_scale = torque_scale = 1.0
         wp.launch(
             L.wrench_to_newton, dim=int(self.model.body_count),
             inputs=[self.world._wrench, self.state_0.body_f,
-                    L.DTYPE(rho * self.world.dx ** 4 / dt2 * per_substep),
-                    L.DTYPE(rho * self.world.dx ** 5 / dt2 * per_substep),
+                    # The lattice accumulates its wrench in lattice units, so it
+                    # carries `rho dx^4/dt^2` for a force and one more `dx` for a
+                    # moment. SPH accumulates newtons and newton-metres directly, so
+                    # both scales are 1 and only the substep mean remains.
+                    L.DTYPE(force_scale * per_substep),
+                    L.DTYPE(torque_scale * per_substep),
                     1],
             device=self.world.device)
 
@@ -570,6 +602,19 @@ class NewtonCoupling:
 
         count = int(self.model.body_count)
         extras = np.zeros((count, 6), dtype=np.float32)
+        if self.buoyancy and self._style == "particles":
+            # SPH has a real waterline and real hydrostatic pressure, so buoyancy comes
+            # out of the pressure field through the boundary particles and adding
+            # `rho V g` on top would count it twice. `docs/sph-contract.md` says
+            # `buoyancy=False` is the default there and should stay it; this refuses
+            # rather than silently double-counting, because a draft that comes out
+            # halved looks like a solver fault and is not one.
+            raise ValueError(
+                "buoyancy=True is for the lattice backend, which has no free surface "
+                "and therefore no hydrostatic gradient to integrate (DECISIONS_LIVE.md "
+                "D9). An SPH world produces its own buoyancy from the pressure field; "
+                "adding rho V g on top counts it twice. Pass buoyancy=False"
+            )
         if self.buoyancy:
             level = getattr(self.world, "waterline", None)
             if level is None:

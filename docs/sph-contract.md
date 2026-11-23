@@ -35,8 +35,20 @@ reported.
 
 ## Stepping and reading
 
-`step(substeps=None)` returns `{"step", "substeps", "seconds", "particles", "mlups"}`
-(`mlups` is particle updates per second / 1e6, named for symmetry; the report says so).
+`step(substeps=None)` returns `{"step", "substeps", "seconds", "simulated", "particles",
+"mlups"}`. `seconds` is wall clock; **`simulated` is the physical time the step advanced**,
+and it is not optional: every period, front speed and decay rate a case measures is wrong
+by one unknown factor without it, and all of them still look plausible. `world.dt` is the
+same number per step and is part of the interface too. (`mlups` is particle updates per
+second / 1e6, named for symmetry with the lattice backend; the report says so.)
+
+`world.coupling_style` must be the string `"particles"`. `couple.py` branches on it: the
+lattice solves in index space and converts shape scales, poses and the accumulated wrench
+by the spacing, while SPH solves in metres and all three conversions are the identity.
+Without it the coupling divides by a `dx` an `SphWorld` does not have.
+
+`world.c0` is the numerical speed of sound, in m/s. A density error and a pressure error
+cannot be connected without it, and both are graded.
 
 | read | returns |
 | --- | --- |
@@ -45,7 +57,8 @@ reported.
 | `densities()` | `(n,)` kg/m3 |
 | `pressures()` | `(n,)` Pa |
 | `wrench(body)` | `(force, torque)` in SI, same convention as the lattice backend |
-| `surface_height(axis=2, bins=None)` | depth per column in metres, `nan` where dry |
+| `surface_height(axis=2, bins=None)` | depth per column in metres, `nan` where dry. **Bin the two horizontal axes independently** -- a square grid sized from one of them leaves most columns of a long thin tank dry, and a caller that zero-fills instead of skipping them then divides the depth by the aspect ratio and gets a believable wrong answer. `nan` means dry, never 0. |
+| `volume(body)` | the sampled volume of a coupled body, m3 |
 | `density_error()` | `{"max", "mean"}` as fractions of the rest density |
 | `report()` | the lines the cases print |
 
