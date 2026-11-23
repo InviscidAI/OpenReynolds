@@ -984,6 +984,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
 def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
                  upstream: float = 0.0, u_lattice: float = 0.037,
                  collision: str = "trt", smagorinsky: float = 0.0,
+                 outlet_rho: float = 0.0,
                  device: str | None = None, periods: float = 30.0,
                  establish_flows: float = 8.0, sample_periods: float = 25.0,
                  out_dir: str | Path = ".", steps: int | None = None,
@@ -1034,6 +1035,7 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
                      f"({index + 1} of {len(grids)})")
         run = _cylinder_once(grid, upstream=upstream, u_lattice=u_lattice,
                              collision=collision, smagorinsky=smagorinsky,
+                             outlet_rho=outlet_rho,
                              device=device, periods=periods, out_dir=out,
                              establish_flows=establish_flows,
                              sample_periods=sample_periods,
@@ -3177,7 +3179,8 @@ look."""
 def _free_surface_world(*, cells: int, size: Sequence[float], depth: float,
                         faces: Any, collision: str, smagorinsky: float,
                         device: str | None, tau: float = 0.53,
-                        gravity: float = 9.81, thin: int = 0):
+                        gravity: float = 9.81, thin: int = 0,
+                        mach: float = 0.07):
     """A `FreeSurfaceWorld` sized from a cell count and a tank, with the Froude scaling.
 
     One helper for the three cases, so that "how a free-surface case is set up" is one
@@ -3212,8 +3215,17 @@ def _free_surface_world(*, cells: int, size: Sequence[float], depth: float,
             faces[("-x", "-y", "-z")[index]] = "periodic"
             faces[("+x", "+y", "+z")[index]] = "periodic"
     domain = Domain(origin=(0.0, 0.0, 0.0), size=tuple(size), faces=faces)
+    # **`mach` is threaded because the sloshing study cannot be interpreted without it.**
+    # `for_froude` with no `g_lattice` sets `g_lattice = (mach c_s)^2 dx / h`, so
+    # `dt ~ dx` -- acoustic scaling, measured at `dx^1.000000` with a residual of 3.4e-15
+    # over seven resolutions, not the `dx^1.5` two places in this repository claim. That
+    # means Ma and tau are **frozen** along the refinement path while `Re_eff ~ 1/dx`
+    # runs away, so an O(Ma^2) error of 4.9e-3 survives Richardson extrapolation
+    # untouched and sits inside the "converged" limit by construction. Varying `mach` at
+    # a fixed grid is the one experiment that separates that from a scheme error, and
+    # until now it could not be run: the knob fell into `run_sloshing`'s `**_`.
     scaling = Scaling.for_froude(dx, depth, "water", gravity=gravity, tau=tau,
-                                 scheme=collision, les=smagorinsky > 0)
+                                 mach=mach, scheme=collision, les=smagorinsky > 0)
     world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                              substeps=1, collision=collision,
                              smagorinsky=smagorinsky, device=device,
@@ -3644,7 +3656,7 @@ def run_dam_break(*, cells: int = 325, height: float = 0.05, reservoir: float = 
 
 def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
                  amplitude: float = 0.002, periods: float = 4.0, collision: str = "trt",
-                 smagorinsky: float = 0.0, device: str | None = None,
+                 smagorinsky: float = 0.0, mach: float = 0.07, device: str | None = None,
                  out_dir: str | Path = ".", steps: int = 0,
                  progress: Callable[[str], None] | None = None,
                  **_: Any) -> dict[str, Any]:
@@ -3677,7 +3689,7 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     world, scaling = _free_surface_world(
         cells=cells, size=(length, 0.0, 3.0 * depth), depth=depth, faces="wall",
         collision=collision, smagorinsky=smagorinsky, device=device, gravity=gravity,
-        thin=thin)
+        thin=thin, mach=mach)
     world.initialise_free_surface(level=depth, amplitude=amplitude, mode=1.0,
                                   along_axis=0)
 
@@ -4259,7 +4271,11 @@ def describe_cases() -> list[str]:
 def run_case(name: str, *, out_dir: str | Path = ".", device: str | None = None,
              progress: Callable[[str], None] | None = None,
              **overrides: Any) -> dict[str, Any]:
-    """Run one case by name and return its result. Unknown keyword arguments are ignored.
+    """Run one case by name and return its result.
+
+    **An unknown keyword argument raises.** It used to be ignored, which meant a knob the
+    case did not plumb produced a run that looked like it honoured the request. See the
+    comment on the check below for the two measurements that cost.
 
     Ignored rather than refused, deliberately: the CLI and the agent tool both pass a
     fixed set of options (`resolution`, `steps`, `collision`, `fluid`) and the cases take
@@ -4287,6 +4303,39 @@ def run_case(name: str, *, out_dir: str | Path = ".", device: str | None = None,
     settings.update({k: v for k, v in overrides.items() if v is not None})
     settings["out_dir"] = out_dir
     settings["device"] = device
+
+    # **An override the runner cannot accept must raise, not be swallowed.** Every case
+    # ends its signature with `**_`, so a keyword the function does not declare is
+    # silently discarded and the run proceeds with the default -- producing a result that
+    # looks like it honoured the request and did not. This has now cost two measurements
+    # in this work:
+    #
+    #   * `--extra '{"outlet_rho": 1.0}'` on the cylinder. `run_cylinder` never declared
+    #     it, so 220 s of H100 re-measured the old boundary and returned Cd 3.6088, bit
+    #     for bit the number already on record. Two identical numbers read as "the change
+    #     made no difference", which is the most expensive way to be wrong.
+    #   * `--u_lattice` on the sloshing case, which is the one experiment that would
+    #     separate its +5.1% from a Mach-number error, and which could not be run at all.
+    #
+    # A silent default is indistinguishable from a tested one in the recorded result, so
+    # the check belongs here, before the GPU is involved.
+    import inspect
+
+    allowed = inspect.signature(case.runner).parameters
+    if not any(q.kind is inspect.Parameter.VAR_KEYWORD for q in allowed.values()):
+        unknown = sorted(set(settings) - set(allowed))
+    else:
+        unknown = sorted(k for k in overrides
+                         if k not in allowed and k not in case.defaults
+                         and k not in ("out_dir", "device", "progress", "resolution"))
+    if unknown:
+        raise TypeError(
+            f"{name!r} does not take {', '.join(unknown)}. Its runner ends in `**_`, so "
+            f"these would be discarded and the case would run with its defaults while "
+            f"the result looked like it honoured them. Thread the argument through the "
+            f"case, or drop it. Accepted here: "
+            f"{', '.join(sorted(k for k in allowed if k != 'kwargs'))}"
+        )
     settings["progress"] = progress
     began = time.perf_counter()
     result = case.runner(**settings)
