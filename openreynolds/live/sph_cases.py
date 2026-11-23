@@ -2055,7 +2055,23 @@ def run_sph_static_float(*, particle_radius: float = 0.002, beam: float = 0.064,
                    _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
-                      step=link.step, hold=hold, progress=progress)
+                      # **Settle the FLUID only, with Newton not stepping at all.**
+                      # The pin used to be `step=link.step, hold=hold`: step the
+                      # coupling, then overwrite `body_q`. That does not hold the body,
+                      # because MuJoCo integrates its own `qpos` and does not re-read
+                      # Newton's public arrays -- measured, the engine's z drifted
+                      # 0.060 -> 0.0055 m over 50 steps while the pinned array read
+                      # 0.060000 throughout, and the draft snapped to the engine's
+                      # accumulated position on release. Drafts of 268,395 mm against a
+                      # 16 mm target came from that.
+                      #
+                      # `world.step` advances the fluid and nothing else. The hull's
+                      # Akinci boundary particles are driven from `body_q`, which does
+                      # not change while Newton is not stepping, so the body is held
+                      # exactly -- by not being integrated, rather than by being
+                      # corrected after the fact. `coupling_notify_input_state_update`
+                      # was tried first and changes nothing.
+                      step=world.step, progress=progress)
 
     period = heave_period(box.draft)
     dt = _timestep(world)
@@ -2275,7 +2291,23 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
                    _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
-                      step=link.step, hold=hold, progress=progress)
+                      # **Settle the FLUID only, with Newton not stepping at all.**
+                      # The pin used to be `step=link.step, hold=hold`: step the
+                      # coupling, then overwrite `body_q`. That does not hold the body,
+                      # because MuJoCo integrates its own `qpos` and does not re-read
+                      # Newton's public arrays -- measured, the engine's z drifted
+                      # 0.060 -> 0.0055 m over 50 steps while the pinned array read
+                      # 0.060000 throughout, and the draft snapped to the engine's
+                      # accumulated position on release. Drafts of 268,395 mm against a
+                      # 16 mm target came from that.
+                      #
+                      # `world.step` advances the fluid and nothing else. The hull's
+                      # Akinci boundary particles are driven from `body_q`, which does
+                      # not change while Newton is not stepping, so the body is held
+                      # exactly -- by not being integrated, rather than by being
+                      # corrected after the fact. `coupling_notify_input_state_update`
+                      # was tried first and changes nothing.
+                      step=world.step, progress=progress)
 
     pushed = held.copy()
     pushed[body][2] -= displacement * box.draft
@@ -2636,7 +2668,23 @@ def _heel_once(box: _Box, *, particle_radius: float, depth: float, span: float,
                    _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
-                      step=link.step, hold=hold, progress=progress)
+                      # **Settle the FLUID only, with Newton not stepping at all.**
+                      # The pin used to be `step=link.step, hold=hold`: step the
+                      # coupling, then overwrite `body_q`. That does not hold the body,
+                      # because MuJoCo integrates its own `qpos` and does not re-read
+                      # Newton's public arrays -- measured, the engine's z drifted
+                      # 0.060 -> 0.0055 m over 50 steps while the pinned array read
+                      # 0.060000 throughout, and the draft snapped to the engine's
+                      # accumulated position on release. Drafts of 268,395 mm against a
+                      # 16 mm target came from that.
+                      #
+                      # `world.step` advances the fluid and nothing else. The hull's
+                      # Akinci boundary particles are driven from `body_q`, which does
+                      # not change while Newton is not stepping, so the body is held
+                      # exactly -- by not being integrated, rather than by being
+                      # corrected after the fact. `coupling_notify_input_state_update`
+                      # was tried first and changes nothing.
+                      step=world.step, progress=progress)
 
     dt = _timestep(world)
     total = int(steps if steps else math.ceil(periods * heave_period(box.draft) / dt))
@@ -2758,7 +2806,23 @@ def run_sph_force_noise(*, particle_radius: float = 0.002, side: float = 0.032,
                    _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
-                      step=link.step, hold=hold, progress=progress)
+                      # **Settle the FLUID only, with Newton not stepping at all.**
+                      # The pin used to be `step=link.step, hold=hold`: step the
+                      # coupling, then overwrite `body_q`. That does not hold the body,
+                      # because MuJoCo integrates its own `qpos` and does not re-read
+                      # Newton's public arrays -- measured, the engine's z drifted
+                      # 0.060 -> 0.0055 m over 50 steps while the pinned array read
+                      # 0.060000 throughout, and the draft snapped to the engine's
+                      # accumulated position on release. Drafts of 268,395 mm against a
+                      # 16 mm target came from that.
+                      #
+                      # `world.step` advances the fluid and nothing else. The hull's
+                      # Akinci boundary particles are driven from `body_q`, which does
+                      # not change while Newton is not stepping, so the body is held
+                      # exactly -- by not being integrated, rather than by being
+                      # corrected after the fact. `coupling_notify_input_state_update`
+                      # was tried first and changes nothing.
+                      step=world.step, progress=progress)
 
     dt = _timestep(world)
     series: list[float] = []
