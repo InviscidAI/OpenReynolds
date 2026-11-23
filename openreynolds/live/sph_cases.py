@@ -1892,6 +1892,62 @@ def _roll_of(quaternion: Any) -> tuple[float, float]:
     return 2.0 * math.atan2(y, w), float(math.hypot(x, z))
 
 
+def _conserving_level(world: Any, box: _Box, *, draft: float) -> float:
+    """The waterline from the water's own volume, which has **no probe in it**.
+
+    `DECISIONS_LIVE.md` **D19**, which the user approved. `_waterline` below measures the
+    free surface as the median topmost *particle* in each hull-free column plus one
+    particle radius, which models a flat lattice fill. A settled column's surface layer
+    sits lower than that -- the kernel is truncated at a free surface, so the outermost
+    particles relax inward -- and the probe reads **0.9047 mm low**, repeatable to 0.01 mm
+    across four runs at two resolutions.
+
+    That was proven with no dynamics in it: the same tank, the same settle, the hull
+    **held** at exactly the Archimedes draft with Newton never stepped (`dz` -0.0000 mm,
+    wobble 0.000 um, so the hull cannot have moved) and the probe reporting 15.0953 mm
+    instead of 16.0000.
+
+    This takes the other route. Every fluid particle stands for one `dp**3` cell of the
+    fill, so `n * dp**3` is the water's volume to the last digit -- the fill placed
+    exactly 33,536 cells in the reference case and the run reported exactly 33,536. The
+    waterline follows by dividing that volume, plus the hull's displaced part, by the
+    tank's waterplane area. No surface is measured at all.
+
+    Returned beside the probe's own answer rather than instead of it, so a re-graded
+    verdict says which instrument produced it.
+    """
+    import numpy as np
+
+    spacing = 2.0 * world.radius
+    volume = int(world.n_fluid) * spacing ** 3
+    area = float(world.domain.size[0]) * float(world.domain.size[1])
+
+    # **Clip each particle's cell to the tank before summing it.** A particle stands for
+    # one `dp**3` cell, but the outermost particles' cells extend past the wall, and
+    # summing them unclipped counts water that is not there. Measured: at an 8 mm radius
+    # in a 120 mm tank the lattice puts 8 particles across 128 mm of cells, and the
+    # unclipped sum returned a **73.96 mm** waterline for a 60.00 mm fill -- 23% high,
+    # which would have read as a physics result rather than as an arithmetic error.
+    #
+    # A bounding-box check cannot catch this: the particles' own box **is** the unclipped
+    # sum by construction, so comparing one against the other compares a thing with
+    # itself. It has to be clipped against the domain.
+    #
+    # What remains after clipping is lattice quantisation, which is physical: a fill to
+    # 60 mm at a 16 mm spacing places four layers whose cells reach 64 mm, and 64 mm is
+    # the right answer for the water that was actually placed.
+    here = np.asarray(world.positions(), dtype=float)
+    lo = np.asarray(world.domain.origin, dtype=float)
+    hi = lo + np.asarray(world.domain.size, dtype=float)
+    half = 0.5 * spacing
+    kept = np.prod(np.clip(np.minimum(here + half, hi) - np.maximum(here - half, lo),
+                           0.0, None), axis=1)
+    volume = float(kept.sum())
+
+    submerged = box.beam * box.length * max(float(draft), 0.0)
+    return (volume + submerged) / area + float(world.domain.origin[2])
+
+
 def _waterline(world: Any, box: _Box, plan: tuple[float, float],
                spacing: float) -> float:
     """The undisturbed water level: the **median** over columns the hull is not standing in.
@@ -2139,9 +2195,16 @@ def run_sph_static_float(*, particle_radius: float = 0.002, beam: float = 0.064,
         if index % every == 0 or index == total - 1:
             pose = link.state.body_q.numpy()[body]
             heel, off_axis = _roll_of(pose[3:7])
-            level = _waterline(world, box, plan, 2.0 * particle_radius)
+            # **Both instruments, every sample** (`DECISIONS_LIVE.md` D19). The probe
+            # is kept because it is what every historical number was measured with; the
+            # conserving level is what the verdict is taken on, because it has no
+            # surface measurement in it at all.
+            keel = float(pose[2]) - box.height / 2.0
+            probed = _waterline(world, box, plan, 2.0 * particle_radius)
+            guess = max(probed - keel, 0.0)
+            level = _conserving_level(world, box, draft=guess)
             track.append((_elapsed(world, dt, index + 1), level,
-                          level - (float(pose[2]) - box.height / 2.0), off_axis))
+                          level - keel, off_axis, probed - keel))
         if progress is not None and index % max(1, total // 20) == 0 and track:
             progress(f"    {index:,}/{total:,}  draft {track[-1][2] * 1e3:.4f} mm  "
                      f"{figures.clock((time.perf_counter() - began) / max(index, 1) * (total - index))} left")
