@@ -1223,28 +1223,55 @@ class FreeSurfaceWorld(FluidWorld):
 
     @property
     def waterline(self) -> float:
-        """The undisturbed free-surface level in metres, read away from any body.
+        """The undisturbed free-surface level in metres: the median depth of dry columns.
 
         **What makes a floating body possible**, and the one number `couple.py` needs
-        from a free surface that a single-phase world cannot give it: `_push_extras`
-        weights each of a hull's solid cells by the fraction of its height below this,
-        and that is the displaced volume Archimedes is about.
+        from a free surface that a single-phase world cannot give it.
 
-        Measured over the outer ring of columns -- the four edges of the domain in x and
-        y -- because that is water the body is not disturbing. Reading it under the hull
-        would measure the body's own depression, and a draft is defined against the
-        level the body is **not** affecting. It is a host read of one small array and it
-        happens once per coupling step, not per substep.
+        **The median over columns that hold no solid, and not the mean over the outer
+        ring.** The first version averaged the four edges of the domain, on the
+        reasoning that the walls are the water a hull is not disturbing. They are also
+        exactly where water thrown up by the hull lands, so the probe read the splash:
+        on a floating box it reported a level 30 mm high, which made a body placed at a
+        20 mm draft measure as 49.9 mm. A median over every column free of the hull is
+        robust to that -- a splash is a minority of columns, and a median does not care
+        how high it goes -- and it uses the whole tank rather than its most disturbed
+        part.
 
-        `nan` if nothing is wet, which `_push_extras` must not be handed; it falls back
-        to the whole voxelised volume when this is not a number.
+        Columns above the hull are excluded because there is no water column there to
+        measure: the hull interrupts it, and `surface_height` sums the fill it finds,
+        which under a hull is the water beneath it.
+
+        `nan` if nothing is wet, which `couple.py` must not be handed; it falls back to
+        the whole voxelised volume when this is not a number.
         """
         depth = self.surface_height(axis=2)
-        edge = np.concatenate([depth[0, :], depth[-1, :], depth[:, 0], depth[:, -1]])
-        wet = np.isfinite(edge) & (edge > 0.0)
-        if not wet.any():
-            return float("nan")
-        return float(self.domain.origin[2] + edge[wet].mean())
+        solid = (self.phi.numpy() < 0.0).any(axis=2)
+        usable = np.isfinite(depth) & (depth > 0.0) & ~solid
+        if not usable.any():
+            # Every column has the hull in it. Fall back to any wet column at all.
+            usable = np.isfinite(depth) & (depth > 0.0)
+            if not usable.any():
+                return float("nan")
+        return float(self.domain.origin[2] + np.median(depth[usable]))
+
+    def at_rest(self, fraction: float = 0.02) -> tuple[bool, float]:
+        """Whether the fluid has settled, and the fastest thing in it, in m/s.
+
+        **A settle has to be decided on the fluid, not on a step count.** The floating
+        box was given 3,000 steps on the reasoning that the hydrostatic gradient arrives
+        within about a thousand, which it does -- and the tank was still moving at 50 to
+        90 mm/s when the body was released, with the force on a *pinned* hull swinging
+        between 0.2 and 1.7 times its weight. A draft averaged over that is an average
+        of a transient, and no fixed step count can be known in advance to be enough.
+
+        `fraction` is of the scaling's reference velocity, which for a free-surface run
+        is the gravity-wave speed `sqrt(g L)` -- the speed the case's own physics happens
+        at. Returns the verdict and the measured maximum so a caller can report what it
+        actually reached rather than only whether it passed.
+        """
+        speed = float(np.nanmax(np.abs(np.nan_to_num(self.fields()["u"]))))
+        return speed <= fraction * abs(self.scaling.reference_velocity), speed
 
     def lattice_mass(self) -> float:
         """Total mass on the lattice, in lattice units. A host read; a diagnostic."""

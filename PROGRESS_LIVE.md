@@ -496,15 +496,36 @@ Two further defects came out of the same trace: the released body reports a draf
 the probe reads the splash -- and `|u|max` reaches 1.3 m/s before the lattice goes
 non-finite, which is the fluid failing after the body has already been pushed around.
 
-What a working version of this case needs, in the order the evidence points:
+**Every part of it checks out in isolation, which is why it is still open.** Measured
+since, each independently:
 
-1. a **quiescent** initial condition. The tank is filled to a flat level with the hull
-   already in it, so the water the hull occupies is discarded and the surface has to
-   fall to a new level; that adjustment is the transient above. Filling to the level
-   that already accounts for the displaced volume removes it.
-2. a waterline probe away from the walls **and** the hull, rather than at the walls.
-3. a settle criterion on the fluid's own velocity, not a step count -- the current 3,000
-   steps demonstrably is not enough, and no fixed number can be known to be.
+| | |
+| --- | --- |
+| `waterline` and `surface_height` | **79.66 mm** against an expected 79.200, on the settled tank with the hull in place |
+| `water_volume` | 3,171,075 mm3 against an exact 3,168,000 -- **0.1%** |
+| the body pin during settling | **0.0000 mm** of drift over 300 steps |
+| the force on a *submerged* box | **+1.000 x rho V g** |
+
+So the probe is right, the volume is right, the hull does stay where it is put, and the
+force is right when the body is fully under water. The case still does not produce a
+reproducible draft, and two scripts that pose the same problem disagree about what the
+waterline is at the moment of release. That is where it stands: **not a solver fault
+that has been localised, and not a case fault that has been localised either.**
+
+Three changes were made on the way and all three are improvements, independent of the
+unresolved part:
+
+1. `waterline` is the **median over columns free of the hull**, not the mean over the
+   outer ring. The ring is exactly where water thrown up by the hull lands, so the probe
+   read the splash; a median over the whole tank does not care how high a minority of
+   columns go.
+2. `FreeSurfaceWorld.at_rest` decides a settle on **the fluid's own velocity**, and
+   `run_archimedes` grades it. The first version took 3,000 steps on trust. No fixed
+   step count can be known in advance to be enough, and a case that releases a hull into
+   a moving tank is averaging a transient.
+3. `refill_vacated` closes the hole where a hull vacates a cell (626 fluid cells
+   touching gas before it, zero after, at every resolution), and writes populations
+   without creating mass.
 
 The force itself is not in question: a submerged box in the same solver reads
 `+1.000 x rho V g` (above), so what is wrong here is how this case is posed.

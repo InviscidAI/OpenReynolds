@@ -3643,7 +3643,7 @@ REFERENCES["archimedes"] = {
 
 def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04,
                    density_ratio: float = 0.5, depth: float = 0.08,
-                   settle_steps: int = 3000,
+                   settle_steps: int = 30000,
                    collision: str = "trt", smagorinsky: float = 0.0,
                    device: str | None = None, out_dir: str | Path = ".",
                    steps: int = 0, solver: str = "mujoco",
@@ -3738,10 +3738,20 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     # pushes poses once, and this loop still goes through `link.step` so the hull is
     # where it says it is on every one of them.
     held_q = link.state.body_q.numpy().copy()
-    for _ in range(int(settle_steps)):
+    settled = False
+    reached = float("nan")
+    for index in range(int(settle_steps)):
         link.step()
         link.state.body_qd.zero_()
         link.state.body_q.assign(held_q)
+        if index % 200 == 199:
+            settled, reached = world.at_rest()
+            if progress:
+                progress(f"    settling {index + 1:,}/{int(settle_steps):,}, "
+                         f"|u|max {reached * 1e3:.2f} mm/s")
+            if settled:
+                break
+    settle_used = world.steps
 
     # The heave period of a floating prism is `2 pi sqrt(d / g)` with `d` the draft --
     # the restoring stiffness is `rho g A` and the mass is `rho_body A H = rho A d`. Run
@@ -3803,6 +3813,15 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
               f"through water legitimately carries some off"),
         Check("fluid cells touching gas cells", world.fluid_touching_gas(), "exactly 0",
               world.fluid_touching_gas() == 0),
+        Check("the tank was at rest before the body was released", settled,
+              "True (|u|max <= 2% of the gravity-wave speed)", bool(settled),
+              f"reached {reached * 1e3:.3f} mm/s after {settle_used:,} steps, against "
+              f"a bound of {0.02 * abs(scaling.reference_velocity) * 1e3:.3f}. **Graded, "
+              f"because the first version of this case was not** -- it took 3,000 steps "
+              f"on trust and released the hull into a tank still moving at 50 to 90 "
+              f"mm/s, with the force on a pinned hull swinging between 0.2 and 1.7 "
+              f"times its weight. The draft it then reported was an average of that "
+              f"transient and did not reproduce between identical runs"),
         Check("lattice finite", world.stable(), "True", world.stable()),
         Check("cells through the draft", f"{cells_through_draft:.1f}",
               "reported, not graded", None,
