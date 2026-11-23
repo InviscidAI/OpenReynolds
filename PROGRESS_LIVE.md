@@ -480,6 +480,41 @@ Also found and fixed on the way, both prerequisites for any hull:
 The carried cup is not begun, and it needs M6's force to be right first: a cup of water
 is a floating-body problem turned inside out.
 
+## The moving window followed the origin, not the body
+
+A bug in a shipped feature, found by the Isaac Sim work and confirmed here before and
+after the fix with the same script:
+
+| | solid cells over 600 steps | shifts | drag |
+| --- | --- | --- | --- |
+| `follow=None` (no window) | 2,176 held | 0 | 2.6 to 7.6 uN |
+| `follow=0`, **before** | 2,176 -> 224 -> 178 -> 129 -> **68** | 1 | down to 0.5 uN |
+| `follow=0`, **after** | **2,176 held** | **0** | **identical to the baseline** |
+
+`couple.py` filled the host-side `world._poses` only when `rotors or buoyancy`. Three
+things read it -- an actuator disk's pose, the buoyancy's moment arm, and
+`FluidWorld._maybe_shift`, which re-centres the window on the body it follows -- and that
+condition covers the first two and silently drops the third. A run with `follow` set, no
+rotors and `buoyancy=False` therefore measured its body's drift from the **origin**,
+fired one spurious shift of half the domain on the first step, and re-centred the window
+on empty water; the body then left the window and dissolved.
+
+An independent measurement on a 23,184-cell hull inside Isaac Sim saw `solid_cells`
+reach **zero** and `world.wrench` return exactly 0.0, with the body accelerating at
+`T/m` to four significant figures -- a submarine flying through vacuum, and **no error
+anywhere**. That is the failure mode worth remembering: not a crash, not a NaN, a
+plausible trajectory.
+
+The readback is unconditional now -- 28 bytes a body, once per coupling step -- because
+the condition was a premature optimisation that bought nothing and cost a silent wrong
+answer. `tests/test_live_cases.py::test_the_host_side_poses_are_not_conditional_on_which_feature_is_on`
+asserts the pose, the shift count and the voxel count with every optional feature off,
+which is exactly the configuration the condition missed.
+
+**The windowed falling-sphere row is not affected**, and this was checked rather than
+assumed: it runs `buoyancy=True`, so the old condition happened to cover it. Its
++12.05% is still the wake truncation that row says it is.
+
 ## Inside Isaac Sim
 
 The addendum asks that the demos "work within Isaac Sim natively", "look good" and be
