@@ -218,3 +218,35 @@ def test_the_grader_lists_every_case_and_every_reference():
         assert name in done.stdout, f"`grade.py list` does not name {name}"
     for name in cases.REFERENCES:
         assert name in done.stdout, f"`grade.py list` does not name the {name} reference"
+
+
+@pytest.mark.parametrize("label", labels())
+def test_every_recorded_run_names_the_commit_it_came_from(label):
+    """A recorded result must say which code produced it, and that the tree was clean.
+
+    **The reason is a day of confusion.** `benchmarks/live/modal_run.py` mounts the
+    working tree, not a commit, so a job picks up whatever is on disk the moment it
+    starts. Editing while runs are in flight is editing the experiment: one job failed
+    on a `NameError` that a later edit had already fixed, two runs an hour apart were not
+    runs of the same code, and from the result file alone that is indistinguishable from
+    a flaky solver. Three reported numbers had to be withdrawn before the stamp existed.
+
+    `dirty` is the half that matters. A result stamped with a commit and `dirty: true`
+    says only "something like that commit", which is not a provenance, so a dirty run is
+    not recordable here. `_provenance` documents the frozen-worktree recipe that makes a
+    run exact, and every file in this directory was produced that way.
+    """
+    payload = dict(recorded())[label]
+    provenance = payload.get("provenance")
+    assert provenance, (
+        f"{label} carries no provenance. It predates the stamp or was written by hand; "
+        f"re-run it from a frozen checkout rather than recording it"
+    )
+    commit = str(provenance.get("commit", ""))
+    assert len(commit) == 40 and all(c in "0123456789abcdef" for c in commit), (
+        f"{label} names its commit as {commit!r}, which is not a full sha"
+    )
+    assert provenance.get("dirty") is False, (
+        f"{label} was produced from a dirty tree ({provenance.get('dirty_files')} "
+        f"files changed), so it does not pin the code that made it"
+    )

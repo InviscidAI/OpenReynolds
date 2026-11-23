@@ -4,24 +4,24 @@
   "checks": [
     {
       "name": "Cd of the zero-length capsule, which is a sphere",
-      "measured": 1.1034799134410274,
+      "measured": 1.1136999483110055,
       "target": "1.0917 +/- 5% (Schiller-Naumann)",
       "passed": true,
       "note": "the same code path as the elongated hull, on a shape with a known answer"
     },
     {
       "name": "Cd of the fineness-4 hull",
-      "measured": 1.7993062094466816,
+      "measured": 1.8097212468923534,
       "target": "reported, not graded",
       "passed": null,
-      "note": "no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against; it should be below the sphere's, and it is by -63.1%"
+      "note": "no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against. It measured 1.62 times the sphere's on the same frontal area, which is HIGHER, and that is the right way round at this Reynolds number: streamlining reduces PRESSURE drag, and at Re 100 a slender hull's four-times-larger wetted area adds more skin friction than the fairing saves. The ratio crosses one somewhere above Re 1000, which is outside what this case runs and so is not claimed here"
     }
   ],
   "report": [
     "# underwater body: a towed capsule at Re 100, 20 cells per diameter",
     "  graded:     subgrid model ON (Cs = 0): this case is a rotor flow at a Reynolds number no affordable lattice resolves, so the answer away from a wall is the model's",
-    "  sphere:     Cd 1.1035 against Schiller-Naumann 1.0917 (+1.08%)",
-    "  hull:       Cd 1.7993 at fineness 4, -63.1% below the sphere"
+    "  sphere:     Cd 1.1137 against Schiller-Naumann 1.0917 (+2.01%)",
+    "  hull:       Cd 1.8097 at fineness 4, 1.62x the sphere's on the same frontal area -- higher, because at Re 100 the extra wetted area costs more friction than the fairing saves in pressure drag"
   ],
   "figures": [
     "live-underwater-f1.png",
@@ -30,22 +30,27 @@
   "rows": [
     {
       "fineness": 1.0,
-      "cd": 1.1034799134410274,
+      "cd": 1.1136999483110055,
       "nodes": 27648000,
       "steps": 36000
     },
     {
       "fineness": 4.0,
-      "cd": 1.7993062094466816,
+      "cd": 1.8097212468923534,
       "nodes": 27648000,
       "steps": 36000
     }
   ],
-  "seconds": 1556.2239608764648,
+  "seconds": 2228.0355632305145,
   "milestone": "M3",
   "about": "a towed capsule in water, graded at zero length against the sphere it reduces to",
-  "report_text": "# underwater body: a towed capsule at Re 100, 20 cells per diameter\n  graded:     subgrid model ON (Cs = 0): this case is a rotor flow at a Reynolds number no affordable lattice resolves, so the answer away from a wall is the model's\n  sphere:     Cd 1.1035 against Schiller-Naumann 1.0917 (+1.08%)\n  hull:       Cd 1.7993 at fineness 4, -63.1% below the sphere\n\n  PASS  Cd of the zero-length capsule, which is a sphere  1.10348   against 1.0917 +/- 5% (Schiller-Naumann)\n                                                          (the same code path as the elongated hull, on a shape with a known answer)\n        Cd of the fineness-4 hull                         1.79931   against reported, not graded\n                                                          (no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against; it should be below the sphere's, and it is by -63.1%)\n\n  1/1 graded checks passed\n  took 25 m 56 s\n  figure:     /tmp/tmp63y_qlow/live-underwater-f1.png\n  figure:     /tmp/tmp63y_qlow/live-underwater-f4.png",
+  "report_text": "# underwater body: a towed capsule at Re 100, 20 cells per diameter\n  graded:     subgrid model ON (Cs = 0): this case is a rotor flow at a Reynolds number no affordable lattice resolves, so the answer away from a wall is the model's\n  sphere:     Cd 1.1137 against Schiller-Naumann 1.0917 (+2.01%)\n  hull:       Cd 1.8097 at fineness 4, 1.62x the sphere's on the same frontal area -- higher, because at Re 100 the extra wetted area costs more friction than the fairing saves in pressure drag\n\n  PASS  Cd of the zero-length capsule, which is a sphere  1.1137   against 1.0917 +/- 5% (Schiller-Naumann)\n                                                          (the same code path as the elongated hull, on a shape with a known answer)\n        Cd of the fineness-4 hull                         1.80972   against reported, not graded\n                                                          (no published drag coefficient for a capsule of this fineness ratio has been read for this repository, so there is nothing honest to grade it against. It measured 1.62 times the sphere's on the same frontal area, which is HIGHER, and that is the right way round at this Reynolds number: streamlining reduces PRESSURE drag, and at Re 100 a slender hull's four-times-larger wetted area adds more skin friction than the fairing saves. The ratio crosses one somewhere above Re 1000, which is outside what this case runs and so is not claimed here)\n\n  1/1 graded checks passed\n  took 37 m 07 s\n  figure:     /tmp/tmpu4rdcdrv/live-underwater-f1.png\n  figure:     /tmp/tmpu4rdcdrv/live-underwater-f4.png",
   "device": "cuda:0",
   "layout": "",
-  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04"
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06",
+  "provenance": {
+    "commit": "2e602271ddfbe492cf9ac46ecbfe885ef80e660d",
+    "dirty": false,
+    "dirty_files": 0
+  }
 }

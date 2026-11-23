@@ -382,8 +382,36 @@ The sloshing estimators close on each other as the lattice refines -- 523/363 ms
 cells over 2.6 cycles, 449/431 at 240 -- and their agreement now passes at 4.4%. The
 **period does not**: 1.0745 at 120 cells and 1.0553 at 240, against a 5% tolerance.
 
-**Damping is ruled out as the explanation**, which is worth recording because it was the
-best hypothesis. Linear theory is inviscid and a damped period is longer by
+### The sloshing period converges, to five per cent above linear theory
+
+Four grids, and the usable window between them is narrow: 80 cells is 25% short and
+unusable, 480 diverges (the Reynolds-number ceiling above), so the convergence can only
+be followed over 120 to 240.
+
+| cells | period / theory |
+| --- | --- |
+| 80 | 0.7469 (under-resolved) |
+| 120 | 1.0726 |
+| 180 | 1.0562 |
+| 240 | 1.0529 |
+| 480 | diverges |
+
+The three usable grids are not at a constant refinement ratio, so the textbook
+three-point formula does not apply and the fit solves `f(h) = f_inf + C h^p` for all
+three unknowns directly: **observed order 3.5, limit 1.0510**. A high order with a
+non-zero limit is the signature of a solution that has essentially converged -- 180 and
+240 cells differ by 0.3% -- **to a value five per cent away from the reference**.
+
+So the discrepancy is a property of the scheme and not of the grid, and the case does
+not meet its 5% tolerance. Everything else is ruled out with a number: damping
+(`zeta` 0.0035 to 0.020, a four-decimal correction), finite amplitude (0.4% at this
+steepness), the depth (half a cell is 0.2%), gravity (the hydrostatic case pins the
+effective `g` to 1.3%, worth 0.6% of the period), the estimator (the FFT and the zero
+crossings bracket the same answer and their mean is graded), and now resolution. What
+is left is the discrete dispersion relation of a one-cell interface at `kh` about 0.94,
+which linear theory is not a statement about.
+
+**Damping was the best hypothesis and is ruled out**, which is worth recording. Linear theory is inviscid and a damped period is longer by
 `1/sqrt(1 - zeta^2)`, so `_damping_of` measures `zeta` from the logarithmic decrement of
 the envelope and the graded period has it removed. Measured: `zeta` is **0.0150** at 120
 cells and **0.0035** at 240, so the correction is four decimal places and changes

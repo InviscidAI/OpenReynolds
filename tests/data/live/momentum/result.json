@@ -4,14 +4,14 @@
   "checks": [
     {
       "name": "momentum balance, still body: |fluid gained + impulse| / |exchanged|",
-      "measured": 2.0795936635959513e-05,
+      "measured": 2.0736491037190522e-05,
       "target": "<= 1%",
       "passed": true,
       "note": "nothing moves, so nothing is refilled: this is the boundary condition and the force sum checked against each other and nothing else"
     },
     {
       "name": "momentum balance, translating body",
-      "measured": 0.0009757537025651724,
+      "measured": 0.000961652870655755,
       "target": "<= 10%",
       "passed": true,
       "note": "3,296 nodes were refilled from equilibrium, each injecting momentum that no force on the body accounts for. The gap is a measurement of what equilibrium refilling costs (DECISIONS_LIVE.md D5)"
@@ -68,23 +68,28 @@
     "  speeds:     u_ref 0.005017 m/s -> 0.04 lattice (Ma 0.0693), peak 0.04 lattice",
     "  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be",
     "  still body: 0.0021% of the momentum exchanged, over 1,500 steps, 0 refills",
-    "  moving:     0.0976% over 396 steps and 0.99 diameters, 3,296 refills",
-    "  cost:       1,500 coupling steps (1,500 lattice steps) in 0.7 s at 233.3 MLUPS, 0.47 ms a step",
-    "  realtime:   10.514x (simulated seconds per wall-clock second)"
+    "  moving:     0.0962% over 396 steps and 0.99 diameters, 3,296 refills",
+    "  cost:       1,500 coupling steps (1,500 lattice steps) in 0.7 s at 252.8 MLUPS, 0.44 ms a step",
+    "  realtime:   11.393x (simulated seconds per wall-clock second)"
   ],
   "figures": [
     "live-momentum-moving.png",
     "live-momentum.png"
   ],
-  "still": 2.0795936635959513e-05,
-  "moving": 0.0009757537025651724,
+  "still": 2.0736491037190522e-05,
+  "moving": 0.000961652870655755,
   "refilled": 3296,
   "travelled": 0.9900000000000283,
-  "seconds": 14.95691180229187,
+  "seconds": 15.379096508026123,
   "milestone": "M2",
   "about": "a closed periodic box with one moving body: the momentum the fluid gained against the impulse the solver reported",
-  "report_text": "# momentum: a closed periodic box, 48^3, 16 cells per diameter\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.000625 m   dt 0.00498306 s   dx/dt 0.125425 m/s\n  viscosity:  nu_lattice 0.0128   tau_plus 0.53840   tau_minus 5.38281\n  relaxation: trt  omega_plus 1.857355  omega_minus 0.185776\n  speeds:     u_ref 0.005017 m/s -> 0.04 lattice (Ma 0.0693), peak 0.04 lattice\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  still body: 0.0021% of the momentum exchanged, over 1,500 steps, 0 refills\n  moving:     0.0976% over 396 steps and 0.99 diameters, 3,296 refills\n  cost:       1,500 coupling steps (1,500 lattice steps) in 0.7 s at 233.3 MLUPS, 0.47 ms a step\n  realtime:   10.514x (simulated seconds per wall-clock second)\n\n  PASS  momentum balance, still body: |fluid gained + impulse| / |exchanged|  2.07959e-05   against <= 1%\n                                                                              (nothing moves, so nothing is refilled: this is the boundary condition and the force sum checked against each other and nothing else)\n  PASS  momentum balance, translating body                                    0.000975754   against <= 10%\n                                                                              (3,296 nodes were refilled from equilibrium, each injecting momentum that no force on the body accounts for. The gap is a measurement of what equilibrium refilling costs (DECISIONS_LIVE.md D5))\n  PASS  the body stayed inside the box                                        0.99 diameters travelled   against no wrap through a periodic face\n        fluid momentum gained, still body                                     -1.4367e-05 kg m/s (x)   against reported, not graded\n        impulse the solver reported, still body                               +1.4367e-05 kg m/s (x)   against reported, not graded\n  PASS  lattice still finite                                                  yes   against True\n  PASS  window shifts                                                         0   against 0, or this measures the window\n        Bouzidi fallbacks                                                     0 still, 1,776 moving   against reported, not graded\n                                                                              (links whose second fluid node was also solid; at 16 cells per diameter this is the sphere's own curvature)\n\n  5/5 graded checks passed\n  took 14.9 s\n  figure:     /tmp/tmps1m7skkc/live-momentum.png\n  figure:     /tmp/tmps1m7skkc/live-momentum-moving.png",
+  "report_text": "# momentum: a closed periodic box, 48^3, 16 cells per diameter\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.000625 m   dt 0.00498306 s   dx/dt 0.125425 m/s\n  viscosity:  nu_lattice 0.0128   tau_plus 0.53840   tau_minus 5.38281\n  relaxation: trt  omega_plus 1.857355  omega_minus 0.185776\n  speeds:     u_ref 0.005017 m/s -> 0.04 lattice (Ma 0.0693), peak 0.04 lattice\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  still body: 0.0021% of the momentum exchanged, over 1,500 steps, 0 refills\n  moving:     0.0962% over 396 steps and 0.99 diameters, 3,296 refills\n  cost:       1,500 coupling steps (1,500 lattice steps) in 0.7 s at 252.8 MLUPS, 0.44 ms a step\n  realtime:   11.393x (simulated seconds per wall-clock second)\n\n  PASS  momentum balance, still body: |fluid gained + impulse| / |exchanged|  2.07365e-05   against <= 1%\n                                                                              (nothing moves, so nothing is refilled: this is the boundary condition and the force sum checked against each other and nothing else)\n  PASS  momentum balance, translating body                                    0.000961653   against <= 10%\n                                                                              (3,296 nodes were refilled from equilibrium, each injecting momentum that no force on the body accounts for. The gap is a measurement of what equilibrium refilling costs (DECISIONS_LIVE.md D5))\n  PASS  the body stayed inside the box                                        0.99 diameters travelled   against no wrap through a periodic face\n        fluid momentum gained, still body                                     -1.4367e-05 kg m/s (x)   against reported, not graded\n        impulse the solver reported, still body                               +1.4367e-05 kg m/s (x)   against reported, not graded\n  PASS  lattice still finite                                                  yes   against True\n  PASS  window shifts                                                         0   against 0, or this measures the window\n        Bouzidi fallbacks                                                     0 still, 1,776 moving   against reported, not graded\n                                                                              (links whose second fluid node was also solid; at 16 cells per diameter this is the sphere's own curvature)\n\n  5/5 graded checks passed\n  took 15.3 s\n  figure:     /tmp/tmpusogbwck/live-momentum.png\n  figure:     /tmp/tmpusogbwck/live-momentum-moving.png",
   "device": "cuda:0",
   "layout": "",
-  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06"
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06",
+  "provenance": {
+    "commit": "2e602271ddfbe492cf9ac46ecbfe885ef80e660d",
+    "dirty": false,
+    "dirty_files": 0
+  }
 }
