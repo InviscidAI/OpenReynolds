@@ -1744,6 +1744,16 @@ def wrench_to_newton(
     in the first three components and torque in the last three -- which is the layout
     `stream` accumulated into, so this is two multiplications and an add.
 
+    **That ordering is verified, not assumed, because assuming it cost a false
+    diagnosis.** A probe read `body_f[5]` for the vertical force -- the angular-z slot
+    under the opposite convention -- found zero there, and concluded this kernel writes
+    nothing and that the floating-body bug was a wrench that never reached Newton.
+    Printing all six components instead of the one index showed the force sitting in
+    `[2]`, matching `world.wrench` to the digit: `+11272.93` mN in both. `body_f` is
+    **linear-first**, the same convention `body_qd` was separately measured to use on
+    newton 1.8.0. A spatial vector has two plausible layouts and reading one slot cannot
+    tell them apart; reading all six can.
+
     `accumulate` is on by default because Newton's own loop is
     `state.clear_forces()`, then every force source adds, then `solver.step`. Gravity,
     a controller's thrust and this are three sources, and a kernel that assigned would
