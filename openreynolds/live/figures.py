@@ -37,7 +37,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-__all__ = ["slice_figure", "profile_figure", "animate", "AXES"]
+__all__ = ["slice_figure", "profile_figure", "animate", "frame_count", "AXES"]
 
 AXES = ("x", "y", "z")
 
@@ -203,10 +203,30 @@ def animate(frames: Sequence[np.ndarray], path: str | Path, *, fps: int = 20,
     The colour scale is fixed across the whole sequence from the first few frames rather
     than per frame. A per-frame scale makes a decaying flow look like it is not decaying,
     which is the one thing an animation of a transient must not do.
+
+    ## Why this raises instead of writing whatever it was handed
+
+    A one-frame GIF looks like a GIF to every tool except a viewer, and this repository
+    has already paid for that: `PROGRESS_LIVE.md` claimed three demos animated while the
+    files on disk held exactly one frame each (the cause was `ensure_rgb`, which flattens
+    mode `"P"`). So the three ways an animation can come out dead are checked rather
+    than hoped for -- too few frames in, every frame identical, and the written file
+    collapsing anyway, which is what Pillow does to identical consecutive frames and to
+    frames that quantise onto the same 256-colour palette. A missing encoder is still
+    `None`, because that is an absent tool and not a dead picture.
     """
     frames = [np.asarray(frame, dtype=np.float64) for frame in frames]
-    if not frames:
-        return None
+    if len(frames) < 2:
+        raise ValueError(
+            f"an animation needs at least 2 frames and was given {len(frames)}; "
+            f"a one-frame GIF is a still with the wrong extension. Check that the "
+            f"case's sampling callback is appending frames at all."
+        )
+    if all(np.array_equal(frame, frames[0], equal_nan=True) for frame in frames[1:]):
+        raise ValueError(
+            f"all {len(frames)} frames are identical, so the GIF would show nothing "
+            f"moving; the sample callback is probably reading a cached or aliased field."
+        )
     try:
         import imageio.v3 as iio
     except Exception:
@@ -241,8 +261,32 @@ def animate(frames: Sequence[np.ndarray], path: str | Path, *, fps: int = 20,
             iio.mimwrite(out, images, fps=fps)  # older imageio
         except Exception:
             return None
+    written = frame_count(out)
+    if written is not None and written < 2:
+        raise ValueError(
+            f"{out.name}: {len(frames)} frames went in and the written file has "
+            f"{written}. The encoder collapsed them -- after palettisation the frames "
+            f"are indistinguishable, so the run has nothing to animate."
+        )
     del extent, title
     return out
+
+
+def frame_count(path: str | Path) -> int | None:
+    """How many frames a written image actually has, or None if PIL cannot say.
+
+    The only measurement that settles whether a GIF animates. `animate` calls it on its
+    own output and `benchmarks/live/gallery.py` calls it on everything in the gallery,
+    because "the writer was handed 200 frames" and "the file has 200 frames" turned out
+    to be different statements.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(Path(path)) as image:
+            return int(getattr(image, "n_frames", 1))
+    except Exception:
+        return None
 
 
 def slice_frame(world: Any, axis: int = 2, index: int | None = None,
@@ -268,6 +312,15 @@ def ensure_rgb(path: str | Path) -> Path:
     saved PNG with an alpha channel comes back as a black rectangle wherever the
     thumbnailer composites it against nothing. matplotlib's `savefig` writes RGBA by
     default. Called by `cases.py` on every figure it writes.
+
+    **It must not touch an animation, and that is not a detail.** Every GIF is mode
+    `"P"`, so the conversion below matched it, kept frame 0, and wrote the file back as a
+    one-frame GIF. `cases.py` calls this on everything in `drawn`, and `drawn` contains
+    the GIFs -- so the cylinder, the falling sphere and the quadrotor each animated
+    correctly inside `figures.animate`, were destroyed one line later, and
+    `PROGRESS_LIVE.md` claimed they animated for weeks. The dam break survived only
+    because its caller happens to guard with `endswith(".png")`. The guard belongs here,
+    where every caller routes through it, not in each caller.
     """
     out = Path(path)
     try:
@@ -276,6 +329,8 @@ def ensure_rgb(path: str | Path) -> Path:
         return out
     try:
         with Image.open(out) as image:
+            if getattr(image, "n_frames", 1) > 1:
+                return out
             if image.mode in ("RGBA", "LA", "P"):
                 image.convert("RGB").save(out)
     except Exception:

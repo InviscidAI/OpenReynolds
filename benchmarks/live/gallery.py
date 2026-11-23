@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draw the live extension's results as pictures: four convergence studies, one scorecard, two GIFs.
+"""Draw the live extension's results as pictures: four convergence studies, one scorecard, six GIFs.
 
     python benchmarks/live/gallery.py            # write benchmarks/live/gallery/
     python benchmarks/live/gallery.py --check    # verify what is already there
@@ -592,18 +592,30 @@ def scorecard() -> Path:
 
 ANIMATIONS = {
     "field-dam-break.gif": "dam-n1300/live-dam-break.gif",
+    "field-cylinder.gif": "gif-cylinder/live-cylinder-n44.gif",
+    "field-falling-sphere.gif": "gif-falling-sphere/live-falling-sphere.gif",
+    "field-quadrotor.gif": "gif-quadrotor/live-quadrotor-z1.gif",
     "isaacsim-freesurface.gif": "isaacsim/freesurface.gif",
     "isaacsim-submarine.gif": "isaacsim/submarine.gif",
 }
-"""Which recorded GIFs the gallery shows, and why only these three.
+"""Which recorded GIFs the gallery shows.
 
-Every `*.gif` under `results/` was read: **the dam break is the only animated one the
-solver itself wrote.** `live-cylinder-*.gif`, `live-falling-sphere.gif` and
-`live-quadrotor-*.gif` each contain exactly one frame, confirmed with both PIL and
-imageio, which makes them stills with a `.gif` extension -- so PROGRESS_LIVE.md's M4 row
-"the cylinder, the falling sphere and the quadrotor animate" is not what is on disk.
-Not fixed here: `cases.py` is off limits to this script and re-rendering on a machine
-with no CUDA device would be a different run. Reported instead, in gallery/README.md."""
+**Three of these were one-frame files until 2026-11-23, and the cause was not the
+sampling.** `figures.ensure_rgb` flattens an image to RGB so an RGBA PNG does not render
+as a black thumbnail; every GIF is mode `"P"`, so it matched too, kept frame 0 and wrote
+the file back. `cases.py` calls it on everything in `drawn`, and `drawn` holds the GIFs.
+The cylinder, the falling sphere and the quadrotor each animated correctly inside
+`figures.animate` -- 200-odd frames, the sampling callbacks were always right -- and were
+destroyed one line later. The dam break survived only because its caller happens to guard
+with `endswith(".png")`. The single-frame files had a frame duration of exactly 50 ms,
+which is `1000/fps` for one frame rather than the accumulated duration Pillow writes when
+it collapses identical frames, and that is how the writer was ruled out.
+
+`ensure_rgb` now returns early on anything with more than one frame and `figures.animate`
+raises rather than write a still, so `check()` below is a second line of defence and not
+the only one. The GIFs here come from re-runs on an L40S under the `gif-*` labels; the
+graded results are untouched, because a figure and a graded number should not come from
+the same incidental run."""
 
 
 def animations() -> list[Path]:
@@ -657,11 +669,21 @@ def inspect(path: Path) -> dict:
             if s < FLAT_STD or c < FLAT_COLOURS]
     median_std = float(np.median(stds))
     median_colours = float(np.median(colours))
+    # The third number, added after three GIFs in this directory turned out to hold one
+    # frame each: the mean absolute change between consecutive frames, on 0-255 RGB. A
+    # file can have two hundred frames and still be a still life, and the per-frame
+    # standard deviation above cannot tell the difference -- it grades each frame on its
+    # own. `still_pairs` counts the consecutive pairs that are byte-identical.
+    diffs = [float(np.abs(b - a).mean()) for a, b in zip(frames, frames[1:])]
+    motion = float(np.median(diffs)) if diffs else 0.0
+    still_pairs = sum(1 for d in diffs if d == 0.0)
     return {
         "path": path, "bytes": path.stat().st_size, "mode": mode, "frames": len(frames),
         "channel_std": median_std, "colours": median_colours, "flat_frames": flat,
+        "motion": motion, "still_pairs": still_pairs,
         "rgba": mode in ("RGBA", "LA") and path.suffix.lower() == ".png",
         "flat": median_std < FLAT_STD or median_colours < FLAT_COLOURS,
+        "dead": path.suffix.lower() == ".gif" and (len(frames) < 2 or motion <= 0.0),
     }
 
 
@@ -671,11 +693,14 @@ def check() -> int:
         print(f"nothing in {OUT}")
         return 1
     print(f"{'file':30} {'bytes':>10} {'mode':5} {'frames':>6} {'med std':>8} "
-          f"{'med colours':>12}  notes")
+          f"{'med colours':>12} {'motion':>7}  notes")
     bad = []
     for path in files:
         got = inspect(path)
         notes = []
+        if got["dead"]:
+            notes.append(f"DEAD GIF -- {got['frames']} frame(s), nothing moves")
+            bad.append(path)
         if got["flat"]:
             notes.append("FLAT -- shows nothing")
             bad.append(path)
@@ -684,13 +709,18 @@ def check() -> int:
             bad.append(path)
         if got["flat_frames"]:
             notes.append(f"uniform frame(s) {got['flat_frames']} of {got['frames']}")
+        if got["still_pairs"]:
+            notes.append(f"{got['still_pairs']} identical consecutive pair(s)")
         print(f"{path.name:30} {got['bytes']:>10,} {got['mode']:5} {got['frames']:>6} "
-              f"{got['channel_std']:>8.2f} {got['colours']:>12,.0f}  {'; '.join(notes)}")
+              f"{got['channel_std']:>8.2f} {got['colours']:>12,.0f} {got['motion']:>7.2f}"
+              f"  {'; '.join(notes)}")
     if bad:
         print(f"\n{len(set(bad))} file(s) failed the check")
         return 1
-    print(f"\n{len(files)} file(s): none flat, no RGBA PNG. A uniform frame noted above "
-          f"is reported, not excused -- for the dam break it is the tank at rest.")
+    print(f"\n{len(files)} file(s): none flat, no RGBA PNG, every GIF animates. "
+          f"`motion` is the median mean-absolute change between consecutive frames on "
+          f"0-255 RGB. A uniform frame noted above is reported, not excused -- for the "
+          f"dam break it is the tank at rest.")
     return 0
 
 
