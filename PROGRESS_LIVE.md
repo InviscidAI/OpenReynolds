@@ -603,7 +603,33 @@ Two further defects came out of the same trace: the released body reports a draf
 the probe reads the splash -- and `|u|max` reaches 1.3 m/s before the lattice goes
 non-finite, which is the fluid failing after the body has already been pushed around.
 
-**Every part of it checks out in isolation, which is why it is still open.** Measured
+**The failure path is now identified and its cause is not: the interface thickens the
+moment the hull is released.** The mass exchange is written for an interface exactly one
+cell thick, and measured in interface cells per wet column:
+
+| | per column | waterline |
+| --- | --- | --- |
+| hull pinned, 1,500 steps | **0.96** | 79.538 mm |
+| released + 10 steps | **1.39** | 79.546 |
+| + 60 | 1.48 | 79.516 |
+| + 100 | 1.58 | 79.301 |
+
+A one-cell layer while the hull is held, half again as thick within **ten steps** of
+letting it go. The waterline stays right throughout, so this is not the probe and not a
+loss of water; it is the layer the algorithm depends on losing its structure, and the
+divergence follows later.
+
+Three refilling rules were tried against it and the metric does not move. Giving every
+vacated cell a full cell of water is a mass source at every cell a heaving hull vacates,
+and diverged outright. Giving none of them mass leaves empty interface cells inside the
+water, which is wrong on its face. Deciding by depth -- full if no gas neighbour, partial
+if there is one -- is the correct rule and is kept, and it changes the thickening not at
+all: 1.39, 1.41, 1.48, 1.58 against 1.39, 1.40, 1.48, 1.63. **So refilling is not the
+cause.** Ten steps is also too few for the hull to have moved anywhere, which argues
+the trigger is the hull becoming free rather than the hull travelling -- the Ladd
+wall-velocity term switching on is the obvious suspect and has not been tested.
+
+**Every other part checks out in isolation, which is why this is still open.** Measured
 since, each independently:
 
 | | |

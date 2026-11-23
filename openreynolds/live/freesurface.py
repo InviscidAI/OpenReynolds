@@ -637,11 +637,13 @@ def refill_vacated(
 
     * no wet neighbour at all -- the cell is in the air, or inside the hull still. `GAS`,
       no mass, and nothing else to do.
-    * wet neighbours -- their mean density and velocity become this cell's equilibrium,
-      so nothing streams garbage, and the cell becomes an **empty interface cell**. The
-      mass exchange fills it from the water around it over the next few steps. It is
-      deliberately not given mass here; the comment at that line has the measurement
-      that settled it.
+    * wet neighbours and **no gas neighbour** -- the cell is inside the water, so the
+      water closes in: a fluid cell, full, at the neighbours' mean density and velocity.
+    * wet neighbours and a gas one -- the cell is at the surface: an interface cell at
+      the fill its wet neighbours have.
+
+    The comment at that branch carries the measurements that ruled out both of the
+    simpler rules -- giving every vacated cell water, and giving none of them any.
     """
     i, j, k = wp.tid()
     if phi[i, j, k] < DTYPE(0.0):
@@ -688,23 +690,47 @@ def refill_vacated(
         velocity = mom / rho
     for q in range(Q):
         L.set_pop(f, q, i, j, k, L._equilibrium(q, density, velocity))
-    # **Populations yes, mass no.** The cell becomes an empty interface cell and the
-    # ordinary mass exchange fills it over the next few steps from the water around it.
+    # **Depth decides, and both simpler rules were measured wrong.**
     #
-    # The first version handed it a full cell of water -- `mass = density * mean
-    # neighbour fill` -- on the reasoning that a cell vacated deep under a hull is
-    # plainly full. It is, eventually, and creating it here is a mass source at every
-    # cell a hull vacates on every step. A heaving hull vacates and re-occupies cells
-    # continuously, so that is a pump, and it measured as one: the floating box went
-    # from a correct draft (+1.9% of Archimedes, then non-finite late) to diverging
-    # outright at all three resolutions. Letting the exchange do the filling costs a few
-    # steps of a slightly empty wake behind the hull and conserves mass exactly.
+    # Give every vacated cell a full cell of water and it is a mass source at every cell
+    # a hull vacates on every step; a heaving hull vacates and re-occupies continuously,
+    # so that is a pump, and the floating box diverged outright with it.
     #
-    # An interface cell is legal beside both fluid and gas, so this closes the invariant
-    # either way, which was the whole point of the kernel.
-    wp.atomic_add(returned, 0, DTYPE(0.0))
-    mass[i, j, k] = DTYPE(0.0)
-    flags[i, j, k] = CELL_INTERFACE
+    # Give none of them any mass and a cell vacated deep under the hull becomes an EMPTY
+    # interface cell, which is wrong on its face: there is water there. So the rule is
+    # depth.
+    #
+    # **What this did NOT fix, recorded because it was the reason for trying it.** The
+    # interface thickens as soon as the hull is released -- interface cells per wet
+    # column go 0.96 while it is pinned (a one-cell layer, which is what the mass
+    # exchange is written for) to 1.39 within ten steps and about 1.6 by a hundred -- and
+    # the depth rule changes that not at all: 1.39, 1.41, 1.48, 1.58 against 1.39, 1.40,
+    # 1.48, 1.63 before it. So empty refilled cells are not what thickens the interface
+    # and the cause is still unidentified. This rule is kept because it is the right one,
+    # not because it fixed anything. A vacated cell with **no gas neighbour** is inside the water:
+    # the water closes in, it is full, and it becomes a fluid cell straight away. One
+    # that touches gas is at the surface and becomes an interface cell at the fill its
+    # wet neighbours have. The mass this hands back is not created from nothing -- the
+    # hull was charged for it in `displaced_by_solids` when it moved in, and
+    # `FreeSurfaceWorld.step` credits the difference back on the same line that charged
+    # it, so a hull that moves and returns owes nothing.
+    touches_gas = int(0)
+    for d in range(1, Q):
+        a = int(i + L.C[0, d])
+        b = int(j + L.C[1, d])
+        c = int(k + L.C[2, d])
+        if a < 0 or a >= nx or b < 0 or b >= ny or c < 0 or c >= nz:
+            continue
+        if flags[a, b, c] == CELL_GAS:
+            touches_gas = int(1)
+    if touches_gas == 0:
+        given = density
+        flags[i, j, k] = CELL_FLUID
+    else:
+        given = density * wp.clamp(filled / found, DTYPE(0.0), DTYPE(1.0))
+        flags[i, j, k] = CELL_INTERFACE
+    mass[i, j, k] = given
+    wp.atomic_add(returned, 0, given)
 
 
 @wp.kernel
