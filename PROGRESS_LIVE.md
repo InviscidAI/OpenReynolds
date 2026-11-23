@@ -258,6 +258,32 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
+### No SPH floating measurement has reached its own settle bound
+
+This is a caveat on every number in the sections below and it is worth stating once,
+plainly, rather than per-number.
+
+`sph_cases._settle` targets 2% of the gravity-wave speed, which for these tanks is
+**15.34 mm/s**. What the runs actually reached:
+
+* the five-point prescribed-draft curve, 4 mm spacing on an H100, capped at 10,000 settle
+  steps: **18 to 33 mm/s** at every point;
+* a 1,500-step fluid-only settle on CPU at 10 mm spacing: **93.12 mm/s**, six times over,
+  and the 2.228x force ratio it reported for a hull pinned at the Archimedes draft is
+  therefore a transient and not a measurement. It is recorded here only because it would
+  otherwise look like a contradiction of the 1.005x the settled curve gives at the same
+  draft.
+
+Why the curve is still usable: all five of its points got an **identical** settle budget,
+so the comparison *across* drafts holds, and its ten-sample RMS of 1.2-2.1% bounds how far
+residual motion can move each mean -- well below the 0.046 spread the flatness rests on.
+What it cannot support is an absolute claim to better than a few per cent at any single
+draft.
+
+Running one order to the full 40,000-step cap costs about four hours of H100. That is owed
+before any of this goes into a graded case, and it is not owed before concluding that a
+flat 0.997 is not a 13.7x.
+
 ### SPH force noise, answered with a number: 12.9% per step, 1.29% at ten samples
 
 The brief asks whether the force on a submerged body is "low enough for control (state
