@@ -107,14 +107,32 @@ def test_the_catalogue_is_the_shape_the_lattice_one_is():
     """
     from openreynolds.live import cases, sph_cases
 
-    assert not set(sph_cases.SPH_CASES) & set(cases.CASES), (
+    # `sph_cases` now registers itself into `cases.CASES` as it imports -- that is what
+    # broke the cycle, since `cases` cannot import it at module level while it imports
+    # `Case` from `cases`. So by the time this test runs the merge has already happened,
+    # and the question is no longer "are the two sets disjoint" but "did registering
+    # replace anything". Identity answers it: a name present in both must be the **same
+    # object**, which is only true if the lattice did not already own that name.
+    shadowed = sorted(n for n, c in sph_cases.SPH_CASES.items()
+                      if cases.CASES.get(n) is not c)
+    assert not shadowed, (
+        f"registering the SPH cases did not take for {shadowed}, which means a lattice "
+        f"case already owned those names. An SPH case sharing a name with a lattice one "
+        f"would mean merging the catalogues silently replaced it"
+    )
+    lattice_only = set(cases.CASES) - set(sph_cases.SPH_CASES)
+    assert not lattice_only & set(sph_cases.SPH_CASES), (
         "an SPH case shares a name with a lattice case, so merging the catalogues would "
         "silently replace one"
     )
     for case in sph_cases.SPH_CASES.values():
         assert isinstance(case, cases.Case)
     merged = {**cases.CASES, **sph_cases.SPH_CASES}
-    assert len(merged) == len(cases.CASES) + len(sph_cases.SPH_CASES)
+    assert len(merged) == len(cases.CASES), (
+        "CASES already holds every SPH case after registration, so re-merging must be a "
+        "no-op; a longer result would mean some SPH case is registered under a different "
+        "name than its key in SPH_CASES"
+    )
 
 
 def test_an_unknown_sph_case_is_refused_by_name():
