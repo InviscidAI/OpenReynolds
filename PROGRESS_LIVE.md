@@ -369,6 +369,15 @@ sloshing period / theory      dam break h(dam) / Ritter        drift
  240 cells   1.063              650 cells   1.185              +2.6e-2  (650 cells)
 ```
 
+**The sloshing case has a stability ceiling, and it is a Reynolds-number ceiling.**
+`for_froude` holds the Mach number by scaling `g_lattice` with `dx` and keeps `tau`
+fixed, so `nu_lattice` is constant and `Re_eff` rises in proportion to the cell count:
+145 at 120 cells, 291 at 240, **582 at 480**. At 480 the case diverges -- a mass drift of
+-1.6e8 over five million cell conversions, the lattice non-finite. So the one-cell
+interface is stable while the wave is damped and stops being stable as the damping goes
+away, which caps the resolution this case can use at somewhere between 240 and 480 and
+therefore caps how far its convergence can be followed.
+
 The sloshing estimators close on each other as the lattice refines -- 523/363 ms at 80
 cells over 2.6 cycles, 449/431 at 240 -- and their agreement now passes at 4.4%. The
 **period does not**: 1.0745 at 120 cells and 1.0553 at 240, against a 5% tolerance.
