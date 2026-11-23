@@ -200,9 +200,24 @@ def animate(frames: Sequence[np.ndarray], path: str | Path, *, fps: int = 20,
     still a demo that ran: the measurement is the result and the animation is how it is
     shown. `cases.py` reports which of the two happened.
 
-    The colour scale is fixed across the whole sequence from the first few frames rather
-    than per frame. A per-frame scale makes a decaying flow look like it is not decaying,
-    which is the one thing an animation of a transient must not do.
+    The colour scale is fixed across the whole sequence rather than per frame. A
+    per-frame scale makes a decaying flow look like it is not decaying, which is the one
+    thing an animation of a transient must not do.
+
+    It is taken from **every** frame and not from the first few, which is what it used
+    to read. For a decaying flow those are the same number, since the peak is in the
+    first frame; for a flow that starts from rest they are not, and the difference is
+    the whole picture. The ground-effect jet begins at zero and takes 60% of the run to
+    reach the floor, so a scale set from its first five frames was set from almost
+    nothing and clipped every later frame into a saturated blob -- an animation that
+    showed one thing moving: the clipping boundary.
+
+    What it takes from every frame is the 99.5th percentile, not the maximum, and that
+    second choice was also paid for: the quadrotor re-rendered against its maximum came
+    back as pale pastel, because a few cells at the rim of an actuator disk carry
+    several times the velocity of the downwash the picture is of. Both failures look the
+    same from a frame count and from a frame-to-frame difference, which is why they were
+    found by looking at the frames.
 
     ## Why this raises instead of writing whatever it was handed
 
@@ -238,14 +253,22 @@ def animate(frames: Sequence[np.ndarray], path: str | Path, *, fps: int = 20,
     plt = _matplotlib()
     from matplotlib import cm, colors
 
-    sample = np.concatenate([f[np.isfinite(f)].ravel() for f in frames[:5]])
+    # The 99.5th percentile of each frame and the largest of those, not the largest
+    # value anywhere. Both ends of that choice have been measured on this case list:
+    # scaled from the maximum, the quadrotor's 200 frames came out as pale pastel,
+    # because a few cells beside an actuator disk carry several times the velocity of
+    # anything a reader is meant to see; scaled from the first five frames, the same
+    # sequence came out saturated. A percentile keeps the fixed scale -- it is one
+    # number for the whole sequence -- and lets half a percent of the field clip.
+    peaks = [float(np.percentile(np.abs(f[np.isfinite(f)]), 99.5)) for f in frames
+             if np.isfinite(f).any()]
+    span = max(peaks) if peaks else 1.0
+    span = span if span > 0 else 1.0
     if component:
-        span = float(np.nanmax(np.abs(sample))) if sample.size else 1.0
         norm = colors.Normalize(-span, span)
         table = cm.get_cmap("RdBu_r") if hasattr(cm, "get_cmap") else plt.get_cmap("RdBu_r")
     else:
-        high = float(np.nanmax(sample)) if sample.size else 1.0
-        norm = colors.Normalize(0.0, high if high > 0 else 1.0)
+        norm = colors.Normalize(0.0, span)
         table = cm.get_cmap("viridis") if hasattr(cm, "get_cmap") else plt.get_cmap("viridis")
 
     images = []

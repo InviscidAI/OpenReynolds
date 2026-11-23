@@ -2385,6 +2385,41 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
                         return arr
             return np.asarray(annotator.get_data())
 
+        # -- the commands, written on the frame ----------------------------------------
+        #
+        # Without this the picture is a shape moving through a cloud and the viewer has
+        # to be told that something commanded it. The two actuator inputs are the whole
+        # control authority this body has -- a constant axial thrust and a short pitch
+        # pulse -- and both are known here exactly, because this loop is what sets them.
+        # A USD stage has no text prim, so they are drawn on the full-resolution frame
+        # before anything is resized or quantised.
+        from PIL import Image, ImageDraw, ImageFont
+
+        try:
+            font = ImageFont.load_default(size=26)
+            small_font = ImageFont.load_default(size=20)
+        except TypeError:          # Pillow < 10.1 has no size= on load_default
+            font = small_font = ImageFont.load_default()
+
+        PITCH_PULSE = 4.0e-7
+
+        def overlay(frame, t, pitch, speed, nose_z):
+            image = Image.fromarray(frame, "RGB")
+            draw = ImageDraw.Draw(image)
+            draw.text((24, 20), "thrust  T = %.2e N  along the body axis" % thrust,
+                      font=font, fill=(255, 226, 170))
+            draw.text((24, 54), "pitch command = %+.1e N m" % pitch, font=font,
+                      fill=(255, 196, 64) if pitch else (150, 162, 178))
+            draw.text((24, 88), "t = %6.2f s    speed = %5.1f mm/s    nose z = %+.2f"
+                      % (t, speed * 1e3, nose_z), font=small_font,
+                      fill=(214, 232, 244))
+            mid, span = 180, 150
+            draw.rectangle([mid - span, 124, mid + span, 136], outline=(110, 128, 144))
+            end = mid + int(span * pitch / PITCH_PULSE)
+            draw.rectangle([min(mid, end), 124, max(mid, end), 136],
+                           fill=(255, 196, 64) if pitch else (60, 76, 92))
+            return np.asarray(image, dtype="uint8")
+
         for step in range(total):
             position, quat = body_pose()
             axis = rotate(quat, np.array([1.0, 0.0, 0.0]))
@@ -2399,7 +2434,7 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
                 # nose went UP through 90 degrees and the hull tumbled, which is both
                 # the wrong sign and about six times too much. This is sized for roughly
                 # twenty degrees.
-                joint_f[4] = 4.0e-7
+                joint_f[4] = PITCH_PULSE
             link.control.joint_f.assign(joint_f)
             mark = time.time()
             link.step()
@@ -2454,7 +2489,10 @@ def _submarine(cells_per_d: int = 0, reynolds: float = 100.0, frames: int = 44,
                 if not arr.size:
                     emit("render_error", f"empty annotator at step {step}")
                     break
-                captured.append(arr[..., :3].astype("uint8").copy())
+                captured.append(overlay(
+                    arr[..., :3].astype("uint8").copy(),
+                    (step + 1) * float(world.dt), float(joint_f[4]),
+                    float(np.linalg.norm(velocity)), float(nose[2])))
                 trace.append({
                     "step": step + 1,
                     "t": round((step + 1) * float(world.dt), 4),
@@ -2725,6 +2763,1019 @@ def stagecheck() -> dict:
     return _stagecheck()
 
 
+# -- 8. a mug of water carried by an end effector ---------------------------------------
+
+
+def _carry(radius: float = 0.002, frames: int = 48, accel: float = 3.5,
+           travel: float = 0.10, settle: float = 0.60, seconds: float = 1.75,
+           width: int = 1280, height: int = 720) -> dict:
+    """A mug of water on a gripper, moved sideways by a commanded acceleration.
+
+    This is the demo the whole file is for: **a robot commands a motion and the fluid
+    answers**. Nothing here is prescribed about the water. The mug's pose and velocity
+    are written to `SphWorld.set_body_state` every step from a trapezoidal acceleration
+    profile -- the kind of profile a cartesian move in Isaac Lab emits -- the boundary
+    particles follow it on the device through `sph.pose_boundary`, and everything the
+    water does after that is DFSPH.
+
+    ## Why SPH and not the lattice
+
+    `DECISIONS_LIVE.md` D15: the lattice free surface is frozen. A mug of water is a free
+    surface with a real waterline inside a moving container, which is the exact case that
+    froze it. `openreynolds/live/sph.py` has no interface layer to repair -- the surface
+    is wherever the particles stop -- so a container that accelerates is just a boundary
+    with a velocity.
+
+    ## The mug is a twelve-sided prism, and the render draws the prism
+
+    `sph._sdf` has spheres, boxes, capsules, cylinders and planes, and a mug is none of
+    them: a solid cylinder's Akinci shell is its whole skin, **including the top cap**,
+    which would seal the mug shut. So the wall is twelve overlapping boxes in a ring on
+    one body, with a short cylinder for the base. The render draws those thirteen prims
+    at the same local poses rather than an idealised cylinder, because the twelve-gon is
+    what the water is actually in: its inradius is 42 mm and its circumradius 43.5 mm,
+    and that 3.5% matters to the number measured below.
+
+    ## What is measured
+
+    **The first sloshing mode.** After the move ends the surface keeps swinging, and the
+    x centroid of the fluid relative to the mug is that mode's amplitude. Its period is
+    read off the zero crossings and compared with Lamb's result for a circular cylinder,
+    `T = 2 pi / sqrt(g k tanh(k h))` with `k = 1.8412 / R` -- the first antisymmetric
+    mode. On the CPU at a 6 mm spacing that came out 0.3193 s against 0.3101 s, 3.0%
+    high, with the prism's own radius ambiguity worth up to 1.7% of it.
+
+    **What the quasi-static answer would have said.** A planner that treats the surface
+    as flat-and-tilted gives `theta = atan(a/g)` -- 19.6 degrees at 3.5 m/s2. The move's
+    acceleration phase is 0.14 s and the slosh period is 0.31 s, so the surface never
+    gets near that angle and the peak surge arrives *after* the mug has stopped. The
+    trace carries both, which is the whole argument for having the fluid in the loop.
+
+    **How much water leaves the mug.** Counted, not described: fluid particles whose
+    radius about the mug axis exceeds the outer wall.
+    """
+    import io
+    import json
+    import math
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name(), "particle_radius": radius, "frames": frames,
+                 "accel_cmd": accel, "travel_m": travel}
+    blobs: dict[str, bytes] = {}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("CARRY " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print('CARRY {"' + key + '": "unserialisable: ' + str(exc) + '"}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401  -- registers extension paths; must precede the app
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({  # noqa: F841  -- keeps Kit alive
+            "headless": True, "width": width, "height": height,
+            "renderer": "RaytracedLighting",
+        })
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("error", traceback.format_exc()[-4000:])
+        return {"result": out, "blobs": blobs}
+
+    sys.path.insert(0, "/repo")
+    try:
+        import numpy as np
+        import omni.replicator.core as rep
+        import omni.usd
+        import warp as wp
+        from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, Vt
+
+        from openreynolds.live.sph import SphWorld
+        from openreynolds.live.world import Domain
+
+        emit("warp_version", wp.config.version)
+        emit("warp_file", wp.__file__)
+
+        # -- the mug, in metres --------------------------------------------------------
+        SIDES = 12
+        # 84 mm across the inside and 90 mm tall. Run two had it 100 mm tall, which with
+        # the water at 70 mm left 30 mm of freeboard, and at the camera's elevation a
+        # near rim hides `freeboard / tan(elevation)` of the surface behind it: 38 mm of
+        # an 84 mm bore, so nearly half the water was out of sight down a white tube.
+        # Both ends of that were wrong and both are fixed -- a shorter mug here and a
+        # higher camera below.
+        R_IN, WALL, HEIGHT, BASE, FILL = 0.042, 0.012, 0.090, 0.012, 0.058
+        RAMP = 0.14          # seconds of constant acceleration at each end of the move
+
+        # Only `-z` is a wall: the table. The other five faces have no boundary particles,
+        # so nothing invisible holds the spilled water up -- `sph.clamp_to_domain`
+        # reflects anything that reaches the box, and the box is far enough out that
+        # nothing does within the run.
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=(0.26, 0.14, 0.22),
+                        faces={"-z": "wall"})
+        world = SphWorld(domain=domain, particle_radius=radius, fluid="water",
+                         device="cuda:0")
+        cx, cy = 0.075, domain.size[1] / 2.0
+        mug = world.add_body(position=(cx, cy, 0.0), label="mug")
+        # Shape positions are in the BODY frame; `sph._shape_sdf` composes the body pose
+        # on top. Passing world coordinates here puts the mug at twice its own offset,
+        # which on this domain sampled the wall boxes outside the box and refused.
+        mug_shapes = [("cylinder", (0.0, 0.0, BASE / 2.0),
+                       (0.0, 0.0, 0.0, 1.0), (R_IN + WALL, BASE / 2.0, 0.0))]
+        for k in range(SIDES):
+            ang = 2.0 * math.pi * k / SIDES
+            mid = R_IN + WALL / 2.0
+            # The half-chord of the OUTER polygon, plus 3%. At the outer radius the
+            # boxes then meet at the vertices and the ring reads as a clean prism; at
+            # the inner radius, where the chord is shorter in the ratio
+            # `R_IN / (R_IN + WALL)`, they overlap by 29% and the water has no gap to
+            # find. Run two used 1.25 and the quarter-chord of extra width stuck out
+            # past each neighbour, so the rim rendered as a twelve-pointed ragged crown.
+            half = (R_IN + WALL) * math.tan(math.pi / SIDES) * 1.03
+            mug_shapes.append((
+                "box",
+                (mid * math.cos(ang), mid * math.sin(ang), BASE + (HEIGHT - BASE) / 2.0),
+                (0.0, 0.0, math.sin(ang / 2.0), math.cos(ang / 2.0)),
+                (WALL / 2.0, half, (HEIGHT - BASE) / 2.0)))
+        for kind, position, orientation, scale in mug_shapes:
+            world.add_shape(kind, body=mug, position=position,
+                            orientation=orientation, scale=scale)
+        world.boundary_from_domain()
+        # The fill is a square box; `fill_box` drops every site inside a shape added
+        # before it, so what is left is the twelve-gon's interior.
+        # The half width is `(R_IN + WALL) / sqrt(2)` and **not** `R_IN`, which is the
+        # obvious choice and is wrong: a square of half width `R_IN` has corners at
+        # `R_IN sqrt(2)` = 59 mm, outside the wall's 54 mm outer face, so those sites are
+        # inside no shape, survive the drop, and start the run as 32 particles sitting on
+        # the table around the mug. What this costs is the sliver of footprint between
+        # 38 mm and 42 mm on the axes, about 1.5% of the water, which the settle spreads
+        # back out -- and `still_depth_m` below is measured rather than assumed.
+        fill_half = (R_IN + WALL) / math.sqrt(2.0)
+        n_fluid = world.fill_box((cx - fill_half, cy - fill_half, BASE),
+                                 (cx + fill_half, cy + fill_half, BASE + FILL))
+        emit("fluid_particles", int(n_fluid))
+        emit("boundary_particles", int(world.n_boundary))
+        emit("spacing_mm", round(world.spacing * 1e3, 3))
+        emit("dt", float(world.dt))
+        emit("report", world.report())
+
+        def command(t: float):
+            """Position, velocity and acceleration of the mug at time `t`. Trapezoid."""
+            cruise = max(travel / (accel * RAMP) - RAMP, 0.0)
+            s = t - settle
+            if s <= 0.0:
+                return 0.0, 0.0, 0.0
+            if s < RAMP:
+                return 0.5 * accel * s * s, accel * s, accel
+            x1, v1 = 0.5 * accel * RAMP * RAMP, accel * RAMP
+            s -= RAMP
+            if s < cruise:
+                return x1 + v1 * s, v1, 0.0
+            x2 = x1 + v1 * cruise
+            s -= cruise
+            if s < RAMP:
+                return x2 + v1 * s - 0.5 * accel * s * s, v1 - accel * s, -accel
+            return x2 + v1 * RAMP - 0.5 * accel * RAMP * RAMP, 0.0, 0.0
+
+        move_stop = settle + 2.0 * RAMP + max(travel / (accel * RAMP) - RAMP, 0.0)
+        emit("move_window_s", [settle, round(move_stop, 4)])
+        emit("peak_speed_mps", round(accel * RAMP, 4))
+
+        # -- settle, before anything is drawn ------------------------------------------
+        #
+        # The fill is a lattice of particles dropped into the mug at rest, and the first
+        # step of it has a 7% density error and a 0.8 m/s kick. On the CPU that decays to
+        # a 0.14 m/s 95th percentile and a still surface in about 0.45 s. None of it is
+        # rendered, because it is the initial condition relaxing and not the demo.
+        settle_steps = int(settle / float(world.dt))
+        mark = time.time()
+        for _ in range(settle_steps):
+            world.step()
+        wp.synchronize()
+        settle_seconds = time.time() - mark
+        speeds = np.linalg.norm(world.velocities(), axis=1)
+        emit("settle_steps", settle_steps)
+        emit("settle_solver_seconds", round(settle_seconds, 1))
+        emit("settled_speed_p95_mps", round(float(np.percentile(speeds, 95)), 4))
+        emit("settled_density_error", {k: float(v)
+                                       for k, v in world.density_error().items()})
+        settled = world.positions()
+        emit("settled_surface_z_p95_mm",
+             round(float(np.percentile(settled[:, 2], 95)) * 1e3, 2))
+
+        # -- the stage -----------------------------------------------------------------
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+        UsdGeom.Xform.Define(stage, "/World")
+
+        def preview_material(path, colour, roughness, metallic=0.0, opacity=1.0,
+                             ior=1.5):
+            """Material first, Shader second. `_freesurface_demo` records why."""
+            material = UsdShade.Material.Define(stage, path)
+            shader = UsdShade.Shader.Define(stage, path + "/surface")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+                Gf.Vec3f(*colour))
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(roughness)
+            shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(metallic)
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(opacity)
+            shader.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(ior)
+            material.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface")
+            return material
+
+        # The table. The solver's table is the domain's `-z` wall at z = 0; this slab
+        # sits just under it so the two do not z-fight.
+        table = UsdGeom.Cube.Define(stage, "/World/table")
+        table.CreateSizeAttr(1.0)
+        table_x = UsdGeom.Xformable(table.GetPrim())
+        table_x.AddTranslateOp().Set(
+            Gf.Vec3d(domain.size[0] / 2, domain.size[1] / 2, -0.012))
+        table_x.AddScaleOp().Set(
+            Gf.Vec3f(domain.size[0] * 2.0, domain.size[1] * 2.4, 0.024))
+        # 0.17 grey, down from 0.26, and the key light below is down from 2600. The
+        # table is a horizontal face that the key hits near normal and it is most of the
+        # frame: run one rendered it as flat white from the horizon forward, which is the
+        # exposure fault `_freesurface_demo` records and not an unbound material.
+        UsdShade.MaterialBindingAPI(table).Bind(
+            preview_material("/World/looks/table", (0.17, 0.165, 0.16), 0.6))
+
+        # Everything the gripper holds lives under one Xform, and that Xform carries the
+        # commanded pose. One transform write a frame moves the mug and the hand
+        # together, which is what "the hand is holding it" means.
+        hand = UsdGeom.Xform.Define(stage, "/World/hand")
+        # The BODY POSE, not the displacement. Run one set this to `(x, 0, 0)` and drew
+        # the whole mug and gripper at the world origin while the water -- which comes
+        # back from `positions()` in world coordinates -- stayed where the solver had it:
+        # an empty cup beside a free-standing column of water, and a picture that is
+        # entirely correct about the fluid and wrong about everything holding it.
+        hand_op = UsdGeom.Xformable(hand.GetPrim()).AddTranslateOp()
+        hand_op.Set(Gf.Vec3d(cx, cy, 0.0))
+
+        # Opaque, at opacity 1.0 rather than the 0.30 run one used. The wall is twelve
+        # boxes that overlap by a quarter of a chord so the solver's ring has no gap at a
+        # vertex, and twelve *translucent* overlapping slabs render their overlaps as
+        # twelve bright vertical stripes -- a picture of the sampling and not of a mug.
+        # Opaque they read as one faceted cup, and the camera sits high enough to see the
+        # surface over the rim.
+        ceramic = preview_material("/World/looks/ceramic", (0.70, 0.71, 0.74), 0.30,
+                                   opacity=1.0, ior=1.5)
+        for index, (kind, position, orientation, scale) in enumerate(mug_shapes):
+            path = "/World/hand/mug_%02d" % index
+            if kind == "cylinder":
+                prim = UsdGeom.Cylinder.Define(stage, path)
+                prim.CreateRadiusAttr(scale[0])
+                prim.CreateHeightAttr(2.0 * scale[1])
+                prim.CreateAxisAttr("Z")
+            else:
+                prim = UsdGeom.Cube.Define(stage, path)
+                prim.CreateSizeAttr(2.0)
+            x = UsdGeom.Xformable(prim.GetPrim())
+            x.AddTranslateOp().Set(Gf.Vec3d(*position))
+            x.AddOrientOp().Set(Gf.Quatf(float(orientation[3]),
+                                         Gf.Vec3f(*[float(v) for v in orientation[:3]])))
+            if kind != "cylinder":
+                # `UsdGeom.Cube` with size 2 is the [-1, 1] cube, so a scale op is the
+                # half extent -- the same convention `sph._sdf` uses for a box.
+                x.AddScaleOp().Set(Gf.Vec3f(*[float(v) for v in scale]))
+            UsdShade.MaterialBindingAPI(prim).Bind(ceramic)
+
+        # The gripper: a palm and two fingers behind the mug in +y, which is away from
+        # the camera, plus a forearm leaving the frame. Visual only -- the solver knows
+        # about the mug and nothing else, and the hand is drawn so that the picture says
+        # "commanded by a robot" rather than "a cup slid along a table".
+        # 0.42 grey rather than 0.18. At 0.18 under this key the hand rendered as a
+        # black slab behind the mug and read as a hole in the table.
+        steel = preview_material("/World/looks/steel", (0.42, 0.44, 0.47), 0.35, 0.25)
+        reach = R_IN + WALL
+        # The fingers straddle the mug at y = 0 so the camera sees them either side of
+        # it; run two put them behind it, where the mug hid them.
+        for path, position, scale in (
+            ("/World/hand/palm", (0.0, reach + 0.034, 0.050),
+             (reach + 0.010, 0.010, 0.015)),
+            ("/World/hand/finger_l", (-(reach + 0.006), reach * 0.1, 0.050),
+             (0.005, reach * 0.8, 0.022)),
+            ("/World/hand/finger_r", (reach + 0.006, reach * 0.1, 0.050),
+             (0.005, reach * 0.8, 0.022)),
+        ):
+            prim = UsdGeom.Cube.Define(stage, path)
+            prim.CreateSizeAttr(2.0)
+            x = UsdGeom.Xformable(prim.GetPrim())
+            x.AddTranslateOp().Set(Gf.Vec3d(*position))
+            x.AddScaleOp().Set(Gf.Vec3f(*scale))
+            UsdShade.MaterialBindingAPI(prim).Bind(steel)
+        forearm = UsdGeom.Cylinder.Define(stage, "/World/hand/forearm")
+        forearm.CreateRadiusAttr(0.022)
+        forearm.CreateHeightAttr(0.15)
+        forearm.CreateAxisAttr("Y")
+        fx = UsdGeom.Xformable(forearm.GetPrim())
+        fx.AddTranslateOp().Set(Gf.Vec3d(0.0, reach + 0.105, 0.072))
+        fx.AddRotateXYZOp().Set(Gf.Vec3f(-22.0, 0.0, 0.0))
+        UsdShade.MaterialBindingAPI(forearm).Bind(steel)
+
+        # The water: one sphere per fluid particle, on a PointInstancer. `_stagecheck`
+        # rendered an instancer at every scale and near plane it tried, including the two
+        # where an implicit Cube and Capsule came back as nothing at all, so this is the
+        # prim type with the most evidence behind it in this file. The prototype is
+        # 1.6 particle radii, so neighbours a spacing apart overlap by 60% and the
+        # cloud reads as a body of liquid rather than as beads -- and it is still one
+        # sphere per particle, which is what the solver has. Run two used 1.35 and the
+        # surface came back as distinct beads.
+        drops = UsdGeom.PointInstancer.Define(stage, "/World/water")
+        drop = UsdGeom.Sphere.Define(stage, "/World/water/drop")
+        drop.CreateRadiusAttr(radius * 1.6)
+        UsdShade.MaterialBindingAPI(drop).Bind(
+            preview_material("/World/looks/water", (0.07, 0.34, 0.62), 0.08,
+                             opacity=0.95, ior=1.33))
+        drops.CreatePrototypesRel().SetTargets([drop.GetPath()])
+        drop_positions = drops.CreatePositionsAttr()
+        drop_protos = drops.CreateProtoIndicesAttr()
+        drop_colour = UsdGeom.PrimvarsAPI(drops).CreatePrimvar(
+            "displayColor", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex)
+
+        sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+        sun.CreateIntensityAttr(1700.0)
+        sun.CreateAngleAttr(0.8)
+        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(
+            Gf.Vec3f(-48.0, 16.0, 24.0))
+        sky = UsdLux.DomeLight.Define(stage, "/World/sky")
+        # 420, up from 300: the key alone left the mug's own shadow black enough to read
+        # as a hole cut in the table.
+        sky.CreateIntensityAttr(420.0)
+        sky.CreateColorAttr(Gf.Vec3f(0.55, 0.60, 0.68))
+
+        for _ in range(8):
+            sim_app.update()
+
+        # The camera holds the whole move rather than tracking the mug, so the travel
+        # reads as travel. The framing is arithmetic, not taste: a USD camera's
+        # horizontal aperture is 20.955 mm, so the frame spans `D * 20.955 / focal`, and
+        # a 0.40 m frame at D = 0.453 m wants a 23.7 mm lens. The elevation is 49
+        # degrees: with 20 mm of freeboard the near rim then hides 17 mm of an 84 mm
+        # bore instead of the 38 mm it hid at 36 degrees, and the spill still clears the
+        # top of the frame.
+        look = (cx + travel / 2.0, cy, 0.055)
+        camera = rep.create.camera(
+            position=(look[0] + 0.02, look[1] - 0.30, look[2] + 0.34), look_at=look,
+            focal_length=24.0, clipping_range=(0.01, 100.0))
+        product = rep.create.render_product(camera, (width, height))
+        annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        annotator.attach([product])
+
+        def push_water():
+            """Fluid particles onto the instancer, coloured by speed. Returns the count."""
+            points = world.positions().astype(np.float32)
+            speed = np.linalg.norm(world.velocities(), axis=1)
+            drop_positions.Set(Vt.Vec3fArray.FromNumpy(points))
+            drop_protos.Set(Vt.IntArray.FromNumpy(np.zeros(len(points), dtype=np.int32)))
+            level = np.clip(speed / max(float(np.percentile(speed, 98)), 1e-9), 0.0, 1.0)
+            colours = np.stack([0.05 + 0.55 * level,
+                                0.30 + 0.48 * level,
+                                0.58 + 0.34 * level], axis=-1)
+            drop_colour.Set(Vt.Vec3fArray.FromNumpy(colours.astype(np.float32)))
+            return len(points)
+
+        def grab():
+            """One rendered frame, through Replicator's own sync. See `_demo`."""
+            for _ in range(6):
+                sim_app.update()
+                rep.orchestrator.step(rt_subframes=6)
+                try:
+                    rep.orchestrator.wait_until_complete()
+                except Exception:
+                    pass
+                arr = np.asarray(annotator.get_data())
+                if arr.size:
+                    sample = arr[..., :3].reshape(-1, 3)[::401]
+                    if len(np.unique(sample, axis=0)) > 8:
+                        return arr
+            return np.asarray(annotator.get_data())
+
+        # -- the overlay ---------------------------------------------------------------
+        from PIL import Image, ImageDraw, ImageFont
+
+        try:
+            font = ImageFont.load_default(size=26)
+            small_font = ImageFont.load_default(size=20)
+        except TypeError:          # Pillow < 10.1 has no size= on load_default
+            font = small_font = ImageFont.load_default()
+
+        def overlay(frame, t, a_cmd, spilled):
+            """The commanded acceleration, written on the frame.
+
+            The command has to be visible beside the motion or the picture is just water
+            moving. A USD stage has no text prim, so it is drawn here, on the
+            full-resolution frame, before anything is resized or quantised.
+            """
+            image = Image.fromarray(frame, "RGB")
+            draw = ImageDraw.Draw(image)
+            draw.text((24, 20), "commanded  a = %+5.2f m/s^2" % a_cmd, font=font,
+                      fill=(255, 238, 180))
+            draw.text((24, 54), "t = %5.3f s     out of the mug: %3d particles"
+                      % (t, spilled), font=small_font, fill=(216, 224, 236))
+            # A signed bar for the command, so the sign is readable at a glance.
+            mid, span = 180, 150
+            draw.rectangle([mid - span, 92, mid + span, 104], outline=(120, 130, 145))
+            end = mid + int(span * a_cmd / max(accel, 1e-9))
+            draw.rectangle([min(mid, end), 92, max(mid, end), 104],
+                           fill=(255, 196, 64) if a_cmd >= 0 else (108, 196, 255))
+            return np.asarray(image, dtype="uint8")
+
+        # -- the loop ------------------------------------------------------------------
+        remaining = max(int((seconds - settle) / float(world.dt)), frames)
+        stride = max(remaining // frames, 1)
+        emit("steps_per_frame", stride)
+        emit("render_steps", stride * frames)
+        emit("simulated_seconds",
+             round((settle_steps + stride * frames) * float(world.dt), 4))
+
+        captured: list = []
+        trace: list = []
+        slosh: list = []
+        solver_seconds = 0.0
+        render_seconds = 0.0
+        t = settle_steps * float(world.dt)
+        for step in range(stride * frames):
+            x, v, a_cmd = command(t)
+            world.set_body_state(mug, position=(cx + x, cy, 0.0),
+                                 velocity=(v, 0.0, 0.0, 0.0, 0.0, 0.0))
+            mark = time.time()
+            world.step()
+            solver_seconds += time.time() - mark
+            t += float(world.dt)
+            points = world.positions()
+            rel = points - np.array([cx + x, cy, 0.0])
+            slosh.append((t, a_cmd, float(rel[:, 0].mean())))
+            if (step + 1) % stride != 0:
+                continue
+            wp.synchronize()
+            out_of_mug = int((np.hypot(rel[:, 0], rel[:, 1]) > R_IN + WALL).sum())
+            count = push_water()
+            hand_op.Set(Gf.Vec3d(cx + x, cy, 0.0))
+            sim_app.update()
+            sim_app.update()
+            mark = time.time()
+            arr = grab()
+            render_seconds += time.time() - mark
+            if not arr.size:
+                emit("render_error", "empty annotator at step %d" % step)
+                break
+            captured.append(overlay(arr[..., :3].astype("uint8").copy(),
+                                    t, a_cmd, out_of_mug))
+            trace.append({
+                "frame": len(captured) - 1,
+                "t": round(t, 4),
+                "a_cmd": round(a_cmd, 3),
+                "mug_x_mm": round(x * 1e3, 2),
+                "centroid_offset_mm": round(float(rel[:, 0].mean()) * 1e3, 3),
+                "surface_top_mm": round(float(points[:, 2].max()) * 1e3, 2),
+                "out_of_mug": out_of_mug,
+                "speed_max_mps": round(float(np.linalg.norm(
+                    world.velocities(), axis=1).max()), 4),
+                "drops": count,
+            })
+        emit("trace", trace)
+        emit("solver_seconds", round(solver_seconds, 1))
+        emit("render_seconds", round(render_seconds, 1))
+        if solver_seconds > 0:
+            emit("solver_mlups", round(stride * frames * world.n_fluid
+                                       / solver_seconds / 1e6, 3))
+        emit("stable", bool(world.stable()))
+        emit("final_density_error", {k: float(v)
+                                     for k, v in world.density_error().items()})
+
+        # -- the slosh period ----------------------------------------------------------
+        #
+        # Zero crossings of the relative x centroid after the mug has stopped, which is a
+        # free decay of the first antisymmetric mode. Compared with Lamb's circular-cup
+        # result; the prism's inradius is used and its circumradius is reported beside it
+        # so the 3.5% ambiguity is visible rather than buried.
+        swing = np.asarray(slosh)
+        post = swing[swing[:, 0] > move_stop + 0.02]
+        if len(post) > 10:
+            sig = post[:, 2] - post[:, 2].mean()
+            cross = [post[i, 0] + (post[i + 1, 0] - post[i, 0])
+                     * abs(sig[i]) / max(abs(sig[i + 1] - sig[i]), 1e-30)
+                     for i in range(len(sig) - 1) if sig[i] * sig[i + 1] < 0]
+            emit("zero_crossings_s", [round(float(c), 4) for c in cross])
+            if len(cross) >= 3:
+                emit("slosh_period_measured_s",
+                     round(float(2.0 * np.mean(np.diff(cross))), 4))
+        depth = float(np.percentile(settled[:, 2], 95)) - BASE
+        for label, mug_r in (("inradius", R_IN),
+                             ("circumradius", R_IN / math.cos(math.pi / SIDES))):
+            k = 1.8412 / mug_r
+            emit("slosh_period_lamb_%s_s" % label,
+                 round(2.0 * math.pi / math.sqrt(9.81 * k * math.tanh(k * depth)), 4))
+        emit("still_depth_m", round(depth, 4))
+        emit("quasi_static_tilt_deg", round(math.degrees(math.atan(accel / 9.81)), 2))
+        if trace:
+            emit("peak_surface_mm", max(row["surface_top_mm"] for row in trace))
+            emit("rim_height_mm", HEIGHT * 1e3)
+            emit("out_of_mug_final", trace[-1]["out_of_mug"])
+            emit("out_of_mug_peak", max(row["out_of_mug"] for row in trace))
+
+        # -- the artifacts -------------------------------------------------------------
+        if not captured:
+            emit("render_error", "no frames captured")
+            emit("ok", False)
+            return {"result": out, "blobs": blobs}
+
+        # The hero is the frame where the surface reached highest, which is the frame the
+        # demo is about: the commanded move was quicker than the fluid and the answer
+        # arrived after the move had ended.
+        hero_index = int(np.argmax([row["surface_top_mm"] for row in trace]))
+        hero = captured[hero_index]
+        emit("hero_frame", hero_index)
+        emit("render_shape", list(hero.shape))
+        rgb = hero.astype("float32")
+        # Per channel then averaged, and the colour count beside it: `_submarine` records
+        # a flat teal frame scoring 51.32 on the whole-array deviation with one colour
+        # in it.
+        emit("render_stddev",
+             round(float(np.mean([rgb[..., c].std() for c in range(3)])), 2))
+        emit("render_mean_rgb", [round(float(v), 1) for v in rgb.reshape(-1, 3).mean(0)])
+        emit("render_unique_colours",
+             int(len(np.unique(rgb.reshape(-1, 3)[::97], axis=0))))
+
+        buf = io.BytesIO()
+        Image.fromarray(hero, "RGB").save(buf, format="PNG", optimize=True)
+        blobs["carry_hero.png"] = buf.getvalue()
+
+        def encode(scale: int, colours: int) -> bytes:
+            small = [Image.fromarray(f, "RGB").resize(
+                (width // scale, height // scale), Image.LANCZOS).quantize(
+                    colors=colours, method=Image.MEDIANCUT) for f in captured]
+            held = io.BytesIO()
+            small[0].save(held, format="GIF", save_all=True, append_images=small[1:],
+                          duration=70, loop=0, optimize=True)
+            return held.getvalue()
+
+        gif = encode(2, 96)
+        # Under about 3 MB so it can go on a web page, decided here rather than by a
+        # second GPU run: a scene of several thousand lit spheres quantises badly and
+        # this is the one number that cannot be fixed from the returned bytes.
+        if len(gif) > 3_000_000:
+            emit("gif_reencoded_from_bytes", len(gif))
+            gif = encode(2, 48)
+        blobs["carry.gif"] = gif
+        emit("gif_bytes", len(gif))
+        emit("gif_frames", len(captured))
+
+        for pick in sorted({0, len(captured) // 3, hero_index, len(captured) - 1}):
+            held = io.BytesIO()
+            Image.fromarray(captured[pick], "RGB").save(held, format="PNG",
+                                                        optimize=True)
+            blobs["carry_%03d.png" % pick] = held.getvalue()
+        emit("ok", True)
+    except Exception:
+        emit("error", traceback.format_exc()[-6000:])
+        emit("ok", False)
+    finally:
+        # No `sim_app.close()`. See the end of `_probe`.
+        out["total_seconds"] = round(time.time() - started, 1)
+    return {"result": out, "blobs": blobs}
+
+
+@app.function(image=image, gpu="L40S", timeout=5400, memory=32768)
+def carry_l40s(radius: float = 0.002, frames: int = 48, accel: float = 3.5) -> dict:
+    return _carry(radius=radius, frames=frames, accel=accel)
+
+
+@app.function(image=image, gpu="A10G", timeout=5400, memory=32768)
+def carry_a10g(radius: float = 0.002, frames: int = 48, accel: float = 3.5) -> dict:
+    return _carry(radius=radius, frames=frames, accel=accel)
+
+
+# -- 9. a hull towed through a tank -----------------------------------------------------
+
+
+def _boat(radius: float = 0.0025, frames: int = 44, speed: float = 0.46,
+          width: int = 1280, height: int = 720) -> dict:
+    """A hull driven along a tank at a commanded speed, with the free surface it makes.
+
+    **This hull does not float, and that is deliberate.** `DECISIONS_LIVE.md` D9 and the
+    SPH floating-body cases: the vertical force on a body at a waterline is the one
+    number this backend does not yet get right, and a hull whose heave came out of that
+    force would be a picture of a defect. So the hull's pose and velocity are
+    **prescribed** every step through `SphWorld.set_body_state`, exactly as the carried
+    mug's are, and nothing about its motion is solved for. The water is solved for.
+
+    What that leaves honest, and what it does not:
+
+    * **Honest.** Everything the surface does -- the bow wave, the shoulder drawdown, the
+      stern wake, the reflections off the tank walls -- is DFSPH answering a moving
+      boundary. The hull is an Akinci boundary like any other.
+    * **Not validated.** The static vertical force on the half-submerged hull is measured
+      here against the displaced weight `rho V g` and **reported whatever it comes to**,
+      because that ratio is the open defect. Do not read the horizontal force as a
+      resistance curve: nothing in this repository grades it.
+
+    The tank is 0.40 m long and the hull is 0.134 m, so the walls are close and the
+    reflections arrive within the run. They are in the picture and they are real; a tank
+    long enough to avoid them is a different and more expensive demo.
+    """
+    import io
+    import json
+    import math
+    import os
+    import sys
+    import time
+    import traceback
+
+    out: dict = {"gpu": _gpu_name(), "particle_radius": radius, "frames": frames,
+                 "hull_speed_cmd": speed}
+    blobs: dict[str, bytes] = {}
+
+    def emit(key: str, value) -> None:
+        out[key] = value
+        try:
+            print("BOAT " + json.dumps({key: value}, default=str), flush=True)
+        except Exception as exc:
+            print('BOAT {"' + key + '": "unserialisable: ' + str(exc) + '"}', flush=True)
+
+    emit("gpu", out["gpu"])
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
+    started = time.time()
+    try:
+        import isaacsim  # noqa: F401
+        from isaacsim.simulation_app import SimulationApp
+
+        sim_app = SimulationApp({  # noqa: F841
+            "headless": True, "width": width, "height": height,
+            "renderer": "RaytracedLighting",
+        })
+        emit("kit_startup_seconds", round(time.time() - started, 1))
+    except Exception:
+        emit("error", traceback.format_exc()[-4000:])
+        return {"result": out, "blobs": blobs}
+
+    sys.path.insert(0, "/repo")
+    try:
+        import numpy as np
+        import omni.replicator.core as rep
+        import omni.usd
+        import warp as wp
+        from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade, Vt
+
+        from openreynolds.live.sph import SphWorld
+        from openreynolds.live.world import Domain
+
+        emit("warp_version", wp.config.version)
+
+        TANK = (0.40, 0.12, 0.11)
+        WATERLINE = 0.050
+        HULL_R, HULL_HALF = 0.022, 0.045
+        START_X, RAMP = 0.070, 0.10
+        SETTLE, SECONDS = 0.40, 1.15
+
+        domain = Domain(origin=(0.0, 0.0, 0.0), size=TANK,
+                        faces={"-x": "wall", "+x": "wall", "-y": "wall", "+y": "wall",
+                               "-z": "wall", "+z": "outlet"})
+        world = SphWorld(domain=domain, particle_radius=radius, fluid="water",
+                         device="cuda:0")
+        cy = TANK[1] / 2.0
+        hull = world.add_body(position=(START_X, cy, WATERLINE), label="hull")
+        # A capsule's axis is its local z (`sph._sdf`, and `cases.run_underwater` says the
+        # same of the lattice backend), so a quarter turn about y lays it along x.
+        world.add_shape("capsule", body=hull, position=(0.0, 0.0, 0.0),
+                        orientation=(0.0, math.sin(math.pi / 4.0), 0.0,
+                                     math.cos(math.pi / 4.0)),
+                        scale=(HULL_R, HULL_HALF, 0.0))
+        world.boundary_from_domain()
+        # After the hull, so the sites inside it are dropped rather than left as fluid
+        # inside a solid -- `fill_below` applies the same rule `fill_box` does.
+        n_fluid = world.fill_below(WATERLINE)
+        emit("fluid_particles", int(n_fluid))
+        emit("boundary_particles", int(world.n_boundary))
+        emit("spacing_mm", round(world.spacing * 1e3, 3))
+        emit("dt", float(world.dt))
+        emit("hull_sampled_volume_m3", float(world.volume(hull)))
+        analytic = (math.pi * HULL_R ** 2 * 2.0 * HULL_HALF
+                    + 4.0 / 3.0 * math.pi * HULL_R ** 3)
+        emit("hull_analytic_volume_m3", analytic)
+        # Half of it is under the waterline, so this is what Archimedes says the vertical
+        # force should be. The measurement against it is below and is the open defect.
+        displaced = 0.5 * analytic
+        emit("displaced_volume_m3", displaced)
+        emit("displaced_weight_N", displaced * world.rho0 * 9.81)
+        emit("froude", round(speed / math.sqrt(9.81 * 2.0 * HULL_HALF
+                                               + 9.81 * 2.0 * HULL_R), 4))
+        emit("report", world.report())
+
+        # Filled in once the settle and the static measurement below are done, so the
+        # first rendered frames are the tank at rest and the move starts in shot.
+        move_at = [SETTLE]
+
+        def command(t: float):
+            """Hull x and dx/dt. A ramp to `speed`, then constant."""
+            s = t - move_at[0]
+            if s <= 0.0:
+                return START_X, 0.0
+            if s < RAMP:
+                return START_X + 0.5 * speed / RAMP * s * s, speed * s / RAMP
+            return START_X + 0.5 * speed * RAMP + speed * (s - RAMP), speed
+
+        # -- settle, unrendered --------------------------------------------------------
+        settle_steps = int(SETTLE / float(world.dt))
+        mark = time.time()
+        for _ in range(settle_steps):
+            world.step()
+        wp.synchronize()
+        emit("settle_steps", settle_steps)
+        emit("settle_solver_seconds", round(time.time() - mark, 1))
+        settled = world.positions()
+        still = float(np.percentile(settled[:, 2], 99))
+        emit("still_waterline_m", round(still, 5))
+        emit("settled_speed_p95_mps",
+             round(float(np.percentile(np.linalg.norm(world.velocities(), axis=1),
+                                       95)), 4))
+        emit("settled_density_error", {k: float(v)
+                                       for k, v in world.density_error().items()})
+        # The static check, taken at rest, before the hull has moved: the vertical force
+        # the solver puts on a half-submerged body against `rho V g`. Averaged over 40
+        # steps because an instantaneous SPH wrench on a few hundred boundary particles
+        # is noisy.
+        static = []
+        for _ in range(40):
+            world.step()
+            static.append([float(v) for v in world.wrench(hull)[0]])
+        static_f = np.asarray(static).mean(axis=0)
+        emit("static_force_N", [round(float(v), 5) for v in static_f])
+        emit("static_fz_over_displaced_weight",
+             round(float(static_f[2] / (displaced * world.rho0 * 9.81)), 4))
+
+        move_at[0] = (settle_steps + 40) * float(world.dt) + 0.06
+        emit("move_starts_s", round(move_at[0], 4))
+
+        # -- the stage -----------------------------------------------------------------
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+        UsdGeom.Xform.Define(stage, "/World")
+
+        def preview_material(path, colour, roughness, metallic=0.0, opacity=1.0,
+                             ior=1.5):
+            """Material first, Shader second. `_freesurface_demo` records why."""
+            material = UsdShade.Material.Define(stage, path)
+            shader = UsdShade.Shader.Define(stage, path + "/surface")
+            shader.CreateIdAttr("UsdPreviewSurface")
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+                Gf.Vec3f(*colour))
+            shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(roughness)
+            shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(metallic)
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(opacity)
+            shader.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(ior)
+            material.CreateSurfaceOutput().ConnectToSource(
+                shader.ConnectableAPI(), "surface")
+            return material
+
+        # The tank: a bed and three walls. The `-y` wall is left out, because the camera
+        # stands there and a fourth wall would be the only thing in the picture. The
+        # solver has all four and the reflections in the surface are off all four.
+        # 0.17 grey under a 1700 key: `_carry` records the blown-out bed this avoids.
+        grey = preview_material("/World/looks/tank", (0.17, 0.165, 0.16), 0.6)
+        for path, centre, half in (
+            ("/World/bed", (TANK[0] / 2, cy, -0.008), (TANK[0] / 2 + 0.01,
+                                                       TANK[1] / 2 + 0.01, 0.008)),
+            ("/World/wall_back", (TANK[0] / 2, TANK[1] + 0.006, TANK[2] / 2),
+             (TANK[0] / 2 + 0.01, 0.006, TANK[2] / 2)),
+            ("/World/wall_lo", (-0.006, cy, TANK[2] / 2), (0.006, TANK[1] / 2,
+                                                           TANK[2] / 2)),
+            ("/World/wall_hi", (TANK[0] + 0.006, cy, TANK[2] / 2),
+             (0.006, TANK[1] / 2, TANK[2] / 2)),
+        ):
+            prim = UsdGeom.Cube.Define(stage, path)
+            prim.CreateSizeAttr(2.0)
+            x = UsdGeom.Xformable(prim.GetPrim())
+            x.AddTranslateOp().Set(Gf.Vec3d(*centre))
+            x.AddScaleOp().Set(Gf.Vec3f(*half))
+            UsdShade.MaterialBindingAPI(prim).Bind(grey)
+
+        # The hull, drawn as the capsule the solver sampled, at the pose it was given.
+        boat = UsdGeom.Capsule.Define(stage, "/World/hull")
+        boat.CreateRadiusAttr(HULL_R)
+        boat.CreateHeightAttr(2.0 * HULL_HALF)
+        boat.CreateAxisAttr("X")
+        boat_op = UsdGeom.Xformable(boat.GetPrim()).AddTranslateOp()
+        UsdShade.MaterialBindingAPI(boat).Bind(
+            preview_material("/World/looks/hull", (0.86, 0.30, 0.14), 0.32))
+
+        drops = UsdGeom.PointInstancer.Define(stage, "/World/water")
+        drop = UsdGeom.Sphere.Define(stage, "/World/water/drop")
+        drop.CreateRadiusAttr(radius * 1.35)
+        UsdShade.MaterialBindingAPI(drop).Bind(
+            preview_material("/World/looks/water", (0.07, 0.34, 0.62), 0.08,
+                             opacity=0.95, ior=1.33))
+        drops.CreatePrototypesRel().SetTargets([drop.GetPath()])
+        drop_positions = drops.CreatePositionsAttr()
+        drop_protos = drops.CreateProtoIndicesAttr()
+        drop_colour = UsdGeom.PrimvarsAPI(drops).CreatePrimvar(
+            "displayColor", Sdf.ValueTypeNames.Color3fArray, UsdGeom.Tokens.vertex)
+
+        sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+        sun.CreateIntensityAttr(1700.0)
+        sun.CreateAngleAttr(0.8)
+        UsdGeom.Xformable(sun.GetPrim()).AddRotateXYZOp().Set(
+            Gf.Vec3f(-52.0, 14.0, 26.0))
+        sky = UsdLux.DomeLight.Define(stage, "/World/sky")
+        sky.CreateIntensityAttr(300.0)
+        sky.CreateColorAttr(Gf.Vec3f(0.52, 0.58, 0.66))
+
+        for _ in range(8):
+            sim_app.update()
+
+        # 0.46 m of tank across the frame: D * 20.955 / focal = 0.46 at D = 0.50 m wants
+        # a 22.8 mm lens. Thirty-six degrees up, which is what it takes to look at a free
+        # surface rather than along it.
+        look = (TANK[0] / 2, cy, WATERLINE)
+        camera = rep.create.camera(
+            position=(look[0] + 0.02, look[1] - 0.40, look[2] + 0.30), look_at=look,
+            focal_length=23.0, clipping_range=(0.01, 100.0))
+        product = rep.create.render_product(camera, (width, height))
+        annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        annotator.attach([product])
+
+        def push_water():
+            points = world.positions().astype(np.float32)
+            speeds = np.linalg.norm(world.velocities(), axis=1)
+            drop_positions.Set(Vt.Vec3fArray.FromNumpy(points))
+            drop_protos.Set(Vt.IntArray.FromNumpy(np.zeros(len(points), dtype=np.int32)))
+            level = np.clip(speeds / max(float(np.percentile(speeds, 98)), 1e-9), 0, 1)
+            colours = np.stack([0.05 + 0.55 * level, 0.30 + 0.48 * level,
+                                0.58 + 0.34 * level], axis=-1)
+            drop_colour.Set(Vt.Vec3fArray.FromNumpy(colours.astype(np.float32)))
+            return len(points)
+
+        def grab():
+            for _ in range(6):
+                sim_app.update()
+                rep.orchestrator.step(rt_subframes=6)
+                try:
+                    rep.orchestrator.wait_until_complete()
+                except Exception:
+                    pass
+                arr = np.asarray(annotator.get_data())
+                if arr.size:
+                    sample = arr[..., :3].reshape(-1, 3)[::401]
+                    if len(np.unique(sample, axis=0)) > 8:
+                        return arr
+            return np.asarray(annotator.get_data())
+
+        from PIL import Image, ImageDraw, ImageFont
+
+        try:
+            font = ImageFont.load_default(size=26)
+            small_font = ImageFont.load_default(size=20)
+        except TypeError:
+            font = small_font = ImageFont.load_default()
+
+        def overlay(frame, t, u, bow):
+            image = Image.fromarray(frame, "RGB")
+            draw = ImageDraw.Draw(image)
+            draw.text((24, 20), "commanded hull speed  U = %.2f m/s" % u, font=font,
+                      fill=(255, 232, 176))
+            draw.text((24, 54), "t = %5.3f s    bow wave %+5.1f mm above the still "
+                      "waterline" % (t, bow * 1e3), font=small_font,
+                      fill=(214, 228, 240))
+            draw.text((24, 82), "the hull is DRIVEN, not floating -- see the docstring",
+                      font=small_font, fill=(236, 170, 120))
+            return np.asarray(image, dtype="uint8")
+
+        # -- the loop ------------------------------------------------------------------
+        remaining = max(int((SECONDS - SETTLE) / float(world.dt)), frames)
+        stride = max(remaining // frames, 1)
+        emit("steps_per_frame", stride)
+        emit("render_steps", stride * frames)
+
+        captured: list = []
+        trace: list = []
+        solver_seconds = 0.0
+        render_seconds = 0.0
+        t = (settle_steps + 40) * float(world.dt)
+        for step in range(stride * frames):
+            x, u = command(t)
+            world.set_body_state(hull, position=(x, cy, WATERLINE),
+                                 velocity=(u, 0.0, 0.0, 0.0, 0.0, 0.0))
+            mark = time.time()
+            world.step()
+            solver_seconds += time.time() - mark
+            t += float(world.dt)
+            if (step + 1) % stride != 0:
+                continue
+            wp.synchronize()
+            points = world.positions()
+            # The bow wave: the highest water within half a hull length ahead of the
+            # nose, above the still waterline measured before the hull moved.
+            nose = x + HULL_HALF + HULL_R
+            ahead = points[(points[:, 0] > nose - 0.01) & (points[:, 0] < nose + 0.045)]
+            bow = (float(ahead[:, 2].max()) - still) if len(ahead) else float("nan")
+            force, torque = world.wrench(hull)
+            count = push_water()
+            boat_op.Set(Gf.Vec3d(x, cy, WATERLINE))
+            sim_app.update()
+            sim_app.update()
+            mark = time.time()
+            arr = grab()
+            render_seconds += time.time() - mark
+            if not arr.size:
+                emit("render_error", "empty annotator at step %d" % step)
+                break
+            captured.append(overlay(arr[..., :3].astype("uint8").copy(), t, u, bow))
+            trace.append({
+                "frame": len(captured) - 1,
+                "t": round(t, 4),
+                "u_cmd": round(u, 4),
+                "hull_x_m": round(x, 4),
+                "bow_wave_mm": None if bow != bow else round(bow * 1e3, 2),
+                "surface_top_mm": round(float(points[:, 2].max()) * 1e3, 2),
+                "force_N": [round(float(v), 5) for v in force],
+                "drops": count,
+            })
+        emit("trace", trace)
+        emit("solver_seconds", round(solver_seconds, 1))
+        emit("render_seconds", round(render_seconds, 1))
+        emit("stable", bool(world.stable()))
+        emit("final_density_error", {k: float(v)
+                                     for k, v in world.density_error().items()})
+        moving = [row for row in trace if row["u_cmd"] > 0.9 * speed
+                  and row["bow_wave_mm"] is not None]
+        if moving:
+            emit("bow_wave_mm_mean",
+                 round(float(np.mean([row["bow_wave_mm"] for row in moving])), 2))
+            emit("bow_wave_mm_peak", max(row["bow_wave_mm"] for row in moving))
+            emit("hull_force_N_mean",
+                 [round(float(v), 5) for v in np.mean(
+                     [row["force_N"] for row in moving], axis=0)])
+
+        if not captured:
+            emit("render_error", "no frames captured")
+            emit("ok", False)
+            return {"result": out, "blobs": blobs}
+
+        hero_index = int(np.argmax([row["bow_wave_mm"] or -1e9 for row in trace]))
+        hero = captured[hero_index]
+        emit("hero_frame", hero_index)
+        emit("render_shape", list(hero.shape))
+        rgb = hero.astype("float32")
+        emit("render_stddev",
+             round(float(np.mean([rgb[..., c].std() for c in range(3)])), 2))
+        emit("render_mean_rgb", [round(float(v), 1) for v in rgb.reshape(-1, 3).mean(0)])
+        emit("render_unique_colours",
+             int(len(np.unique(rgb.reshape(-1, 3)[::97], axis=0))))
+
+        held = io.BytesIO()
+        Image.fromarray(hero, "RGB").save(held, format="PNG", optimize=True)
+        blobs["boat_hero.png"] = held.getvalue()
+
+        def encode(scale: int, colours: int) -> bytes:
+            small = [Image.fromarray(f, "RGB").resize(
+                (width // scale, height // scale), Image.LANCZOS).quantize(
+                    colors=colours, method=Image.MEDIANCUT) for f in captured]
+            buf = io.BytesIO()
+            small[0].save(buf, format="GIF", save_all=True, append_images=small[1:],
+                          duration=70, loop=0, optimize=True)
+            return buf.getvalue()
+
+        gif = encode(2, 96)
+        if len(gif) > 3_000_000:
+            emit("gif_reencoded_from_bytes", len(gif))
+            gif = encode(2, 48)
+        blobs["boat.gif"] = gif
+        emit("gif_bytes", len(gif))
+        emit("gif_frames", len(captured))
+        for pick in sorted({0, len(captured) // 3, hero_index, len(captured) - 1}):
+            buf = io.BytesIO()
+            Image.fromarray(captured[pick], "RGB").save(buf, format="PNG",
+                                                        optimize=True)
+            blobs["boat_%03d.png" % pick] = buf.getvalue()
+        emit("ok", True)
+    except Exception:
+        emit("error", traceback.format_exc()[-6000:])
+        emit("ok", False)
+    finally:
+        out["total_seconds"] = round(time.time() - started, 1)
+    return {"result": out, "blobs": blobs}
+
+
+@app.function(image=image, gpu="L40S", timeout=5400, memory=32768)
+def boat_l40s(radius: float = 0.0025, frames: int = 44, speed: float = 0.46) -> dict:
+    return _boat(radius=radius, frames=frames, speed=speed)
+
+
+@app.function(image=image, gpu="A10G", timeout=5400, memory=32768)
+def boat_a10g(radius: float = 0.0025, frames: int = 44, speed: float = 0.46) -> dict:
+    return _boat(radius=radius, frames=frames, speed=speed)
+
+
 # -- the local side ---------------------------------------------------------------------
 
 PROBES = {"a10g": probe_a10g, "l40s": probe_l40s}
@@ -2934,6 +3985,109 @@ def submarine(gpu: str = "l40s", cells_per_d: int = 0, reynolds: float = 100.0,
     if payload.get("error"):
         print(payload["error"])
     _save(f"submarine-{gpu}", payload, blobs)
+    if not payload.get("ok"):
+        sys.exit(1)
+
+
+@app.local_entrypoint()
+def carry(gpu: str = "l40s", radius: float = 0.002, frames: int = 48,
+          accel: float = 3.5) -> None:
+    """A mug of water carried by a gripper: the commanded move, and what the fluid did."""
+    runner = {"l40s": carry_l40s, "a10g": carry_a10g}[gpu.lower()]
+    got = runner.remote(radius, frames, accel)
+    payload = got.get("result", got)
+    blobs = got.get("blobs", {})
+    print("\ngpu: %s" % payload.get("gpu"))
+    print("warp in Kit: %s" % payload.get("warp_version"))
+    print("particles: %s fluid + %s boundary at a %s mm spacing, dt %s s"
+          % (payload.get("fluid_particles"), payload.get("boundary_particles"),
+             payload.get("spacing_mm"), payload.get("dt")))
+    print("settled in %s steps: speed p95 %s m/s, density error %s"
+          % (payload.get("settle_steps"), payload.get("settled_speed_p95_mps"),
+             payload.get("settled_density_error")))
+    print("command: %s m/s2 over %s m, peak %s m/s, move window %s s"
+          % (payload.get("accel_cmd"), payload.get("travel_m"),
+             payload.get("peak_speed_mps"), payload.get("move_window_s")))
+    print("solver %s s (%s MLUPS, particle updates), render %s s, total %s s"
+          % (payload.get("solver_seconds"), payload.get("solver_mlups"),
+             payload.get("render_seconds"), payload.get("total_seconds")))
+    print("\n-- measured --")
+    print("  slosh period, measured   %s s" % payload.get("slosh_period_measured_s"))
+    print("  Lamb, prism inradius     %s s"
+          % payload.get("slosh_period_lamb_inradius_s"))
+    print("  Lamb, prism circumradius %s s"
+          % payload.get("slosh_period_lamb_circumradius_s"))
+    print("  quasi-static tilt        %s deg (what a flat-surface planner assumes)"
+          % payload.get("quasi_static_tilt_deg"))
+    print("  peak surface height      %s mm against a %s mm rim"
+          % (payload.get("peak_surface_mm"), payload.get("rim_height_mm")))
+    print("  out of the mug           %s peak, %s at the end"
+          % (payload.get("out_of_mug_peak"), payload.get("out_of_mug_final")))
+    print("  stable / density error   %s / %s"
+          % (payload.get("stable"), payload.get("final_density_error")))
+    for row in (payload.get("trace") or [])[::4]:
+        print("  t %.3f  a %+5.2f  mug %6.1f mm  centroid %+6.2f mm  top %6.1f mm  "
+              "out %3d" % (row["t"], row["a_cmd"], row["mug_x_mm"],
+                           row["centroid_offset_mm"], row["surface_top_mm"],
+                           row["out_of_mug"]))
+    print("\nhero frame %s: %s stddev %s colours %s mean %s"
+          % (payload.get("hero_frame"), payload.get("render_shape"),
+             payload.get("render_stddev"), payload.get("render_unique_colours"),
+             payload.get("render_mean_rgb")))
+    print("gif: %s frames, %s bytes" % (payload.get("gif_frames"),
+                                        payload.get("gif_bytes")))
+    if payload.get("error"):
+        print(payload["error"])
+    _save("carry-%s" % gpu, payload, blobs)
+    if not payload.get("ok"):
+        sys.exit(1)
+
+
+@app.local_entrypoint()
+def boat(gpu: str = "l40s", radius: float = 0.0025, frames: int = 44,
+         speed: float = 0.46) -> None:
+    """A hull towed through a tank. DRIVEN, not floating -- see `_boat`'s docstring."""
+    runner = {"l40s": boat_l40s, "a10g": boat_a10g}[gpu.lower()]
+    got = runner.remote(radius, frames, speed)
+    payload = got.get("result", got)
+    blobs = got.get("blobs", {})
+    print("\ngpu: %s   warp in Kit: %s"
+          % (payload.get("gpu"), payload.get("warp_version")))
+    print("particles: %s fluid + %s boundary at a %s mm spacing, dt %s s"
+          % (payload.get("fluid_particles"), payload.get("boundary_particles"),
+             payload.get("spacing_mm"), payload.get("dt")))
+    print("hull: sampled %s m3 against an analytic %s m3, Fr %s at %s m/s"
+          % (payload.get("hull_sampled_volume_m3"),
+             payload.get("hull_analytic_volume_m3"), payload.get("froude"),
+             payload.get("hull_speed_cmd")))
+    print("solver %s s, render %s s, total %s s"
+          % (payload.get("solver_seconds"), payload.get("render_seconds"),
+             payload.get("total_seconds")))
+    print("\n-- measured --")
+    print("  static force on the hull  %s N" % payload.get("static_force_N"))
+    print("  displaced weight          %s N" % payload.get("displaced_weight_N"))
+    print("  Fz / rho V g              %s   <-- 1.0 would mean the floating-body path "
+          "works; it does not, which is why this hull is driven"
+          % payload.get("static_fz_over_displaced_weight"))
+    print("  bow wave, mean / peak     %s / %s mm above the still waterline"
+          % (payload.get("bow_wave_mm_mean"), payload.get("bow_wave_mm_peak")))
+    print("  force while moving        %s N (NOT a resistance curve -- ungraded)"
+          % payload.get("hull_force_N_mean"))
+    print("  stable / density error    %s / %s"
+          % (payload.get("stable"), payload.get("final_density_error")))
+    for row in (payload.get("trace") or [])[::4]:
+        print("  t %.3f  U %.2f  x %.3f m  bow %s mm  F %s"
+              % (row["t"], row["u_cmd"], row["hull_x_m"], row["bow_wave_mm"],
+                 row["force_N"]))
+    print("\nhero frame %s: %s stddev %s colours %s mean %s"
+          % (payload.get("hero_frame"), payload.get("render_shape"),
+             payload.get("render_stddev"), payload.get("render_unique_colours"),
+             payload.get("render_mean_rgb")))
+    print("gif: %s frames, %s bytes" % (payload.get("gif_frames"),
+                                        payload.get("gif_bytes")))
+    if payload.get("error"):
+        print(payload["error"])
+    _save("boat-%s" % gpu, payload, blobs)
     if not payload.get("ok"):
         sys.exit(1)
 

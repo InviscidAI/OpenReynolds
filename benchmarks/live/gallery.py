@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draw the live extension's results as pictures: four convergence studies, one scorecard, six GIFs.
+"""Draw the live extension's results as pictures: four convergence studies, one scorecard, the recorded GIFs.
 
     python benchmarks/live/gallery.py            # write benchmarks/live/gallery/
     python benchmarks/live/gallery.py --check    # verify what is already there
@@ -591,12 +591,27 @@ def scorecard() -> Path:
 # --------------------------------------------------------------------------- animations
 
 ANIMATIONS = {
-    "field-dam-break.gif": "dam-n1300/live-dam-break.gif",
+    # `gif-dam-break` and not `dam-n1300`: the same case at the same 1,300 cells, re-run
+    # for its picture after the colour scale was fixed. Its numbers reproduce the graded
+    # run's to four figures (depth at the dam 25.718 mm against 25.724), including the
+    # check that run already failed, which is the point of saying so here.
+    "field-dam-break.gif": "gif-dam-break/live-dam-break.gif",
     "field-cylinder.gif": "gif-cylinder/live-cylinder-n44.gif",
     "field-falling-sphere.gif": "gif-falling-sphere/live-falling-sphere.gif",
     "field-quadrotor.gif": "gif-quadrotor/live-quadrotor-z1.gif",
     "isaacsim-freesurface.gif": "isaacsim/freesurface.gif",
     "isaacsim-submarine.gif": "isaacsim/submarine.gif",
+    "isaacsim-carry.gif": "isaacsim/carry.gif",
+    "isaacsim-boat.gif": "isaacsim/boat.gif",
+    # The two M3 cases that had no animation path at all until 2026-11-23: they were
+    # written to emit PNG frames, so there was nothing to copy here. Both are now
+    # animated by their own sampling callback. The ground-effect pair is the comparison
+    # that case exists for -- the same disk with the floor under it and in free air --
+    # and the underwater pair is the graded sphere beside the hull that is not graded.
+    "field-ground-effect.gif": "gif-ground-effect/live-ground-effect-z0.75.gif",
+    "field-ground-effect-free-air.gif": "gif-ground-effect/live-ground-effect-z6.gif",
+    "field-underwater-sphere.gif": "gif-underwater/live-underwater-f1.gif",
+    "field-underwater-hull.gif": "gif-underwater/live-underwater-f4.gif",
 }
 """Which recorded GIFs the gallery shows.
 
@@ -676,11 +691,16 @@ def inspect(path: Path) -> dict:
     # own. `still_pairs` counts the consecutive pairs that are byte-identical.
     diffs = [float(np.abs(b - a).mean()) for a, b in zip(frames, frames[1:])]
     motion = float(np.median(diffs)) if diffs else 0.0
+    # The mean of the same pairs, beside the median, because `renders/README.md` quotes
+    # one number a file and a run whose motion builds -- the ground-effect jet starts
+    # from rest -- has a median well below its mean. Reporting both means the README's
+    # number has a command behind it rather than a convention nobody wrote down.
+    motion_mean = float(np.mean(diffs)) if diffs else 0.0
     still_pairs = sum(1 for d in diffs if d == 0.0)
     return {
         "path": path, "bytes": path.stat().st_size, "mode": mode, "frames": len(frames),
         "channel_std": median_std, "colours": median_colours, "flat_frames": flat,
-        "motion": motion, "still_pairs": still_pairs,
+        "motion": motion, "motion_mean": motion_mean, "still_pairs": still_pairs,
         "rgba": mode in ("RGBA", "LA") and path.suffix.lower() == ".png",
         "flat": median_std < FLAT_STD or median_colours < FLAT_COLOURS,
         "dead": path.suffix.lower() == ".gif" and (len(frames) < 2 or motion <= 0.0),
@@ -693,7 +713,7 @@ def check() -> int:
         print(f"nothing in {OUT}")
         return 1
     print(f"{'file':30} {'bytes':>10} {'mode':5} {'frames':>6} {'med std':>8} "
-          f"{'med colours':>12} {'motion':>7}  notes")
+          f"{'med colours':>12} {'motion':>7} {'mean':>7}  notes")
     bad = []
     for path in files:
         got = inspect(path)
@@ -712,15 +732,17 @@ def check() -> int:
         if got["still_pairs"]:
             notes.append(f"{got['still_pairs']} identical consecutive pair(s)")
         print(f"{path.name:30} {got['bytes']:>10,} {got['mode']:5} {got['frames']:>6} "
-              f"{got['channel_std']:>8.2f} {got['colours']:>12,.0f} {got['motion']:>7.2f}"
-              f"  {'; '.join(notes)}")
+              f"{got['channel_std']:>8.2f} {got['colours']:>12,.0f} {got['motion']:>7.2f} "
+              f"{got['motion_mean']:>7.2f}  {'; '.join(notes)}")
     if bad:
         print(f"\n{len(set(bad))} file(s) failed the check")
         return 1
     print(f"\n{len(files)} file(s): none flat, no RGBA PNG, every GIF animates. "
-          f"`motion` is the median mean-absolute change between consecutive frames on "
-          f"0-255 RGB. A uniform frame noted above is reported, not excused -- for the "
-          f"dam break it is the tank at rest.")
+          f"`motion` is the median and `mean` the mean of the mean-absolute change "
+          f"between consecutive frames on 0-255 RGB; `renders/README.md` quotes the "
+          f"mean. A uniform frame noted above is reported, not excused -- for the dam "
+          f"break it is the tank at rest, and for the ground-effect jet it is the air "
+          f"before the rotor is switched on.")
     return 0
 
 
