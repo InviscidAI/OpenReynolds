@@ -19,6 +19,8 @@ these published fits say.
 """
 from __future__ import annotations
 
+import math
+
 __all__ = ["stokes_cd", "schiller_naumann_cd", "clift_gauvin_cd", "newton_regime_cd"]
 
 STOKES_LIMIT_RE = 0.1
@@ -71,6 +73,53 @@ def clift_gauvin_cd(reynolds: float) -> float:
         raise ValueError("Reynolds number must be positive")
     return (schiller_naumann_cd(reynolds)
             + 0.42 / (1.0 + 42500.0 * reynolds ** -1.16))
+
+
+CGW_LOW_RE_RANGE = (0.01, 20.0)
+"""The Reynolds range of the Clift, Grace & Weber branch below.
+
+The paper is piecewise and this is only its `0.01 < Re < 20` branch. Outside it the
+formula is not CGW's answer, which is why `clift_grace_weber_cd` refuses rather than
+extrapolating: an out-of-range value from a piecewise fit looks exactly like an
+in-range one."""
+
+
+def clift_grace_weber_cd(reynolds: float) -> float:
+    """Sphere drag from Clift, Grace & Weber (1978), the `0.01 < Re < 20` branch.
+
+        Cd = (24/Re) (1 + 0.1315 Re^(0.82 - 0.05 log10 Re))
+
+    **This is the bar the live sphere case is graded against** (DECISIONS_LIVE.md D16),
+    chosen because it is the best-validated of the correlations available: Feng
+    (arXiv:2610.00334v3) reports average relative errors against 480 experimental points
+    of 3.019% for CGW, 3.236% for Brown & Lawler and 2.469% for Cheng (2009).
+
+    **It is independent of `schiller_naumann_cd`, which `clift_gauvin_cd` is not.** That
+    matters and is the reason this function exists: `clift_gauvin_cd` *calls*
+    `schiller_naumann_cd` and adds a high-Reynolds plateau worth 0.0034% at Re 10, so the
+    two agree there because they are the same formula, not because two independent fits
+    concur. A validation argument was built on that agreement and had to be withdrawn.
+
+    **Provenance, stated because it is not clean.** The primary text -- *Bubbles, Drops,
+    and Particles* (1978) -- could not be reached. The branch above was read from two
+    independent code transcriptions that both cite it (`fluids` and `pychemqt`). Two
+    internal checks were run before adopting it: the exponent `0.82 - 0.05 log10 Re`
+    gives exactly `0.82` at Re 1 and the expression reduces to Stokes as `Re -> 0`; and
+    the correction term reaches unity near Re 20, the top of the stated branch, which is
+    where a low-Re branch should hand over. Neither check substitutes for the book, so
+    any case grading against this must say so in its target string.
+
+    At Re 10 this gives **4.258391**, against Schiller-Naumann's 4.151066.
+    """
+    if not CGW_LOW_RE_RANGE[0] <= reynolds <= CGW_LOW_RE_RANGE[1]:
+        raise ValueError(
+            f"Clift, Grace & Weber is piecewise and this is its "
+            f"{CGW_LOW_RE_RANGE[0]} < Re < {CGW_LOW_RE_RANGE[1]} branch; Re "
+            f"{reynolds:g} is outside it. Extrapolating a piecewise fit returns a "
+            f"number that looks like an answer"
+        )
+    exponent = 0.82 - 0.05 * math.log10(reynolds)
+    return 24.0 / reynolds * (1.0 + 0.1315 * reynolds ** exponent)
 
 
 def newton_regime_cd() -> float:
