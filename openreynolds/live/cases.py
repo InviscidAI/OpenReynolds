@@ -2617,6 +2617,34 @@ def _openfoam_cylinder() -> dict[str, Any]:
     return payload["fixed"]
 
 
+def _try_draw(label: str, make: Callable[[], Any]) -> tuple[Any, str | None]:
+    """Draw a figure, and **never let a drawing failure discard a finished run.**
+
+    Returns `(figure_or_None, note_or_None)`. The note goes in the report so a missing
+    figure is visible rather than silent.
+
+    This exists because the same accident has now happened three times in this work, each
+    time *after* every graded number had been computed and each time on a GPU:
+
+    * a mangled f-string -- `r[chr(39) + 'z_over_r' + chr(39)]` -- raised `KeyError`
+      after **1,087 s** of H100 on the ground-effect case;
+    * two report lines appended to `lines` before `lines` existed raised
+      `UnboundLocalError` after **44 s** on `sph_hydrostatic`;
+    * a one-frame animation tripped `figures.animate`'s own guard after **457 s** on
+      `crosscheck-2d1`.
+
+    All three are report-assembly faults. None of them says anything about the physics,
+    and all three threw the physics away. A figure is a presentation of a result and must
+    not be able to destroy one.
+    """
+    try:
+        return make(), None
+    except Exception as exc:  # noqa: BLE001 -- a figure must not sink a run
+        return None, (f"  figure:     {label} was not drawn: "
+                      f"{type(exc).__name__}: {exc}. The run's numbers are unaffected; "
+                      f"a figure cannot be allowed to discard them.")
+
+
 def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
                    steps: int | None = None, device: str | None = None,
                    out_dir: str | Path = ".", animate: bool = True,
@@ -2729,7 +2757,12 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
         force, _ = world.wrench(body)
         history.append((index, float(force[0]) * coefficient,
                         float(force[1]) * coefficient))
-        if animate and len(frames) < 180 and index % max(1, total // 180) == 0:
+        # **Gate on the sample count, not on a second modulus of `index`.** The first
+        # version tested `index % (total // 180)` here while the line above had already
+        # returned unless `index % (total // 400) == 0`. For `total = 704,000` those are
+        # 3,911 and 1,760, which are coprime, so both fired only at index 0 -- one frame,
+        # and `figures.animate` refused it after 457 s of H100.
+        if animate and len(frames) < 180 and len(history) % 2 == 1:
             frames.append(figures.slice_frame(world, axis=2))
 
     _advance(world, total, sample_every=1, sample=take, settle=0.0, progress=progress)
@@ -2775,10 +2808,12 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
     ]
 
     drawn = []
+    notes: list[str] = []
     if frames:
         gif = Path(out_dir) / "crosscheck-2d1.gif"
-        figures.animate(frames, gif)
-        drawn.append(gif)
+        made, note = _try_draw(f"the {len(frames)}-frame animation",
+                               lambda: figures.animate(frames, gif) or gif)
+        drawn.append(made) if made else notes.append(note or "")
     if history:
         drawn.append(figures.profile_figure(
             Path(out_dir) / "crosscheck-2d1-forces.png",
@@ -2806,6 +2841,7 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
         f"  steadiness: Cd's spread over the averaging window {spread:.3%} of its mean",
         f"  reference:  {reference['source']}",
         f"  caveat:     {reference['caveat']}",
+        *notes,
     ]
     return _result("crosscheck-2d1", checks, lines, drawn, live_cd=cd, live_cl=cl,
                    paper_cd=paper_cd, felix_cd=felix_cd, felix_cl=felix_cl,
