@@ -109,8 +109,23 @@ def tar_of(members: dict[str, bytes], mode: str = "w:gz") -> bytes:
     return out.getvalue()
 
 
+def _a_shell_runs_here() -> bool:
+    import subprocess
+
+    from openreynolds.backend import local as local_backend
+    try:
+        return subprocess.run([local_backend.SHELL, "-lc", "echo 1"],
+                              capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> LocalBackend:
+    """A real local workspace: unpacking runs as a command on it, so these tests need a
+    POSIX shell, which a Windows runner usually lacks (its `bash` is the WSL launcher)."""
+    if not _a_shell_runs_here():
+        pytest.skip("no POSIX shell here, so the unpacking command cannot run")
     return LocalBackend(tmp_path / "ws")
 
 
