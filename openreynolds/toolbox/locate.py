@@ -565,7 +565,7 @@ _SOLVING = re.compile(
     r"\s*Final residual = ([0-9.eE+-]+),\s*No Iterations (\d+)"
 )
 _BOUNDING = re.compile(r"^bounding (\S+?),")
-_COURANT = re.compile(r"Courant Number mean: ([0-9.eE+-]+) max: ([0-9.eE+-]+)")
+_COURANT = re.compile(r"(?<!Interface )Courant Number mean: ([0-9.eE+-]+) max: ([0-9.eE+-]+)")
 
 DEGRADE_FACTOR = 100.0
 """How far above its own median a field's outer residual has to climb before the

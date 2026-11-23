@@ -18,7 +18,8 @@ from typing import Any
 
 from .backend.base import Backend, BackendError, JobStatus
 from .browse import human
-from .progress import _READ_FELIX_FACTS, felix_job_facts, felix_job_summary
+from .progress import (_READ_FELIX_FACTS, TIME, felix_job_facts, felix_job_summary,
+                       how_it_ended, is_felix_solve)
 from .store import Store
 from .tools import describe_job
 from .view import View
@@ -29,6 +30,12 @@ TICK_S = 0.5
 """How often the poll wait checks for typed input, so the user is never left waiting."""
 
 WAKE_TAIL_BYTES = 2_000
+
+ENDING_WINDOW_BYTES = 64_000
+"""How much of a finished solver log `progress.how_it_ended` reads. The wake shows
+2 kB, a stack trace's worth; a residual that climbed for a hundred steps first needs
+a few hundred lines more to be seen climbing. Read only for a log whose tail is a
+solver's, once per finished job."""
 
 
 PASTE_WINDOW_S = 0.2
@@ -372,9 +379,33 @@ def _job_report(
         if felix:
             lines.extend(felix)
     tail = _tail(backend, status)
+    ending = _ending(backend, status, record, tail)
+    if ending:
+        lines.append(f"how the log ends: {ending}")
     if tail:
         lines.append(f"last {len(tail.encode('utf-8'))} bytes of log:\n{tail}")
     return "\n".join(lines)
+
+
+def _ending(backend: Backend, status: JobStatus, record: Any, tail: str) -> str | None:
+    """`progress.how_it_ended` over the last `ENDING_WINDOW_BYTES` of an OpenFOAM
+    solver's log; None for a Felix solve (its summary already says how it ended), a
+    log that is not a solver's, or one that ended well."""
+    if record is not None and is_felix_solve(getattr(record, "cmd", "") or ""):
+        return None
+    # No gate on the 2 kB tail: a real sigFpe stack trace is 15-25 frames of 150-250
+    # bytes each, so the handler frame and the last `Time =` are routinely above it.
+    size = status.log_size or 0
+    window = tail
+    if size > len(tail.encode("utf-8")):
+        try:
+            window, _next, _eof = backend.job_tail(
+                status.job_id, offset=max(0, size - ENDING_WINDOW_BYTES))
+        except BackendError:
+            window = tail
+    if not (TIME.search(window) or "FOAM FATAL" in window):
+        return None
+    return how_it_ended(window)
 
 
 def _tail(backend: Backend, status: JobStatus) -> str:

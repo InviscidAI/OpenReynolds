@@ -262,8 +262,11 @@ def _residual_reading(data) -> str:
             f"{f} best {shape['best'][f]:.1e}, last {shape['last'][f]:.1e}" for f in worst
         )
         return (f"residuals: climbing ({detail}) -- this run is diverging, not converging "
-                "slowly, and the last field is not one to show; the usual causes are the "
-                "mesh where the field is worst, a boundary condition, or the timestep")
+                "slowly, and the last field is not one to show. The cheap causes are "
+                "numerical -- the time step, the relaxation, the convection schemes -- "
+                "and recover.py reads which of those this case still has room in; the mesh "
+                "where the field is worst, or a boundary condition, is what is left when "
+                "they have each been tried")
     if kind == "falling":
         moving = [f for f, k in shape["fields"].items() if k == "falling"]
         detail = ", ".join(f"{f} {shape['last'][f]:.1e}" for f in moving)
