@@ -811,12 +811,21 @@ is that it **converges**: four grids, an observed order of 3.5 and a limit of 1.
 linear theory, with 180 and 240 cells differing by 0.3%. A converged solution arriving at
 the wrong value is a property of the scheme and not of the grid. Everything else is ruled
 out with a number -- damping (`zeta` 0.0035 to 0.020, a four-decimal correction), finite
-amplitude (0.4% at this steepness), the depth (0.2%), gravity (0.6% of the period), the
-estimator (both of them and their mean sit above theory) and resolution. What is left is
-the discrete dispersion relation of a one-cell interface at `kh` about 0.94, which linear
-theory is not a statement about. It is the one M5 number with no account of itself.
-`PROGRESS_LIVE.md`, "The sloshing period converges, to five per cent above linear
-theory".
+amplitude (**-0.027% at this steepness**), the depth (0.2%), gravity (0.6% of the
+period), the estimator (both of them and their mean sit above theory) and resolution.
+What is left is the discrete dispersion relation of a one-cell interface at `kh` about
+0.94, which linear theory is not a statement about. It is the one M5 number with no
+account of itself. `PROGRESS_LIVE.md`, "The sloshing period converges, to five per cent
+above linear theory".
+
+The finite-amplitude number used to read "0.4%" here and in three other places, with the
+sign the other way: a larger amplitude was said to **lengthen** the period, so part of
+the measured excess was credited to physics. Concus 1962 (UCRL-10208) equation (34) at
+`delta = 0` -- the capillary-gravity generalisation of Tadjbakhsh & Keller 1960, whose
+original is paywalled -- puts this tank at **kh = 0.9425, below the critical depth
+kh = 1.058**, so `w_2 = +0.1179 > 0` and a larger amplitude **shortens** the period. At
+`k a = 0.0628` the shift is **-0.027%**. The credit was never due, and **removing it
+makes the unexplained residual larger: 5.1 points rather than 4.7.**
 
 For contrast, the two M5 cases around it: `hydrostatic` passes **7/7**, and `dam_break`'s
 graded row fails on the finest affordable grid (25.7244 mm against 22.2222 +/- 15%) while

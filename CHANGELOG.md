@@ -8,53 +8,72 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
-- **`openreynolds[live]`: a GPU fluid in lockstep with Newton, with two backends at two
-  different levels of validation.** An optional extra; nothing in the core install changes
-  and core imports without it. `docs/live-sync.md` is the page, and its backend table is
-  the first thing to read.
+- **`openreynolds[live]` v0.1: a GPU lattice Boltzmann fluid in lockstep with Newton.** An
+  optional extra; nothing in the core install changes and core imports without it.
+  `RELEASE_NOTES_v0.1.md` is the release record and `docs/live-sync.md` is the page.
 
-  **The lattice Boltzmann backend (`backend="lbm"`) is supported** for single-phase
-  flow -- air, and water with no surface in the picture. D3Q19 on NVIDIA Warp, TRT / BGK /
-  regularized collision, Bouzidi interpolated walls, momentum-exchange forces,
-  two-way coupled to Newton's MuJoCo-Warp solver with no host round trips in the step
-  loop. **56 of 64 graded checks pass over 17 GPU validation runs**, and it reaches
-  **1,478 MLUPS on an H100** against a 1,000 target. It runs inside a live Isaac Sim 6.2
-  Kit process on Kit's own Warp 1.17 -- 63 tests passed, 0 failed, no shim -- and the
-  coupling is two-way there, confirmed by two numbers that arrive on different routes
-  (fluid drag / thrust 0.815, momentum balance 0.879 over 347 wrench samples).
+  **v0.1 is the lattice Boltzmann backend (`backend="lbm"`) for single-phase flow** --
+  air, and water with no free surface in the picture. D3Q19 on NVIDIA Warp, TRT / BGK /
+  regularized collision, Bouzidi interpolated walls, momentum-exchange forces, two-way
+  coupled to Newton's MuJoCo-Warp solver with no host round trips in the step loop. It
+  reaches **1,478.7 MLUPS on an H100 80GB** at 384^3 against a 1,000 target, and 1,095.2
+  at 128^3. **M0 4/4, M2 16/16 over all four cases, M3 10/10 over all three** -- re-tallied
+  from the recorded `result.json` files for this release. **M1: five of its seven cases
+  pass every check they grade**, with the per-case table, the measured values and the two
+  provenance gaps in `RELEASE_NOTES_v0.1.md`.
 
-  **The SPH backend (`backend="sph"`, or `free_surface=True`) is BETA** and is the path
-  for a free surface: a boat, a cup, a tank that pours. DFSPH (Bender and Koschier
-  2015/2017) with Akinci et al. (2012) boundary particles, a Warp `HashGrid`, and
-  Monaghan (1992) viscosity from a physical `nu`. **Written from the papers and not
-  ported** -- there is no SPlisHSPlasH code in it, so no notice is carried and no
-  `LICENSES` entry is owed, which `openreynolds/live/sph.py`'s header states and this
-  release verified. Its unit numbers are good: the wrench on a tank reads **0.9999** of
-  the weight of its own water, a submerged box **1.0992** of `rho V g` converging to
-  1.0614 at five particles across, `dp/dh` **0.9855 rho g**, density error 0.61% max.
-  **Its eight validation cases do not yet have passing numbers, which is why it ships
-  beta rather than supported.**
+  It runs inside a live Isaac Sim 6.2 Kit process on **Kit's own Warp 1.17.0 and Newton
+  1.6.1**, two minor versions below what the benchmarks pin, with no shim -- **63 tests
+  passed, 0 failed** -- and the coupling is two-way there, confirmed by two numbers that
+  arrive on independent routes (fluid drag / thrust **0.815**, momentum balance **0.879**,
+  over 347 wrench samples). `openreynolds.live.isaac.HoverFluidEnv` is a quadrotor hover
+  task conforming to Isaac Lab's `DirectRLEnv` interface method for method; it is **not** a
+  `DirectRLEnv` subclass and cannot be, because that requires a USD stage, and `isaac.py`
+  states what that costs.
 
-  Also in the extra: an agent tool and an `openreynolds live` CLI, 24 validation cases
-  that each carry the reference they are graded against, a `PROGRESS_LIVE.md` summary
-  table generated from the recorded results rather than typed, and `DECISIONS_LIVE.md`
-  for the choices made along the way. Every dependency is permissively licensed and was
-  checked against its installed metadata for this release: warp-lang, newton and
-  mujoco-warp are Apache-2.0, numpy is BSD, matplotlib is PSF.
+  **The SPH backend is out of scope for v0.1.** Not beta: out of scope. `sph.py` and
+  `sph_cases.py` are in the tree and import, and that is all this release claims about
+  them -- their eight validation cases do not have passing numbers, they are not graded
+  here, and nothing in v0.1 is supported on `backend="sph"` or `free_surface=True`. The
+  lattice free surface is likewise **frozen by decision** (`DECISIONS_LIVE.md` D15), not
+  broken-and-unfixed. So a boat, a cup, a tank that pours or a hull at a waterline is not
+  a v0.1 capability on either backend.
 
-  **Known issues are documented rather than deferred**, in `docs/live-sync.md` under
-  "Known issues at v0.1", each with its measurement: the 2D-2 cylinder reads +11.7% on
-  Cd (mostly compressibility; two independent routes extrapolate to +2.6%); the sphere at
-  Re 10 reads +5.65% against Schiller-Naumann, which is inside the 3.13% spread of five
-  distinct drag correlations and reads +2.99% against Clift, Grace and Weber; the
-  unsteady backend cross-check's Strouhal number is wrong sevenfold from a transverse
-  acoustic mode that its incompressible reference cannot have; M5 sloshing on the lattice
-  converges, at order 3.5, to +5.1% and so misses a 5% bar by arriving at the wrong
-  value rather than by not converging; and the lattice free surface is **frozen, not
-  deleted** -- correct for still water, and its one-cell interface invariant breaks
-  within ten steps of releasing a moving hull, which is why free-surface liquids moved to
-  SPH. Only one demo renders as a true animation today; the other GIF files hold a single
-  frame each, which this release says rather than implies.
+  **The engineering result of the release is an outlet boundary condition.** Three M1
+  failures -- the cylinder, the unsteady cross-check and 2D-1 -- traced to one boundary,
+  and each had first been blamed on something else. The old outlet extrapolated
+  populations, so with a velocity inlet nothing anchored the domain's mass: an **empty**
+  channel, no cylinder and no wake, gained **+28.113% of its mass over 704,000 steps**,
+  with mass flux out 0.538% below flux in every step and never correcting. A
+  density-anchored outlet holds it to **+0.032%**. The cylinder went from +11.73% to
+  **+2.16%** on Cd and the cross-check from +25.6% and Strouhal +636% to **-0.80%** and
+  **-0.053%**. **The anchor is opt-in and off by default**: `run_cylinder` and
+  `crosscheck` still default `outlet_rho=0.0` so the recorded numbers stay reproducible,
+  so a default run of those two cases reproduces the failure, and the passing runs used
+  `--extra '{"outlet_rho": 1.0}'`.
+
+  Also in the extra: an agent tool and an `openreynolds live` CLI, validation cases that
+  each carry the reference they are graded against, a `PROGRESS_LIVE.md` summary table
+  generated from the recorded results rather than typed, and `DECISIONS_LIVE.md` for the
+  choices made along the way. Every `[live]` dependency is permissively licensed, checked
+  against its installed metadata for this release: warp-lang 1.19.0, newton 1.8.0 and
+  mujoco-warp 4.0.1 are Apache-2.0, numpy 2.3.2 is BSD, matplotlib 3.10.5 is PSF. No
+  `LICENSES` file is owed: `sph.py` was written from the Bender & Koschier and Akinci
+  papers and carries no SPlisHSPlasH code, which its header states and this release
+  verified by reading it.
+
+  **Known limitations, each with its number**, in `RELEASE_NOTES_v0.1.md` section 7: the
+  sphere at Re 10 reads +2.99% against Clift, Grace & Weber -- the reference it is now
+  graded against (D16) -- and +5.66% against Schiller-Naumann, and since it sits above all
+  five candidate correlations the positive bias is real rather than scatter; 2D-1's lift
+  check is open and its post-fix Cl is not recorded in the tree; the frozen lattice free
+  surface is correct for still water and its one-cell interface invariant breaks within
+  ten steps of releasing a moving hull; a closed recirculating float32 run erodes about
+  0.86% per million steps. Of the 23 GIFs in the tree, **12 animate and 11 hold exactly
+  one frame**, counted with PIL for this release -- eight of the twelve are lattice demos
+  and four are Isaac Sim RTX renders; the single-frame files are superseded duplicates or
+  diagnostics except `results/crosscheck/live-crosscheck-cylinder.gif`, which is current
+  and holds one frame.
 
 ### Added
 

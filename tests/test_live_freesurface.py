@@ -227,7 +227,13 @@ def test_refining_a_froude_run_raises_the_reynolds_number_and_holds_the_mach():
     `Ma = sqrt(L g_lattice / dx) / c_s`, so refining at a fixed lattice gravity **raises**
     the Mach number -- the opposite of a single-phase case. `for_froude` therefore
     derives `g_lattice` from a Mach target, and the compensation is that the effective
-    viscosity falls as `dx^1.5` so the Reynolds number rises. Both halves are checked.
+    viscosity falls as `dx` so the Reynolds number rises as `1/dx`. Both halves are
+    checked.
+
+    This docstring used to say `dx^1.5`, while the assertion below has always demanded a
+    factor of **2.0** per doubling -- which is `dx^-1`, not the 2.83 that `dx^-1.5` would
+    give. The assertion was right and the prose was wrong; `units.py::for_froude` has the
+    measurement (`dx^1.000000`, residual 3.4e-15 over seven resolutions).
     """
     runs = [Scaling.for_froude(0.1 / cells, 0.06, "water", tau=0.53)
             for cells in (30, 60, 120)]

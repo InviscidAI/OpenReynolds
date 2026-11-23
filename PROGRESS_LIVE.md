@@ -800,11 +800,38 @@ equal to one part in 1e5.
 **Free-surface runs match Froude, not Reynolds, and say so every time.** A free surface's
 timestep comes from gravity -- `g_lattice = g dt^2 / dx` has to stay near 1e-4 -- and
 water's viscosity at that timestep is a `tau_plus` of 0.50002, which no resolution fixes
-(`dt` goes as `sqrt(dx)`, so `nu dt/dx^2` goes as `dx^-1.5` and refining makes it
-worse). So `Scaling.for_froude` chooses the lattice viscosity for stability and reports
-the Reynolds number it actually achieved beside the one real water would have had.
-`Re_eff = Ma c_s N / nu_lattice` with `N` the cells across the depth, which is why every
-number below improves with resolution and why the affordable ones are low.
+(refining makes it worse). So `Scaling.for_froude` chooses the lattice viscosity for
+stability and reports the Reynolds number it actually achieved beside the one real water
+would have had. `Re_eff = Ma c_s N / nu_lattice` with `N` the cells across the depth,
+which is why every number below improves with resolution and why the affordable ones are
+low.
+
+**CORRECTED: the exponent was `dx^1.5` and it is `dx^1`.** This paragraph used to read
+"`dt` goes as `sqrt(dx)`, so `nu dt/dx^2` goes as `dx^-1.5`", and the line directly
+under it disproved it: `Re_eff = Ma c_s N / nu_lattice` is **linear in `N`**, which is
+`dx^-1`, not `dx^-1.5`. `for_froude` with no `g_lattice` sets
+`g_lattice = (Ma c_s)^2 dx / h`, so `dt = Ma c_s dx / sqrt(g h)` goes as `dx` --
+**acoustic scaling, not diffusive** -- and the effective viscosity `nu_l dx^2/dt` falls
+as `dx`. Measured by a least-squares fit over seven resolutions: **`dx^1.000000`, with a
+residual of 3.4e-15**. `dx^1.5` is the law at a *fixed* `g_lattice`, which the Mach
+ceiling forbids. `units.py` carried the same claim and the same self-refutation -- its
+worked example quotes Re going 76 to 153 for a doubling, a factor 2.01, where `dx^-1.5`
+demands 2.83 -- and both are now corrected.
+
+**And the exponent decides what the refinement study below is a study of.** Because
+`dt` goes as `dx`, `Ma` and `tau` are **frozen** along the refinement path while
+`Re_eff` runs away as `1/dx`. The cancellation is exact: with `g_lattice` defaulted,
+`Ma = sqrt(h g_lattice / dx) / c_s` reduces to `mach` itself, and the runs read
+`Ma = 0.070000000` bit-for-bit at 80, 120, 240, 480 and 960 cells while `Re_eff` reads
+96.99, 145.49, 290.98, 581.97, 1163.94 -- the same 145/291/582 the ceiling paragraph
+above quotes. So the sloshing convergence study is **not a fixed-physics study**: it
+refines the grid and changes the Reynolds number together, and the scheme's `O(Ma^2)`
+compressibility error -- **4.9e-3**, which is `0.07^2` exactly and not a fit -- is the
+*same on every grid* and therefore **survives Richardson extrapolation untouched**,
+sitting inside the "converged" limit by construction rather than being eliminated by it.
+Varying `mach` at a fixed grid is the one experiment that separates that from a scheme
+error, and **no mach-swept sloshing run is recorded** in
+`benchmarks/live/results/` -- the knob reached `run_sloshing` only recently.
 
 | case | measured | against | verdict |
 | --- | --- | --- | --- |
@@ -826,14 +853,21 @@ sloshing period / theory      dam break h(dam) / Ritter        drift
  240 cells   1.063              650 cells   1.185              +2.6e-2  (650 cells)
 ```
 
-**The sloshing case has a stability ceiling, and it is a Reynolds-number ceiling.**
-`for_froude` holds the Mach number by scaling `g_lattice` with `dx` and keeps `tau`
-fixed, so `nu_lattice` is constant and `Re_eff` rises in proportion to the cell count:
-145 at 120 cells, 291 at 240, **582 at 480**. At 480 the case diverges -- a mass drift of
--1.6e8 over five million cell conversions, the lattice non-finite. So the one-cell
-interface is stable while the wave is damped and stops being stable as the damping goes
-away, which caps the resolution this case can use at somewhere between 240 and 480 and
-therefore caps how far its convergence can be followed.
+**The sloshing case has a stability ceiling, and a Reynolds-number ceiling is one of two
+readings of it.** `for_froude` holds the Mach number by scaling `g_lattice` with `dx` and
+keeps `tau` fixed, so `nu_lattice` is constant and `Re_eff` rises in proportion to the
+cell count: 145 at 120 cells, 291 at 240, **582 at 480**. At 480 the case diverges -- a
+mass drift of -1.6e8 over five million cell conversions, the lattice non-finite. On that
+reading the one-cell interface is stable while the wave is damped and stops being stable
+as the damping goes away, which caps the resolution this case can use at somewhere
+between 240 and 480 and therefore caps how far its convergence can be followed.
+
+**This paragraph used to rest partly on the mass drift falling with resolution, and the
+drift rises.** With it rising about ten per doubling, the divergence reads equally well
+as the endpoint of a conservation defect, and the recorded runs cannot separate the two
+because both grow as `1/dx` along the only axis that was swept. The numbers and what
+would separate them are under "Mass drift is the one defect of the algorithm itself"
+below. The resolution cap is the same either way.
 
 The sloshing estimators close on each other as the lattice refines -- 523/363 ms at 80
 cells over 2.6 cycles, 449/431 at 240 -- and their agreement now passes at 4.4%. The
@@ -861,8 +895,9 @@ non-zero limit is the signature of a solution that has essentially converged -- 
 
 So the discrepancy is a property of the scheme and not of the grid, and the case does
 not meet its 5% tolerance. Everything else is ruled out with a number: damping
-(`zeta` 0.0035 to 0.020, a four-decimal correction), finite amplitude (0.4% at this
-steepness), the depth (half a cell is 0.2%), gravity (the hydrostatic case pins the
+(`zeta` 0.0035 to 0.020, a four-decimal correction), finite amplitude (**-0.027% at
+this steepness, and the wrong way round** -- see below), the depth (half a cell is
+0.2%), gravity (the hydrostatic case pins the
 effective `g` to 1.3%, worth 0.6% of the period), the estimator (the FFT and the zero
 crossings bracket the same answer and their mean is graded), and now resolution. What
 is left is the discrete dispersion relation of a one-cell interface at `kh` about 0.94,
@@ -876,10 +911,35 @@ nothing. The wave is barely damped and the period is still five per cent long.
 
 What that leaves: not resolution (the two resolutions agree to 2%), not the estimator
 (both of them, and their mean, sit above theory), not damping, not finite amplitude
-(the second-order correction at this steepness is 0.4%), not the depth (half a cell of
+(**-0.027%**, corrected below), not the depth (half a cell of
 it is 0.2% of the period) and not gravity (the hydrostatic case measures the effective
 `g` to 1.3%, which is 0.6% of the period). Unexplained, and it is the one M5 number
 with no account of itself.
+
+**CORRECTED: the finite-amplitude correction is -0.027%, not 0.4%, and it has the
+opposite sign -- which makes this residual worse.** This document and three other places
+credited a finite amplitude with **lengthening** the period by 0.4%, so part of the
+measured excess was taken to be physics. Both halves are wrong. The second-order theory
+is Concus 1962 (UCRL-10208), the capillary-gravity generalisation of Tadjbakhsh & Keller
+(1960) whose original is paywalled; its equation (34) at zero relative capillarity
+`delta = 0` gives
+
+    w_2 = [-2 w0^5 - 3 w0 - 12 w0^-3 + 9 w0^-7] / 32,   w0^2 = tanh(k h)
+
+and `w = w0 + (1/2) (k a)^2 w_2`. Checked against the two anchors the paper supplies:
+it returns **exactly -1/4** in the deep-water limit, and its zero lands at
+**kh = 1.058092** against the paper's stated critical depth of 1.06 (Fultz's 1962
+experiment puts the reversal at `h/lambda` 0.14 against the predicted 0.17, and
+`1.058/2 pi = 0.168`). This tank sits at **kh = 0.9425, below that critical depth**, so
+`w_2 = +0.11788 > 0`: the frequency **rises** with amplitude and a larger amplitude
+**shortens** the period. At `k a = 0.0628` the shift is **-0.027%** (-0.113 ms on
+417.086 ms), not +0.4%.
+
+So the 0.4% was not a small correction in the right direction; it was a credit that
+should never have been taken. **Removing it makes the unexplained residual larger:
+5.1 points rather than 4.7** (the Richardson limit is +5.10% and theory now moves the
+other way by 0.03). That is a correction against this project's own interest, which is
+why it is recorded rather than quietly dropped.
 
 ### The dam break converges, and not to Ritter
 
@@ -922,9 +982,36 @@ conversions and the redistribution are exactly conservative -- the mass banked b
 `apply_conversions` equals the mass `redistribute` hands out, to the last digit -- and the
 whole imbalance lives in the pairing of `exchange_mass` with `sync_fluid_mass`, which
 nearly cancel and do not quite: -0.0396 against +0.0394 on one step, growing to -0.0261
-against +0.0351 six steps later. It falls by a factor of ten from 120 to 240 cells, so it
-behaves like a discretisation error in that pairing rather than a leak, but it has not
-been explained and the cases fail on it at the tolerance they state.
+against +0.0351 six steps later.
+
+**CORRECTED: the drift RISES with resolution, it does not fall.** This paragraph said
+"it falls by a factor of ten from 120 to 240 cells, so it behaves like a discretisation
+error in that pairing rather than a leak". Every recorded pair in
+`benchmarks/live/results/*/result.json` says the opposite -- the drift grows by roughly
+ten per doubling:
+
+| case | coarse | doubled | doubled again |
+| --- | --- | --- | --- |
+| sloshing `slosh3-n*` | 120 cells: 9.0e-7 | 240: 2.8e-5 (**x31**) | 480: diverged, -1.6e8 |
+| sloshing `slosh-n*` | 120 cells: -2.2e-6 | 240: 3.3e-5 (**x15**) | 480: 2.25 |
+| dam break `dam-n*` | 325 cells: 1.5e-6 | 650: -3.1e-5 (**x21**) | 1300: -2.5e-4 (**x8**) |
+
+So the argument that ran off the falling drift is gone, and **a conclusion reverses with
+it, not just a word.** The section above reads the 480-cell divergence as a
+Reynolds-number ceiling: `Re_eff` rises as `1/dx` (145, 291, 582), the one-cell
+interface is stable while the wave is damped and stops being stable as the damping goes
+away. That reading still stands on its own numbers. But with the drift **rising** about
+ten per doubling, the divergence is **equally well read as the endpoint of a
+conservation defect** -- the same refinement that raises `Re_eff` raises the imbalance in
+the `exchange_mass`/`sync_fluid_mass` pairing, and 480 cells is simply where it stops
+being small. The two explanations are confounded along the only axis that was swept, and
+**the recorded runs cannot separate them**: both scale monotonically with `1/dx` and no
+run holds one fixed while moving the other. Separating them needs a run at 480 cells
+with `Re_eff` held down (a larger `tau`, or `mach` lowered to restore it), which has not
+been done.
+
+Either way it is a defect of the algorithm and not a leak at a single site, it has not
+been explained, and the cases fail on it at the tolerance they state.
 
 **Bugs this milestone found in its own code, each with what made it visible.**
 

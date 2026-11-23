@@ -388,8 +388,12 @@ class Scaling:
     scheme goes unstable within a few hundred steps. That fixes `dt` at
     `sqrt(g_lattice dx / g)`, which for a 3 mm cell is about 6e-5 s -- and water's
     viscosity at that timestep is `nu dt / dx^2 = 5e-6` in lattice units, a tau_plus of
-    0.500016. There is no resolution that fixes it: `dt` goes as `sqrt(dx)`, so
-    `nu dt/dx^2` goes as `dx^-1.5` and refining makes it worse.
+    0.500016. There is no resolution that fixes it, on either scaling path: at a *fixed*
+    `g_lattice` the step goes as `sqrt(dx)` and `nu dt/dx^2` goes as `dx^-1.5`, and on
+    the path `for_froude` actually defaults to -- `g_lattice` scaled with `dx` to hold
+    the Mach number -- the step goes as `dx` and `nu dt/dx^2` goes as `dx^-1`. Refining
+    makes it worse either way, and `dx^-1.5` is the exponent of the fixed-`g_lattice`
+    path only; `for_froude`'s docstring has the measurement.
 
     So a free-surface run matches the **Froude** number, which is the one that governs a
     gravity-driven free surface, and accepts a Reynolds number lower than the real
@@ -770,9 +774,33 @@ class Scaling:
         to override it; `mach` sets the target the default aims at.
 
         The compensation is worth stating because it is the reason refining is still
-        worth doing: `dt` falls as `sqrt(g_lattice dx)`, so the effective viscosity
-        `nu_l dx^2/dt` falls as `dx^1.5` and the **Reynolds number rises**. A 30-cell
-        tank runs at Re 76 and a 60-cell one at Re 153.
+        worth doing, and **the exponent is `dx^1`, not the `dx^1.5` this docstring used
+        to claim.** Substituting the defaulted `g_lattice` into `dt`,
+
+            dt = sqrt(g_lattice dx / g) = mach c_s dx / sqrt(g L)
+
+        so `dt` goes as `dx` -- acoustic scaling, not diffusive -- and the effective
+        viscosity `nu_l dx^2/dt` falls as `dx`, measured at `dx^1.000000` by a
+        least-squares fit over seven resolutions with a residual of 3.4e-15. The
+        **Reynolds number rises** as `1/dx`. `dx^1.5` is the law on the *fixed*-
+        `g_lattice` path, which is exactly the path the Mach ceiling above forbids.
+
+        **The worked example the old claim shipped with disproved it**, which is the
+        clearest evidence there is -- a document that refutes itself in its own example
+        needs no outside check: a 30-cell tank runs at Re 76 and a 60-cell one at Re 153, a
+        factor of **2.01**. `dx^-1` demands 2.00; `dx^-1.5` demands 2.83.
+
+        That exponent is not bookkeeping. Because `dt` goes as `dx`, **Ma and tau are
+        frozen along the refinement path while `Re_eff` runs away as `1/dx`.** With
+        `g_lattice` defaulted the two cancel exactly: `Ma = sqrt(L g_lattice / dx) / c_s`
+        reduces to `mach` itself, bit-for-bit at every resolution, and `tau` is passed
+        in. A convergence study on this constructor is therefore **not a fixed-physics
+        study**: it refines the grid and changes the Reynolds number at the same time,
+        while the scheme's `O(Ma^2)` compressibility error -- `4.9e-3` at the default
+        `mach = 0.07`, which is `0.07^2` and not a fit -- is **identical on every grid**
+        and so **survives Richardson extrapolation untouched**, sitting inside the
+        "converged" limit by construction rather than being eliminated by it. Varying
+        `mach` at a fixed grid is the one experiment that separates the two.
         """
         medium = fluid(fluid_spec)
         dx = float(dx)
