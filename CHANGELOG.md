@@ -10,6 +10,12 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **The cheap recovery moves when a run diverges, and how the log ended.**
+  `openreynolds/toolbox/recover.py`, from #274. Merged into this release rather than left
+  under Unreleased, because it is on `main` and a tag of `main` publishes it either way --
+  a changelog that omits what the artefact contains is the kind of drift this file exists
+  to prevent.
+
 - **`openreynolds[live]` v0.1: a GPU lattice Boltzmann fluid in lockstep with Newton.** An
   optional extra; nothing in the core install changes and core imports without it.
   `RELEASE_NOTES_v0.1.md` is the release record and `docs/live-sync.md` is the page.
