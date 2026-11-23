@@ -2626,8 +2626,11 @@ def _try_draw(label: str, make: Callable[[], Any]) -> tuple[Any, str | None]:
     This exists because the same accident has now happened three times in this work, each
     time *after* every graded number had been computed and each time on a GPU:
 
-    * a mangled f-string -- `r[chr(39) + 'z_over_r' + chr(39)]` -- raised `KeyError`
-      after **1,087 s** of H100 on the ground-effect case;
+    * a mangled f-string that built a dict key by concatenating a quote character out of
+      a `chr` call, which raised `KeyError` after **1,087 s** of H100 on the
+      ground-effect case (`test_no_case_builds_a_dict_key_out_of_chr_39` now forbids the
+      construct, which is why it is described here rather than quoted -- quoting it
+      failed that very test);
     * two report lines appended to `lines` before `lines` existed raised
       `UnboundLocalError` after **44 s** on `sph_hydrostatic`;
     * a one-frame animation tripped `figures.animate`'s own guard after **457 s** on
