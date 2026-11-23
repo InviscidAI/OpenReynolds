@@ -326,6 +326,45 @@ The alternative was to ship the soft inlet, pass the cross-check, and leave
 Schaefer-Turek 43% wrong with nothing on the page about it. That trades a visible
 failure for a hidden one.
 
+### The sphere at Re 10: not resolution, and barely blockage
+
+M1's last genuinely open failure, now characterised. It is `Cd` at Re 10 reading +5.65%
+against Schiller-Naumann's 4.1511, outside the brief's 5%.
+
+**Not resolution.** Three grids, the cross-section held at 12 diameters:
+
+| cells per diameter | Cd | |
+| --- | --- | --- |
+| 16 | 4.3848 | +5.63% |
+| 20 | 4.3857 | +5.65% |
+| 24 | 4.3875 | +5.70% |
+
+A 0.07% spread over a 50% refinement is not a grid error.
+
+**Barely blockage.** Widening the box at 16 cells per diameter takes it from +5.63% at
+12 diameters to **+5.35%** at 20, so the side walls are worth about a quarter of a per
+cent, not five.
+
+**What it looks like instead.** The error over all four Reynolds numbers the case runs
+is monotonic and changes sign:
+
+| Re | 10 | 50 | 100 | 200 |
+| --- | --- | --- | --- | --- |
+| error | **+5.65%** | +4.10% | +2.30% | **-0.74%** |
+
+about -2.0% per e-fold of Reynolds number, crossing zero near Re 230. That is the shape
+of an error in the **viscous-dominated limit** -- it grows as the flow gets more viscous
+and vanishes as inertia takes over -- and not of a constant offset or of noise.
+
+Two candidates remain and this repository can distinguish neither from the other
+without something it does not have. The lattice's own low-Re behaviour is one.
+Schiller-Naumann itself is the other: it is a fit to 1933 measurements, `REFERENCES`
+records that `sphere_drag.py` "is explicit that its accuracy should be quoted from a
+source and not from the formula", and no source for it has been read here. **So the
+discrepancy is reported and not attributed**, because attributing it would mean
+inventing the reference's error bar, which is the one thing the reference entry exists
+to refuse.
+
 ### M5 -- the free surface
 
 `openreynolds/live/freesurface.py`, written from Korner et al. (2005) and Thurey's
