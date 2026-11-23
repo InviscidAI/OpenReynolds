@@ -261,6 +261,138 @@ quaternion, and the controller tracks the setpoint to within 0.6 degrees.
 Cross-checked on an L40S inside a live Kit process at the same settings, on Kit's own
 Warp and Newton: 0.00 g, 67.88 g, 126.77 g and 195.65 g, ratios --, 2.21, 1.12 and 1.05,
 which is within 1.5% of the CPU run at every angle. Four angles in 79 s.
+
+**Every mass in that table is a count of particles**, and the table now prints the
+quantum beside it: at 5 mm the cup holds 256 of them, so one particle is 0.998 g =
+0.391% of the cup and the four transfers are 0, 69, 129 and 194 particles. Those are
+hundreds of quanta, so the pour masses are not quantum-limited and the ratios above are
+real. The spill in `convergence` is the one that is, and `--mode onset` below is the
+measurement that does not have the problem at all.
+
+## The spill angle, which is the quantity that converges
+
+`--mode onset`, which is `spill_onset` and `onset_convergence` below. `pour` weighs mass
+at fixed angles; this measures the **angle** at a fixed event, and that is the better
+conditioned of the two by a long way. Mass out of this cup is a count, quantised at
+1/`n_fluid`; a threshold angle is quantised only by how fast the tilt sweeps through it,
+`rate / 100` radians at a 100 Hz step, and refining the fluid does not coarsen it.
+
+**Two closed forms get quoted for a tipping cup and they are different formulas.**
+
+    tan(theta) = D^2 / (4 a h) = 1.5625 -> 57.381 deg   `spill_angle`, dry-floor wedge
+    tan(theta) = (H - h) / R   = 1.5000 -> 56.310 deg   `rim_angle`, floor wet across
+
+The second is the trapezoid branch `spill_angle` already derives, written for a round
+cup; it is the right formula for a cup filled past half. It carries a precondition --
+the floor has to still be wet under the tilted plane, `tan(theta) <= h / R` -- and this
+cup fails it at **45 degrees**, twelve below the angle the formula itself returns. So
+this was never a tie for a measurement to break: one of the two is being evaluated
+outside its own domain. `h = 40 mm` against `H / 2 = 50 mm`, short by 10 mm.
+
+**The square plan is not the explanation, which is the thing to check before believing
+the above.** `tests/test_live_isaac.py::test_the_spill_angle_is_the_one_quadrature_
+agrees_with_and_the_rim_form_is_not` integrates the water volume under the onset plane
+assuming **neither** branch and gets 57.381 deg for the square cup, to 0.01 deg. The
+same integral on a cylinder of `R = a` gives 56.80, and on one of the equal-area
+`R = 45.14 mm` gives 53.56. So the plan shape is worth 0.58 deg, the branch 1.07, and
+the `R` convention 3.3.
+
+Measured on an **L40S** (`benchmarks/live/modal_run.py::onset`, Warp 1.19.0, pip Newton
+1.8.0), tilting about world y at 0.1 rad/s from a settled cup, the angle read off the
+cup's own quaternion on a 0.057 deg/step grid, first escaped particle:
+
+    radius  fluid  depth   1 particle      onset    err vs 57.38  err vs 56.31   5% out
+    10 mm      32   2 p   7.986 g 3.12%   56.93 deg    -0.45         +0.62       57.36
+     5 mm     256   4 p   0.998 g 0.39%   51.76 deg    -5.62         -4.55       55.63
+     2.5 mm  2,048  8 p   0.125 g 0.05%   57.15 deg    -0.23         +0.84       61.02
+     2 mm    4,000 10 p   0.064 g 0.03%   57.23 deg    -0.15         +0.92       61.61
+
+**The error converges to the wedge form and away from the rim form.** Over the two
+finest rows it falls 0.23 -> 0.15 deg while the error against `(H - h) / a` grows
+0.84 -> 0.92; a linear extrapolation in the spacing puts the converged onset at
+57.5 deg, 0.2 above the wedge and 1.2 above the rim form. The whole sweep is 290 s.
+
+The coarse rows are not monotone, and the two things that put an O(spacing) error on
+this measurement pull in **opposite directions**, so there is no reason they should
+shrink in step. Both are measured on the settled cup rather than asserted -- 100
+coupling steps, Warp CPU, particle heights in the cup's own frame, the free surface
+taken as the median of the per-column topmost particle plus half a spacing:
+
+    radius  bulk surface   above the 40 mm line   highest particle   crest above bulk
+    10 mm      41.6 mm            +4.0%                39.1 mm            7.5 mm
+     5 mm      43.7 mm            +9.3%                60.9 mm           22.2 mm
+     2.5 mm    42.8 mm            +7.0%                53.7 mm           13.4 mm
+     2 mm      44.0 mm            +9.9%                52.3 mm           10.3 mm
+
+* **The column stands 2 to 4 mm proud of the still-water line, at every radius**, and
+  it does not shrink with refinement, because it is not a discretisation error: the
+  surface particles carry a density deficit -- `density_error()["mean_deficit"]` is
+  0.078 to 0.095 on these four runs -- and an 8% deficit over a 40 mm column is 3 mm of
+  dilation. At the 2 mm row's measured 44.0 mm the wedge form gives 54.9 rather than
+  57.4, so this is worth about **-2.5 deg**.
+* **`_Cup.outside` allows half a spacing past the rim** before a particle counts as
+  spilled, 10 mm at the coarsest radius against 2 mm at the finest. Raising the rim
+  from 100 to 102 mm on that same dilated column gives 55.9 rather than 54.9, so this
+  is worth about **+1.0 deg** at 2 mm and more at every coarser radius.
+
+They partly cancel, to a net -1.5 deg of artefact at 2 mm against a measured -0.07, so
+about a degree and a half is left over that this does not account for -- the two terms
+above are a budget, not a model, and a cup tipping is not a cup standing still. It does
+not need to be accounted for to pick a formula: the two forms are 1.07 deg apart, the
+error against the wedge form shrinks with refinement (-0.45, -0.23, -0.07) while the
+error against the rim form grows (+0.62, +0.84, +1.00), and a bias that pushed the
+measurement toward the wedge form would have to be a coincidence that also reversed
+sign between the two candidates.
+
+**What is wrong with the 5 mm row is the crest, and the table above shows it.** Its
+highest particle stands 22.2 mm above its bulk surface, against 7.5, 13.4 and 10.3 mm
+at the others. A first-particle onset is by construction an event in the crest and not
+in the bulk surface, and at 5 mm the crest is tall enough to clear the rim while the
+surface is still 5 degrees short of it -- which is why that row's first and second
+particle leave on the **same step**, 3.9 deg before the 5% threshold. The coarse rows
+are not evidence for `(H - h) / R`; the 5 mm row is not evidence for anything.
+
+**The tilt rate is a real term and it runs the other way from the obvious guess.** At
+5 mm, same seed:
+
+    rate        onset     err vs 57.38    5% out
+    0.40 rad/s  55.90 deg    -1.48        61.21
+    0.20 rad/s  53.51 deg    -3.87        57.86
+    0.10 rad/s  51.50 deg    -5.89        55.71
+    0.05 rad/s  51.21 deg    -6.17        54.08
+
+A **faster** tilt pours **later**, because the water lags the cup: at the moment the cup
+passes a given angle the surface has not yet redistributed to the plane that angle
+implies, so it is still low at the pouring rim. The quasi-static limit is about 51.1 deg
+and 0.1 rad/s is within 0.3 of it, which is what makes the radius sweep above a
+near-quasi-static measurement rather than a rate measurement. It is also not in
+contradiction with `pour`'s ratios being above 1: a fast tilt delays the onset and then
+throws more water over the rim once it is past it.
+
+At 2 mm the rate dependence has collapsed with the bulge that caused it -- 57.87, 57.59,
+57.53 and 56.95 deg over the same factor of eight in rate, a 0.92 deg spread against
+5 mm's 4.69 -- which is the same evidence read a second way: what the tilt rate acts on
+is the time the surface has to redistribute, and a resolved surface has little to
+redistribute.
+
+**The error bar on a first-particle event is about a fifth of a degree and it is
+measured, not assumed.** The SPH neighbour reductions are not bit-reproducible on the
+GPU, so a repeat is a sample and not a copy. Three runs at 2 mm and 0.1 rad/s, same
+seed, gave 57.23, 57.18 and 57.53 deg; two at 5 mm gave 51.76 and 51.50. Both scatter
+0.19 deg, and the angle between the first and the second particle out is 0.43, 0.00,
+0.38 and 0.24 deg across the four radii -- the same order, which is what says the bound
+is the one-particle event itself and not the integration.
+
+So the finest radius measures **57.31 +- 0.19 deg** against a 1.07 deg gap between the
+two closed forms:
+
+    D^2 / (4 a h)   57.381 deg   measured - predicted = -0.07 +- 0.19   indistinguishable
+    (H - h) / a     56.310 deg   measured - predicted = +1.00 +- 0.19   5.3 sigma away
+    (H - h) / R_eq  53.048 deg   measured - predicted = +4.26 +- 0.19   22 sigma away
+
+The wedge form is the one the measurement supports, the rim form is ruled out at five
+sigma, and the rim form was already ruled out by its own precondition before a particle
+moved. Those two agreeing is the result.
 """
 
 from __future__ import annotations
@@ -276,7 +408,8 @@ import numpy as np
 from .isaac import AUTORESET_SAME_STEP, G, _torch
 
 __all__ = ["CarryFluidEnvCfg", "CarryFluidEnv", "lamb_period", "spill_angle",
-           "retained_fraction", "shake", "convergence", "pour", "main"]
+           "rim_angle", "retained_fraction", "shake", "convergence", "pour",
+           "spill_onset", "onset_convergence", "main"]
 
 
 @dataclass
@@ -1466,6 +1599,64 @@ def spill_angle(cfg: CarryFluidEnvCfg) -> float:
     return math.atan(tangent)
 
 
+def rim_angle(cfg: CarryFluidEnvCfg, radius: str = "half_width") -> dict:
+    """The other spill-angle formula, `tan(theta) = (H - h) / R`, and whether it holds.
+
+    This is the **trapezoid branch** of `spill_angle` written for a round cup: a vessel
+    of inner height `H` filled to depth `h`, tilted until the free surface -- still a
+    plane covering the whole floor -- first touches the rim. For a cylinder the volume
+    under the plane `z = x tan(theta) + k` is `pi R^2 k` by symmetry, so `k = h`
+    exactly, and the plane reaches `(R, H)` at `tan(theta) = (H - h) / R`. For a square
+    cup the same symmetry gives `k = h` with `R = a`, so the formula is shape-blind in
+    this branch; `(H - h) / a` is the trapezoid branch `spill_angle` already derives.
+
+    **It carries a precondition that this cup fails.** The floor stays wet only while
+    the plane's uphill end is still above it, `h - R tan(theta) >= 0`, i.e.
+    `tan(theta) <= h / R`. Past that the water pulls away from the uphill wall and
+    becomes a wedge, which is deeper at the pouring rim for the same volume, and the
+    governing angle is `spill_angle`'s triangle branch instead. The precondition is
+    equivalent to `h >= H / 2` at onset, which is why `spill_angle` branches on exactly
+    that. At the defaults `h = 40 mm` against `H / 2 = 50 mm`: short by 10 mm, so this
+    formula is being read 12 degrees outside its own domain and the number it returns
+    is not a prediction of anything.
+
+    `radius` says what to use for `R` on a cup that has no radius, since it is five
+    boxes and square in plan (see the module docstring):
+
+    * `"half_width"` -- `R = a`, matching the cross-section the tilt runs through. This
+      is the one that makes the two formulas comparable, because it is the same `a` the
+      triangle branch uses.
+    * `"equal_area"` -- `R = sqrt((2a)^2 / pi)`, the radius of a cylinder with the same
+      plan area and therefore the same volume at the same fill depth. Wider than `a` by
+      13%, so it predicts a smaller angle.
+
+    Returns the tangent, the angle in radians and degrees, the floor-dry limit, and
+    `valid`. **The plan shape is not where the two formulas differ**: a cylinder of
+    `R = a`, integrated without assuming a branch, spills at 56.80 degrees against the
+    square cup's 57.38 -- 0.58 degrees. The branch is worth 1.07 degrees and the
+    `R` convention 3.3. `tests/test_live_isaac.py` pins all of it against quadrature.
+    """
+    a = float(cfg.cup_half_width)
+    height, fill = float(cfg.cup_depth), float(cfg.fill_depth)
+    if radius == "half_width":
+        r = a
+    elif radius == "equal_area":
+        r = math.sqrt((2.0 * a) ** 2 / math.pi)
+    else:
+        raise ValueError(f"radius must be 'half_width' or 'equal_area', got {radius!r}")
+    tangent = (height - fill) / r
+    return {
+        "convention": radius,
+        "R": r,
+        "tangent": tangent,
+        "angle": math.atan(tangent),
+        "angle_deg": math.degrees(math.atan(tangent)),
+        "floor_dry_tangent": fill / r,
+        "floor_dry_deg": math.degrees(math.atan(fill / r)),
+        "valid": tangent <= fill / r,
+    }
+
+
 def retained_fraction(cfg: CarryFluidEnvCfg, angle: float) -> float:
     """What fraction of the water a cup tilted quasi-statically to `angle` keeps.
 
@@ -1621,13 +1812,19 @@ def convergence(radii: tuple[float, ...] = (0.01, 0.005, 0.0025), *,
           f" -- {rows[0]['simulated_s']:.2f} s simulated, {rows[0]['env_steps']} env "
           f"steps, identical at every radius\n")
     print("  radius  spacing  fluid  depth    F_xy peak   F_xy rms   F_z/weight  "
-          "    spill        of cup   ms/step")
+          "    spill        of cup    particles out   1 p = quantum   ms/step")
     for row in rows:
+        # Every spill figure carries its quantum, because the spill is a count of
+        # escaped particles and nothing finer than one of them exists: two rows that
+        # differ by less than a quantum are the same measurement reported twice.
+        quantum = 1.0 / max(row["fluid_particles"], 1)
         print(f"  {row['radius'] * 1e3:4.1f} mm  {row['spacing_mm']:4.1f} mm  "
               f"{row['fluid_particles']:5d}  {row['depth_in_particles']:2d} p  "
               f"{row['force_peak']:7.3f} N    {row['force_rms']:6.3f} N    "
               f"{row['weight_fraction'] * 100:6.1f}%    "
               f"{row['spill'] * 1e3:7.2f} g   {row['spill_fraction'] * 100:5.1f}%   "
+              f"{row['spill_fraction'] / quantum:9.0f} p      "
+              f"{quantum * row['water_mass'] * 1e3:6.3f} g = {quantum * 100:5.2f}%  "
               f"{row['ms_per_coupling_step']:6.1f}")
     raw = ", ".join("%.3f" % row["force_raw_peak"] for row in rows)
     filtered = ", ".join("%.3f" % row["force_peak"] for row in rows)
@@ -1673,7 +1870,11 @@ def pour(angles_deg: tuple[float, ...] = (45.0, 60.0, 70.0, 80.0), *,
         print(f"  spill angle from the geometry: {math.degrees(critical):.1f} deg "
               f"(tan = {math.tan(critical):.4f} = D^2 / 4ah), tilted at {rate:g} rad/s "
               f"then held {hold_s:g} s\n")
-        print("  target   reached   transferred   predicted   ratio    left in cup")
+        print(f"  one particle = {env.cups[0].particle_mass * 1e3:.3f} g = "
+              f"{100.0 / max(env.cups[0].world.n_fluid, 1):.3f}% of the cup, which is "
+              f"the quantum every mass below is counted in\n")
+        print("  target   reached   transferred  particles   predicted   ratio"
+              "    left in cup")
         for target in angles_deg:
             env.reset(seed=seed)
             action = torch.zeros((1, env.num_actions), device=device)
@@ -1700,17 +1901,218 @@ def pour(angles_deg: tuple[float, ...] = (45.0, 60.0, 70.0, 80.0), *,
                 "ratio": transferred / predicted if predicted > 0 else float("nan"),
                 "water_mass": float(env.water_mass),
                 "fluid_particles": int(env.cups[0].world.n_fluid),
+                "particle_mass": float(env.cups[0].particle_mass),
+                "quantum_fraction": 1.0 / max(int(env.cups[0].world.n_fluid), 1),
+                "transferred_particles": transferred
+                                         / max(env.cups[0].particle_mass, 1e-18),
                 "tilt_rate": float(rate),
                 "hold_s": float(hold_s),
             })
             row = rows[-1]
             print(f"  {target:5.0f}d   {row['reached_deg']:5.1f}d   "
-                  f"{transferred * 1e3:7.2f} g    {predicted * 1e3:7.2f} g   "
+                  f"{transferred * 1e3:7.2f} g   "
+                  f"{transferred / max(env.cups[0].particle_mass, 1e-18):6.0f} p  "
+                  f"  {predicted * 1e3:7.2f} g   "
                   f"{row['ratio']:6.2f}   "
                   f"{(env.water_mass - transferred) * 1e3:7.2f} g")
         return rows
     finally:
         env.close()
+
+
+def spill_onset(radius: float = 0.005, *, device: str = "cpu", rate: float = 0.1,
+                cap_deg: float = 70.0, seed: int = 0, settle: int = 100,
+                stop_fraction: float = 0.05) -> dict:
+    """Tilt slowly and record the cup's own angle at which water first leaves. Measured.
+
+    `pour` weighs mass at four fixed angles; this measures the **angle** at a fixed
+    event, and the angle is the better conditioned of the two by a long way. Mass out
+    of this cup is a count of escaped particles, so it is quantised in units of
+    `1 / n_fluid` of the cup -- 3.1% at a 10 mm radius against 0.025% at 2 mm -- and
+    that quantum is why the spill masses in `convergence` do not converge. A threshold
+    angle is quantised only by how fast the tilt sweeps through it: at `rate` rad/s and
+    a 100 Hz environment step the angle grid is `rate / 100` radians, 0.057 degrees at
+    the default, and refining the fluid does not coarsen it.
+
+    The drive is a single continuous rotation about the world y axis at `rate` rad/s
+    from a settled upright cup, stepped until `stop_fraction` of the water is out or the
+    cup reaches `cap_deg`. The angle recorded is the **cup's**, `acos(R[2][2])` off its
+    quaternion, not the setpoint's -- at 0.1 rad/s the finite-stiffness PD lags by about
+    0.08 degrees, which matters at the 1 degree resolution the two closed forms differ
+    at.
+
+    **`rate` is a real term in the answer.** The closed forms are quasi-static and the
+    water sloshes, so a faster tilt spills earlier; `onset_convergence` sweeps the rate
+    at one radius so the extrapolation to zero is a measurement rather than an
+    assumption. 0.1 rad/s is the default here against `pour`'s 0.4 because this is a
+    threshold measurement and 0.4 rad/s crosses the whole interesting interval in
+    0.3 sloshing periods.
+
+    Two resolution-dependent biases sit on the number and they have opposite signs, so
+    the convergence is not expected to be one-sided:
+
+    * the coarse free surface settles **above** the still-water line -- up to 40% of the
+      fill depth at four particles through it -- which reaches the rim early;
+    * `_Cup.outside` allows half a spacing of slack past the rim before it calls a
+      particle spilled, 10 mm at the coarsest radius against 2 mm at the finest, which
+      calls it late.
+
+    Both are O(spacing), so the error should fall roughly linearly in the spacing, and
+    the reported `onset_deg` is an onset for the *discrete* free surface either way.
+
+    Returns the angle at the first escaped particle, at the second (their difference is
+    the quantum expressed in degrees, which is the honest error bar on a one-particle
+    event), at `stop_fraction`, and both closed forms with the error against each.
+    """
+    torch = _torch()
+    from .world import _quat_matrix
+
+    env = _carry_env(radius, device, settle_steps=settle)
+    try:
+        env.reset(seed=seed)
+        action = torch.zeros((1, env.num_actions), device=device)
+        action[0, 4] = min(1.0, rate / float(env.cfg.max_rate))
+        cup = env.cups[0]
+        quantum = float(cup.particle_mass)
+        water = float(cup.water_mass)
+        particles = int(cup.world.n_fluid)
+        cap = math.radians(cap_deg)
+        angles: list[float] = []
+        counts: list[int] = []
+        started, ended = time.perf_counter(), ""
+        while True:
+            _, _, terminated, truncated, _ = env.step(action)
+            if bool(terminated.any()) or bool(truncated.any()):
+                ended = "the episode ended mid-measurement"
+                break
+            _, orientation = cup.pose()
+            angles.append(math.acos(min(1.0, max(-1.0, float(
+                _quat_matrix(orientation)[2, 2])))))
+            counts.append(int(round(float(env._spilled[0]) / max(quantum, 1e-18))))
+            if angles[-1] >= cap:
+                ended = f"reached the {cap_deg:g} degree cap"
+                break
+            if counts[-1] * quantum >= stop_fraction * water:
+                ended = f"{stop_fraction * 100:g}% of the cup is out"
+                break
+        elapsed = time.perf_counter() - started
+
+        def angle_at(n: int) -> float | None:
+            """Cup angle, degrees, at the step the nth particle was first counted out."""
+            for angle, count in zip(angles, counts):
+                if count >= n:
+                    return math.degrees(angle)
+            return None
+
+        onset = angle_at(1)
+        second = angle_at(2)
+        bulk = angle_at(max(1, int(math.ceil(stop_fraction * particles))))
+        triangle = math.degrees(spill_angle(env.cfg))
+        trapezoid = rim_angle(env.cfg)["angle_deg"]
+        return {
+            "radius": float(radius),
+            "spacing_mm": env.cfg.spacing * 1e3,
+            "fluid_particles": particles,
+            "depth_in_particles": int(round(env.cfg.fill_depth / env.cfg.spacing)),
+            "particle_mass": quantum,
+            "quantum_fraction": 1.0 / max(particles, 1),
+            "water_mass_sampled": water,
+            "water_mass_nominal": float(env.water_mass),
+            "rate": float(rate),
+            "angle_grid_deg": math.degrees(rate * env.step_dt),
+            "onset_deg": onset,
+            "second_particle_deg": second,
+            "quantum_deg": None if (onset is None or second is None)
+                           else second - onset,
+            "bulk_deg": bulk,
+            "bulk_fraction": float(stop_fraction),
+            "max_angle_deg": math.degrees(max(angles)) if angles else 0.0,
+            "escaped_particles": counts[-1] if counts else 0,
+            "escaped_fraction": (counts[-1] / max(particles, 1)) if counts else 0.0,
+            "triangle_deg": triangle,
+            "trapezoid_deg": trapezoid,
+            "error_vs_triangle": None if onset is None else onset - triangle,
+            "error_vs_trapezoid": None if onset is None else onset - trapezoid,
+            "env_steps": len(angles),
+            "device": device,
+            "stopped_because": ended,
+            "seconds": elapsed,
+            "ms_per_coupling_step": elapsed / max(len(angles) * env.cfg.decimation, 1)
+                                    * 1e3,
+        }
+    finally:
+        env.close()
+
+
+def onset_convergence(radii: tuple[float, ...] = (0.01, 0.005, 0.0025, 0.002), *,
+                      device: str = "cpu", rate: float = 0.1,
+                      rates: tuple[float, ...] = (), seed: int = 0,
+                      settle: int = 100, stop_fraction: float = 0.05) -> dict:
+    """`spill_onset` at several particle counts, and optionally at several tilt rates.
+
+    The deliverable for "does the spill angle converge, and to which closed form".
+    Prints the quantum beside every mass fraction, because a difference smaller than one
+    particle is not a difference: at a 10 mm radius the cup holds 32 particles, so the
+    finest spill fraction that exists is 3.1% and any two numbers inside that band are
+    the same measurement.
+    """
+    cfg = CarryFluidEnvCfg(particle_radius=radii[0])
+    triangle = math.degrees(spill_angle(cfg))
+    half = rim_angle(cfg, "half_width")
+    area = rim_angle(cfg, "equal_area")
+    print(f"\n  cup {2 * cfg.cup_half_width * 1e3:g} mm square (five boxes, not round) "
+          f"x H = {cfg.cup_depth * 1e3:g} mm deep, filled h = {cfg.fill_depth * 1e3:g} mm"
+          f" -- h/H = {cfg.fill_depth / cfg.cup_depth:.2f}, so h < H/2")
+    print(f"  prediction A  tan = D^2/4ah  = {math.tan(spill_angle(cfg)):.4f}  -> "
+          f"{triangle:6.3f} deg   dry-floor wedge, equal volume   VALID (needs tan >= h/a"
+          f" = {cfg.fill_depth / cfg.cup_half_width:.2f})")
+    for form in (half, area):
+        print(f"  prediction B  tan = (H-h)/R  = {form['tangent']:.4f}  -> "
+              f"{form['angle_deg']:6.3f} deg   R = {form['R'] * 1e3:.2f} mm "
+              f"({form['convention']}), floor wet across   "
+              f"{'VALID' if form['valid'] else 'INVALID past'} "
+              f"{form['floor_dry_deg']:.2f} deg")
+    rows = [spill_onset(radius, device=device, rate=rate, seed=seed, settle=settle,
+                        stop_fraction=stop_fraction) for radius in radii]
+    print(f"\n  tilted about world y at {rate:g} rad/s from settled, angle read off the "
+          f"cup's quaternion (grid {rows[0]['angle_grid_deg']:.3f} deg/step)\n")
+    print("  radius  spacing  fluid  depth    1 particle = quantum    onset    err vs A"
+          "   err vs B    5% out   ms/step")
+    for row in rows:
+        quantum = (f"{row['particle_mass'] * 1e3:6.3f} g = "
+                   f"{row['quantum_fraction'] * 100:5.2f}%")
+        onset = ("  --  " if row["onset_deg"] is None
+                 else f"{row['onset_deg']:6.2f}d")
+        err_a = ("   --  " if row["error_vs_triangle"] is None
+                 else f"{row['error_vs_triangle']:+6.2f}d")
+        err_b = ("   --  " if row["error_vs_trapezoid"] is None
+                 else f"{row['error_vs_trapezoid']:+6.2f}d")
+        bulk = "  --  " if row["bulk_deg"] is None else f"{row['bulk_deg']:6.2f}d"
+        print(f"  {row['radius'] * 1e3:4.1f} mm  {row['spacing_mm']:4.1f} mm  "
+              f"{row['fluid_particles']:5d}  {row['depth_in_particles']:2d} p   "
+              f"{quantum}   {onset}    {err_a}     {err_b}    {bulk}  "
+              f"{row['ms_per_coupling_step']:7.1f}")
+    print(f"\n  the quantum in degrees -- first to second particle out: "
+          + ", ".join("%s" % ("--" if row["quantum_deg"] is None
+                              else "%.2f deg at %.1f mm"
+                                   % (row["quantum_deg"], row["radius"] * 1e3))
+                      for row in rows))
+    sweep = [spill_onset(radii[-1] if len(radii) == 1 else 0.005, device=device,
+                         rate=r, seed=seed, settle=settle,
+                         stop_fraction=stop_fraction) for r in rates]
+    if sweep:
+        print(f"\n  tilt rate at {sweep[0]['radius'] * 1e3:g} mm -- the closed forms are "
+              f"quasi-static, so slower should read later\n")
+        print("    rate      onset    err vs A    5% out")
+        for row in sweep:
+            onset = "  --  " if row["onset_deg"] is None else f"{row['onset_deg']:6.2f}d"
+            err = ("   --  " if row["error_vs_triangle"] is None
+                   else f"{row['error_vs_triangle']:+6.2f}d")
+            bulk = "  --  " if row["bulk_deg"] is None else f"{row['bulk_deg']:6.2f}d"
+            print(f"    {row['rate']:4.2f} rad/s  {onset}    {err}    {bulk}")
+    return {"radii": rows, "rates": sweep, "triangle_deg": triangle,
+            "trapezoid_half_width_deg": half["angle_deg"],
+            "trapezoid_equal_area_deg": area["angle_deg"]}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1728,10 +2130,14 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--mode", default="rollout",
-                        choices=["rollout", "convergence", "pour"])
+                        choices=["rollout", "convergence", "pour", "onset"])
     parser.add_argument("--radii", type=float, nargs="+",
                         default=[0.01, 0.005, 0.0025],
-                        help="particle radii for --mode convergence")
+                        help="particle radii for --mode convergence or onset")
+    parser.add_argument("--rate", type=float, default=0.1,
+                        help="tilt rate in rad/s for --mode onset")
+    parser.add_argument("--rates", type=float, nargs="*", default=[],
+                        help="extra tilt rates to sweep at 5 mm for --mode onset")
     parser.add_argument("--angles", type=float, nargs="+",
                         default=[45.0, 60.0, 70.0, 80.0],
                         help="tilt targets in degrees for --mode pour")
@@ -1757,6 +2163,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "pour":
         pour(tuple(args.angles), radius=args.radius, device=args.device,
              seed=args.seed, settle=args.settle)
+        return 0
+    if args.mode == "onset":
+        onset_convergence(tuple(args.radii), device=args.device, rate=args.rate,
+                          rates=tuple(args.rates), seed=args.seed,
+                          settle=args.settle)
         return 0
 
     torch = _torch()

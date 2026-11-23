@@ -400,6 +400,92 @@ def main(case: str = "smoke", gpu: str = "h100", resolution: int = 0,
         sys.exit(1)
 
 
+carry_image = image.pip_install("torch==2.15.0")
+"""`image` plus PyTorch, which `CarryFluidEnv` cannot run without.
+
+Its own image and not an addition to `image`, because torch's Linux wheel carries the
+CUDA runtime and is about 2.5 GB: every other function here is warp-and-newton only and
+should not pay for that. One `device` string configures both the Warp allocation and
+the torch tensors (`CarryFluidEnvCfg.device` says why two would be worse), so a
+`cuda:0` run needs the CUDA build rather than the CPU one.
+"""
+
+
+def _run_onset(settings: dict) -> dict:
+    """`carry.onset_convergence` on whatever device this container has.
+
+    Separate from `_run_remote` because the carry task's measurements are not `cases.py`
+    cases: they are functions on `openreynolds/live/carry.py` itself, deliberately, so
+    the environment and the numbers quoted about it cannot drift apart. It **prints as
+    it goes**, and the print goes to Modal's log rather than only into the return value,
+    so a run started with `--detach` whose local side loses DNS is still readable.
+    """
+    import time
+    import traceback
+
+    sys.path.insert(0, "/repo")
+    import warp as wp
+
+    wp.init()
+    device = "cuda:0" if wp.get_cuda_device_count() else "cpu"
+    started = time.time()
+    try:
+        from openreynolds.live import carry
+
+        result = carry.onset_convergence(device=device, **settings)
+    except Exception:
+        return {"error": traceback.format_exc(), "device": device,
+                "gpu_name": _gpu_name(), "seconds": time.time() - started}
+    payload = _sanitise(result)
+    payload.update(device=device, gpu_name=_gpu_name(),
+                   warp=wp.config.version, seconds=time.time() - started)
+    return payload
+
+
+@app.function(image=carry_image, gpu="L40S", timeout=14400)
+def onset_l40s(settings: dict) -> dict:
+    return _run_onset(settings)
+
+
+@app.function(image=carry_image, gpu="A10G", timeout=14400)
+def onset_a10g(settings: dict) -> dict:
+    return _run_onset(settings)
+
+
+ONSET_RUNNERS = {"l40s": onset_l40s, "a10g": onset_a10g}
+
+
+@app.local_entrypoint()
+def onset(gpu: str = "l40s", radii: str = "0.01,0.005,0.0025,0.002",
+          rate: float = 0.1, rates: str = "", settle: int = 100,
+          stop_fraction: float = 0.05, label: str = "carry-onset") -> None:
+    """The spill-angle convergence on a GPU.
+
+    `python -m modal run --detach benchmarks/live/modal_run.py::onset --gpu l40s`
+
+    `--detach` is not optional in practice: a local DNS failure has killed whole
+    batches here, and a detached run keeps going and keeps logging.
+    """
+    settings = {
+        "radii": tuple(float(r) for r in radii.split(",") if r.strip()),
+        "rate": float(rate),
+        "rates": tuple(float(r) for r in rates.split(",") if r.strip()),
+        "settle": int(settle),
+        "stop_fraction": float(stop_fraction),
+    }
+    payload = ONSET_RUNNERS[gpu.lower()].remote(settings)
+    out = RESULTS / label
+    out.mkdir(parents=True, exist_ok=True)
+    payload["provenance"] = _provenance()
+    (out / "result.json").write_text(json.dumps(payload, indent=2) + "\n",
+                                     encoding="utf-8")
+    print(f"\n  {payload.get('gpu_name', '?')}, warp {payload.get('warp', '?')}, "
+          f"{payload.get('seconds', 0):.1f} s -- saved {out / 'result.json'}")
+    if payload.get("error"):
+        print(payload["error"])
+        sys.exit(1)
+
+
 @app.function(image=image, timeout=600)
 def _noop() -> str:
     return "ok"

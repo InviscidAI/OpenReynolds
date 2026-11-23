@@ -639,6 +639,88 @@ def test_the_pour_geometry_agrees_at_the_seam_between_its_two_branches():
         "a cup at 80 degrees keeps almost nothing, and this one claims it does")
 
 
+def test_the_spill_angle_is_the_one_quadrature_agrees_with_and_the_rim_form_is_not():
+    """`carry.spill_angle` against a numeric volume integral, and `carry.rim_angle` not.
+
+    Two closed forms get quoted for a tipping cup and they are different formulas:
+
+        tan(theta) = D^2 / (4 a h)    `spill_angle`, the dry-floor wedge
+        tan(theta) = (H - h) / R      `rim_angle`, the floor-wet plane
+
+    The second is the trapezoid branch and it carries a precondition -- the floor has to
+    still be wet, `tan(theta) <= h / R` -- that the default cup fails at 45 degrees,
+    twelve degrees below the angle the formula itself returns. So this is not a tie to
+    be broken by measurement: one of them is being evaluated outside its own domain, and
+    the test that says which is a volume integral that assumes **neither** branch.
+
+    The integral: the free surface is the plane `z = x tan(theta) + k`, at onset it
+    passes through the pouring rim `(R, H)` so `k = H - R tan(theta)`, and the volume
+    under it falls monotonically with `theta`. Bisect for the `theta` that holds the
+    cup's water and compare. No warp, no newton, no particles.
+
+    It also prices the shape, because the cup is square and the task's hint is that the
+    square may be the whole explanation: it is not. A cylinder of `R = a` integrates to
+    0.58 degrees off the square cup, against 1.07 degrees between the two branches.
+    """
+    import math
+
+    cfg = carry.CarryFluidEnvCfg()
+    a, height, fill = cfg.cup_half_width, cfg.cup_depth, cfg.fill_depth
+
+    def under(theta, radius, square):
+        """Water volume under the onset plane, by the trapezoidal rule in x."""
+        tangent, n = math.tan(theta), 2001
+        total, k = 0.0, height - radius * math.tan(theta)
+        xs = [-radius + 2 * radius * i / (n - 1) for i in range(n)]
+
+        def column(x):
+            depth = min(max(x * tangent + k, 0.0), height)
+            width = (2 * a if square else
+                     2 * math.sqrt(max(radius * radius - x * x, 0.0)))
+            return depth * width
+
+        for lo, hi in zip(xs, xs[1:]):
+            total += (column(lo) + column(hi)) / 2 * (hi - lo)
+        return total
+
+    def onset(radius, square, volume):
+        lo, hi = math.radians(0.1), math.radians(89.0)
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if under(mid, radius, square) > volume else (lo, mid)
+        return math.degrees((lo + hi) / 2)
+
+    water = (2 * a) ** 2 * fill
+    square = onset(a, True, water)
+    assert math.isclose(square, math.degrees(carry.spill_angle(cfg)), abs_tol=0.01), (
+        f"quadrature says this cup spills at {square:.3f} deg and spill_angle says "
+        f"{math.degrees(carry.spill_angle(cfg)):.3f}")
+
+    for convention in ("half_width", "equal_area"):
+        form = carry.rim_angle(cfg, convention)
+        assert not form["valid"], (
+            f"rim_angle({convention}) claims its floor-wet branch holds on a cup filled "
+            f"{fill * 1e3:g} mm of {height * 1e3:g}, which is below H/2")
+        assert abs(form["angle_deg"] - square) > 0.5, (
+            "the invalid branch landed on the quadrature answer, so this test proves "
+            "nothing and the numbers below are coincidence")
+
+    # The same cup made round, which is the other candidate explanation for the two
+    # formulas disagreeing. It is worth half the gap the branch is worth.
+    round_cup = onset(a, False, math.pi * a * a * fill)
+    assert abs(round_cup - square) < 1.0, (
+        f"a cylinder of the same half-width spills at {round_cup:.2f} deg against the "
+        f"square cup's {square:.2f}; the plan shape was supposed to be the small term")
+
+    # And the seam, from the other side: at h = H/2 the rim form becomes the valid one
+    # and quadrature has to agree with it.
+    seam_cfg = carry.CarryFluidEnvCfg(cup_depth=0.10, fill_depth=0.05)
+    seam = carry.rim_angle(seam_cfg, "half_width")
+    assert seam["valid"], "at h = H/2 the floor-wet branch is exactly on its boundary"
+    assert math.isclose(onset(a, True, (2 * a) ** 2 * 0.05), seam["angle_deg"],
+                        abs_tol=0.01), "the rim form fails quadrature where it is valid"
+
+
 @needs_the_stack
 @pytest.mark.parametrize("fluid_on", [False, True])
 def test_a_carry_rollout_returns_a_conformant_five_tuple(fluid_on):
