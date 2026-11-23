@@ -1913,6 +1913,21 @@ def _conserving_level(world: Any, box: _Box, *, draft: float) -> float:
     waterline follows by dividing that volume, plus the hull's displaced part, by the
     tank's waterplane area. No surface is measured at all.
 
+    **UNRESOLVED, and the number this returns is not yet trustworthy.** On the case's own
+    configuration this gives a draft of **14.5141 mm (0.9071x)** where
+    `benchmarks/live/free_settle.py::mass_conserving_draft` -- a standalone implementation
+    of the same idea, hand-run on the same settled state -- gives **15.9015 mm (0.9938x)**,
+    a pass. Two implementations of one quantity disagreeing by 1.4 mm means at least one is
+    wrong, and the algebra is not the difference: solving
+    `V = A_tank L - A_wp (L - keel)` for `L` gives exactly the form below, and the
+    probe-seeded `draft` argument costs only about 0.1 mm of the 1.4.
+
+    So this is **recorded as a known issue rather than relied on**. `sph_static_float`
+    reads 5 of 6 with the draft check failing either way, and the release notes carry both
+    numbers and the fact that they disagree. Resolving it needs the two implementations run
+    side by side on one settled state with their intermediates printed, which is a pass of
+    its own and was not done before the release cut.
+
     Returned beside the probe's own answer rather than instead of it, so a re-graded
     verdict says which instrument produced it.
     """
