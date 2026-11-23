@@ -356,14 +356,34 @@ about -2.0% per e-fold of Reynolds number, crossing zero near Re 230. That is th
 of an error in the **viscous-dominated limit** -- it grows as the flow gets more viscous
 and vanishes as inertia takes over -- and not of a constant offset or of noise.
 
-Two candidates remain and this repository can distinguish neither from the other
-without something it does not have. The lattice's own low-Re behaviour is one.
-Schiller-Naumann itself is the other: it is a fit to 1933 measurements, `REFERENCES`
-records that `sphere_drag.py` "is explicit that its accuracy should be quoted from a
-source and not from the formula", and no source for it has been read here. **So the
-discrepancy is reported and not attributed**, because attributing it would mean
-inventing the reference's error bar, which is the one thing the reference entry exists
-to refuse.
+**Not tau and not the Mach number either.** Holding Re and the grid fixed and changing
+only the lattice velocity, which moves both at once:
+
+| u_lattice | tau | Ma | Cd | error |
+| --- | --- | --- | --- | --- |
+| 0.055 | 0.764 | 0.095 | 4.3848 | +5.63% |
+| 0.0275 | 0.632 | 0.048 | 4.3907 | +5.77% |
+
+Halving the Mach number and taking tau from 0.76 to 0.63 moves the error by 0.14%, in
+the wrong direction.
+
+**And not the reference.** This repository ships two correlations and at Re 10 they agree
+to **0.00%** -- Schiller-Naumann 4.1511 against Clift-Gauvin 4.1512 -- so the comfortable
+explanation that a 1933 fit carries scatter is not available here. They differ by only
+0.57% even at Re 200. `sphere_drag.py` is still right that its accuracy must be quoted
+from a source rather than from the formula, and that remains unread; what can be said
+without it is that two independent closed forms do not disagree at this Reynolds number,
+and the measurement is 5.65% above both.
+
+So five candidates are eliminated with a number each: **resolution** (0.07% over a 50%
+refinement), **confinement** (0.28% from 12 to 20 diameters, small because the side faces
+are slip, so the Stokes wall correction does not apply), **the reference** (0.00%),
+**tau** and **the Mach number** (0.14%). What is left is the discretisation's own
+behaviour in the viscous limit, and the boundary treatment is where that would live: at
+Re 10 the boundary layer is thick compared with the sphere, and Bouzidi's interpolation
+is being asked for its accuracy across a curved surface in exactly the regime where the
+velocity profile along a link is least linear. **That is a direction and not a
+measurement**, and the case is reported failing at +5.65% rather than explained away.
 
 ### M5 -- the free surface
 
@@ -619,7 +639,42 @@ letting it go. The waterline stays right throughout, so this is not the probe an
 loss of water; it is the layer the algorithm depends on losing its structure, and the
 divergence follows later.
 
-Three refilling rules were tried against it and the metric does not move. Giving every
+**The trigger is the moving-wall momentum transfer**, which is the one thing that had
+not been tested and is now measured. Disabling Ladd's wall-velocity term in `stream`
+while still letting the hull move:
+
+| | term on | term off |
+| --- | --- | --- |
+| hull pinned | 0.957 | 0.957 |
+| released + 10 steps | **1.391** | **0.957** |
+| + 60 | 1.480 | 0.985 |
+| + 100 | 1.584 | 1.059 |
+
+With the term off the interface holds its single layer and thickens only gently, as a
+genuinely moving hull should make it. With the term on it jumps 45% within ten steps.
+**Switching it off is not an option** -- a moving wall does hand momentum to the fluid,
+and without it a hull feels no drag -- so this is where M6 has to be fixed.
+
+Two things were tried against it and both are kept as improvements while neither cures
+it. Scaling the term by the interface cell's own fill fraction is right on its face: the
+term is written for a cell full of fluid, and a cell at fill `eps` holds `eps` of a cell
+of water and should take `eps` of the momentum. It changes the thickening not at all,
+which locates the damage at the **fluid** cells beside the hull rather than the interface
+cells. And offsetting the hull half a cell so its faces do not land on lattice nodes
+takes +10 steps from 1.391 to 1.316: the Bouzidi `frac` hits its 0.01 clamp when a face
+sits on a node, and the branch amplifies the wall term by `1/(2 frac)` = 50, so that is
+a real contributor and about a sixth of the effect.
+
+The term itself was checked and is correctly formed: `body_qd` is linear-first on
+Newton 1.8.0 (verified by displacement, not by the docstring) and `world.body_vel`
+carries the lattice conversion exactly -- 55.72 against an expected 55.57.
+
+**What this means for M6.** Korner's paper has no moving solids in it; a moving boundary
+against a free surface is a later extension and this is the part that is missing rather
+than broken. The interface cells adjacent to a moving solid need their own treatment,
+and naming that is as far as the evidence goes.
+
+Three refilling rules were also tried and the metric does not move. Giving every
 vacated cell a full cell of water is a mass source at every cell a heaving hull vacates,
 and diverged outright. Giving none of them mass leaves empty interface cells inside the
 water, which is wrong on its face. Deciding by depth -- full if no gas neighbour, partial

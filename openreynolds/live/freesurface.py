@@ -1205,7 +1205,7 @@ class FreeSurfaceWorld(FluidWorld):
                       inputs=[self.f, self.f_next, self.phi, self.owner,
                               self.body_pose, self.body_vel, self.body_com,
                               self._wrench, self.faces, self.face_velocity,
-                              self._fallbacks, moving, self._flags, self._normals,
+                              self._fallbacks, moving, self._flags, self._normals, self.fill,
                               gas, self._use_flags],
                       device=self.device)
             self.f, self.f_next = self.f_next, self.f

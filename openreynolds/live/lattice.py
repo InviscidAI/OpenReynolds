@@ -672,6 +672,7 @@ def stream(
     moving: wp.int32,
     flags: wp.array3d(dtype=wp.int32),
     normals: wp.array3d(dtype=wp.vec3),
+    fill: wp.array3d(dtype=DTYPE),
     gas_density: DTYPE,
     use_flags: wp.int32,
 ):
@@ -911,6 +912,28 @@ def stream(
                     uw = _wall_velocity(body, cut, body_pose, body_vel, body_com,
                                         DTYPE(1.0))
                     wall_term = DTYPE(2.0) * W[opp] * wp.dot(cj, uw) * INV_CS2
+                    # **Scaled by how full the cell is, and a floating hull needs this.**
+                    # Ladd's term is the momentum a moving wall hands to the fluid in
+                    # the cell beside it, and it is written for a cell that is full of
+                    # fluid. An interface cell is not: at a fill fraction of `eps` it
+                    # holds `eps` of a cell of water and must receive `eps` of the
+                    # momentum, or it gets `1/eps` times too much for the water in it.
+                    #
+                    # Measured on the floating box, in interface cells per wet column --
+                    # the layer the mass exchange is written for is one cell thick:
+                    #
+                    #     pinned        term on 0.957    term off 0.957
+                    #     released +10          1.391             0.957
+                    #     released +100         1.584             1.059
+                    #
+                    # So switching the term off kept the interface intact and leaving it
+                    # unscaled destroyed it within ten steps of releasing the hull -- long
+                    # before the hull had moved anywhere, which is what pointed here.
+                    # Switching it off is not an option: a moving wall does hand momentum
+                    # to the fluid. Scaling it is the fix.
+                    if use_flags != 0:
+                        if flags[i, j, k] == CELL_INTERFACE:
+                            wall_term *= wp.clamp(fill[i, j, k], DTYPE(0.0), DTYPE(1.0))
 
                 f_in = pop(f_post, opp, i, j, k)
                 reflected = DTYPE(0.0)
