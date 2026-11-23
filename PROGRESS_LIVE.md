@@ -258,6 +258,47 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
+### The SPH floating bodies: the remaining fault is in the coupled force path
+
+All four floating cases fail with drafts of order `1e5` times Archimedes. The half-metre
+pose bug was one cause and is fixed; it is not the only one.
+
+**What is ruled out, and how.** The force *scaling* is right: a tank reads **0.9999** of
+the weight of its own water, and if the accumulator were being summed over solver
+iterations without being divided by them -- which its own docstring made plausible, since
+it takes one contribution per substep *and* per iteration while `wrench()` divides by the
+substep count alone -- that number would be out by the iteration count, roughly
+fourteenfold. It is out by one part in ten thousand. So summing the per-iteration pressure
+impulses is the correct physics and the divisor is correct.
+
+**What the measurement shows instead.** A box held rigidly submerged, driven through
+`NewtonCoupling`, 80 samples after settling:
+
+| hull resolution | fluid particles | mean Fz | RMS fluctuation | range |
+| --- | --- | --- | --- | --- |
+| 4 across | 1,296 | +1.8346 rho V g | **31.0%** | [+0.61, +4.19] |
+| 8 across | 10,368 | **+0.4579** rho V g | **223.6%** | [-2.31, +1.94] |
+
+Refining makes it **worse on both counts**: the noise quadruples and the mean moves
+*away* from 1.0. That is not a convergence sequence, so it is not a resolution problem
+and it is not SPH pressure noise behaving as SPH pressure noise does.
+
+**And it disagrees with the solver's own numbers on the same physics.** Driven directly
+through `world.step()`, the solver reports `+rho V g` to **1.1863 / 1.0992 / 1.0614** at
+3 / 4 / 5 particles across -- converging, as it should. Driven through the coupling, the
+same box at 4 across reads 1.83. Two paths, one body, forces that differ by 70%.
+
+So the fault is in the coupled path specifically. The coupling takes over the world's
+body table -- it replaces `body_pose`, `body_vel` and `body_com` with its own arrays and
+sets `_device_bodies_dirty = False`, which makes `SphWorld._sync_bodies` return early for
+the rest of the run -- and one of those three is not being maintained the way the solver's
+kernels expect. `body_com` is the first suspect, because the lattice path needs it only
+for a moment arm while the SPH boundary-particle force uses it per particle.
+
+**This is why the M6 cases fail and M7 was not attempted.** A hull that cannot be held
+still with the right force cannot be floated, and a cup cannot be carried. The validation
+numbers for those cases are not pending on compute; they are pending on this.
+
 ### The empty-channel inlet check, and the step rate the cylinder actually runs at
 
 Both measured on an A100 before the long run was launched, because a blanket timeout is
