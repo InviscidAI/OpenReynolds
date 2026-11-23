@@ -2868,6 +2868,7 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
 
 
 def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
+               outlet_rho: float = 0.0,
                collision: str = "trt",
                smagorinsky: float = 0.0, device: str | None = None,
                out_dir: str | Path = ".", periods: float = 30.0,
@@ -2933,7 +2934,7 @@ def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
                     face_velocity={"-x": (u_mean, 0.0, 0.0)})
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                        substeps=1, collision=collision, smagorinsky=smagorinsky,
-                       device=device)
+                       outlet_rho=outlet_rho, device=device)
     centre = (height, height / 2.0 + dx / 2.0, nz * dx / 2.0)
     # Half a cell off the centreline, which is what the OpenFOAM case does: a cylinder
     # exactly on the axis sheds only when the symmetry is broken by round-off, and the
