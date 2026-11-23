@@ -2593,7 +2593,11 @@ class SphWorld:
             f"own and nothing here reads it",
             f"  timestep:   dt {self.dt:.6g} s per step, {self.substeps} substeps of "
             f"{self.dt / self.substeps:.6g} s "
-            f"(CFL {CFL:g} at an ESTIMATED peak of {self._peak_estimate:.4g} m/s)",
+            f"(CFL {self.cfl:g}"
+            + ("" if self._cfl_asked is not None else
+               ", chosen automatically because a body is coupled"
+               if self.cfl == QUIET_CFL else ", fluid-only default")
+            + f" at an ESTIMATED peak of {self._peak_estimate:.4g} m/s)",
             f"  density:    max compression {error['max'] * 100:.3f}%, mean "
             f"{error['mean'] * 100:.3f}%; surface deficit (expected, not an error) mean "
             f"{error['mean_deficit'] * 100:.2f}%, worst {-error['min_signed'] * 100:.2f}%",

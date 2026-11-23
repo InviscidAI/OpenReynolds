@@ -2180,7 +2180,14 @@ def run_sph_static_float(*, particle_radius: float = 0.002, beam: float = 0.064,
         # nothing to six decimals.
         link.place(body, held[body])
 
-    settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
+    # **The settle budget is in steps, so a shorter step settles less.** The quiet CFL
+    # that a coupled body now takes automatically is a quarter of the fluid-only one, so
+    # the same count covers a quarter of the physical time -- and `sph_force_noise` duly
+    # failed "the tank was at rest before sampling" on the defaults while every force
+    # number in it improved. Scale the count by the step ratio so the budget is a time and
+    # not a number of iterations.
+    budget = int(round(settle_steps * (sph.CFL / max(world.cfl, 1e-9))))
+    settled = _settle(world, reference_speed=celerity, max_steps=budget,
                       # **Settle the FLUID only, with Newton not stepping at all.**
                       # The pin used to be `step=link.step, hold=hold`: step the
                       # coupling, then overwrite `body_q`. That does not hold the body,
@@ -2430,7 +2437,14 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
         # nothing to six decimals.
         link.place(body, held[body])
 
-    settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
+    # **The settle budget is in steps, so a shorter step settles less.** The quiet CFL
+    # that a coupled body now takes automatically is a quarter of the fluid-only one, so
+    # the same count covers a quarter of the physical time -- and `sph_force_noise` duly
+    # failed "the tank was at rest before sampling" on the defaults while every force
+    # number in it improved. Scale the count by the step ratio so the budget is a time and
+    # not a number of iterations.
+    budget = int(round(settle_steps * (sph.CFL / max(world.cfl, 1e-9))))
+    settled = _settle(world, reference_speed=celerity, max_steps=budget,
                       # **Settle the FLUID only, with Newton not stepping at all.**
                       # The pin used to be `step=link.step, hold=hold`: step the
                       # coupling, then overwrite `body_q`. That does not hold the body,
@@ -2816,7 +2830,14 @@ def _heel_once(box: _Box, *, particle_radius: float, depth: float, span: float,
         # nothing to six decimals.
         link.place(body, held[body])
 
-    settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
+    # **The settle budget is in steps, so a shorter step settles less.** The quiet CFL
+    # that a coupled body now takes automatically is a quarter of the fluid-only one, so
+    # the same count covers a quarter of the physical time -- and `sph_force_noise` duly
+    # failed "the tank was at rest before sampling" on the defaults while every force
+    # number in it improved. Scale the count by the step ratio so the budget is a time and
+    # not a number of iterations.
+    budget = int(round(settle_steps * (sph.CFL / max(world.cfl, 1e-9))))
+    settled = _settle(world, reference_speed=celerity, max_steps=budget,
                       # **Settle the FLUID only, with Newton not stepping at all.**
                       # The pin used to be `step=link.step, hold=hold`: step the
                       # coupling, then overwrite `body_q`. That does not hold the body,
@@ -2961,7 +2982,14 @@ def run_sph_force_noise(*, particle_radius: float = 0.002, side: float = 0.032,
         # nothing to six decimals.
         link.place(body, held[body])
 
-    settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
+    # **The settle budget is in steps, so a shorter step settles less.** The quiet CFL
+    # that a coupled body now takes automatically is a quarter of the fluid-only one, so
+    # the same count covers a quarter of the physical time -- and `sph_force_noise` duly
+    # failed "the tank was at rest before sampling" on the defaults while every force
+    # number in it improved. Scale the count by the step ratio so the budget is a time and
+    # not a number of iterations.
+    budget = int(round(settle_steps * (sph.CFL / max(world.cfl, 1e-9))))
+    settled = _settle(world, reference_speed=celerity, max_steps=budget,
                       # **Settle the FLUID only, with Newton not stepping at all.**
                       # The pin used to be `step=link.step, hold=hold`: step the
                       # coupling, then overwrite `body_q`. That does not hold the body,
