@@ -148,7 +148,7 @@ def _one_free_body(gravity: float = 0.0):
     cfg.density = 500.0
     cfg.has_shape_collision = False
     builder.add_shape_box(body, hx=0.02, hy=0.02, hz=0.02, cfg=cfg)
-    model = builder.finalize(device="cpu")
+    model = builder.finalize(device="cpu")  # see the SIGSEGV note
     model.set_gravity((0.0, 0.0, -gravity))
     solver = newton.solvers.SolverMuJoCo(model, disable_contacts=True, solver="newton",
                                          integrator="implicitfast", iterations=10)
@@ -214,4 +214,106 @@ def test_a_placed_body_is_where_it_was_put_after_the_solver_steps() -> None:
         f"That is a change in Newton's contract -- body_q has been a solver OUTPUT for "
         f"SolverMuJoCo -- so check `place_body` and the four sph_cases holds against it "
         f"before relaxing this"
+    )
+
+
+def test_a_hull_held_up_by_its_own_weight_in_body_f_does_not_move() -> None:
+    """The whole Newton half of the floating coupling, in one assert and no fluid.
+
+    `sph_static_float`'s draft was wrong while the hull sat still, and four things on the
+    Newton side could do that: a `body_mass` Newton derived from the shape density rather
+    than taking the case's figure, gravity arriving twice, a wrench applied at the body
+    origin instead of the centre of mass, or `body_f` being angular-first so the force
+    landed in a torque slot. All four were checked by hand; none of them was it. This is
+    what checking them by hand should have left behind.
+
+    The construction is the floating cases' own -- `_float_rig`'s builder calls, the same
+    `SolverMuJoCo` flags -- with the fluid replaced by **exactly** the force Archimedes
+    says it must supply at the equilibrium draft, `m g` upward. A hull in that force must
+    not move and must not rotate, and each of the four faults breaks it visibly:
+
+        body_mass wrong by a factor k   net a_z = (1/k - 1) g
+        gravity applied twice           net a_z = -g
+        body_f dropped by the solver    net a_z = -g
+        body_f angular-first            net a_z = -g, plus a spin
+        wrench at the wrong point       a torque, which for this hull is zero either way
+                                        because body_com is (0, 0, 0) -- so this asserts
+                                        the torque is zero rather than claiming to
+                                        distinguish the two reference points
+
+    Measured when this was written, 500 steps at the case's own dt: net a_z
+    +0.0000 m/s2, dz 0.000 um, identity quaternion.
+
+    **Water is 1000 kg/m3 here and that is deliberate**, so this test asserts against its
+    own arithmetic and not against `units.FLUIDS`: a 64 x 64 x 32 mm box at 500 kg/m3
+    weighs 642.9082 mN and `body_mass` gives 65.5360 g, six figures. `_float_rig` uses
+    `FLUIDS["water"].rho`, which is **998.21**, so the case's own hull is 65.41869 g and
+    641.7574 mN -- 0.18% lighter, and worth knowing because the prescribed-draft curve's
+    measured 646.4 mN is divided by it. The Archimedes draft does not move with rho,
+    since the body's density is defined as `ratio * rho_water`.
+    """
+    pytest.importorskip("newton")
+    import newton
+    import numpy as np
+    import warp as wp
+
+    gravity, rho, beam, height, ratio = 9.81, 1000.0, 0.064, 0.032, 0.5
+
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+    body = builder.add_body(
+        xform=wp.transform(wp.vec3(0.096, 0.096, 0.044), wp.quat_identity()),
+        label="hull")
+    cfg = builder.default_shape_cfg.copy()
+    cfg.density = ratio * rho
+    cfg.has_shape_collision = False
+    builder.add_shape_box(body, hx=beam / 2.0, hy=beam / 2.0, hz=height / 2.0, cfg=cfg)
+    model = builder.finalize()
+    model.set_gravity((0.0, 0.0, -gravity))
+
+    # (a) the mass is the case's figure and not something derived from a thickness
+    intended = ratio * rho * beam * beam * height
+    mass = float(model.body_mass.numpy()[body])
+    assert mass == pytest.approx(intended, rel=1e-6), (
+        f"Newton's body_mass is {mass:.9g} kg where the case's own arithmetic -- "
+        f"{beam * 1e3:g} x {beam * 1e3:g} x {height * 1e3:g} mm at "
+        f"{ratio * rho:g} kg/m3 -- says {intended:.9g}. A hull that weighs something "
+        f"other than intended floats at a draft that is correct for the wrong hull"
+    )
+    com = np.asarray(model.body_com.numpy()[body], dtype=float)
+    assert np.allclose(com, 0.0, atol=1e-9), (
+        f"body_com is {tuple(com)} and not the origin, so the wrench's reference point "
+        f"is no longer vacuous for this hull and the torque assert below is no longer "
+        f"the whole of the (c) check"
+    )
+
+    solver = newton.solvers.SolverMuJoCo(model, disable_contacts=True, solver="newton",
+                                         integrator="implicitfast", iterations=10)
+    state_0, state_1, control = model.state(), model.state(), model.control()
+    dt = 1.1423e-3  # the SPH timestep at the case's 2 mm particle radius
+    steps = 200
+    z0 = float(state_0.body_q.numpy()[body][2])
+    for _ in range(steps):
+        state_0.clear_forces()
+        forces = state_0.body_f.numpy()
+        forces[body] = np.array([0.0, 0.0, mass * gravity, 0.0, 0.0, 0.0],
+                                dtype=forces.dtype)
+        state_0.body_f.assign(forces)
+        solver.step(state_0, state_1, control, None, dt)
+        state_0, state_1 = state_1, state_0
+
+    pose = np.asarray(state_0.body_q.numpy()[body], dtype=float)
+    drift = float(pose[2]) - z0
+    elapsed = steps * dt
+    accel = 2.0 * drift / elapsed ** 2
+    assert abs(accel) < 1.0e-3, (
+        f"a hull handed exactly its own weight upward in body_f accelerated at "
+        f"{accel:+.4f} m/s2 over {steps} steps ({drift * 1e6:+.3f} um). It must float. "
+        f"{-gravity:+.2f} means the wrench never reached the body or gravity arrived "
+        f"twice; a clean fraction of {-gravity:+.2f} means body_mass is wrong by that "
+        f"factor"
+    )
+    assert np.allclose(pose[3:7], (0.0, 0.0, 0.0, 1.0), atol=1e-6), (
+        f"a purely linear body_f spun the hull to {tuple(pose[3:7])}. body_f is "
+        f"linear-first with the torque in the last three components; a force in a "
+        f"torque slot shows up here"
     )

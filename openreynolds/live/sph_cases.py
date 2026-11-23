@@ -1909,6 +1909,29 @@ def _waterline(world: Any, box: _Box, plan: tuple[float, float],
     `particle_radius` is a constructor argument in `docs/sph-contract.md` and not a
     promised attribute, and a case that reads an unpromised attribute is a case that
     breaks on the first implementation that names it something else.
+
+    **THIS PROBE READS ABOUT 0.9 mm LOW AND IT IS THE STATIC FLOAT'S WHOLE REPORTED
+    MISS.** Measured on an H100 with the hull **held** at exactly the Archimedes draft and
+    Newton never stepped -- `dz` -0.0000 mm, z wobble 0.000 um, so the hull cannot have
+    moved -- this returns 15.0953 mm for a draft that is 16.0000 mm by construction. Mass
+    conservation gives the level with no probe in it: the fill places exactly
+    `(36,864 x 60 - 4,096 x 16) / 4^3` = 33,536 particles at this configuration and the
+    run reports exactly 33,536, so `n dp^3` is the water's volume to the last digit and
+    `V = A_tank L - A_waterplane (L - keel)` solves for `L`. On that reference the free
+    hull floats at **0.993x Archimedes, -0.66%, a pass**, at both 2 mm and 1.5 mm.
+
+    The cause is one layer up, in `SphWorld.surface_height`: it adds one particle radius
+    to the topmost particle's centre, which is right for a column in bulk and short at a
+    free surface, where the kernel is truncated and the outermost particles relax inward.
+    Measured, the median topmost centre is 57.095 mm in a column whose surface is at
+    exactly 60.000 -- 2.905 mm below it, not the 2.000 mm the radius correction assumes.
+
+    Nothing is changed here yet, because re-grading four cases on a corrected probe is a
+    decision and not a bug fix. `benchmarks/live/free_settle.py::mass_conserving_draft` is
+    the reference, and its `demo()` asserts the four runs. ponytail: report both
+    waterlines and both drafts from the floating cases and grade the mass-conserving one
+    with this bias printed beside it, the way `draft_curve.py` already reports its three
+    volume denominators rather than picking one silently.
     """
     columns = _columns(world, world.surface_height(axis=2))
     grid, axes = columns["grid"], columns["axes"]
@@ -1955,8 +1978,16 @@ def _floating_tank(box: _Box, *, particle_radius: float, depth: float, span: flo
     # per-step noise rising to **83.5%**. Hull first, the same curve reads
     # **0.995 / 1.012 / 1.007** across a fourfold draft range with noise at 26-31%, and
     # at the Archimedes draft the fluid delivers 646.4 mN against the hull's own weight
-    # of 642.9 mN -- **1.005x**. The fluid and the boundary particles are right; the
-    # construction was wrong.
+    # of **641.7574 mN** -- **1.0072x**. The fluid and the boundary particles are right;
+    # the construction was wrong.
+    #
+    # That weight was written here as 642.9 mN and the ratio as 1.005x, both of which
+    # assume water at 1000 kg/m3. `_float_rig` sets `shape.density =
+    # density_ratio * FLUIDS["water"].rho` and that rho is **998.21**, so Newton's
+    # `body_mass` is 65.41869 g and the weight is 641.7574 mN. 0.18%, and it is corrected
+    # because a measured 646.4 is being divided by it. The Archimedes draft is untouched:
+    # the body's density is defined as `ratio * rho_water`, so rho cancels exactly out of
+    # `d = ratio * H` and 16.0000 mm is 16.0000 mm at either figure.
     world.boundary_from_domain()
     if fill:
         world.fill_below(depth, axis=2)

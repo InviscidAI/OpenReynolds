@@ -258,10 +258,163 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
-### No SPH floating measurement has reached its own settle bound
+### The static float: the settle bound is met, and the last fault is the draft probe
 
-This is a caveat on every number in the sections below and it is worth stating once,
-plainly, rather than per-number.
+**The short version.** The hull floats at **0.993x** Archimedes and the case reports
+**0.938x**, because `_waterline` reads the free surface **0.9 mm low**. The coupling, the
+fluid force, Newton's mass, its gravity and the wrench's point and frame were each
+measured and each is clean; the one thing nobody had weighed against an independent
+reference was the probe the draft is measured with. A hull **held** at exactly the
+Archimedes draft, never stepped through Newton, `dz` -0.0000 mm, is reported at
+15.0953 mm -- and that settles it without any argument about dynamics.
+
+
+**`benchmarks/live/free_settle.py`, H100, the case's own configuration** -- 2 mm particle
+radius, 64 x 64 x 32 mm hull at 0.5 of water's density, 60 mm of water in a three-beam
+tank with 40 mm of freeboard, hull-first, DFSPH, `SolverMuJoCo`, 33,536 fluid and 22,288
+boundary particles, `dt` 1142.274 us, 4.0 particle spacings through the draft, 11.51
+coupling steps a second.
+
+**The settle bound is reached: 14.898 mm/s after 13,400 steps against the 15.344 mm/s
+bound.** That is the first floating measurement in this project to clear it, and it cost
+20 minutes rather than the four hours the 40,000-step cap was budgeted at, because
+`_settle` returns as soon as the bound is met and the tank met it at 13,400.
+
+Released for 1,333 steps -- six heave periods, 1522.5 ms -- the hull floats at
+
+| | |
+| --- | --- |
+| draft, as the case reports it | **15.0026 mm** against Archimedes' 16.0000 -- **0.9377x**. The section below shows this is the probe and not the hull |
+| the same, re-run | **15.0025 mm**. Two runs of one configuration, 0.0001 mm apart |
+| wobble | **0.0086 mm**, 0.054% of the draft against a 2% bound |
+| mean `Fz` over the last 534 steps | **642.9924 mN = 1.0019 x `m g`** |
+| `a_z` from that force | **+0.0189 m/s2**; from the hull's own z trace, **+0.0152** |
+| `dz` over that window | **+14.752 um** observed, **+9.461 um** from the mean `vz` |
+
+So the hull is in force balance to **0.2%**, its displacement agrees with its own
+velocity, and the acceleration the force implies agrees with the acceleration it made.
+**`m z'' = Fz - m g` holds over the same steps.**
+
+### And the draft is not wrong. `_waterline` is, by 0.9 mm
+
+**The same tank, the same settle to the same bound, with the hull HELD** -- `world.step`
+only, Newton never stepped, the `draft_curve.py` configuration -- is what shows it. The
+hull is pinned at the pose it was built at, `dz` **-0.0000 mm** and a z wobble of
+**0.000 um** over the whole window, so its draft is exactly the Archimedes 16.0000 mm by
+construction. `_waterline` reports **15.0953 mm**.
+
+A hull that has not moved by a nanometre cannot have a draft 0.9 mm from where it was
+put. The probe is wrong, and the probe is what every floating case grades.
+
+**Mass conservation has no probe in it.** The fill places one particle per `dp^3` cell,
+and the counts are exact rather than approximate: a 192 x 192 mm tank filled to 60 mm
+with a 64 x 64 mm hull 16 mm into it is `(36,864 x 60 - 4,096 x 16) / 4^3` = **33,536**
+cells, and the run reports exactly 33,536 fluid particles. So `V = n dp^3` is the water's
+volume to the last digit, and for a wall-sided prism
+`V = A_tank L - A_waterplane (L - keel)` is one linear equation in the level.
+
+| H100, settled, hull-first | `_waterline` draft | mass-conserving draft | x Archimedes | probe low by |
+| --- | --- | --- | --- | --- |
+| 2 mm, **held** at the built pose | 15.0953 mm | **16.0000 mm** | **1.0000** | 0.9047 mm |
+| 2 mm, free | 14.9962 mm | **15.8945 mm** | **0.9934** | 0.8983 mm |
+| 2 mm, free, re-run | 14.9954 mm | **15.9038 mm** | **0.9940** | 0.9084 mm |
+| 1.5 mm, free | 15.0632 mm | **15.8937 mm** | **0.9934** | 0.8305 mm |
+
+**So `sph_static_float` passes.** The hull floats at **0.993x** Archimedes, **-0.66%**,
+against a 2% bound; the held row's exact 1.0000 is the control, since that hull was never
+integrated. The three free rows agree to 0.06% across a 1.33x refinement, so this is not
+a resolution artefact either -- and the probe's bias is 0.83 to 0.90 mm at both spacings,
+which is a convention and not a discretisation.
+
+**Where the 0.9 mm comes from.** `SphWorld.surface_height` takes the topmost particle in
+each column and adds one particle radius, because "the particle's centre is half a spacing
+below the surface it represents" -- which is right for a column in bulk. At a free surface
+the kernel is truncated, the outermost particles sit at a density deficit and relax
+inward, and the topmost centre ends up a further ~0.2 `dp` down: measured here, the median
+topmost centre is 57.095 mm in a column whose surface is at exactly 60.000, so 2.905 mm
+below it rather than the 2.000 mm the radius correction assumes. `_waterline` then
+inherits all of it, and a floating case subtracts a hull position from it, so the error
+lands undiluted on the one number being graded.
+
+**This also closes the force.** Held at the Archimedes draft on a settled tank the fluid
+delivers **646.6669 mN = 1.0077 x `m g`** (23.0% per-step RMS, no near-zero steps), and
+the prescribed-draft curve's unsettled 646.4 mN against the corrected weight of 641.7574
+mN is **1.0072x**. The two agree to **0.05%** -- so the curve's force was right all along
+and settling moved it by less than a twentieth of a per cent. A force 0.77% high puts the
+equilibrium draft 0.76% shallow, and the free runs measure 0.66% shallow. **Everything
+agrees: the fluid, the coupling and the hull. Only the probe did not.**
+
+`benchmarks/live/free_settle.py::mass_conserving_draft` is those three lines, and its
+`demo()` asserts all four rows above, so the finding is re-derivable without a GPU.
+
+**What is left open, and it is not the draft: releasing the hull quadruples the per-step
+force noise.** Same tank, same settle, same window, the only difference being whether
+Newton is stepped:
+
+| | per-step RMS of `Fz` | steps below 1% of `m g` | mean `Fz` |
+| --- | --- | --- | --- |
+| held, 2 mm | **23.0%** | **0.0%** | 1.0077 `m g` |
+| free, 2 mm | **101.5%** | 4.1% | 1.0019 `m g` |
+| free, 1.5 mm | **114.9%** | 23.6% | 1.0024 `m g` |
+
+The mean is right in all three. What changes on release is the per-step quality: the noise
+goes up fourfold and steps appear where the hull feels essentially nothing. That is the SPH
+analogue of a failure this document already catalogues on the lattice -- "the interface
+thickens the moment the hull is released", traced there to Ladd's moving-wall momentum
+term -- and here the candidate is the same thing by another name, the Akinci boundary
+particles acquiring a velocity from `body_vel` once the body is integrated. It does not
+move any draft, and it is what the "force usable for control" claim rests on, so it is the
+next thing to measure rather than the next thing to fix.
+
+**"13.7x Archimedes" was a unit error and it cost a day.** The check reports its draft in
+**millimetres** against a target printed as `16.0000 mm`, so `measured: 14.6` is 14.6 mm
+-- 0.91x -- and not fourteen times Archimedes. Only the first number in the sequence was
+ever a ratio: 268,395 mm against 16 really is 16,774x, and dividing it was right; the same
+division was then not done to the next two. `84a2329`'s message ("16,774x -> 14.6x") and
+`draft_curve.py`'s docstring are corrected. Three things say so independently: the
+0.0081 wobble a hull 219 mm deep in a 100 mm tank cannot have, a coarse CPU re-run that
+gives 13.533 mm, and this H100 run's 15.0026 mm.
+
+**The Newton half of the coupling was checked four ways and is clean.** Each of these was
+a candidate for a constant-factor draft error and none of them is:
+
+| | measured |
+| --- | --- |
+| `body_mass` | `ratio * FLUIDS["water"].rho * V` exactly -- 65.41869 g, the case's own arithmetic to six figures, so no wrong hull |
+| `body_inertia` | diag `[2.79620326e-05, 2.79620326e-05, 4.47392522e-05]` against the analytic `[2.7962e-05, 2.7962e-05, 4.47392e-05]` |
+| `body_com` | exactly `(0, 0, 0)`, which makes the COM-versus-origin reference point **vacuous for this hull** -- a wrong wrench point cannot be this bug |
+| gravity | once. MuJoCo applies `model.opt.gravity`; `apply_mjc_body_f_kernel`'s correction is `body_mass (1 - gravcomp)(gravity[body_world] - gravity[world])`, identically zero in a single-world model. `buoyancy=False` is what `_float_rig` passes, flipping it to True on an `SphWorld` raises, and `SphWorld` has no `rotors` attribute at all, so `_push_extras` is unreachable on the particle path |
+| the handoff | all six components of `state.body_f` equal `world.wrench(body)` **to the last float** on four consecutive coupled steps -- force and torque both, linear-first |
+| the whole Newton half | the same builder calls and solver flags with the fluid replaced by exactly `rho g A d` upward, released 8 mm shallow at the case's own `dt`, converge to **15.99996 mm against 16.00000 -- 1.000000x** |
+
+`tests/test_live_couple_backends.py::test_a_hull_held_up_by_its_own_weight_in_body_f_does_not_move`
+is that last one as a 10-second CPU test, because checking four things by hand and leaving
+nothing behind is how they get checked again.
+
+**One number in the record was wrong and is corrected.** The prescribed-draft curve's
+write-up divides 646.4 mN by "the hull's own weight of 642.9 mN" for 1.005x. That weight
+assumes water at 1000 kg/m3; `_float_rig` uses `FLUIDS["water"].rho`, which is 998.21, so
+the hull weighs **641.7574 mN** and the ratio is **1.0072x**. 0.18%, and it matters only
+because a measured number is being divided by it. The Archimedes draft does not move: the
+body's density is *defined* as `ratio * rho_water`, so rho cancels exactly out of
+`d = ratio * H`.
+
+**A sampling trap, recorded because it nearly became a fifth retraction.** The first
+version of `free_settle.py` sampled the force every 25 steps. On a hull whose draft had a
+0.0086 mm wobble -- a body that is not moving -- the late window read a mean of
+**1.4736 `m g`** on one run and **0.6377 `m g`** on the next run *of the same
+configuration*, while the per-step mean of both was **1.0019**. The per-step force is
+bimodal: 101.5% RMS, with **4.1% of steps below 1% of `m g`**, so a sparse sample lands
+on one mode or the other and 1.47 looked like a coupling that was pushing a hull it could
+not move. The file now keeps `z`, `vz` and `Fz` for every step and reads the mean off the
+full series. **A per-step quantity with 100% RMS must not be sampled sparsely**, and a
+mean force that contradicts the body's own displacement is a diagnostic fault before it is
+a physics finding.
+
+### No SPH floating measurement had reached its own settle bound, until the run above
+
+This was a caveat on every number in the sections below. It is now a caveat on all of
+them except the static float, whose numbers are above.
 
 `sph_cases._settle` targets 2% of the gravity-wave speed, which for these tanks is
 **15.34 mm/s**. What the runs actually reached:
@@ -283,6 +436,33 @@ draft.
 Running one order to the full 40,000-step cap costs about four hours of H100. That is owed
 before any of this goes into a graded case, and it is not owed before concluding that a
 flat 0.997 is not a 13.7x.
+
+**It turned out to be cheaper than that, and it has now been paid for the static float.**
+`_settle` returns the moment the bound is met rather than running to the cap, and this
+tank met it at **13,400 steps -- 20 minutes of H100**, not four hours. The four-hour
+figure was the cap's cost and was quoted as the measurement's cost. The curve's own five
+points are still owed a settled re-run, and the section above says what the settled
+configuration gives.
+
+### The settle bound has now been reached, and the earlier runs that missed it
+
+`sph_cases._settle` targets 2% of the gravity-wave speed, **15.344 mm/s** for these tanks.
+For most of this work nothing reached it, and every floating number carried that silently.
+
+**It has now been reached: 14.898 mm/s after 13,400 steps**, on an H100 at the case's own
+configuration (2 mm radius, 33,536 fluid and 22,288 boundary particles, dt 1142.274 us).
+It cost **20 minutes, not the four hours** the 40,000-step cap was budgeted at, because
+`_settle` returns as soon as the bound is met rather than running the cap.
+
+Which earlier measurements did **not** reach it, so their numbers are bounded rather than
+settled:
+
+* the five-point prescribed-draft curve: **18 to 33 mm/s** at every point, capped at
+  10,000 settle steps. All five got an identical budget, so the comparison across drafts
+  holds and the flatness argument stands; an absolute claim at a single draft does not.
+* a 1,500-step CPU probe at 10 mm spacing: **93.12 mm/s**, six times over. Its 2.228x
+  force ratio for a hull pinned at the Archimedes draft is a transient and is recorded
+  only so it does not read as contradicting the settled 1.0072x at the same draft.
 
 ### SPH force noise, answered with a number: 12.9% per step, 1.29% at ten samples
 

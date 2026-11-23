@@ -11,8 +11,19 @@
 ## The question
 
 Four M6 floating cases miss Archimedes, and after `_float_rig`'s held-body bug was fixed
-the static float still reads 14.6x its target. Two things can produce that and the fix
-for each is in a different file:
+the static float still misses. **This paragraph used to say it "reads 14.6x its target"
+and that was a unit error that cost a day of hunting.** The check reports its draft in
+**millimetres** against a target printed as "16.0000 mm", so a `measured: 14.6` is 14.6
+mm -- **0.91x** -- and not fourteen times Archimedes. Only the first number in that
+sequence was ever a ratio: 268,395 mm against 16 is genuinely 16,774x, and dividing it
+was the right thing to do; the same division was then not done to the next two. The
+record now reads, on the same coarse CPU resolution, 16,774x then 0.91x then 0.86x, and
+on an H100 at the case's own 2 mm radius with the settle bound actually met,
+**15.0025 mm = 0.9377x** (`free_settle.py`). So the error is a few per cent and not a
+constant factor, which is a different hunt: a factor is a coupling fault and a few per
+cent at four particle spacings through the draft is the wetted surface.
+
+Two things can produce a factor and the fix for each is in a different file:
 
 * the **boundary particles** are not carrying the hydrostatic pressure, in which case the
   vertical force on the hull is wrong at every depth and the coupling is innocent;
