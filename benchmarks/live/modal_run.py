@@ -220,22 +220,22 @@ def _gpu_name() -> str:
 # at decoration time. Four decorators is less machinery than a factory.
 
 
-@app.function(image=image, gpu="H100", timeout=7200)
+@app.function(image=image, gpu="H100", timeout=72000)
 def on_h100(case: str, settings: dict, layout: str | None = None) -> dict:
     return _run_remote(case, settings, layout)
 
 
-@app.function(image=image, gpu="A100-80GB", timeout=7200)
+@app.function(image=image, gpu="A100-80GB", timeout=72000)
 def on_a100(case: str, settings: dict, layout: str | None = None) -> dict:
     return _run_remote(case, settings, layout)
 
 
-@app.function(image=image, gpu="L40S", timeout=7200)
+@app.function(image=image, gpu="L40S", timeout=72000)
 def on_l40s(case: str, settings: dict, layout: str | None = None) -> dict:
     return _run_remote(case, settings, layout)
 
 
-@app.function(image=image, gpu="A10G", timeout=7200)
+@app.function(image=image, gpu="A10G", timeout=72000)
 def on_a10g(case: str, settings: dict, layout: str | None = None) -> dict:
     return _run_remote(case, settings, layout)
 

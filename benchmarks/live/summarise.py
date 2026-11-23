@@ -52,6 +52,12 @@ MILESTONE_OF = {
     "hydrostatic": "M5", "dam-break": "M5", "sloshing": "M5",
     "dam-n1300": "M5", "slosh-n240": "M5",
     "archimedes": "M6",
+    # The SPH backend. Its free-surface rows are beta until these pass (the v0.1 cut):
+    # the lattice stays the supported backend for single-phase flow, and these grade the
+    # thing the lattice could not do -- a free surface with a rigid body moving in it.
+    "sph_hydrostatic": "M5", "sph_dam_break": "M5", "sph_sloshing": "M7",
+    "sph_static_float": "M6", "sph_heave_decay": "M6", "sph_heel_stability": "M6",
+    "sph_force_noise": "M6", "sph_convergence": "M6",
 }
 """Which milestone each **validation** run belongs to.
 

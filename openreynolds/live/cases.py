@@ -4382,3 +4382,15 @@ def report(result: dict[str, Any]) -> str:
     for figure in result.get("figures", []):
         lines.append(f"  figure:     {figure}")
     return "\n".join(lines)
+
+
+# The SPH cases live in their own module -- it is 3,000 lines and has its own imports --
+# but they are cases like any other and `run_case`, `modal_run.py` and the CLI all reach
+# them through this one registry. Imported at the bottom so `sph_cases` can import `Case`,
+# `Check`, `_result` and the period/damping helpers from here without a cycle.
+from .sph_cases import SPH_CASES as _SPH_CASES  # noqa: E402
+
+for _name, _case in _SPH_CASES.items():
+    if _name in CASES:
+        raise RuntimeError(f"two cases are called {_name!r}; one would shadow the other")
+    CASES[_name] = _case
