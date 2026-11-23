@@ -413,6 +413,44 @@ one. And a re-run of `falling_sphere` and `ground_effect` was launched against t
 while the result labels use hyphens, so exactly the two multi-word cases failed and the
 two single-word ones did not. That is a naming inconsistency in this file worth removing.
 
+### The inlet/outlet channel gains mass, and that is what the 2D-1 drag drift is
+
+`crosscheck-2d1` reads Cd **17.7483** against the paper's 5.5795. That is not a wrong
+converged value; it is a value still climbing. Measured on CPU at 10 cells/D, with the
+lift settled at +0.0095 throughout:
+
+| steps | total mass | Cd |
+| --- | --- | --- |
+| 500 | +0.000% | 5.292 |
+| 2,000 | +0.993% | 5.705 |
+| 4,000 | +2.214% | 5.839 |
+| 8,000 | +4.606% | 5.974 |
+| 12,000 | **+7.055%** | **6.114** |
+
+**The channel is gaining mass**, monotonically, and the mean density goes 1008 to 1079
+kg/m3 with it. A velocity inlet sets momentum and the outlet is first-order extrapolation
+-- the "do nothing" outflow -- so nothing anchors either the mass or the pressure level.
+Density rises, pressure rises, and the force on the body follows.
+
+(The first attempt to measure this returned `nan`: `fields()["rho"]` carries `nan` in
+solid cells, so the plain mean over the array is `nan`. A masked mean is the whole fix and
+it is worth saying rather than quietly correcting, because an unexplained `nan` is easy to
+read as "the probe does not work" and drop.)
+
+This is the mechanism behind every oddity in that case at once: a drag that never settles,
+the 9.358% steadiness failure, Cd 17.75 after 704,000 steps, and **Cl landing inside the
+paper's 0.0104-0.0110 interval anyway**. Lift is a top-minus-bottom difference, so a
+rising background cancels out of it; drag is a streamwise integral, so it does not.
+
+**How far this generalises, carefully.** The 2D-2 cylinder runs 224,288 steps in the same
+family of configuration and reads +11.7%, not +218%, so the growth rate is not one
+constant across cases and the cylinder's error is not simply this. What can be said is
+that all three failing M1 cases -- the cylinder, the unsteady cross-check and 2D-1 -- use
+a velocity inlet with an extrapolating outlet, and that this is now a **measured defect in
+that configuration** rather than a hypothesis about it.
+
+The fix is an outlet that anchors the density instead of extrapolating into it.
+
 ### The empty-channel inlet check, and the step rate the cylinder actually runs at
 
 Both measured on an A100 before the long run was launched, because a blanket timeout is
