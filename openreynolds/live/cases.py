@@ -943,7 +943,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
 
 
 def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
-                 upstream: float = 0.0,
+                 upstream: float = 0.0, u_lattice: float = 0.037,
                  collision: str = "trt", smagorinsky: float = 0.0,
                  device: str | None = None, periods: float = 30.0,
                  establish_flows: float = 8.0, sample_periods: float = 25.0,
@@ -993,8 +993,8 @@ def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] =
         if progress:
             progress(f"  cylinder at {grid} cells per diameter "
                      f"({index + 1} of {len(grids)})")
-        run = _cylinder_once(grid, upstream=upstream, collision=collision,
-                             smagorinsky=smagorinsky,
+        run = _cylinder_once(grid, upstream=upstream, u_lattice=u_lattice,
+                             collision=collision, smagorinsky=smagorinsky,
                              device=device, periods=periods, out_dir=out,
                              establish_flows=establish_flows,
                              sample_periods=sample_periods,
