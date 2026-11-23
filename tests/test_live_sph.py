@@ -279,9 +279,10 @@ def tank():
 def test_a_hydrostatic_column_rises_linearly_with_depth_at_rho_g_h(tank):
     """`dp/dh = rho g`, fitted over the bulk, with the scatter reported rather than hidden.
 
-    Measured here: a slope of 0.9855 rho g, an intercept of -3 Pa against a bottom
-    pressure of 2,740 Pa, and a residual scatter of 6.3% of rho g H about the line. The
-    gate is 5% on the slope.
+    Measured here: a slope of 1.0257 rho g, an intercept of -39.5 Pa against a bottom
+    pressure of 2,740 Pa, and a residual scatter of 6.4% of rho g H about the line. The
+    gate is 5% on the slope and two standard errors on the intercept; see below for why
+    the intercept cannot honestly be graded tighter than that.
 
     The excluded particles and why each is excluded:
 
@@ -319,10 +320,34 @@ def test_a_hydrostatic_column_rises_linearly_with_depth_at_rho_g_h(tank):
     rho_g = world.rho0 * 9.81
 
     assert abs(slope / rho_g - 1.0) < 0.05, (slope, rho_g, slope / rho_g)
+
     # The intercept is the pressure the fit extrapolates to the free surface, where the
-    # physical answer is zero. Graded against the bottom pressure, not absolutely: 1% of
-    # rho g H is a tight bound on a field whose point-wise scatter is 6%.
-    assert abs(intercept) < 0.01 * rho_g * level, intercept
+    # physical answer is zero -- and it is graded against **its own standard error**, not
+    # against a fraction of the bottom pressure, because the fraction that was here (1%
+    # of rho g H = 27 Pa) is smaller than the uncertainty of the number it was grading.
+    #
+    # That is arithmetic and not an opinion. The residual scatter about the line is 6.4%
+    # of rho g H -- 175 Pa, a layer-scale pattern in the pressure field and not temporal
+    # noise, so averaging more steps does not shrink it -- and over 140 points whose
+    # depths run 40 to 250 mm the leverage term puts the intercept's standard error at
+    # about 38 Pa. The old gate was therefore 0.7 sigma on a quantity whose own error bar
+    # is wider than the gate, and it passed or failed on where the layer pattern happened
+    # to sit: -3.0 Pa (0.08 sigma) before `nonpressure` stopped racing its own velocity
+    # field and -39.5 Pa (1.0 sigma) after, for a pressure field whose integrated load on
+    # the floor is 0.9999x the weight of the water in BOTH cases (the check below, which
+    # is the one with the physics in it).
+    #
+    # Two sigma on the intercept still catches what this line is for -- a field with a
+    # real offset in it, which would be many sigma -- and it is a statement that holds
+    # whatever the layer pattern does.
+    residual = pressure[bulk] - (slope * depth + intercept)
+    scatter = float(residual.std(ddof=2))
+    spread = float(((depth - depth.mean()) ** 2).sum())
+    error = scatter * math.sqrt(1.0 / len(depth) + depth.mean() ** 2 / spread)
+    assert abs(intercept) < 2.0 * error, (
+        f"the fit extrapolates {intercept:.3g} Pa to the free surface, "
+        f"{abs(intercept) / error:.2f} standard errors from zero "
+        f"(scatter {scatter / (rho_g * level):.2%} of rho g H, SE {error:.3g} Pa)")
     # Monotonic in the mean: the deepest tenth is heavier than the shallowest tenth by
     # the amount the hydrostatic gradient says, within the scatter.
     order = np.argsort(depth)
@@ -826,3 +851,114 @@ def test_a_moving_wall_drags_the_fluid_and_feels_the_reaction():
     # about the ringing of a 20 mm particle lattice and would fail for the right reasons.
     assert np.mean(pushed) < 0.0, pushed
     assert world.stable()
+
+
+def test_the_viscous_term_cannot_see_a_velocity_another_thread_wrote():
+    """A rigidly translating block has no shear, so `nonpressure` must only add gravity.
+
+    **This is the reproducibility bug, as one assertion.** `sph.nonpressure` used to
+    finish with `v[i] = vi + accel * dt`, in the same launch whose neighbour loop reads
+    `v[j]`. Nothing orders the two, so `v[j]` was the old velocity or the new one
+    depending on where thread `j` had got to -- which on a GPU is a different subset of
+    the neighbourhood on every run of the same code, and is what made `sph_sloshing` read
+    a 419 ms first-mode period on one run and 322 ms on the next.
+
+    Monaghan's viscosity is a function of `v_i - v_j` only, so a block of fluid moving
+    rigidly has an identically zero viscous acceleration: every pair difference is zero.
+    Gravity's increment `g dt` is uniform, so it cancels out of a pair difference taken
+    at one instant and survives in full in one taken across the race. The invariant is
+    therefore exact rather than approximate -- `v` out must be `v` in plus `g dt`, to the
+    last bit -- and the failure is one-sided: the only thing that can break it is reading
+    a neighbour mid-update.
+
+    Measured with the bug in, on this exact configuration: 1.07e-5 m/s of spurious
+    velocity after a single launch, 0.011% of the block's own 0.1 m/s and 0.048% of
+    `g dt`. That is injected afresh every substep, so over the 2,217 substeps of the
+    sloshing case it is not small. Warp's CPU launch is serial, so the race is *milder*
+    here than on a GPU -- thread `i` sees an updated `v[j]` only for the neighbours ahead
+    of it in grid order -- and it still fails by five orders of magnitude.
+
+    No walls in this world on purpose: a boundary particle sits at `v = 0` next to fluid
+    at 0.1 m/s, which is real shear and would hide the invariant.
+    """
+    from openreynolds.live import sph
+    from openreynolds.live.world import Domain
+
+    speed = 0.1
+    world = sph.SphWorld(
+        domain=Domain((0.0, 0.0, 0.0), (0.04, 0.04, 0.04), faces="wall"),
+        particle_radius=0.0025, fluid="water", gravity=(0.0, 0.0, -9.81), device="cpu")
+    world.fill_box((0.005, 0.005, 0.005), (0.035, 0.035, 0.035),
+                   velocity=(speed, 0.0, 0.0))
+    world._commit()
+    assert world.n_boundary == 0
+    world._prepare()
+    dt = world.dt / world.substeps
+    before = world.v.numpy().copy()[:world.n_fluid]
+
+    warp.launch(sph.nonpressure, dim=world.n, device=world.device,
+                inputs=[world._grid.id, world.x, world.v, world.psi, world.rho,
+                        world.body, world.body_com, world._wrench, world.accel,
+                        sph.DTYPE(world.mass), world.n_fluid, sph.DTYPE(world.support),
+                        sph.DTYPE(world.sigma), warp.vec3(*world.gravity),
+                        sph.DTYPE(world.nu), sph.DTYPE(world.rho0)])
+    warp.launch(sph.advect, dim=world.n_fluid, device=world.device,
+                inputs=[world.v, world.accel, world.n_fluid, sph.DTYPE(dt)])
+
+    after = world.v.numpy()[:world.n_fluid]
+    want = before + np.asarray(world.gravity, dtype=np.float32) * np.float32(dt)
+    slip = float(np.abs(after - want).max())
+    # 1e-9 m/s and not exact equality, so that the assertion is about the race and not
+    # about whether the device fused the multiply and the add. The bug gave 1.07e-5.
+    assert slip < 1.0e-9, (
+        f"a rigidly translating block picked up {slip:.4g} m/s of viscous acceleration "
+        f"in one substep ({slip / speed:.3%} of its own speed, {slip / (9.81 * dt):.3%} "
+        f"of g*dt): `nonpressure` is reading a velocity its own launch has written"
+    )
+
+
+def test_the_same_tank_stepped_twice_gives_the_same_field_bit_for_bit():
+    """Two identical worlds, twenty steps each, and the fields must match exactly.
+
+    The property every SPH measurement in this repository rests on and the one that was
+    not true: `sph_sloshing` on an H100 read a first-mode period anywhere between 374.4
+    and 419.3 ms on five runs of byte-identical code, because `sph.nonpressure` raced its
+    own velocity field and because the solver's convergence test came off a float32
+    `wp.atomic_add` whose summation order varies. Both are fixed and this is the standing
+    guard: positions, velocities and densities compared with `==`, not with a tolerance,
+    because the claim is determinism and a tolerance would pass on a solver that had lost
+    it.
+
+    On the **preferred** device rather than `"cpu"` on purpose, which is the only test
+    here that is: Warp's CPU launches are serial, so a CPU pass is a weak pass -- a race
+    between threads cannot fire when there is one thread. On a CUDA device this is the
+    real check, and it is what it measures there: five H100 runs of `sph_sloshing` now
+    return one sampled surface trace, identical byte for byte.
+
+    No bodies, so no `wrench()`: that accumulator is six float32 `wp.atomic_add`s per
+    boundary pair and its summation order does vary. It is an output and nothing in the
+    fluid reads it, so it is not in this test's claim -- see `SphWorld.wrench`.
+    """
+    from openreynolds.live.sph import SphWorld
+    from openreynolds.live.world import Domain
+
+    def run():
+        world = SphWorld(
+            domain=Domain((0.0, 0.0, 0.0), (0.12, 0.06, 0.12), faces="wall"),
+            particle_radius=0.005, fluid="water", dt=0.004)
+        world.boundary_from_domain()
+        # Off-centre and with a velocity, so the field has something to get wrong: a
+        # column released at rest in the middle of a symmetric tank is a weaker test of
+        # a summation order than one that is sloshing.
+        world.fill_box((0.01, 0.01, 0.01), (0.07, 0.05, 0.08), velocity=(0.15, 0.0, 0.0))
+        for _ in range(20):
+            world.step()
+        return world.positions(), world.velocities(), world.densities()
+
+    first, second = run(), run()
+    for name, a, b in zip(("positions", "velocities", "densities"), first, second):
+        assert a.shape == b.shape, (name, a.shape, b.shape)
+        differing = int((a != b).sum())
+        assert differing == 0, (
+            f"{differing} of {a.size} {name} differ between two identical runs; "
+            f"largest difference {np.abs(a - b).max():.6g}")

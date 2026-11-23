@@ -1,7 +1,13 @@
-"""`openreynolds/live/isaac.py` still matches the interface it claims to match.
+"""`openreynolds/live/isaac.py` and `carry.py` still match the interface they claim.
 
-The file's whole value is a claim about somebody else's package: that
-`HoverFluidEnv.step`, `.reset`, `.close`, `.render` and `.seed` are
+Two environments live behind this file: `isaac.HoverFluidEnv`, a quadrotor hover with a
+lattice Boltzmann fluid, and `carry.CarryFluidEnv`, a robot end effector carrying a cup
+of water with an SPH free surface in it. They are siblings -- same conformance claim,
+same five hooks, same autoreset contract -- so every interface test here is
+parametrised over both and a new sibling is one entry in `ENVS`.
+
+Their value is a claim about somebody else's package: that
+`step`, `reset`, `close`, `render` and `seed` are
 `isaaclab.envs.direct_rl_env.DirectRLEnv`'s, so the env drops into Isaac Lab's RL
 wrappers and into any gymnasium >= 1.0 training loop without Isaac Sim installed. A
 claim like that has two ways to go stale and they need two different tests:
@@ -24,6 +30,14 @@ result is recorded in the commit message, not in CI. The first test is what CI h
 Everything else in this file is cheap: a config's fields, the class attributes a vector
 wrapper branches on, the five hooks, and one short rollout on a lattice small enough to
 be a unit test.
+
+The carry task's own tests are at the bottom and are **not** all cheap. Three of them
+are physics: that a cup held still does not leak, that the load the cup feels is the
+weight of the water in it, and that shaking it spills more than holding it. Those are
+the three that would catch a coupling sign error, a leaking boundary or a spill counter
+measuring the wrong thing, and no amount of shape checking substitutes for them. They
+share one settled environment through a module fixture, because settling the water is
+the expensive part and `reset()` is exactly the call that undoes an episode.
 """
 
 from __future__ import annotations
@@ -34,7 +48,7 @@ from pathlib import Path
 
 import pytest
 
-from openreynolds.live import isaac
+from openreynolds.live import carry, isaac
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,8 +68,17 @@ needs_the_stack = pytest.mark.skipif(
     reason="a rollout needs warp, newton and torch on this machine",
 )
 
+ENVS = {"hover": (isaac.HoverFluidEnv, isaac.HoverFluidEnvCfg),
+        "carry": (carry.CarryFluidEnv, carry.CarryFluidEnvCfg)}
+"""Every environment in this extension that claims to be a `DirectRLEnv`.
+
+Keyed by name so a failure says which one. Adding a third task means adding it here and
+nothing else: the conformance tests, the five hooks, the class attributes and the
+required-field checks are all parametrised over this.
+"""
+
 ISAAC_LAB_SIGNATURES = {
-    "__init__": "(self, cfg: 'HoverFluidEnvCfg', render_mode: 'str | None' = None, "
+    "__init__": "(self, cfg: '{cfg}', render_mode: 'str | None' = None, "
                 "**kwargs: 'Any') -> 'None'",
     "reset": "(self, seed: 'int | None' = None, "
              "options: 'dict[str, Any] | None' = None) "
@@ -100,10 +123,36 @@ def tiny(**overrides) -> isaac.HoverFluidEnvCfg:
     return isaac.HoverFluidEnvCfg(**settings)
 
 
+TINY_CARRY = dict(particle_radius=0.01, wall_thickness=0.04, settle_steps=5,
+                  workspace=(0.06, 0.06, 0.04), scene_pad=0.04, num_envs=1,
+                  episode_length_s=0.02, device="cpu")
+"""The carry task's equivalent of `tiny`, as the kwargs rather than as a config.
+
+A 20 mm particle spacing puts **two** particles through the water's depth and 32 in the
+cup, which resolves nothing at all -- the point, exactly as with `tiny`'s 8 cells.
+`settle_steps=5` is the other half of the cost: settling is `_Cup`'s dominant expense
+and these tests are about shapes, dtypes and the autoreset contract, not about a still
+cup. The physics tests at the bottom of this file use the real defaults instead, and
+say why.
+
+A dict and not a function because `CarryFluidEnvCfg.__post_init__` refuses dimensions
+that do not land on the particle lattice, so a caller that overrides `particle_radius`
+has to override the cup with it and wants to see both in one place.
+"""
+
+
+def tiny_carry(**overrides) -> carry.CarryFluidEnvCfg:
+    """`TINY_CARRY` as a config, with overrides."""
+    settings = dict(TINY_CARRY)
+    settings.update(overrides)
+    return carry.CarryFluidEnvCfg(**settings)
+
+
 # -- the config ------------------------------------------------------------------------
 
 
-def test_the_config_carries_isaac_labs_five_required_fields():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_the_config_carries_isaac_labs_five_required_fields(env_name):
     """`DirectRLEnvCfg`'s five `MISSING` fields are all present, and all filled in.
 
     They are the five a `DirectRLEnvCfg` cannot be constructed without: `decimation`,
@@ -112,18 +161,20 @@ def test_the_config_carries_isaac_labs_five_required_fields():
     asserts it *exists* rather than that it is truthy -- and that is the one field whose
     absence would be easiest to rationalise away.
     """
-    fields = isaac.HoverFluidEnvCfg.__dataclass_fields__
+    config = ENVS[env_name][1]
+    fields = config.__dataclass_fields__
     for name in ("decimation", "episode_length_s", "scene", "observation_space",
                  "action_space"):
         assert name in fields, f"{name} is one of DirectRLEnvCfg's required five"
-    cfg = isaac.HoverFluidEnvCfg()
+    cfg = config()
     assert cfg.decimation >= 1
     assert cfg.episode_length_s > 0
-    assert cfg.observation_space == 13 and cfg.action_space == 4
+    assert int(cfg.observation_space) > 0 and int(cfg.action_space) > 0
     assert cfg.scene is None
 
 
-def test_every_config_field_is_documented():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_every_config_field_is_documented(env_name):
     """A field with no docstring is a knob nobody can use.
 
     `ARCHITECTURE_LIVE.md`'s whole argument for this extension is written in prose
@@ -134,10 +185,12 @@ def test_every_config_field_is_documented():
     """
     import ast
 
-    source = (ROOT / "openreynolds" / "live" / "isaac.py").read_text(encoding="utf-8")
+    config = ENVS[env_name][1]
+    module = {"hover": "isaac.py", "carry": "carry.py"}[env_name]
+    source = (ROOT / "openreynolds" / "live" / module).read_text(encoding="utf-8")
     tree = ast.parse(source)
     body = next(node.body for node in ast.walk(tree)
-                if isinstance(node, ast.ClassDef) and node.name == "HoverFluidEnvCfg")
+                if isinstance(node, ast.ClassDef) and node.name == config.__name__)
     undocumented = []
     for index, node in enumerate(body):
         if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
@@ -148,7 +201,8 @@ def test_every_config_field_is_documented():
                       and isinstance(following.value.value, str))
         if not documented:
             undocumented.append(node.target.id)
-    assert not undocumented, f"HoverFluidEnvCfg fields with no docstring: {undocumented}"
+    assert not undocumented, (
+        f"{config.__name__} fields with no docstring: {undocumented}")
 
 
 def test_max_thrust_defaults_to_the_hover_trim():
@@ -170,7 +224,8 @@ def test_a_bad_config_is_refused_at_construction():
 # -- the interface ---------------------------------------------------------------------
 
 
-def test_the_module_does_not_import_torch_gymnasium_or_isaaclab():
+@pytest.mark.parametrize("module", ["isaac.py", "carry.py"])
+def test_the_module_does_not_import_torch_gymnasium_or_isaaclab(module):
     """Importing this module costs none of the three, which is the acceptance criterion.
 
     `openreynolds/tools.py` imports `openreynolds.live` to decide whether to offer the
@@ -182,7 +237,7 @@ def test_the_module_does_not_import_torch_gymnasium_or_isaaclab():
     """
     import ast
 
-    source = (ROOT / "openreynolds" / "live" / "isaac.py").read_text(encoding="utf-8")
+    source = (ROOT / "openreynolds" / "live" / module).read_text(encoding="utf-8")
     tree = ast.parse(source)
     forbidden = {"torch", "gymnasium", "isaaclab"}
     offenders = []
@@ -193,10 +248,11 @@ def test_the_module_does_not_import_torch_gymnasium_or_isaaclab():
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module.split(".")[0] in forbidden:
                 offenders.append(node.module)
-    assert not offenders, f"imported at module scope: {offenders}"
+    assert not offenders, f"{module} imports at module scope: {offenders}"
 
 
-def test_it_is_a_vector_env_with_same_step_autoreset():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_it_is_a_vector_env_with_same_step_autoreset(env_name):
     """The two class attributes every gymnasium >= 1.0 vector wrapper branches on.
 
     SAME_STEP autoreset is the one that changes what `step` must return: an environment
@@ -205,9 +261,10 @@ def test_it_is_a_vector_env_with_same_step_autoreset():
     carries the member's value as a string and the instance upgrades it -- which is why
     this test accepts either form rather than asserting one.
     """
-    assert isaac.HoverFluidEnv.is_vector_env is True
-    assert isaac.HoverFluidEnv.metadata["render_modes"] == [None, "human", "rgb_array"]
-    mode = isaac.HoverFluidEnv.metadata["autoreset_mode"]
+    env = ENVS[env_name][0]
+    assert env.is_vector_env is True
+    assert env.metadata["render_modes"] == [None, "human", "rgb_array"]
+    mode = env.metadata["autoreset_mode"]
     assert _autoreset_name(mode) == "SAME_STEP", mode
 
 
@@ -219,19 +276,25 @@ def _autoreset_name(mode) -> str:
             "Disabled": "DISABLED"}.get(str(mode), str(mode))
 
 
+@pytest.mark.parametrize("env_name", sorted(ENVS))
 @pytest.mark.parametrize("name", sorted(ISAAC_LAB_SIGNATURES))
-def test_the_signatures_are_the_ones_isaac_lab_declares(name):
-    """Each method's `inspect.signature`, against a literal.
+def test_the_signatures_are_the_ones_isaac_lab_declares(name, env_name):
+    """Each method's `inspect.signature`, against a literal, for every environment.
 
     A literal and not a live comparison, so that this fails in the environment CI runs
     in, where `isaaclab` is absent and must stay absent. The companion test below is the
-    live comparison and skips here.
+    live comparison and skips here. `{cfg}` is filled in per environment because the
+    only part of the string that is allowed to differ between siblings is the config
+    type `cfg` is annotated with.
     """
-    got = str(inspect.signature(getattr(isaac.HoverFluidEnv, name)))
-    assert got == ISAAC_LAB_SIGNATURES[name], f"{name}{got}"
+    env, cfg = ENVS[env_name]
+    want = ISAAC_LAB_SIGNATURES[name].replace("{cfg}", cfg.__name__)
+    got = str(inspect.signature(getattr(env, name)))
+    assert got == want, f"{env_name}.{name}{got}"
 
 
-def test_seed_is_a_static_method_as_direct_rl_env_declares_it():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_seed_is_a_static_method_as_direct_rl_env_declares_it(env_name):
     """`DirectRLEnv.seed` is a `@staticmethod`, so it seeds the process and not an
     instance.
 
@@ -240,21 +303,26 @@ def test_seed_is_a_static_method_as_direct_rl_env_declares_it():
     this protects is `HoverFluidEnv.seed(0)` on the class, before anything is
     constructed, which is how a training script seeds a run.
     """
-    assert isinstance(inspect.getattr_static(isaac.HoverFluidEnv, "seed"), staticmethod)
-    assert isaac.HoverFluidEnv.seed(7) == 7
+    env = ENVS[env_name][0]
+    assert isinstance(inspect.getattr_static(env, "seed"), staticmethod)
+    assert env.seed(7) == 7
 
 
+@pytest.mark.parametrize("env_name", sorted(ENVS))
 @pytest.mark.parametrize("hook", THE_FIVE_HOOKS)
-def test_the_five_direct_rl_env_hooks_exist(hook):
-    assert callable(getattr(isaac.HoverFluidEnv, hook, None)), hook
+def test_the_five_direct_rl_env_hooks_exist(hook, env_name):
+    assert callable(getattr(ENVS[env_name][0], hook, None)), f"{env_name}.{hook}"
 
 
-def test_render_modes_are_enforced():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_render_modes_are_enforced(env_name):
     """An unknown `render_mode` is refused before anything expensive is built, which is
-    the difference between a typo found in a second and one found after a lattice and a
-    MuJoCo model have been compiled."""
+    the difference between a typo found in a second and one found after a lattice, a
+    particle set and a MuJoCo model have been compiled."""
+    env, config = ENVS[env_name]
+    settings = dict(TINY_CARRY) if env_name == "carry" else dict(resolution=8)
     with pytest.raises(ValueError, match="render_mode"):
-        isaac.HoverFluidEnv(tiny(), render_mode="pretty")
+        env(config(**settings), render_mode="pretty")
 
 
 # -- the rollout -----------------------------------------------------------------------
@@ -456,8 +524,9 @@ def test_render_gives_an_image_only_with_a_fluid_and_an_rgb_mode():
 
 
 @needs_isaaclab
+@pytest.mark.parametrize("env_name", sorted(ENVS))
 @pytest.mark.parametrize("name", sorted(ISAAC_LAB_SIGNATURES))
-def test_our_signatures_match_the_real_direct_rl_env(name):
+def test_our_signatures_match_the_real_direct_rl_env(name, env_name):
     """The live comparison, which skips everywhere `isaaclab` is rightly absent.
 
     Parameter names, kinds and defaults rather than the whole signature string: the
@@ -474,23 +543,25 @@ def test_our_signatures_match_the_real_direct_rl_env(name):
                 for parameter in inspect.signature(method).parameters.values()]
 
     theirs = shape(getattr(DirectRLEnv, name))
-    ours = shape(getattr(isaac.HoverFluidEnv, name))
-    assert ours == theirs, f"{name}: ours {ours} vs DirectRLEnv's {theirs}"
+    ours = shape(getattr(ENVS[env_name][0], name))
+    assert ours == theirs, f"{env_name}.{name}: ours {ours} vs DirectRLEnv's {theirs}"
 
 
 @needs_isaaclab
-def test_the_class_attributes_match_the_real_direct_rl_env():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_the_class_attributes_match_the_real_direct_rl_env(env_name):
     from isaaclab.envs.direct_rl_env import DirectRLEnv
 
-    assert isaac.HoverFluidEnv.is_vector_env == DirectRLEnv.is_vector_env
-    assert (isaac.HoverFluidEnv.metadata["render_modes"]
-            == DirectRLEnv.metadata["render_modes"])
-    assert (_autoreset_name(isaac.HoverFluidEnv.metadata["autoreset_mode"])
+    env = ENVS[env_name][0]
+    assert env.is_vector_env == DirectRLEnv.is_vector_env
+    assert env.metadata["render_modes"] == DirectRLEnv.metadata["render_modes"]
+    assert (_autoreset_name(env.metadata["autoreset_mode"])
             == _autoreset_name(DirectRLEnv.metadata["autoreset_mode"]))
 
 
 @needs_isaaclab
-def test_our_config_covers_isaac_labs_required_fields():
+@pytest.mark.parametrize("env_name", sorted(ENVS))
+def test_our_config_covers_isaac_labs_required_fields(env_name):
     """Isaac Lab's own `MISSING` set, read from the installed package.
 
     If `isaaclab` 3.1 makes a sixth field required, this is the test that says so --
@@ -517,5 +588,219 @@ def test_our_config_covers_isaac_labs_required_fields():
         if isinstance(resolved, dataclasses._MISSING_TYPE):
             required.add(name)
     assert required, "no field read as MISSING: configclass's layout has changed"
-    ours = set(isaac.HoverFluidEnvCfg.__dataclass_fields__)
-    assert required <= ours, f"DirectRLEnvCfg requires {sorted(required - ours)} too"
+    ours = set(ENVS[env_name][1].__dataclass_fields__)
+    assert required <= ours, (
+        f"{env_name}: DirectRLEnvCfg requires {sorted(required - ours)} too")
+
+
+# -- the carry task's own tests --------------------------------------------------------
+
+
+def test_the_pour_geometry_agrees_at_the_seam_between_its_two_branches():
+    """`carry.spill_angle` and `carry.retained_fraction` are each two formulas.
+
+    The spill angle is `(D - h) / a` for a cup filled past half and `D^2 / (4 a h)` for
+    one filled below it, and the retained fraction past that angle is a triangle in one
+    regime and a trapezoid in the other. Four closed-form branches with two seams
+    between them is exactly the shape of thing that is right on the defaults and
+    silently wrong one knob away, and it costs nothing to check -- no warp, no newton,
+    no particles, just the algebra in the docstrings.
+
+    The seams: both spill-angle formulas must give `D / 2a` at `h = D / 2`, and both
+    retained-area formulas must give `a D` at `tan(theta) = D / 2a`. Plus the two things
+    that are true of any cup: nothing pours below the spill angle, and more tilt never
+    retains more.
+    """
+    import math
+
+    half = carry.CarryFluidEnvCfg(cup_depth=0.10, fill_depth=0.05)
+    assert math.isclose(math.tan(carry.spill_angle(half)),
+                        half.cup_depth / (2.0 * half.cup_half_width), rel_tol=1e-9), (
+        "the two spill-angle branches disagree at h = D/2, where they are the same cup")
+
+    # The retained-fraction seam, approached from both sides of tan = D / 2a. A cup
+    # filled to 0.09 m of 0.10 reaches its spill angle below the seam, so both branches
+    # are reachable on the same cup and the seam is a real crossing rather than a
+    # formula nothing evaluates.
+    deep = carry.CarryFluidEnvCfg(cup_depth=0.10, fill_depth=0.09)
+    seam = math.atan(deep.cup_depth / (2.0 * deep.cup_half_width))
+    assert math.isclose(carry.retained_fraction(deep, seam - 1e-6),
+                        carry.retained_fraction(deep, seam + 1e-6), rel_tol=1e-4), (
+        "the triangle and the trapezoid disagree at the seam between them")
+
+    for cfg in (half, deep, carry.CarryFluidEnvCfg()):
+        critical = carry.spill_angle(cfg)
+        assert carry.retained_fraction(cfg, critical * 0.99) == 1.0, "poured too early"
+        assert math.isclose(carry.retained_fraction(cfg, critical), 1.0, abs_tol=1e-6)
+        kept = [carry.retained_fraction(cfg, math.radians(d)) for d in range(1, 89)]
+        assert all(b <= a + 1e-12 for a, b in zip(kept, kept[1:])), (
+            "tilting further retained more water")
+    assert carry.retained_fraction(carry.CarryFluidEnvCfg(), math.radians(80.0)) < 0.3, (
+        "a cup at 80 degrees keeps almost nothing, and this one claims it does")
+
+
+@needs_the_stack
+@pytest.mark.parametrize("fluid_on", [False, True])
+def test_a_carry_rollout_returns_a_conformant_five_tuple(fluid_on):
+    """The contract `CarryFluidEnv.step` has to keep, on both sides of `fluid_on`.
+
+    The same test as the hover task's, at the carry task's 20-wide observation, and for
+    the same reason it is run on both sides of the flag: `fluid_on=False` is meant to be
+    the *same task* with the water replaced by a rigid payload, and a change that altered
+    the observation width or the dtype on only one path would be invisible to a test that
+    ran one of them.
+    """
+    import torch
+
+    env = carry.CarryFluidEnv(tiny_carry(fluid_on=fluid_on, num_envs=2))
+    try:
+        observations, extras = env.reset(seed=0)
+        assert isinstance(extras, dict)
+        assert observations["policy"].shape == (2, env.num_observations) == (2, 20)
+        for _ in range(3):
+            result = env.step(torch.zeros((2, env.num_actions), device=env.device))
+            assert len(result) == 5
+            observations, reward, terminated, truncated, extras = result
+            assert observations["policy"].shape == (2, 20)
+            assert observations["policy"].dtype == torch.float32
+            assert reward.shape == (2,) and reward.dtype == torch.float32
+            assert terminated.shape == truncated.shape == (2,)
+            assert terminated.dtype == truncated.dtype == torch.bool
+            assert isinstance(extras, dict)
+            assert torch.isfinite(reward).all(), "a non-finite reward poisons training"
+    finally:
+        env.close()
+
+
+@pytest.fixture(scope="module")
+def settled_cup():
+    """One carry environment at the **real** defaults, settled once and shared.
+
+    The three tests below are physics and the tiny config cannot carry them: two
+    particles through the depth is a cup whose water is two slabs, and a 5-step settle
+    is the unsettled first step that `settle_steps` documents as applying 770% of the
+    water's weight to the floor. So these run at `particle_radius = 5 mm` -- 256
+    particles, four through the depth -- with the default 100-step settle, and they
+    share the result because settling is the whole cost and `reset()` is exactly the
+    call that undoes an episode.
+
+    `episode_length_s` is raised so that no test here is cut short by a truncation it
+    did not ask for; everything else is the shipped default, because a physics test on
+    a configuration nobody runs is a test of nothing.
+    """
+    if not (HAS_WARP and HAS_TORCH and HAS_NEWTON):
+        pytest.skip("a settled cup needs warp, newton and torch on this machine")
+    env = carry.CarryFluidEnv(carry.CarryFluidEnvCfg(episode_length_s=10.0))
+    yield env
+    env.close()
+
+
+def _hold(env, steps: int) -> tuple[float, float]:
+    """Hold the cup still for `steps` env steps; return `(peak spill kg, mean F_z)`.
+
+    The mean is over the second half of the hold, because `place()` restores the settled
+    particles with their velocities zeroed and that is itself a small transient -- a
+    couple of sloshing periods of it. The peak spill is tracked per step rather than
+    read at the end because a termination inside the loop resets the counter.
+    """
+    import numpy as np
+    import torch
+
+    action = torch.zeros((env.num_envs, env.num_actions), device=env.device)
+    peak, vertical = 0.0, []
+    for step in range(steps):
+        env.step(action)
+        peak = max(peak, float(env._spilled[0]))
+        vertical.append(float(env._wrench[0, 2]))
+    return peak, float(np.mean(vertical[steps // 2:]))
+
+
+def test_a_cup_held_still_does_not_leak(settled_cup):
+    """The one failure that would make every other number here meaningless.
+
+    A one-layer Akinci wall does not hold this fluid in -- measured, the water goes
+    through the floor and the cup feels 75% of its weight -- and `wall_thickness`
+    records it at length. The symptom from outside is a cup that spills while the arm
+    holds perfectly still, which is a reward signal with the task's whole content
+    inverted: the policy is punished for the solver. Zero spill, exactly, and the
+    quantity is kilograms.
+    """
+    settled_cup.reset(seed=0)
+    spill, _ = _hold(settled_cup, 30)
+    assert spill == 0.0, f"a still cup leaked {spill * 1e3:.3f} g through its own walls"
+
+
+def test_the_load_the_cup_feels_is_the_weight_of_the_water(settled_cup):
+    """The coupling's sign and its magnitude, in one number.
+
+    `docs/sph-contract.md` fixes `wrench(body)` as the force **on the body**, and the
+    sign of it has been wrong twice in this repository. A still cup of water is the one
+    configuration whose answer is known in advance and is not zero: the floor carries
+    the weight of what is in it, `m g` downward, and nothing else. So this catches a
+    flipped sign, a wall that leaks half the load, a doubled buoyancy term
+    (`buoyancy=False` is required for this backend precisely because the pressure solve
+    already has it) and a wrench read on the wrong body.
+
+    The tolerance is 15%, which is loose on purpose and is not slack: at four particles
+    through the depth the free surface sits above the fill line by a fraction of a
+    spacing, so the sampled water mass and the load it puts down are both resolution
+    quantities. Measured on this configuration -- 256 particles, 255.5 g of water, the
+    default 100-step settle, averaged over steps 20 to 40 of a still hold -- it reads
+    **-2.5037 N against a 2.5069 N weight, 99.9%**, and spills exactly nothing. A
+    tolerance tight enough to assert 99.9% would be asserting that resolution rather
+    than the coupling, which is what this test is for.
+    """
+    settled_cup.reset(seed=0)
+    _, vertical = _hold(settled_cup, 30)
+    weight = settled_cup.water_mass * carry.G
+    assert vertical < 0.0, (
+        f"the water pushes the cup UP by {-vertical:.3f} N: the wrench's sign is "
+        f"inverted, which is the error docs/sph-contract.md fixes the convention to stop"
+    )
+    assert abs(-vertical - weight) / weight < 0.15, (
+        f"a still cup feels {-vertical:.3f} N from {weight:.3f} N of water "
+        f"({-vertical / weight * 100:.1f}%)")
+
+
+def test_shaking_the_cup_spills_and_the_wrench_says_so(settled_cup):
+    """The task has content: the same cup spills when the arm moves it badly.
+
+    Driven at the cup's own first sloshing mode (`carry.lamb_period`), which is the
+    drive `carry.shake` uses and the worst case for a given speed. Three things have to
+    be true together, and each one of them is a different bug if it is not:
+
+    * spill is **greater than zero**, where holding still gave exactly zero. If this
+      fails the spill counter is measuring the cup's frame rather than the world's, or
+      the latch is never set.
+    * the horizontal fluid force is greater than it was while holding still. A cup of
+      water that is being shaken pushes sideways; one that does not is a payload bolted
+      in, which is the `fluid_on=False` baseline and not this.
+    * the **filtered** peak is below the unfiltered one. The measured per-step noise is
+      12.9% RMS falling to 1.29% over ten samples, which is what the EMA's `alpha=0.2`
+      is sized for, and an observation carrying the raw wrench is carrying mostly that.
+    """
+    import math
+
+    import numpy as np
+    import torch
+
+    settled_cup.reset(seed=0)
+    period = carry.lamb_period(settled_cup.cfg)
+    steps = int(round(2.0 * period / settled_cup.step_dt))
+    action = torch.zeros((settled_cup.num_envs, settled_cup.num_actions),
+                         device=settled_cup.device)
+    peak, filtered, raw = 0.0, 0.0, 0.0
+    for step in range(steps):
+        action[0, 0] = math.sin(2.0 * math.pi * step * settled_cup.step_dt / period)
+        settled_cup.step(action)
+        peak = max(peak, float(settled_cup._spilled[0]))
+        filtered = max(filtered, float(np.linalg.norm(settled_cup._wrench[0, :2])))
+        sample = settled_cup._sampled[0] / max(settled_cup._samples, 1)
+        raw = max(raw, float(np.linalg.norm(sample[:2])))
+
+    assert peak > 0.0, "shaking the cup at its own sloshing mode spilled nothing at all"
+    assert filtered > 0.05 * settled_cup.water_mass * carry.G, (
+        f"the water pushed sideways with only {filtered:.3f} N while being shaken")
+    assert filtered < raw, (
+        f"the EMA's peak ({filtered:.3f} N) is not below the raw one ({raw:.3f} N), so "
+        f"it is not filtering anything")

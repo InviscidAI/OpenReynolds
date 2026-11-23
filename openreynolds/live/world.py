@@ -384,16 +384,17 @@ class FluidWorld:
         self.smagorinsky = float(smagorinsky)
         self.one_way = bool(one_way)
 
+        # **Hoisted above the `scaling` branch, because `step()` reads it
+        # unconditionally.** It was set only on the `scaling is not None` path, and
+        # every coupling caller builds `FluidWorld(..., dt=...)`, which takes the
+        # other branch -- so `HoverFluidEnv` died with
+        # `AttributeError: 'FluidWorld' object has no attribute 'outlet_rho'` on its
+        # first fluid step, and the Isaac Lab env was the only thing exercising that
+        # combination. An attribute set on one branch of a constructor and read
+        # unconditionally is a bug the type checker cannot see.
+        self.outlet_rho = float(outlet_rho)
         if scaling is not None:
             self.scaling = scaling
-            # **0 keeps the extrapolating outlet, which does not conserve mass.** A velocity
-            # inlet with a "do nothing" outflow has nothing anchoring the channel's mass or
-            # its pressure level, and the 2D-1 channel gained +7.06% of its mass in 12,000
-            # steps while its drag climbed and never settled. Setting this to the rest density
-            # in lattice units (1.0) rescales the outlet node's populations to that density,
-            # which fixes the pressure level and leaves the velocity alone. Off by default so
-            # that no case which passes today changes without opting in.
-            self.outlet_rho = float(outlet_rho)
             self.substeps = int(substeps or 1)
             self.dt = self.scaling.dt * self.substeps
         elif dt is None:

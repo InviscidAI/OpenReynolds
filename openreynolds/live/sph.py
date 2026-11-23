@@ -67,7 +67,7 @@ happens once instead of twice:
     3  densities   rho_i = sum_j m_j W_ij + sum_b psi_b W_ib     (Akinci)
     4  factors     alpha_i, the DFSPH stiffness coefficient
     5  divergence  the divergence-free solver, on this substep's own neighbourhood
-    6  nonpressure gravity and viscosity, straight into v
+    6  nonpressure gravity and viscosity, as an acceleration, then v += dt a
     7  density     the constant-density solver
     8  advect      x += dt v
 
@@ -153,20 +153,31 @@ walls are also what a real flume has.
 
 The repository's rule is no host round trips in the step loop, and both DFSPH solvers
 iterate *to a tolerance*, which means somebody has to look at the error. So each solver
-iteration reduces the error to a two-float device array and reads those eight bytes back.
-That is a device synchronise per solver iteration -- three to six per substep in practice
--- and it is the standard DFSPH implementation shape, but it is a host round trip and
-calling it anything else would be a lie. `check_every=0` turns it off and runs
-`max_iterations` blind, which is the setting for a GPU coupled run where the sync is the
-cost; `report()` says which was in force.
+iteration copies the residual field back and takes its mean in numpy. That is a device
+synchronise per solver iteration -- three to six per substep in practice -- and it is
+the standard DFSPH implementation shape, but it is a host round trip and calling it
+anything else would be a lie. `check_every=0` turns it off and runs `max_iterations`
+blind, which is the setting for a GPU coupled run where the sync is the cost;
+`report()` says which was in force.
 
-Measured directly rather than inferred from two runs with different iteration counts,
-which is the comparison that cannot be made: on the 2,394-particle tank, the reduction
-kernel alone is 85.2 microseconds and the reduction plus the `numpy()` read is 120.4, so
-**the read itself is 35.2 microseconds** -- 0.045% of a 77.5 ms substep, and 0.21% of one
-across the 4.6 iterations a substep takes. On a CPU the sync is free. It exists for the
-GPU, where a 35-microsecond stall is a stall and not a rounding error, and the whole of
-this backend's host traffic inside a step is those eight bytes.
+**It used to be eight bytes, and the eight bytes were wrong.** A `wp.atomic_add` summed
+`n_fluid` float32 residuals on the device and the host read a two-float array. float32
+addition is not associative and a CUDA atomic adds in retirement order, so that mean
+moved in its sixth digit from run to run on byte-identical code -- and the comparison it
+feeds is a *branch*. A sixth-digit difference therefore bought one run an extra solver
+iteration that the next run did not take, after which the two velocity fields had nothing
+to do with each other. Four bytes of ordering noise through a branch was a measurable
+fraction of the sloshing period; `tests/test_live_sph.py` and this module's history have
+the numbers. numpy's pairwise sum over a fixed-length array is the same arithmetic every
+time, so the convergence decision is now a function of the field and nothing else.
+
+What that costs, measured on the 3,840-particle sloshing tank on an H100, five runs each
+side: 15 KiB a read instead of 8 bytes, at 4.8 density plus 2.0 divergence iterations a
+substep, for a step time of **6.890 ms against 6.756 ms** -- 2.0%, and the two ranges
+overlap (6.54 to 7.26 ms against 6.55 to 7.02). The cost of this read is the synchronise,
+not the bytes: the 35 microseconds the old eight were measured at is already more than a
+15 KiB DMA. On a CPU the sync is free. A case large enough for the transfer to matter has
+`check_every` to raise and `check_every=0` to turn it off.
 
 Everything else -- `positions()`, `densities()`, `wrench()`, `density_error()` -- is a
 host read for reports and figures, outside the loop, same as the lattice backend.
@@ -507,6 +518,7 @@ def nonpressure(
     body: wp.array(dtype=wp.int32),
     body_com: wp.array(dtype=wp.vec3),
     wrench: wp.array2d(dtype=DTYPE),
+    accel_out: wp.array(dtype=wp.vec3),
     mass: DTYPE,
     n_fluid: wp.int32,
     h: DTYPE,
@@ -514,9 +526,43 @@ def nonpressure(
     gravity: wp.vec3,
     nu: DTYPE,
     rho0: DTYPE,
-    dt: DTYPE,
 ):
-    """Gravity plus Monaghan's viscosity, straight into `v`, with the wall reaction.
+    """Gravity plus Monaghan's viscosity, as an acceleration, with the wall reaction.
+
+    **It writes an acceleration and not a velocity, and that is a bug fix with a number
+    on it.** This kernel used to end `v[i] = vi + accel * dt`, in the same launch whose
+    neighbour loop reads `v[j]`. Every thread therefore raced every neighbour it looked
+    at: `v[j]` was the old velocity if thread `j` had not reached its store yet and the
+    new one if it had, so `dv = vi - v[j]` carried a spurious `-gravity * dt` for some
+    arbitrary subset of the neighbourhood -- arbitrary meaning "whatever the scheduler
+    did this time", which is different on the next run of the same code.
+
+    The size of it, which is why this was not a rounding error. Gravity's increment is
+    `g dt`, uniform over every particle, so it cancels exactly out of `vi - v[j]` when
+    both sides are from the same instant and survives in full when they are not. At the
+    sloshing tank's numbers -- `dt` 752 us, so `g dt` = 7.4 mm/s -- that contamination is
+    about five times the real neighbour velocity difference (a 32 mm/s mode over a 5 mm
+    support), so the viscous term was mostly made of it. Measured on a rigidly
+    translating block at a 2.5 mm spacing, where the true viscous acceleration is
+    identically zero: **1.07e-5 m/s of spurious velocity in one substep**, 0.011% of the
+    block's own speed, injected afresh every substep and in a different pattern each run.
+    `tests/test_live_sph.py::test_the_viscous_term_cannot_see_a_velocity_another_thread_wrote`
+    is that measurement as an assertion.
+
+    So the acceleration goes to `accel_out` and `SphWorld.step` adds it with a second
+    launch -- which is the `advect` kernel again, since `v += a dt` and `x += v dt` are
+    the same three lines. The neighbour loop then reads one velocity field, the one at
+    the start of the substep, which is also what "explicit viscosity" means.
+
+    What it bought, end to end: `sph_sloshing` run five times on byte-identical code on
+    an H100 read a first-mode period of 374.4, 375.8, 417.6, 418.4 and 419.3 ms against
+    a 417.09 ms theory with a +/-5% gate, and its two period estimators disagreed by
+    1.7% to 26.8% against a 5% gate -- 3/5 runs passing, which is a solver that cannot
+    settle anything. With this kernel and the residual reduction below fixed, the same
+    five runs return **one** trajectory: 421.376 ms every time, estimators 2.768% apart,
+    5/5 passing, and the sampled surface trace identical byte for byte across all five.
+    The cost of both fixes together is 6.890 ms a step against 6.756 ms, 2.0%, with the
+    two ranges overlapping.
 
     **Why the standard viscosity and not XSPH.** XSPH is a velocity smoothing,
     `dv_i = -xi sum_j (m_j/rho_j)(v_i - v_j) W_ij`, it is unconditionally stable, and its
@@ -572,7 +618,7 @@ def nonpressure(
                 force = contribution * (-mass)
                 arm = x[j] - body_com[b]
                 _accumulate(wrench, b, force, wp.cross(arm, force))
-    v[i] = vi + accel * dt
+    accel_out[i] = accel
 
 
 # -- the two solvers -------------------------------------------------------------------
@@ -681,6 +727,26 @@ def _accumulate(wrench: wp.array2d(dtype=DTYPE), b: wp.int32, force: wp.vec3,
     A `wp.func` and not six inline lines because it is called from two kernels and the
     ordering of the six components is exactly the kind of thing that gets transcribed
     wrong the second time.
+
+    **These six are the backend's one remaining run-to-run variation, and it is bounded
+    rather than removed.** float32 addition is not associative and an atomic adds in
+    whatever order the blocks retire, so the same set of boundary contributions sums to a
+    slightly different total each run. The rest of the file is now deterministic -- same
+    input, same field, bit for bit -- so that variation can be measured on its own, and
+    it was: `sph_force_noise` on an H100 at a shortened settle, twice, gave a mean force
+    on a held submerged box of 311.5991608 against 311.5991652 mN, **1.4e-8 relative**,
+    and 3.2e-7 on the most derived quantity in that case (the noise reduction ratio).
+    Against the 5% the case grades that mean force to, that is six millionths of the
+    tolerance.
+
+    It is left in because removing it properly means a fixed summation order over the
+    fluid-boundary pairs -- a materialised neighbour list and a segmented reduction, not
+    a dtype -- and a float64 accumulator would only move the figure to about 1e-16
+    without making it deterministic. The bound above is what a caller may rely on, with
+    one caveat that is in `SphWorld.wrench`: it is a bound on the force *out*, measured
+    on a body that does not move. A body whose motion is integrated from this force is a
+    dynamical system with this as its input noise, and nothing here bounds what that
+    grows to over a long coupled run.
     """
     wp.atomic_add(wrench, b, 0, force[0])
     wp.atomic_add(wrench, b, 1, force[1])
@@ -766,20 +832,6 @@ def apply_pressure(
 
 
 @wp.kernel
-def reduce_error(adv: wp.array(dtype=DTYPE), out: wp.array(dtype=DTYPE)):
-    """Max and sum of the residual into two floats, so the tolerance test is one read.
-
-    Two atomics over the fluid particles rather than a `wp.utils.array_max` and an
-    `array_sum`, which would be two launches, two temporaries and two reads. The caller
-    divides `out[1]` by the particle count it already knows.
-    """
-    i = wp.tid()
-    e = adv[i]
-    wp.atomic_max(out, 0, e)
-    wp.atomic_add(out, 1, e)
-
-
-@wp.kernel
 def advect(x: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3), n_fluid: wp.int32,
            dt: DTYPE):
     """`x += dt v`, fluid only. Semi-implicit Euler: the velocity is already the new one.
@@ -788,6 +840,13 @@ def advect(x: wp.array(dtype=wp.vec3), v: wp.array(dtype=wp.vec3), n_fluid: wp.i
     oscillation the way forward Euler does, which is the same argument `toolbox/sph.py`
     makes for the same integrator. Boundary particles are posed from their bodies and are
     never advected.
+
+    **Launched twice a substep, on two different pairs of arrays**, because `y += dt dy`
+    is the same three lines whether `y` is a position and `dy` a velocity or `y` is a
+    velocity and `dy` the acceleration `nonpressure` just wrote. The second use is what
+    keeps that kernel's neighbour loop off the field it is updating; see its docstring.
+    A second kernel with the same body and different parameter names would be the same
+    three lines written twice.
     """
     i = wp.tid()
     if i >= n_fluid:
@@ -1552,7 +1611,12 @@ class SphWorld:
         self.adv = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
         self.kappa = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
         self.kappa_sum = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
-        self._error = wp.zeros(2, dtype=DTYPE, device=d)
+        # Where `nonpressure` leaves gravity and viscosity, so that its neighbour loop
+        # is not reading the velocity field it is writing. Every fluid entry is written
+        # by exactly one thread of every launch, so `zeros` is for tidiness and not for
+        # correctness -- `wp.empty` would read the same, which is precisely the property
+        # this file is not willing to rely on anywhere.
+        self.accel = wp.zeros(self.n_fluid, dtype=wp.vec3, device=d)
         self._clamped = wp.zeros(1, dtype=wp.int32, device=d)
         # The reflection box is the domain box itself, computed once -- host arithmetic
         # with no business inside the substep loop.
@@ -1627,10 +1691,15 @@ class SphWorld:
             iterations_divergence += self._solve(divergence=True, dt=sub)
             wp.launch(nonpressure, dim=self.n, device=self.device,
                       inputs=[self._grid.id, self.x, self.v, self.psi, self.rho,
-                              self.body, self.body_com, self._wrench, DTYPE(self.mass),
-                              self.n_fluid, DTYPE(self.support), DTYPE(self.sigma),
-                              wp.vec3(*self.gravity), DTYPE(self.nu), DTYPE(self.rho0),
-                              DTYPE(sub)])
+                              self.body, self.body_com, self._wrench, self.accel,
+                              DTYPE(self.mass), self.n_fluid, DTYPE(self.support),
+                              DTYPE(self.sigma), wp.vec3(*self.gravity), DTYPE(self.nu),
+                              DTYPE(self.rho0)])
+            # `v += dt a`, which is `advect`'s `x += dt v` on the other two arrays. A
+            # separate launch and not the tail of the kernel above, because that kernel's
+            # neighbour loop reads `v[j]`: see `nonpressure`.
+            wp.launch(advect, dim=self.n_fluid, device=self.device,
+                      inputs=[self.v, self.accel, self.n_fluid, DTYPE(sub)])
             self.kappa_sum.zero_()
             iterations_density += self._solve(divergence=False, dt=sub)
             wp.launch(advect, dim=self.n_fluid, device=self.device,
@@ -1726,11 +1795,19 @@ class SphWorld:
         while iterations < self.max_iterations:
             wp.launch(residual, dim=self.n, device=self.device, inputs=args)
             if self.check_every and iterations >= 2 and iterations % self.check_every == 0:
-                self._error.zero_()
-                wp.launch(reduce_error, dim=self.n_fluid, device=self.device,
-                          inputs=[self.adv, self._error])
-                got = self._error.numpy()
-                if float(got[1]) / max(1, self.n_fluid) <= self.tolerance:
+                # The residual field itself, summed on the host in numpy's own fixed
+                # order and in float64. **Not a device reduction**, and that is the
+                # second half of this file's reproducibility fix: the mean used to come
+                # from a `wp.atomic_add` over `n_fluid` float32 values, which adds them
+                # in whatever order the blocks happen to retire. float32 addition is not
+                # associative, so the mean differed between runs in its sixth digit --
+                # and this line is a *branch*, so a sixth-digit difference occasionally
+                # bought one more solver iteration on one run than on the next, and the
+                # two trajectories had no reason to agree about anything afterwards.
+                # numpy's pairwise sum over a fixed-length array is the same arithmetic
+                # every time. The cost is the array instead of eight bytes; see the
+                # module docstring, which has it measured.
+                if float(self.adv.numpy().mean(dtype=np.float64)) <= self.tolerance:
                     break
             wp.launch(stiffness, dim=self.n_fluid, device=self.device,
                       inputs=[self.adv, self.alpha, self.kappa, self.kappa_sum,
@@ -1821,6 +1898,31 @@ class SphWorld:
         surface has a real waterline and a real hydrostatic pressure field, so buoyancy
         comes out of the pressure solve -- which is exactly why
         `docs/sph-contract.md` makes `buoyancy=False` the default for this backend.
+
+        **This is the one number in this file that is not reproducible bit for bit, and
+        the bound on it is measured**: 1.4e-8 relative on the mean force over a run,
+        from the float32 atomics `_accumulate` uses, whose docstring has the measurement
+        and why it is not worth removing. Everything the fluid does is deterministic, so
+        two runs of a case that *reads* this force differ by that much and no more.
+        A case that *feeds* it back -- any `NewtonCoupling` run with a free body -- is
+        integrating a body's motion from an input with 1.4e-8 of noise on it, and the
+        bound above says nothing about what that grows to. **Measured, and it grows:**
+        `sph_static_float` at a 4 mm radius and a 4,000-step settle, run twice on this
+        code, read a draft of 11.7869 mm and 11.7648 mm -- 1.9e-3 relative, five orders
+        of magnitude up from the input over about 4,600 steps -- with the wobble 5.8%
+        apart. So the floating-body cases are **not** reproducible yet and must not be
+        reported from a single run.
+        Which of two sources that is has not been separated and both are real
+        candidates: these atomics, and `newton`/`mujoco_warp`'s own solver, which runs
+        its own reductions on the same device. The experiment that separates them is a
+        body on a *prescribed* path -- `set_body_state` from the host, no Newton in the
+        loop -- stepped twice: a difference there is this file's, and no difference there
+        puts it in the rigid solver. Fixing this file's half means a fixed summation
+        order over the fluid-boundary pairs, which is a sweep over boundary particles
+        accumulating into its own slot with no atomic at all plus a fixed-order reduction
+        into bodies -- a second neighbour sweep over a boundary that outnumbers the fluid
+        here 9,600 to 3,840, so it is a measurable cost and a rewrite of the two kernels
+        that carry this convention, not a dtype change.
         """
         self._commit()
         count = float(self.substeps if substeps is None else substeps)
@@ -1972,8 +2074,10 @@ class SphWorld:
                          f"(see this module's docstring for what to do instead)")
         lines.append(
             "  host reads: " + (
-                f"the solver residual every {self.check_every} iteration(s) -- 8 bytes "
-                f"and a device sync, the only host round trip inside the step"
+                f"the solver residual every {self.check_every} iteration(s) -- "
+                f"{self.n_fluid * 4 / 1024:.1f} KiB and a device sync, summed on the "
+                f"host so the convergence decision does not depend on a float32 atomic's "
+                f"summation order; the only host round trip inside the step"
                 if self.check_every else
                 "none inside the step (check_every=0: both solvers run to the cap)"))
         outside = version_note()
