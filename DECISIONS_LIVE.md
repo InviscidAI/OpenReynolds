@@ -474,3 +474,45 @@ at `T = a/h0` and returns to the dam at `T = 2 a/h0`, so for a square column Rit
 expires at `T = 2` -- exactly when the agreement arrives, which makes the agreement
 worthless. The reservoir is now four depths wide, which buys a valid window of `T` in
 [2, 8], and the case grades over [2, 4] inside it.
+
+---
+
+## D15. The lattice-Boltzmann free surface is frozen; free-surface liquids move to SPH
+
+**2026-11-23, on instruction.** `freesurface.py` stays, behind an `experimental=True`
+gate, with its tests green. It is not deleted and it is not supported.
+
+**What it does.** Still water, correctly. `run_hydrostatic` passes every check: the
+volume it was filled with to a part in 1e6, a surface flat to 0.0011 of the depth, mass
+drift 3.1e-7 over 5,000 steps, and -- the one that matters -- `d(rho)/dz` within 0.5% of
+`-rho g / c_s^2`, which is the pressure gradient buoyancy *is*. A fully submerged body
+in it feels `+1.000 x rho V g`. The gravity-wave frequency is right: a standing wave in
+a periodic box brackets linear theory, and the sloshing tank converges to +5.1% of it.
+
+**What it does not do: a moving rigid body.** The mass exchange requires the interface to
+be a layer exactly one cell thick, and measured in interface cells per wet column on a
+released floating box:
+
+| | | |
+| --- | --- | --- |
+| hull pinned | **0.957** | one layer, as required |
+| released + 10 steps | **1.391** | |
+| released + 100 steps | 1.584 | and the run diverges later |
+
+Ten steps is far too few for the hull to have travelled anywhere, and the trigger is
+measured rather than guessed: the same run with Ladd's moving-wall term disabled holds
+the layer at 0.957. Switching that term off is not an option -- a moving wall does hand
+momentum to the fluid, and without it a hull feels no drag. Scaling it by the interface
+cell's fill fraction is right on its face and changes nothing, which puts the damage at
+the fluid cells beside the hull. Korner's formulation has no moving solids in it at all;
+this is **missing rather than broken**, and supplying it is a research task.
+
+**So the direction changed.** Free-surface liquids -- boats, cups, pouring -- move to an
+SPH backend, where rigid coupling through boundary particles (Akinci et al. 2012) is a
+solved problem rather than an open one. LBM remains the supported backend for
+single-phase flow: air, and fully submerged water, which is what M1 to M4 validate and
+where its advantages are real.
+
+What this rules out: spending more on the LBM moving-contact-line problem. The findings
+above are kept so that nobody has to rediscover them, and `freesurface.FROZEN` says the
+same thing to anyone who constructs the class without the flag.

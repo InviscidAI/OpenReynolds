@@ -103,13 +103,25 @@ import warp as wp
 
 from . import lattice as L
 from .lattice import CELL_FLUID, CELL_GAS, CELL_INTERFACE, CELL_SOLID, DTYPE, Q
-from .units import UnphysicalScaling
+from .units import LiveUnavailable, UnphysicalScaling
 from .world import Domain, FluidWorld
 
 __all__ = [
     "FreeSurfaceWorld", "CELL_GAS", "CELL_INTERFACE", "CELL_FLUID", "CELL_SOLID",
-    "FILL_EPSILON",
+    "FILL_EPSILON", "FROZEN",
 ]
+
+FROZEN = (
+    "The lattice-Boltzmann free surface is frozen and experimental "
+    "(DECISIONS_LIVE.md D15). It is correct for still water -- the hydrostatic case "
+    "passes on every check, and mass conserves to a part in 1e6 -- and it does not "
+    "survive a moving rigid body: the interface layer, which the mass exchange requires "
+    "to be one cell thick, goes to 1.4 cells within ten steps of releasing a hull and "
+    "the run diverges later. The trigger is measured (Ladd's moving-wall term; the same "
+    "run with it disabled holds the layer) and the fix is a moving-boundary treatment "
+    "that Korner's formulation does not contain. Free-surface liquid work moved to the "
+    "SPH backend. Pass `experimental=True` to use this anyway."
+)
 
 wp.set_module_options({"max_unroll": L._MAX_UNROLL, "enable_backward": False})
 
@@ -1011,7 +1023,10 @@ class FreeSurfaceWorld(FluidWorld):
     """
 
     def __init__(self, *args: Any, gravity: Sequence[float] = (0.0, 0.0, -9.81),
-                 gas_density: float = 1.0, **kwargs: Any) -> None:
+                 gas_density: float = 1.0, experimental: bool = False,
+                 **kwargs: Any) -> None:
+        if not experimental:
+            raise LiveUnavailable(FROZEN)
         super().__init__(*args, **kwargs)
         self.gas_density = float(gas_density)
         self.gravity = tuple(float(v) for v in gravity)

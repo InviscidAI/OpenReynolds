@@ -1,5 +1,10 @@
 """The free surface's own tests: the invariants, and that it did not break single phase.
 
+**This backend is frozen** (`freesurface.FROZEN`, `DECISIONS_LIVE.md` D15) and every
+construction here passes `experimental=True`. These tests are what keeps the frozen code
+honest about what it does and does not do, so they stay and they stay green; free-surface
+liquid work has moved to the SPH backend.
+
 `tests/test_live_cases.py` grades the catalogue. This file holds what is specific to
 `openreynolds/live/freesurface.py` -- the three cell types, the mass bookkeeping, and the
 one test that `DECISIONS_LIVE.md` D11 rests on: a free-surface run with every cell
@@ -34,7 +39,7 @@ def tank():
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(height * 0.5, height * 0.5, height),
                     faces="wall")
     world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                             substeps=1, device="cpu")
+                             substeps=1, device="cpu", experimental=True)
     world.initialise_free_surface(level=depth)
     return world, scaling, depth
 
@@ -59,7 +64,7 @@ def test_the_interface_is_a_closed_layer_wherever_the_level_falls():
         domain = Domain(origin=(0.0, 0.0, 0.0),
                         size=(height * 0.25, height * 0.25, height), faces="wall")
         world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                                 substeps=1, device="cpu")
+                                 substeps=1, device="cpu", experimental=True)
         world.initialise_free_surface(level=depth)
         counts = world.cell_counts()
         assert world.fluid_touching_gas() == 0, (
@@ -173,7 +178,7 @@ def test_a_fully_flooded_free_surface_run_matches_the_single_phase_one():
 
     # Gravity off, so that the only difference left between the two runs is the flag
     # field itself -- a free-surface run with gravity on would be a different problem.
-    flooded = build(FreeSurfaceWorld, gravity=(0.0, 0.0, 0.0))
+    flooded = build(FreeSurfaceWorld, gravity=(0.0, 0.0, 0.0), experimental=True)
     flooded.initialise(velocity=(0.02, 0.0, 0.0))
     flooded._body_force = (50.0, 0.0, 0.0)
     flooded._flags.fill_(CELL_FLUID)
@@ -248,7 +253,7 @@ def test_a_fill_level_on_a_boundary_is_not_silently_empty():
     scaling = Scaling.for_froude(dx, 0.06, "water", tau=0.53)
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(0.05, 0.05, 0.1), faces="wall")
     world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
-                             substeps=1, device="cpu")
+                             substeps=1, device="cpu", experimental=True)
     world.initialise_free_surface(level=0.06)
     assert world.cell_counts()["interface"] == 100, world.cell_counts()
     before = world.fill.numpy().copy()

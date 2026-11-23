@@ -2915,7 +2915,10 @@ def _free_surface_world(*, cells: int, size: Sequence[float], depth: float,
     world = FreeSurfaceWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                              substeps=1, collision=collision,
                              smagorinsky=smagorinsky, device=device,
-                             gravity=(0.0, 0.0, -gravity))
+                             gravity=(0.0, 0.0, -gravity),
+                             # These cases exist to measure the frozen backend, which is
+                             # the one use that does not need the warning.
+                             experimental=True)
     return world, scaling
 
 
