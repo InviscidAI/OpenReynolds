@@ -824,7 +824,7 @@ def run_cavity(cells: int = 128, reynolds: float = 100.0, *, u_lattice: float = 
 
 def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
                    collision: str = "trt", smagorinsky: float = 0.0,
-                   outlet_rho: float = 0.0,
+                   outlet_rho: float = 1.0,
                    device: str | None = None, periods: float = 30.0,
                    establish_flows: float = 8.0, sample_periods: float = 25.0,
                    settle: float = 0.5, out_dir: str | Path = ".",
@@ -984,7 +984,7 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
 def run_cylinder(cells_per_d: int | None = None, *, resolutions: Sequence[int] = (24, 32, 44),
                  upstream: float = 0.0, u_lattice: float = 0.037,
                  collision: str = "trt", smagorinsky: float = 0.0,
-                 outlet_rho: float = 0.0,
+                 outlet_rho: float = 1.0,
                  device: str | None = None, periods: float = 30.0,
                  establish_flows: float = 8.0, sample_periods: float = 25.0,
                  out_dir: str | Path = ".", steps: int | None = None,
@@ -2985,7 +2985,7 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
 
 
 def crosscheck(*, cells_per_d: int = 20, u_lattice: float = 0.05,
-               outlet_rho: float = 0.0,
+               outlet_rho: float = 1.0,
                collision: str = "trt",
                smagorinsky: float = 0.0, device: str | None = None,
                out_dir: str | Path = ".", periods: float = 30.0,
@@ -3344,7 +3344,8 @@ def _free_surface_world(*, cells: int, size: Sequence[float], depth: float,
     # **`mach` is threaded because the sloshing study cannot be interpreted without it.**
     # `for_froude` with no `g_lattice` sets `g_lattice = (mach c_s)^2 dx / h`, so
     # `dt ~ dx` -- acoustic scaling, measured at `dx^1.000000` with a residual of 3.4e-15
-    # over seven resolutions, not the `dx^1.5` two places in this repository claim. That
+    # over seven resolutions, not the `dx^1.5` three places in this repository used to
+    # claim (`units.py` twice and `PROGRESS_LIVE.md`, all now corrected). That
     # means Ma and tau are **frozen** along the refinement path while `Re_eff ~ 1/dx`
     # runs away, so an O(Ma^2) error of 4.9e-3 survives Richardson extrapolation
     # untouched and sits inside the "converged" limit by construction. Varying `mach` at

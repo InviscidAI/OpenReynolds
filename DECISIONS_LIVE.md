@@ -588,3 +588,62 @@ Felix is dropped for a reason that was visible from the start and is now decisiv
 
 Felix's numbers stay in the case's report as context, clearly labelled as not graded.
 Nothing about `benchmarks/felix/` changes; it is a different suite with its own purpose.
+
+## D18. The outlet anchors its density, and that is the default
+
+**2026-11-23.** Taken under the standing rule to pick the reasonable option and log it:
+the user had not ruled on whether `outlet_rho` should default on, and shipping v0.1 with
+it off means shipping a case that reproduces a known-wrong number.
+
+The old outlet was first-order extrapolation of the populations from one cell inside --
+the "do nothing" outflow, unconditionally stable, and what XLB calls it too. Paired with a
+velocity inlet, **nothing anchors the domain's mass or its pressure level**: the inlet
+sets momentum and the outlet extrapolates whatever arrives.
+
+Measured on an **empty** channel over 704,000 steps -- no cylinder, no wake, nothing but
+the boundary conditions, at 32 cells per diameter:
+
+| | extrapolating | density-anchored |
+| --- | --- | --- |
+| mass gained | **+28.113%** | **+0.032%** |
+| late-time slope | +4.22e-2 %/1000 steps, still linear | +7.4e-9, flat |
+| mass flux out / in | **-0.60%, every step** | +0.053% |
+| outlet profile vs the effective-wall parabola, max | 0.596% -- **fails 0.5%** | **0.322%** |
+| dp/dx against analytic Poiseuille | 1.1722x | 0.9778x |
+
+Reproduced to every printed digit across two independent H100 runs. An integral audit
+closes the loop on the extrapolating case: net inflow integrated over the run predicts
++2.118 kg against a measured +2.370 kg gain, agreeing to 10.6%.
+
+`outlet_rho` rescales the outlet node's copied populations so the face density equals that
+value. **A uniform scaling leaves the velocity alone** -- `u = sum(c f)/rho` scales by
+`s/s` -- so it fixes the pressure level without imposing a velocity, which is the one
+thing an outlet must not do.
+
+What it bought, and these were the three open M1 failures:
+
+| case | extrapolating | anchored |
+| --- | --- | --- |
+| cylinder 2D-2, Cd_max | 3.6088, **+11.73%** | **3.29976, +2.16%** -- passes |
+| cross-check vs OpenFOAM, Cd | **+25.6%** | **-0.80%** -- passes |
+| cross-check, Strouhal | 1.2226, **+636%** | **0.166053, -0.053%** -- passes |
+| 2D-1, Cd | 17.7483, **+218%** | **5.67801, +1.77%** -- passes the paper |
+
+**Two independent estimates made before the fix existed predicted its size.** The Mach
+sweep extrapolated the cylinder's residual to **+2.6%** at zero Mach and four extra
+diameters of inlet development gave **+2.4%**; the measured residual after the fix is
+**+2.16%**. So the +11.73% was about nine points of mass-conservation defect sitting on
+about two points of compressibility, and the smaller part had been characterised correctly
+long before the larger one was found.
+
+**Why default on rather than opt-in.** A knob that must be passed to get the right answer
+is a trap: `openreynolds live run cylinder` would reproduce +11.9% while the documented
+number said +2.16%, and the gap would live in a flag nobody reads. `outlet_rho=0` remains
+available and is what the historical numbers were measured with, so every recorded result
+stays reproducible by naming it.
+
+**What this does not claim.** The anchored channel still shows a residual **-2.2%** on
+`dp/dx` against analytic Poiseuille, not separated into discretisation error against the
+real axial variation of the gradient. And the profile clears 0.5% at the outlet while
+peaking at **0.5477%** at the quarter station, so "the inlet profile survives the channel"
+holds where it was asked and not at every station.
