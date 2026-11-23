@@ -283,21 +283,40 @@ Refining makes it **worse on both counts**: the noise quadruples and the mean mo
 *away* from 1.0. That is not a convergence sequence, so it is not a resolution problem
 and it is not SPH pressure noise behaving as SPH pressure noise does.
 
-**And it disagrees with the solver's own numbers on the same physics.** Driven directly
-through `world.step()`, the solver reports `+rho V g` to **1.1863 / 1.0992 / 1.0614** at
-3 / 4 / 5 particles across -- converging, as it should. Driven through the coupling, the
-same box at 4 across reads 1.83. Two paths, one body, forces that differ by 70%.
+**RETRACTED: "it disagrees with the solver's own numbers".** The previous version of
+this section said the coupled path and the direct path give forces 70% apart, and
+concluded the fault was in the coupling's takeover of the body table -- `body_pose`,
+`body_vel`, `body_com`. **Both halves of that are wrong**, and the way they are wrong is
+the same mistake this document has recorded twice before: two numbers compared across two
+configurations that were not the same configuration.
 
-So the fault is in the coupled path specifically. The coupling takes over the world's
-body table -- it replaces `body_pose`, `body_vel` and `body_com` with its own arrays and
-sets `_device_bodies_dirty = False`, which makes `SphWorld._sync_bodies` return early for
-the rest of the run -- and one of those three is not being maintained the way the solver's
-kernels expect. `body_com` is the first suspect, because the lattice path needs it only
-for a moment arm while the SPH boundary-particle force uses it per particle.
+Measured properly -- the same 32 mm box, the same tank, the same fill, the same 110 steps,
+one driven through `world.step()` and one through `NewtonCoupling`:
+
+| path | mean Fz | RMS fluctuation | range | boundary particles |
+| --- | --- | --- | --- | --- |
+| direct | +2.1470 rho V g | 52.6% | [+0.80, +8.49] | 2,416 |
+| coupled | +2.1513 rho V g | 52.0% | [+0.61, +8.17] | 2,416 |
+
+**They agree to 0.2%.** The three arrays the coupling takes over were also compared
+directly and are identical on both paths, to four decimals. The coupling is exonerated
+and the `body_com` hypothesis is dead.
+
+**What is actually wrong is the force itself: +2.15 rho V g where Archimedes says 1.00,
+with 52% RMS fluctuation, on both paths.** That is a solver-level result at this
+configuration, not a coupling artefact, and it is what makes the floating cases diverge:
+a hull held by a force twice its weight with half of it as noise cannot find a draft.
+
+It does not match the solver's own convergence sequence -- 1.1863 / 1.0992 / 1.0614 at
+3 / 4 / 5 particles across -- so the two differ in setup rather than in code, and finding
+which part of the setup is next. The candidates with numbers attached: this tank is 120 mm
+for a 32 mm box, 27% blockage; the box sits 29 mm off the floor with its top 29 mm below
+the surface; and the spacing gives only 3.2 particles across the hull, below the 3 that
+sequence starts at.
 
 **This is why the M6 cases fail and M7 was not attempted.** A hull that cannot be held
-still with the right force cannot be floated, and a cup cannot be carried. The validation
-numbers for those cases are not pending on compute; they are pending on this.
+still with the right force cannot be floated, and a cup cannot be carried. Those numbers
+are not pending on compute; they are pending on this.
 
 ### The empty-channel inlet check, and the step rate the cylinder actually runs at
 
