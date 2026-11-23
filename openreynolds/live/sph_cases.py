@@ -2767,6 +2767,12 @@ def run_sph_force_noise(*, particle_radius: float = 0.002, side: float = 0.032,
 # ======================================================================================
 
 
+THIN_AXIS = 0.030
+"""The dam break's shortest domain axis, which sets the coarsest usable particle
+spacing for the convergence sweep. `SphWorld._check` refuses fewer than four particles
+across it, and a sweep that asks for such a run records no convergence at all."""
+
+
 def run_sph_convergence(*, particle_radius: float = 0.005, ratio: float = 1.5,
                         height: float = 0.05, side: float = 0.064,
                         device: str | None = None, solver: str = "dfsph",
@@ -2806,7 +2812,24 @@ def run_sph_convergence(*, particle_radius: float = 0.005, ratio: float = 1.5,
     Particle count goes as the cube of the refinement, so at a ratio of 1.5 the finest run
     is 3.4 times the middle one and 11.4 times the coarsest. This case is a GPU case.
     """
-    radii = [particle_radius / ratio ** 2, particle_radius / ratio, particle_radius]
+    # **The coarsest radius comes from the geometry, not from a default.** This swept
+    # `[r/ratio**2, r/ratio, r]` around a 5 mm default, and `SphWorld._check` refused the
+    # run outright: a 10 mm spacing in the dam break's 30 mm thin axis is fewer than four
+    # particles across it, and the kernel support is two spacings, so no particle would
+    # have a full neighbourhood anywhere. The guard is right. The whole case then raised
+    # and recorded nothing -- including for the points that were perfectly valid.
+    #
+    # Reordering the list does not fix that, because the 5 mm radius *is* the refused
+    # point and appears in every ordering of it. So the coarsest member is derived from
+    # the thin axis and asserted, and the sweep refines from there at the given ratio:
+    # Richardson still gets three points at a constant refinement ratio, and every one is
+    # a run the solver will accept.
+    thin = min(THIN_AXIS, side)
+    coarsest = min(particle_radius, thin / 10.0)   # >= 5 particles across the thin axis
+    radii = [coarsest, coarsest / ratio, coarsest / ratio ** 2]
+    assert 2.0 * radii[0] * 4.0 <= thin, (
+        f"the coarsest particle spacing {2 * radii[0] * 1e3:.1f} mm needs four across "
+        f"the {thin * 1e3:.0f} mm thin axis and does not have them")
     out = Path(out_dir)
     dam: list[dict[str, Any]] = []
     floats: list[dict[str, Any]] = []
