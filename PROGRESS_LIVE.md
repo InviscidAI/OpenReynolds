@@ -258,6 +258,51 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
+### SPH force noise, answered with a number: 12.9% per step, 1.29% at ten samples
+
+The brief asks whether the force on a submerged body is "low enough for control (state
+the number)". It is, with light filtering, and the measurement also **retracts the alarm
+in the section below**.
+
+A 32 mm box held fully submerged in 80 mm of water, on an H100, after the tank settled:
+
+| | measured |
+| --- | --- |
+| mean force against `rho V g` | **0.9732x** (312.29 mN against 320.88) |
+| RMS fluctuation, per step | **12.948%** |
+| RMS after averaging 10 samples | **1.294%** |
+| noise reduction from that averaging | **10.01x** |
+
+The last row is the useful one. Ten samples of white noise would average down by
+`sqrt(10) = 3.16`. This averages down by **10.01**, which means the fluctuation is not
+white: it is a largely coherent oscillation that cancels against itself, and a controller
+with even a short filter sees far less of it than the per-step figure suggests. The case
+grades the per-step number against a 10% bound and **fails at 12.9%**, which is the honest
+verdict for an unfiltered 1 kHz loop; at ten samples it passes at 1.29%.
+
+**And the mean is right.** `0.9732 x rho V g` on a body the coupling is driving. That
+retracts the worry recorded below that the coupled force was `+2.15 rho V g`: those probes
+were run in a 120 mm tank around a 32 mm box, 27% blockage with 29 mm clearances, which is
+a confinement measurement and not an Archimedes one. The case's own tank is larger and the
+case's own number is 0.97.
+
+### SPH hydrostatic: the error is where the diagnostics said it would be
+
+The graded pressure RMS is 22.76% of `rho g h` against a 5% bound, so the case still
+fails. The diagnostics added for exactly this question say where it lives:
+
+| | measured |
+| --- | --- |
+| interior RMS, 600 particles over one support radius from a wall | **9.393%** |
+| `dp/dz` fitted on the interior | **0.9229 x (-rho g)** |
+| whole-column RMS, graded | 22.763% |
+
+So the near-wall particles carry most of it, as kernel truncation predicts -- but the
+interior is 9.4%, not 5%, and the gradient is 7.7% low. **The near-wall story is real and
+is not the whole story**, which is what reporting all three numbers rather than one was
+for. A bound that excluded near-wall particles would turn a 9.4% interior failure into a
+pass and would have been the wrong thing to do.
+
 ### The SPH floating bodies: the remaining fault is in the coupled force path
 
 All four floating cases fail with drafts of order `1e5` times Archimedes. The half-metre
