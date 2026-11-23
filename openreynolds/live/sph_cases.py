@@ -2043,6 +2043,14 @@ def _floating_tank(box: _Box, *, particle_radius: float, depth: float, span: flo
                     faces="wall")
     world = sph.SphWorld(domain=domain, particle_radius=particle_radius, fluid="water",
                          gravity=(0.0, 0.0, -GRAVITY), surface_tension=0.0,
+                         # **A quarter of the CFL step** (`sph.CFL`'s docstring has
+                         # the measurement): the per-step RMS force on a freely
+                         # floating hull goes from 104.6% of its weight to 1.8-2.6%,
+                         # and the transition is a cliff between CFL/2 and CFL/3, not
+                         # a slope -- which is why halving it had been tried and done
+                         # nothing. 1.9-2.5x wall clock, not 4x, because the solver's
+                         # iterations fall from about nine to exactly two.
+                         cfl=sph.CFL / 4.0,
                          device=device, solver=solver)
     # **`fill=False` lets the caller add the hull before the water.** Filling first and
     # then inserting a hull leaves fluid particles **inside** the hull, and they push

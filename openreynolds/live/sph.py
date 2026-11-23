@@ -188,6 +188,18 @@ lattice backend for single-phase flow, which is stable. What beta means concrete
 the fluid-only cases are bit-for-bit reproducible, the floating ones are not, and
 the per-step force noise on a freely floating hull is 101.5% RMS against 23.0% held
 with the mean correct in both. No floating-body number should come from one run.
+
+**The force noise has a cause and a fix, and the fix is the substep.** `CFL`'s docstring
+has the measurement: a step of `CFL/4` takes the per-step RMS on a freely floating hull
+from 99-115% to **1.3 to 8.3%** across a 1.67x refinement, falling as the resolution
+rises -- which the 101.5%-to-114.9% baseline did the opposite of. The same step takes a
+*held* hull from 23.0% to 1.3%, so it is the pressure field converging in time and not
+the explicit coupling's lag. It is not the DFSPH tolerance (100x tighter buys 13% at
+6.9x the wall clock, with a 50x better density field) and it is not spurious density
+oscillation (delta-SPH buys nothing free and makes the held hull worse). The default is
+unchanged because `CFL` is also the fluid's own stability number and a fluid-only case
+has no wrench to be noisy; `SphWorld.wrench` has the optional filter for a caller who
+cannot afford the shorter step.
 """
 
 from __future__ import annotations
@@ -268,9 +280,107 @@ the timestep -- so the only thing the step has to beat is the neighbourhood chan
 faster than the solver can follow. 0.4 is the DFSPH papers' own figure. The peak speed it
 is applied to is an estimate, not a measurement (`SphWorld._substep`), because measuring
 it needs a host read of the velocity field every step.
+
+## **0.4 is right for the fluid's motion and three times too long for its wrench**
+
+This is the whole of the v0.1 force-noise finding: **0.4 converges where the particles
+go and does not converge the pressure field that `wrench` integrates. A case that reads
+a per-step force needs `CFL/3` or smaller.** `benchmarks/live/force_noise.py` is the
+measurement -- one settle, then every candidate released from the identical settled
+state, two independent settles of each -- and this is it, as the per-step RMS of the
+vertical fluid force on a 64 x 64 x 32 mm hull at 0.5 of water's density in 60 mm of
+water, over the last 40% of a six-heave-period release, on an H100:
+
+    effective CFL     2.5 mm radius      2.0 mm            1.5 mm
+      0.4   (dt)      92.9 / 94.0%    104.6 / 99.2%    114.9 / 115.0%
+      0.2   (dt/2)    92.1 / 89.8%     97.3 / 97.2%     90.8 /  89.4%
+      0.133 (dt/3)     5.5 /  5.3%          --               --
+      0.1   (dt/4)     5.1 /  5.4%      1.8 /  2.6%      1.3 /   1.3%
+      0.067 (dt/6)     6.9 /  5.9%          --               --
+      0.05  (dt/8)     5.8 /  5.4%          --           1.4 /   1.6%
+
+**It is a cliff and not a slope.** Halving dt does nothing -- 97.3% against 104.6% at
+2 mm -- and thirding it takes 93% to 5.4%. Between `CFL/2` and `CFL/3` the per-step force
+stops being noise with a mean in it and becomes a force: at 1.5 mm and `CFL/4` the
+vertical force stays inside **0.955 to 1.040 `m g` on every single step**, against 0.004
+to 2.65 at `CFL 0.4`, and the steps where the hull felt essentially nothing -- 27% of
+them at 1.5 mm -- go to **zero**. `CFL/6` and `CFL/8` are no better than `CFL/4`, so
+`CFL/4` is the floor and not a point on the way down.
+
+**And it is a ratio, not an absolute step**, which is the one thing that had to be
+measured rather than assumed because the two are indistinguishable at one resolution:
+476 us is quiet at a 2.5 mm radius and 428 us is *noisy* at 1.5 mm. A fixed millisecond
+figure would have the sign backwards. `CFL` is the knob.
+
+**It is this file's step and not the coupling's, which is also measured rather than
+assumed.** The obvious story is the explicit coupling -- the fluid sees `body_vel` from
+the start of the step and the body sees the wrench from the end of it -- and it is wrong,
+because the same cliff is there on a hull Newton **never steps**. Held at the Archimedes
+draft, where `body_vel` is identically zero and there is no lag to shorten, `CFL/4` takes
+the per-step RMS from **22.0% to 1.3%**. Shortening the step is converging the pressure
+field in time, and the coupling lag is a second and smaller term on top of it: freezing
+the boundary particles' velocity on a hull that is being integrated (not a remedy -- a
+hull with no surface velocity has no added mass) takes 99-115% down to only 42-66%,
+about half the free-minus-held excess and all of the near-zero steps.
+
+What it costs, measured as wall clock per simulated second on the same hardware: **1.9x
+at `CFL/3` and 2.3 to 2.5x at `CFL/4`**, and not the 3x and 4x the step count suggests,
+because the constant-density solver's iteration count falls from 8.7-9.7 a substep to
+exactly **2.0** -- the papers' floor -- once the step is small enough that one substep's
+density error is already inside the tolerance.
+
+**The spread, because one run settles nothing on a floating body.** Every figure above
+is two independent settles, and `CFL/4` reproduced to 0.8 percentage points or better at
+2.0 and 1.5 mm. At 2.5 mm -- 3.2 particle spacings through the draft, the coarse end --
+a third settle read **8.3%** against the 5.1% and 5.4% of the first two, so the spread
+there is 3.2 points and the margin to a 10% target is thin. The margin *grows* with
+refinement, which is the opposite of the baseline's behaviour and is the thing that makes
+this a convergent result rather than a lucky setting.
+
+**Nothing here changes the default,** and that is deliberate: `CFL` is also the number
+that keeps the neighbourhood from outrunning the solver, a fluid-only case has no wrench
+to be noisy, and `docs/sph-contract.md` sets this constant. A case that reads a per-step
+force asks for the shorter step through `dt=`, which `_substep` already accepts and
+already refuses an inconsistent `substeps` against:
+
+    world = SphWorld(..., particle_radius=r)      # dt is one CFL substep
+    world = SphWorld(..., particle_radius=r, dt=world_dt / 4.0)   # or a quarter of it
+
+and `openreynolds/live/sph_cases.py`'s floating runners are where that choice belongs,
+which is not this file. The three knobs that do NOT fix it are written down where each
+one lives: `diffusivity` and `diffuse_density` for delta-SPH, `SphWorld.wrench` for the
+filter, and the tolerance in this list -- `tolerance=1e-5` drives the mean compression
+error from 0.097% to 0.002%, a 50x better density field, and buys **13%** off the force
+RMS at 6.9x the wall clock. The noise is not under-converged pressure; it is pressure
+converged at the wrong instant.
 """
 
 _EPS = 1.0e-9
+
+DIFFUSION_EIGENVALUE = 23.2963
+"""`lambda_max h^2` for `diffuse_density`'s Laplacian on this file's own lattice fill.
+
+**Measured, not assumed, and the assumption it replaces was wrong by 3x.** The density
+diffusion is an explicit Laplacian, so a substep multiplies a mode by
+`1 - D dt lambda`, and the sharpest mode a cubic lattice at spacing `h/2` carries is the
+checkerboard. Launching `diffuse_density` once on a checkerboard of unit amplitude and
+reading the amplitude back gives `lambda h^2` directly, and it is the same number at
+every resolution because it is a property of the kernel and the lattice and not of the
+run: **23.2963 at particle radii of 2, 2.5 and 5 mm, to four decimals.**
+
+The limit `_check` holds is therefore `D dt lambda <= 1`, which is monotone decay of
+that mode. Stability alone would allow `<= 2`, and the band between the two is a
+diffusion that *alternates the sign* of the noise it is removing every substep -- which
+is not a diffusion, and on a one-sided density constraint it is a rectifier. Measured at
+`D dt lambda = 2.209`: a unit checkerboard came back at **-1.209**, so it had grown.
+
+Taking the viscous term's `0.125 h^2/nu` for this operator instead -- which is what
+writing it by analogy gives, and what this file did first -- allows
+`D dt lambda = 2.9` and is past even the stability edge. `0.125` is Monaghan's figure
+for Monaghan's viscosity, which carries a `2(d+2) = 10` and a different normalisation;
+it is not a property of SPH Laplacians in general. One checkerboard launch is cheaper
+than the argument, and `tests/test_live_sph.py` keeps it.
+"""
 
 # -- the cubic spline ------------------------------------------------------------------
 #
@@ -451,6 +561,131 @@ def densities(
         else:
             total += psi[j] * w
     rho[i] = total
+
+
+@wp.kernel
+def diffuse_density(
+    grid: wp.uint64,
+    x: wp.array(dtype=wp.vec3),
+    rho: wp.array(dtype=DTYPE),
+    rho_out: wp.array(dtype=DTYPE),
+    mass: DTYPE,
+    n_fluid: wp.int32,
+    h: DTYPE,
+    sigma: DTYPE,
+    coefficient: DTYPE,
+):
+    """delta-SPH: one substep of density diffusion, into the field the constraint reads.
+
+        rho_c_i = rho_i + dt * delta * h' * c0 * 2 sum_j (m_j/rho_j) (rho_i - rho_j)
+                                                    (x_ij . grad_i W_ij)/(|x_ij|^2 + 0.01 h^2)
+
+    which is Molteni and Colagrossi (2009) eq. (14), the diffusive term Antuono et al.
+    (2010) and Marrone et al. (2011) then build the renormalised delta-SPH on.
+    `coefficient` is the whole prefactor `dt * delta * h' * c0`, formed on the host so
+    this kernel carries no units it has to agree with anything about.
+
+    **The one adaptation, and it is the reason for the `_c`.** Those papers add this term
+    to the *continuity equation*, because a weakly compressible scheme integrates
+    `Drho/Dt` and the noise accumulates in the integral. This solver has no continuity
+    equation: `densities` re-sums `rho_i` from the particle positions every substep, by
+    the deliberate choice its docstring argues for. The same operator applied to the same
+    field is therefore a one-substep diffusion of the summation density, and where it goes
+    is the constant-density residual's `rho_i/rho0 - 1` term -- the one place the density
+    enters as a constraint rather than as a normalisation. `factors` and `apply_pressure`
+    keep the raw `rho_i`, because there it divides a stiffness and is not being asked to
+    be true; `densities()` and `density_error()` keep the raw one too, so **the reported
+    density error is the field as summed and not the field as smoothed.** A diffusion
+    term that also marked its own homework would make every graded density number here
+    better by construction.
+
+    `h'` in the prefactor is the papers' *smoothing length*, which is half this file's
+    support radius (`SUPPORT_FACTOR`'s docstring on the two conventions). The host passes
+    `self.support / 2`, and `report()` prints the resulting diffusivity in m^2/s so that
+    nobody has to work out which `h` a published `delta` was quoted against.
+
+    **Boundary neighbours are skipped.** A boundary particle has no density: `psi_b` is a
+    pseudo-mass from Akinci's own normalisation and `rho[b]` is not even allocated. The
+    published wall treatments for this term (Marrone's included) extrapolate a wall
+    density from the fluid, which is a second scheme with its own ghost-node machinery;
+    without it, `rho_j` for a wall is a number somebody would have to invent, and
+    inventing it is how a diffusion term becomes a wall attraction. So the operator is
+    the interior one, which is the standard practice, and the cost is that it does
+    nothing in the outermost fluid layer -- the same layer the free surface already
+    truncates.
+
+    Double-buffered: it reads `rho` for every neighbour and writes `rho_out`, which is a
+    different array. In place it would be a race with no symptom, since the term is small
+    and a neighbour's half-updated density still looks like a density. **`SphWorld.rho_c`
+    is only a separate array when this term is on** -- `_commit` does not allocate one
+    otherwise -- so a caller launching this kernel by hand with the term off would be
+    passing `rho` as both. Measured, because it is what a test did: the sweep becomes
+    Gauss-Seidel in grid order and the operator's apparent eigenvalue drifts from 23.19
+    down to 20.53 with the diffusion number, which reads exactly like a nonlinearity.
+
+    The sign is the thing to get right and it is checkable rather than arguable:
+    `x_ij . grad_i W_ij` is negative everywhere in the support (the kernel falls away
+    from the particle), so with `rho_i > rho_j` the whole term is negative and `rho_i`
+    comes down towards its neighbours. Backwards, it is an anti-diffusion that sharpens
+    the noise it was added to remove, and it would still produce a plausible-looking run.
+    `openreynolds/toolbox/sph.py::accelerations` carries the same term with the same
+    sign check, and
+    `tests/test_live_sph.py::test_density_diffusion_flattens_a_bump_and_spares_a_gradient`
+    is the assertion: a bump flattens, a linear ramp does not move.
+
+    ## It does not reduce the force noise on a floating hull, and it is off by default
+
+    This term was written to attack the per-step force noise `CFL`'s docstring measures,
+    and **it does not touch it.** `benchmarks/live/force_noise.py`, two independent
+    settles at each of two resolutions, per-step RMS of the vertical force:
+
+        delta        free, 2.0 mm       free, 2.5 mm      held, 2.0 mm   held, 2.5 mm
+        0 (off)      104.6 / 99.2%     93.9 / 95.8%       23.0%          22.0%
+        0.004        109.9 / 110.2%    97.8 / 96.8%        --             --
+        0.012        102.3 / 105.8%   100.6 / 102.7%      31.2%          23.0%
+
+    0.012 is 88% of the ceiling `SphWorld.diffusivity` derives and 0.004 is 29% of it, so
+    the range is bracketed rather than sampled. **The held rows are the clean ones** -- a
+    hull Newton never steps is deterministic here, and both of those numbers reproduced
+    bit for bit across the two runs -- and they say it plainly: at 2 mm the diffusion
+    makes the fluid's own force noise **worse, 23.0% to 31.2%**, and it raises the worst
+    step from 1.41 to 2.44 `m g`.
+
+    Why, stated so it can be argued with rather than as a shrug: delta-SPH removes the
+    *accumulated* density error of a scheme that integrates `Drho/Dt`, and this one has
+    none to remove -- `densities` re-sums the field from the positions every substep, so
+    there is no history for a diffusion to clean. What the operator does instead is blur
+    the real short-wavelength structure that is there, and the shortest-wavelength real
+    structure in this problem is the pressure in the one or two fluid layers against the
+    hull, which is exactly what the wrench integrates. The reported compression error
+    agrees: it goes *up* with delta, 0.097% to 0.136% at 2 mm, because the solver is now
+    driving a smoothed field to rho0 and leaving the summed one further away.
+
+    It is kept, off, because it is correct, cheap when off (no allocation and no launch),
+    checked, and the right tool for a weakly compressible path if one is ever added --
+    `toolbox/sph.py` measures 67% to 2.1% pressure error from exactly this term. On this
+    solver it is not the remedy, and a knob whose measurement says so is more useful than
+    a knob that was never tried.
+    """
+    tid = wp.tid()
+    i = wp.hash_grid_point_id(grid, tid)
+    if i >= n_fluid:
+        return
+    xi = x[i]
+    rho_i = rho[i]
+    soft = DTYPE(0.01) * h * h
+    total = DTYPE(0.0)
+    for j in wp.hash_grid_query(grid, xi, h):
+        if j >= n_fluid:
+            continue
+        d = xi - x[j]
+        r = wp.length(d)
+        if r < DTYPE(_EPS) or r >= h:
+            continue
+        g = _spline_grad(d, r, h, sigma)
+        total += (mass / rho[j]) * DTYPE(2.0) * (rho_i - rho[j]) \
+            * wp.dot(d, g) / (wp.dot(d, d) + soft)
+    rho_out[i] = rho_i + coefficient * total
 
 
 @wp.kernel
@@ -1005,6 +1240,9 @@ class SphWorld:
         max_iterations: int = 100,
         boundary_layers: int = 2,
         check_every: int = 1,
+        density_diffusion: float = 0.0,
+        wrench_filter: float = 0.0,
+        cfl: float = CFL,
     ) -> None:
         """
         `particle_radius` is the sizing knob, the way `dx` is for the lattice: the
@@ -1034,6 +1272,15 @@ class SphWorld:
         trade the GPU path is offered, not a mode to drift into.
 
         `surface_tension` must be 0.0 -- see `_check`.
+
+        `density_diffusion` is delta-SPH's `delta`, and **0.0 is off, which is the
+        default and is the control every measurement of it is against.** See
+        `diffuse_density` for the term and `_check` for the stability limit it is held
+        to, which at a projection timestep is a real limit and not a formality.
+
+        `wrench_filter` is a one-pole low-pass on the wrench `wrench()` **reports**, as
+        an EMA coefficient in `(0, 1]`; 0.0 is off and is the default. It changes nothing
+        the solver does -- see `wrench`.
         """
         self.wp = require()
 
@@ -1068,23 +1315,19 @@ class SphWorld:
         self.max_iterations = int(max_iterations)
         self.boundary_layers = max(1, int(boundary_layers))
         self.check_every = max(0, int(check_every))
+        self.density_diffusion = float(density_diffusion)
+        # **A knob because the floating cases need `CFL/4` and fluid-only cases do not.**
+        # `CFL`'s own docstring carries the measurement: a quarter step takes the per-step
+        # RMS force on a freely floating hull from 104.6% of its weight to 1.8-2.6%, and the
+        # transition is a cliff between `CFL/2` and `CFL/3` rather than a slope -- which is
+        # why halving it had been tried and had done nothing. It costs 1.9-2.5x wall clock,
+        # not the 4x the step implies, because the solver's iteration count falls from about
+        # nine to exactly two. The default is unchanged, because `CFL` is also the fluid's own
+        # stability number and a fluid-only case has no wrench to be noisy.
+        self.cfl = float(cfl)
+        self.wrench_filter = float(wrench_filter)
 
         self.dt, self.substeps, self._peak_estimate = self._substep(dt, substeps)
-        self._check()
-
-        self.coupling_style = "particles"
-        """How `couple.py` must treat this world's arrays. `docs/sph-contract.md`.
-
-        The lattice backend solves in index space, so `couple.py` divides every shape
-        scale by `dx` on the way in and multiplies the accumulated wrench by
-        `rho dx^4/dt^2` on the way out. This backend solves in metres, seconds and
-        kilograms, so all three conversions are the identity -- and an `SphWorld` has no
-        `dx` at all, which is how the coupling found out: it raised
-        `AttributeError: no attribute 'dx'` from `_static_shape_arrays` and took all four
-        floating-body cases with it. A string rather than a `hasattr(world, "dx")` probe
-        because a missing attribute is an accident and a declared style is a promise.
-        """
-
         self.c0 = self._peak_estimate / math.sqrt(self.tolerance)
         """The weakly compressible sound speed this run is *equivalent* to, in m/s.
 
@@ -1109,6 +1352,22 @@ class SphWorld:
         this as a measured property of the solver -- it is a derived equivalence, and the
         measured quantity is the density error itself.
         """
+
+        self._check()
+
+        self.coupling_style = "particles"
+        """How `couple.py` must treat this world's arrays. `docs/sph-contract.md`.
+
+        The lattice backend solves in index space, so `couple.py` divides every shape
+        scale by `dx` on the way in and multiplies the accumulated wrench by
+        `rho dx^4/dt^2` on the way out. This backend solves in metres, seconds and
+        kilograms, so all three conversions are the identity -- and an `SphWorld` has no
+        `dx` at all, which is how the coupling found out: it raised
+        `AttributeError: no attribute 'dx'` from `_static_shape_arrays` and took all four
+        floating-body cases with it. A string rather than a `hasattr(world, "dx")` probe
+        because a missing attribute is an accident and a declared style is a promise.
+        """
+
 
         # -- the particles, on the host until the first step ------------------------
         #
@@ -1158,6 +1417,12 @@ class SphWorld:
         self._committed = False
         self._grid = None
         self._wrench = None
+        self._wrench_mean = None
+        """The filtered wrench, `(n, 6)` in SI, or `None` until the first filtered step.
+
+        Host-side and float64, because it is the number a caller reads and not a number
+        the solver uses -- see `wrench`.
+        """
         self._wall_faces: list[str] = []
         self.x = None
         self.v = None
@@ -1193,8 +1458,8 @@ class SphWorld:
             # speed at which this discretisation stops being able to follow its own
             # neighbourhood, which is the same thing the CFL limit says and is the honest
             # floor for a run whose speeds nothing has told us about.
-            peak = CFL * self.spacing / 1.0e-3
-        limit = CFL * self.spacing / peak
+            peak = self.cfl * self.spacing / 1.0e-3
+        limit = self.cfl * self.spacing / peak
         if dt is None:
             return float(limit), 1, peak
         step = float(dt)
@@ -1214,6 +1479,42 @@ class SphWorld:
                 f"`particle_radius`"
             )
         return step, count, peak
+
+    @property
+    def diffusivity(self) -> float:
+        """delta-SPH's diffusivity `delta h' c0`, in m^2/s. Zero when the term is off.
+
+        `h'` is the papers' smoothing length, half this file's support radius, and `c0`
+        is the equivalent sound speed above -- the only speed a projection scheme has to
+        offer a term whose published prefactor wants an acoustic one. Both conventions
+        are a place to be wrong by a factor of two, so the product is computed once here,
+        used by `_check`, `_prepare` and `report`, and printed in m^2/s where a reader can
+        compare it against the physical `nu` in the line above it.
+
+        **The largest usable delta is `0.429 sqrt(tolerance)` and nothing else**, which
+        is worth having in closed form because it is the whole reason a published delta
+        cannot be copied in here. At the default substep -- the CFL one, `dt = CFL
+        spacing/u` with `spacing = h/2` -- with `c0 = u/sqrt(tolerance)` and the measured
+        `lambda_max = 23.2963/h^2` (`DIFFUSION_EIGENVALUE`):
+
+            delta h' c0 dt lambda_max <= 1
+              =>  delta (h/2)(u/sqrt(tolerance))(0.2 h/u)(23.2963/h^2) <= 1
+              =>  delta <= sqrt(tolerance) / 2.3296  =  0.429 sqrt(tolerance)
+
+        The resolution cancels, the fluid cancels, the peak speed cancels. At the default
+        `tolerance=1e-3` that is **0.01357**, so Molteni and Colagrossi's 0.1 and
+        `toolbox/sph.py`'s 0.3 are both out of reach here by an order of magnitude -- and
+        tightening the tolerance makes it *worse*: `tolerance=1e-4` allows only 0.00429,
+        because a tighter tolerance is a higher equivalent sound speed and this term's
+        prefactor is proportional to it. **So delta-SPH and a tighter DFSPH tolerance are
+        not independent knobs; they trade against each other.** `_check` refuses past the
+        limit and prints the number.
+
+        What is NOT small about that delta: at the limit the sharpest density mode is
+        annihilated in one substep, by construction. The ceiling is low because the
+        operator is strong, not because it is weak.
+        """
+        return self.density_diffusion * (self.support / 2.0) * self.c0
 
     def _check(self) -> None:
         """The refusals, each naming the knob that moves it. `units.UnphysicalScaling`'s
@@ -1237,6 +1538,48 @@ class SphWorld:
                 f"`substeps`, lower `viscosity`, or coarsen `particle_radius` (the limit "
                 f"goes as h^2)"
             )
+        if not 0.0 <= self.wrench_filter <= 1.0:
+            raise UnphysicalScaling(
+                f"`wrench_filter` is an EMA coefficient in [0, 1] and is "
+                f"{self.wrench_filter:g}. 0.0 is off (the default), 1.0 is a filter that "
+                f"passes the raw wrench through, and anything outside that is not a "
+                f"low-pass -- above 1 it overshoots and amplifies, below 0 it alternates "
+                f"sign. See `SphWorld.wrench`"
+            )
+        if self.density_diffusion < 0.0:
+            raise UnphysicalScaling(
+                f"`density_diffusion` is delta-SPH's delta and is {self.density_diffusion:g}. "
+                f"Negative, the same term is an ANTI-diffusion: it sharpens the density "
+                f"noise it exists to remove, and the run still looks plausible. 0.0 is off"
+            )
+        if self.density_diffusion > 0.0:
+            # The explicit diffusion limit, from the operator's own largest eigenvalue
+            # rather than by analogy with the `0.125 h^2/nu` viscous one above --
+            # `DIFFUSION_EIGENVALUE` has the measurement and why the analogy is 3x wrong.
+            diffusivity = self.diffusivity
+            ceiling = self.support ** 2 / (DIFFUSION_EIGENVALUE * diffusivity)
+            if sub > ceiling:
+                raise UnphysicalScaling(
+                    f"delta-SPH at delta {self.density_diffusion:g} is a diffusivity of "
+                    f"delta h' c0 = {diffusivity:.4g} m2/s (h' {self.support / 2 * 1e3:.4g} mm, "
+                    f"the papers' smoothing length; c0 {self.c0:.4g} m/s, this run's "
+                    f"equivalent sound speed), so one substep multiplies the sharpest "
+                    f"density mode this lattice carries by "
+                    f"1 - {DIFFUSION_EIGENVALUE:g} D dt/h^2 = "
+                    f"{1.0 - DIFFUSION_EIGENVALUE * diffusivity * sub / self.support ** 2:+.4g}. "
+                    f"Below -1 that mode GROWS and above 0 it decays monotonically, "
+                    f"which is the only behaviour a diffusion may have: the limit is a "
+                    f"substep of {ceiling:.4g} s and this one is {sub:.4g} s. Lower "
+                    f"`density_diffusion` to at most "
+                    f"{self.density_diffusion * ceiling / sub:.4g}, raise `substeps`, or "
+                    f"lower `dt`.\n"
+                    f"This limit is why a published delta cannot be copied across: "
+                    f"Molteni and Colagrossi's 0.1 is quoted against an ACOUSTIC "
+                    f"timestep, `dt ~ 0.25 h'/c0` = {0.25 * self.support / 2 / self.c0:.4g} s "
+                    f"here, which is {sub / (0.25 * self.support / 2 / self.c0):.3g}x "
+                    f"smaller than this projection scheme's substep. The diffusion "
+                    f"NUMBER is what transfers, not delta"
+                )
         if self.spacing > min(self.domain.size) / 4.0:
             raise UnphysicalScaling(
                 f"a particle spacing of {self.spacing * 1e3:.3g} mm in a domain "
@@ -1614,6 +1957,12 @@ class SphWorld:
         self.body = wp.array(body, dtype=wp.int32, device=d)
         self.psi = wp.zeros(self.n, dtype=DTYPE, device=d)
         self.rho = wp.full(self.n_fluid, DTYPE(self.rho0), dtype=DTYPE, device=d)
+        # The density the constant-density constraint reads. **The same array when
+        # delta-SPH is off**, which is the usual case and costs neither the allocation
+        # nor the launch; a second array only when there is a diffusion to put in it.
+        # See `diffuse_density` on why the raw field stays the one every report reads.
+        self.rho_c = (wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
+                      if self.density_diffusion > 0.0 else self.rho)
         self.alpha = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
         self.adv = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
         self.kappa = wp.zeros(self.n_fluid, dtype=DTYPE, device=d)
@@ -1694,7 +2043,7 @@ class SphWorld:
         iterations_divergence = 0
 
         for _ in range(count):
-            self._prepare()
+            self._prepare(sub)
             iterations_divergence += self._solve(divergence=True, dt=sub)
             wp.launch(nonpressure, dim=self.n, device=self.device,
                       inputs=[self._grid.id, self.x, self.v, self.psi, self.rho,
@@ -1717,6 +2066,18 @@ class SphWorld:
             self.substeps_taken += 1
 
         wp.synchronize_device(self.device)
+        # The wrench filter is driven here and nowhere else, because this is the one
+        # thing that happens exactly once a coupling step. A filter updated inside
+        # `wrench()` would advance by one sample every time a caller *looked*, and
+        # `benchmarks/live/free_settle.py` looks twice on the steps it tabulates -- so
+        # its time constant would be a function of the reporting code. See `wrench`.
+        if self.wrench_filter > 0.0:
+            raw = self._wrench.numpy().astype(np.float64) / max(float(count), 1.0)
+            if self._wrench_mean is None:
+                self._wrench_mean = raw
+            else:
+                a = self.wrench_filter
+                self._wrench_mean = a * raw + (1.0 - a) * self._wrench_mean
         elapsed = time.perf_counter() - started
         self.seconds += elapsed
         self.time += self.dt
@@ -1739,8 +2100,13 @@ class SphWorld:
             "divergence_iterations": iterations_divergence / max(1, count),
         }
 
-    def _prepare(self) -> None:
+    def _prepare(self, dt: float | None = None) -> None:
         """Pose the boundary, rebuild the grid, and recompute densities and factors.
+
+        `dt` is the substep length, which only the delta-SPH term needs: it is a rate and
+        has to be integrated over the interval `residual` is then asked about. Defaults
+        to `self.dt/self.substeps`, which is what it is unless the caller overrode
+        `substeps` on this `step()`.
 
         The grid is rebuilt every substep and not reused. It is the obvious thing to try
         to avoid and it is not avoidable here: the whole point of this backend is that
@@ -1777,6 +2143,16 @@ class SphWorld:
         wp.launch(densities, dim=self.n, device=self.device,
                   inputs=[*common, self.rho, DTYPE(self.mass), self.n_fluid,
                           DTYPE(self.support), DTYPE(self.sigma)])
+        if self.density_diffusion > 0.0:
+            # `dt delta h' c0`, the whole prefactor, formed on the host once a substep.
+            # The substep and not `self.dt`, because this is a rate integrated over the
+            # interval `residual` is about to be asked about.
+            wp.launch(diffuse_density, dim=self.n, device=self.device,
+                      inputs=[self._grid.id, self.x, self.rho, self.rho_c,
+                              DTYPE(self.mass), self.n_fluid, DTYPE(self.support),
+                              DTYPE(self.sigma),
+                              DTYPE((self.dt / self.substeps if dt is None else dt)
+                                    * self.diffusivity)])
         wp.launch(factors, dim=self.n, device=self.device,
                   inputs=[*common, self.rho, self.alpha, DTYPE(self.mass), self.n_fluid,
                           DTYPE(self.support), DTYPE(self.sigma)])
@@ -1795,7 +2171,10 @@ class SphWorld:
         particle at 40% is worth knowing about and a max-based criterion on a free surface
         chases a single particle in a corner for the whole iteration budget.
         """
-        args = [self._grid.id, self.x, self.v, self.psi, self.rho, self.adv,
+        # `rho_c` and not `rho`: the density the CONSTRAINT reads, which delta-SPH
+        # diffuses and which is the same array when it is off. `apply_pressure` below
+        # keeps the raw `rho`, where it only normalises a stiffness.
+        args = [self._grid.id, self.x, self.v, self.psi, self.rho_c, self.adv,
                 DTYPE(self.mass), self.n_fluid, DTYPE(self.support), DTYPE(self.sigma),
                 DTYPE(self.rho0), DTYPE(dt), 0 if divergence else 1]
         iterations = 0
@@ -1930,10 +2309,71 @@ class SphWorld:
         into bodies -- a second neighbour sweep over a boundary that outnumbers the fluid
         here 9,600 to 3,840, so it is a measurable cost and a rewrite of the two kernels
         that carry this convention, not a dtype change.
+
+        ## `wrench_filter`: the optional low-pass, which is OFF by default
+
+        `SphWorld(wrench_filter=alpha)` makes this method return a one-pole EMA,
+        `y_k = alpha x_k + (1 - alpha) y_(k-1)`, advanced once per `step()` and never
+        per call. 0.0 is off, and off is the default: the raw per-step force is what
+        this method has always returned and what every number in `PROGRESS_LIVE.md` was
+        measured on.
+
+        **It changes nothing the solver does, and that is the point and the limit.**
+        `couple.py::_push_wrench` reads `world._wrench` on the device through
+        `L.wrench_to_newton`, so a filtered world is coupled to Newton by exactly the
+        same unfiltered force as an unfiltered one: the body's trajectory, the draft and
+        the fluid are bit-for-bit what they were. The filter is on the number a
+        **reader** gets -- a controller, a load report, a plot -- which is where the
+        per-step noise is a problem and where a phase lag is a price somebody can decide
+        to pay.
+
+        **What it costs, which is a lag and not an approximation.** A one-pole EMA at
+        `alpha` has a group delay of `(1 - alpha)/alpha` samples at low frequency and a
+        -3 dB corner at `f_c ~ alpha/(2 pi (1 - alpha) dt)`. A controller closing a loop
+        faster than that is being lied to about *when*, which is a different and worse
+        failure than being lied to about *how much*. `report()` prints both numbers for
+        the alpha in force, so a run says its own lag.
+
+        **Measured on the signal, not argued.** The EMA run over the free hull's own
+        per-step series at a 2 mm radius (`benchmarks/live/force_noise.py`, two
+        independent settles, 1142.274 us step, heave period 253.75 ms):
+
+            alpha   n     lag        corner     RMS          cut by    white   peak/mg
+            raw     --    --         --         104.6/99.2%  --        --      3.27/4.08
+            0.5     3.0   1.14 ms    139.3 Hz    40.6/38.8%  2.6x      1.73x   1.97/2.35
+            0.3     5.7   2.67 ms     59.7 Hz    22.2/21.4%  4.7x      2.38x   1.54/1.75
+            0.2     9.0   4.57 ms     34.8 Hz    14.1/13.7%  7.3x      3.00x   1.35/1.48
+            0.1    19.0  10.28 ms     15.5 Hz     6.7/ 6.6%  15.3x     4.36x   1.16/1.23
+            0.05   39.0  21.70 ms      7.3 Hz     3.3/ 3.2%  31.7x     6.24x   1.08/1.10
+
+        `n = (2 - alpha)/alpha` is the equivalent averaging length and `white` is the
+        `sqrt(n)` a white signal would give. **The noise is coherent, not white, and the
+        factor is 2.4 to 5.1**: nine samples cut it 7.3x where white noise would give
+        3.0x. That is why a filter is worth offering at all. The mean is untouched to
+        four decimals at every alpha -- 1.0005 against the raw 1.0018 -- so this trades
+        phase for amplitude and nothing else.
+
+        **alpha = 0.1 is the setting that reaches the 10% target**, at a nine-step
+        (10.28 ms) lag, which is 4.1% of this hull's heave period. alpha = 0.2 reaches
+        14% at half that lag.
+
+        And the peak, which is the number a load case wants: raw over-reports the peak
+        vertical force by **2.4x to 2.8x** (3.27 `m g` against the filtered 1.35 at
+        alpha 0.2). `openreynolds/live/carry.py` is the precedent at the same alpha and
+        measured the same shape of error, 3.42 N raw against a true 2.18 N, 1.6x.
+
+        **The filter is the fallback and not the fix.** A coupling step of `CFL/4` gets
+        the *raw* per-step RMS to 1.3-5.4% with no lag at all, which is better than any
+        alpha here and is what `CFL`'s docstring recommends. This exists for a caller who
+        cannot afford 2.3x the wall clock, and for whom a known phase lag is the cheaper
+        price.
         """
         self._commit()
-        count = float(self.substeps if substeps is None else substeps)
-        both = self._wrench.numpy().astype(np.float64) / max(count, 1.0)
+        if self.wrench_filter > 0.0 and self._wrench_mean is not None:
+            both = self._wrench_mean
+        else:
+            count = float(self.substeps if substeps is None else substeps)
+            both = self._wrench.numpy().astype(np.float64) / max(count, 1.0)
         if body is None:
             return both
         return tuple(both[body, :3]), tuple(both[body, 3:])
@@ -2061,9 +2501,29 @@ class SphWorld:
             "refuses a non-zero value rather than ignoring it)",
             f"  gravity:    {self.gravity} m/s2, on the fluid -- buoyancy comes out of "
             f"the pressure field, so do not add rho V g as well",
+            "  diffusion:  density diffusion OFF (delta-SPH, Molteni & Colagrossi 2009 "
+            "/ Antuono 2010); the constant-density constraint reads the summation "
+            "density as summed" if self.density_diffusion <= 0.0 else
+            f"  diffusion:  delta-SPH delta {self.density_diffusion:g} = a diffusivity "
+            f"delta h' c0 of {self.diffusivity:.4g} m2/s "
+            f"({self.diffusivity / self.nu:.3g}x nu), diffusion number "
+            f"{self.diffusivity * (self.dt / self.substeps) / self.support ** 2:.4g} "
+            f"of the 0.125 explicit limit. On the constraint's density only -- the "
+            f"reported density error is still the raw summation density",
             f"  solver:     DFSPH (Bender & Koschier 2015/2017), constant-density and "
             f"divergence-free, mean residual <= {self.tolerance:g}, <= "
             f"{self.max_iterations} iterations each",
+            "  wrench:     RAW per-step force (wrench_filter off, the default). "
+            "`SphWorld.wrench` has the measured per-step noise and what the filter "
+            "costs" if self.wrench_filter <= 0.0 else
+            f"  wrench:     `wrench()` returns a one-pole EMA at alpha "
+            f"{self.wrench_filter:g} -- a "
+            f"{(1.0 - self.wrench_filter) / self.wrench_filter:.3g}-step group delay "
+            f"({(1.0 - self.wrench_filter) / self.wrench_filter * self.dt * 1e3:.3g} ms) "
+            f"and a -3 dB corner at "
+            f"{self.wrench_filter / (2.0 * math.pi * (1.0 - self.wrench_filter) * self.dt):.3g} Hz. "
+            f"The FLUID AND THE BODY ARE UNAFFECTED: couple.py reads the raw device "
+            f"wrench, so this filters what a reader sees and not what Newton integrates",
             f"  coupling:   style {self.coupling_style!r} -- every array above is SI, "
             f"so couple.py's scale, pose and wrench conversions are the identity",
             f"  equivalent: c0 {self.c0:.4g} m/s, the weakly compressible sound speed "

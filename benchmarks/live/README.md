@@ -119,6 +119,52 @@ flattering number that nothing refuses is the worst failure mode a suite like th
 | Williamson (1996), *Annu. Rev. Fluid Mech.* **28**, 477-539 | a full text of the review | St = 0.164 at Re 100 is **not tabulated** there: page 494, figure 7b prints the fit `S0 = -3.3265/Re + 0.1816 + 1.6e-4 Re`, which at Re 100 evaluates to 0.16433. The value and the attribution are both right, with that provenance. **The review gives no drag coefficient at Re 100 and none is attributed to it** |
 | this repository's OpenFOAM cylinder, `tests/data/moving_mesh/viv_fixed/` | read live by `../moving_mesh/grade.py` on every cross-check | a cylinder at Re 100 in water with 2.5% blockage, `pimpleFoam` on a morphing mesh. St 0.166141 and mean Cd 1.355514, asserted to five digits by `tests/test_benchmark_moving_mesh.py` so they cannot drift without a test failing. **There is no canonical published Cd at Re 100** -- the literature clusters 1.32 to 1.37 -- which is why drag is graded against this run and not against a published number |
 
+## The force noise on a floating hull: one settle, every candidate
+
+`free_settle.py` settles a tank to its own velocity bound and refuses to report a draft
+until it is met. `force_noise.py` is that settle **once**, with every candidate remedy
+released from the identical settled state:
+
+```
+MODAL_PROFILE=inviscid python -m modal run --detach benchmarks/live/force_noise.py --radius 0.002
+MODAL_PROFILE=inviscid python -m modal run benchmarks/live/force_noise.py --fetch
+python benchmarks/live/force_noise.py --demo        # the EMA arithmetic, no GPU
+```
+
+The settle is 19 of `free_settle.py`'s 22 minutes, so twelve variants its way is four
+hours of H100 for forty minutes of release window. Settling once and restoring the fluid
+positions, the velocities and the hull's pose between windows is 4.7x cheaper **and a
+better experiment**: every variant starts from literally the same water, which separate
+runs cannot promise. `base-again` is the last variant and is the control on exactly that
+-- `base` run twice, first and last, which bounds what the restore leaks.
+
+What it found, with the hull's weight as the unit and two independent settles of every
+configuration (H100, 64 x 64 x 32 mm hull at 0.5 of water's density, 60 mm of water):
+
+| per-step RMS of `Fz`, free hull | 2.5 mm | 2.0 mm | 1.5 mm |
+|---|---|---|---|
+| the shipped coupling step (`CFL` 0.4) | 92.9 / 94.0% | 104.6 / 99.2% | 114.9 / 115.0% |
+| `CFL/2` | 92.1 / 89.8% | 97.3 / 97.2% | 90.8 / 89.4% |
+| **`CFL/4`** | **5.1 / 5.4%** | **1.8 / 2.6%** | **1.3 / 1.3%** |
+| `CFL/8` | 5.8 / 5.4% | -- | 1.4 / 1.6% |
+| DFSPH tolerance 1e-5 instead of 1e-3 | 88.7 / 91.2% | 89.2 / 89.6% | -- |
+| delta-SPH at 88% of its stability ceiling | 100.6 / 102.7% | 102.3 / 105.8% | -- |
+
+A hull **held** at the Archimedes draft, where Newton is never stepped and there is no
+coupling lag to shorten, goes **22.0% to 1.3%** under the same change -- so the cause is
+the pressure field converging in time and not the explicit coupling. The coarse row has
+the honest caveat: a third settle at 2.5 mm read **8.3%** against those 5.1% and 5.4%, so
+the spread at 3.2 spacings through the draft is 3.2 points and the margin to a 10% target
+is thin there. It widens with refinement.
+
+`openreynolds/live/sph.py`'s `CFL` docstring is the write-up: it is a cliff between
+`CFL/2` and `CFL/3` rather than a slope, it is a *ratio* and not an absolute step (476 us
+is quiet at 2.5 mm and 428 us is noisy at 1.5 mm), it costs 1.9x to 2.5x the wall clock
+rather than the 3x to 4x the step count suggests, and the two things everyone tries first
+-- a tighter pressure tolerance and density diffusion -- buy 13% and nothing
+respectively. `SphWorld.wrench` carries the optional EMA for a caller who cannot afford
+the shorter step, with its lag measured.
+
 ## What the recorded runs measured
 
 See `../README.md` for the index rows and `../../PROGRESS_LIVE.md` for the full table with

@@ -4,7 +4,9 @@ Everything here runs on Warp's **CPU** backend, because the suite has no GPU. Th
 hydrostatic worlds are a few thousand particles each and are built once per module;
 measured, `pytest tests/test_live_sph.py --durations=8`: **177.5 s for 23 tests**, of
 which 95.0 s is the still tank settling and 73.0 s is the submerged box, so 95% of the
-file is those two fixtures and no other test costs more than 6.5 s. Both are
+file is those two fixtures and no other test costs more than 6.5 s. The four
+density-diffusion and wrench-filter tests added for v0.1's force noise bring it to
+**29 tests** and cost about 2 s between them, because none of them settles anything. Both are
 module-scoped for that reason -- three tests read the still tank and two read the box,
 and per-test fixtures would be seven and a half minutes.
 
@@ -19,6 +21,7 @@ What is graded here, and to what:
     bulk summation density    sum_j m_j W_ij = rho0              to 1e-4 (measured 3e-5)
     hydrostatic pressure      dp/dh = rho g                      to 5% (measured 1.5%)
     density error             max compression bounded            to 2% (measured 0.6%)
+    delta-SPH's eigenvalue    lambda_max h^2, resolution-free    to 0.02 (measured 23.2963)
     weight on the floor       F_z on the tank = -(water weight)  to 2% (measured 0.01%)
     submerged box             F_z on the box  = +rho V g         to 15% (measured 9.9%)
 
@@ -962,3 +965,273 @@ def test_the_same_tank_stepped_twice_gives_the_same_field_bit_for_bit():
         assert differing == 0, (
             f"{differing} of {a.size} {name} differ between two identical runs; "
             f"largest difference {np.abs(a - b).max():.6g}")
+
+
+# -- delta-SPH and the wrench filter, the two v0.1 knobs for the force noise -----------
+
+
+def test_density_diffusion_flattens_a_bump_and_spares_a_gradient():
+    """`diffuse_density` is a Laplacian: it removes a bump and leaves a linear ramp.
+
+    The two halves are the whole of what a diffusion term is allowed to do, and the
+    second is why this one is not a thumb on the scale. `openreynolds/toolbox/sph.py`
+    makes the same argument for the same term in the weakly compressible solver and
+    `tests/test_toolbox_sph.py` has the 2D version of this test; this is the device
+    kernel, launched the way `_prepare` launches it.
+
+    **The sign is what this catches.** `x_ij . grad_i W_ij` is negative everywhere in
+    the support, so the term diffuses only if it is subtracted; written the other way it
+    is an anti-diffusion that sharpens the noise, and a run with it that way looks
+    entirely plausible -- the density field is still a density field and the solver still
+    converges.
+
+    No walls, because `diffuse_density` skips boundary neighbours by design (its
+    docstring says why) and a test with walls in it would be measuring that skip rather
+    than the operator.
+    """
+    from openreynolds.live import sph
+    from openreynolds.live.world import Domain
+
+    def diffused(field):
+        world = sph.SphWorld(
+            domain=Domain((0.0, 0.0, 0.0), (0.06, 0.06, 0.06), faces="wall"),
+            particle_radius=0.0025, fluid="water", device="cpu",
+            density_diffusion=0.012)
+        world.fill_box((0.01, 0.01, 0.01), (0.05, 0.05, 0.05))
+        world._commit()
+        assert world.n_boundary == 0
+        world._prepare()
+        # The real summation density is overwritten, so the operator is measured on a
+        # field this test chose rather than on whatever the fill happened to produce.
+        world.rho.assign(field(world.x.numpy()[:world.n_fluid]).astype(np.float32))
+        warp.launch(sph.diffuse_density, dim=world.n, device=world.device,
+                    inputs=[world._grid.id, world.x, world.rho, world.rho_c,
+                            sph.DTYPE(world.mass), world.n_fluid,
+                            sph.DTYPE(world.support), sph.DTYPE(world.sigma),
+                            sph.DTYPE(world.dt / world.substeps * world.diffusivity)])
+        return (world.rho.numpy().astype(np.float64),
+                world.rho_c.numpy().astype(np.float64),
+                world.x.numpy()[:world.n_fluid].astype(np.float64))
+
+    # A bump: rho0 everywhere, plus 1% on the particles nearest the centre.
+    def bump(x):
+        middle = np.abs(x - 0.03).max(axis=1) < 0.006
+        return np.where(middle, 998.21 * 1.01, 998.21)
+
+    raw, out, _ = diffused(bump)
+    hot = raw > 998.21 * 1.005
+    assert hot.sum() >= 8, "the bump has to be wider than one particle to diffuse"
+    before = float(raw[hot].mean() - 998.21)
+    after = float(out[hot].mean() - 998.21)
+    assert 0.0 < after < before, (
+        f"the bump's excess went {before:.4g} -> {after:.4g} kg/m3. It must come DOWN: "
+        f"up is the sign error, and `x_ij . grad_i W_ij` is negative everywhere live, "
+        f"so the term diffuses only when it is subtracted"
+    )
+    # delta 0.012 is 88% of the ceiling `diffusivity` derives, where `D dt lambda` is
+    # 0.88 and the sharpest mode is almost annihilated in one substep. A three-particle
+    # bump is close to that mode, so most of it goes: the gate is that most goes and
+    # that none of it comes back the other side of zero, which is the overshoot
+    # `DIFFUSION_EIGENVALUE` exists to keep out.
+    assert 0.10 < after / before < 0.80, (
+        f"one substep took the bump to {after / before:.3g} of itself; it measures "
+        f"0.615 at this delta. A ratio near 1 is a term that is not running, and a "
+        f"NEGATIVE one is the overshoot `_check` refuses. A three-particle bump is not "
+        f"the checkerboard, so it keeps more than the sharpest mode would -- "
+        f"`test_the_diffusion_eigenvalue_is_what_the_refusal_is_built_on` is where that "
+        f"mode is measured"
+    )
+
+    # A linear ramp in z, which a Laplacian must not move. This is the half that says
+    # the hydrostatic profile the cases grade survives.
+    _, ramp_out, points = diffused(lambda x: 998.21 * (1.0 + 0.01 * x[:, 2] / 0.06))
+    want = 998.21 * (1.0 + 0.01 * points[:, 2] / 0.06)
+    # Interior only: the operator is truncated at the edge of the block, where a
+    # one-sided Laplacian of a ramp is genuinely not zero.
+    inside = np.abs(points - 0.03).max(axis=1) < 0.012
+    assert inside.sum() >= 20
+    drift = float(np.abs(ramp_out[inside] - want[inside]).max())
+    assert drift < 0.02, (
+        f"a linear density ramp moved by {drift:.4g} kg/m3 under the diffusion. A "
+        f"Laplacian leaves a linear field alone, which is what lets this term run "
+        f"without flattening the hydrostatic gradient every floating case is graded on"
+    )
+
+
+def test_the_diffusion_eigenvalue_is_what_the_refusal_is_built_on():
+    """`lambda_max h^2 = 23.2963`, at three resolutions, and it GROWS past `D dt lam = 2`.
+
+    `DIFFUSION_EIGENVALUE` is the one number in `_check`'s density-diffusion refusal, and
+    the refusal is the only thing standing between a caller who read Molteni and
+    Colagrossi and a run that sharpens its own density noise. It is a measurement, so it
+    is measured here: one launch on a checkerboard, which is the sharpest mode a cubic
+    lattice at this spacing carries, and the amplitude back out.
+
+    Resolution independence is the half that makes it a constant rather than a fit: the
+    operator is a property of the kernel and the lattice, so the same `lambda h^2` has to
+    come out at every spacing, and it does to four decimals.
+
+    The second half is the failure the limit exists for. At `D dt lambda = 2.209` -- which
+    is what taking the viscous term's `0.125 h^2/nu` by analogy would have allowed -- a
+    unit checkerboard comes back at about -1.21: the noise is bigger than it started and
+    has changed sign, every substep.
+    """
+    from openreynolds.live import sph
+    from openreynolds.live.world import Domain
+
+    def eigenvalue(radius: float, box: float, number: float) -> tuple[float, float]:
+        """`(lambda h^2, the amplitude after one launch at this diffusion number)`."""
+        world = sph.SphWorld(
+            domain=Domain((0.0, 0.0, 0.0), (box, box, box), faces="wall"),
+            particle_radius=radius, fluid="water", device="cpu",
+            # Any valid delta: it only has to be non-zero, so that `rho_c` is a second
+            # array. With the term off `rho_c` *is* `rho` -- the allocation `_commit`
+            # does not make -- and this kernel read in place is a Gauss-Seidel sweep in
+            # grid order rather than the Jacobi one it is. Measured: the apparent
+            # eigenvalue then drifts 23.19 -> 20.53 with the diffusion number, which
+            # reads exactly like a nonlinearity and is an aliased output.
+            density_diffusion=0.001)
+        world.fill_box((box / 6.0,) * 3, (box * 5.0 / 6.0,) * 3)
+        world._commit()
+        world._prepare()
+        points = world.x.numpy()[:world.n_fluid].astype(np.float64)
+        cell = np.rint((points - points.min(axis=0)) / world.spacing).astype(int)
+        sign = np.where(cell.sum(axis=1) % 2 == 0, 1.0, -1.0)
+        world.rho.assign((998.21 + sign).astype(np.float32))
+        # `number` is `D dt/h^2`; the kernel takes the product `D dt`.
+        warp.launch(sph.diffuse_density, dim=world.n, device=world.device,
+                    inputs=[world._grid.id, world.x, world.rho, world.rho_c,
+                            sph.DTYPE(world.mass), world.n_fluid,
+                            sph.DTYPE(world.support), sph.DTYPE(world.sigma),
+                            sph.DTYPE(number * world.support ** 2)])
+        out = world.rho_c.numpy().astype(np.float64) - 998.21
+        # Interior only: the operator is truncated at the edge of the block.
+        middle = np.abs(points - points.mean(axis=0)).max(axis=1) < (
+            box / 3.0 - 2.0 * world.spacing)
+        assert middle.sum() >= 27
+        amplitude = float((sign[middle] * out[middle]).mean())
+        return (1.0 - amplitude) / number, amplitude
+
+    for radius, box in ((0.005, 0.12), (0.0025, 0.06), (0.002, 0.048)):
+        # 0.02, not 1e-3: the amplitude is float32, so a diffusion number small enough
+        # to be "linear" is also small enough to be rounding. At 0.02 the mode loses
+        # 47% and the eigenvalue reads to four decimals.
+        lam, _ = eigenvalue(radius, box, 0.02)
+        assert abs(lam - sph.DIFFUSION_EIGENVALUE) < 0.02, (
+            f"at a {radius * 1e3:g} mm radius the checkerboard decayed as though "
+            f"lambda h^2 were {lam:.4f}, against the {sph.DIFFUSION_EIGENVALUE} "
+            f"`_check` builds its refusal on. It must not depend on the resolution: it "
+            f"is a property of the kernel and the lattice"
+        )
+
+    # The limit itself: monotone at `D dt lambda = 1`, and growing at the 2.209 the
+    # viscous analogy would have allowed.
+    _, at_limit = eigenvalue(0.0025, 0.06, 1.0 / sph.DIFFUSION_EIGENVALUE)
+    assert abs(at_limit) < 0.02, (
+        f"at the ceiling the sharpest mode should be annihilated, not reflected; the "
+        f"checkerboard came back at {at_limit:+.4g}"
+    )
+    _, past_it = eigenvalue(0.0025, 0.06, 2.209 / sph.DIFFUSION_EIGENVALUE)
+    assert past_it < -1.0, (
+        f"at `D dt lambda` = 2.209 a unit checkerboard must come back below -1 -- "
+        f"grown and sign-flipped -- and it came back at {past_it:+.4g}. That is the "
+        f"configuration `0.125 h^2/nu` by analogy allows and `_check` refuses"
+    )
+
+
+def test_a_published_delta_is_refused_and_the_ceiling_is_1_25_root_tolerance():
+    """`1.25 sqrt(tolerance)`, and a refusal that names the knob rather than running.
+
+    `SphWorld.diffusivity` derives the ceiling in closed form; this is the arithmetic
+    checked against the solver's own `_check` at three resolutions and two tolerances,
+    because the derivation's whole claim is that the resolution cancels.
+    """
+    from openreynolds.live import sph
+    from openreynolds.live.units import UnphysicalScaling
+    from openreynolds.live.world import Domain
+
+    domain = Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall")
+    for radius in (0.005, 0.0075, 0.01):
+        for tolerance in (1.0e-3, 1.0e-4):
+            ceiling = math.sqrt(tolerance) / (sph.DIFFUSION_EIGENVALUE / 10.0)
+            kwargs = dict(domain=domain, particle_radius=radius, device="cpu",
+                          tolerance=tolerance)
+            sph.SphWorld(density_diffusion=ceiling * 0.9, **kwargs)
+            with pytest.raises(UnphysicalScaling, match="delta-SPH at delta"):
+                sph.SphWorld(density_diffusion=ceiling * 1.1, **kwargs)
+    # And the one every reader will try first.
+    with pytest.raises(UnphysicalScaling, match="ACOUSTIC"):
+        sph.SphWorld(domain=domain, particle_radius=0.005, device="cpu",
+                     density_diffusion=0.1)
+    with pytest.raises(UnphysicalScaling, match="ANTI-diffusion"):
+        sph.SphWorld(domain=domain, particle_radius=0.005, device="cpu",
+                     density_diffusion=-0.01)
+
+
+def test_the_wrench_filter_is_off_by_default_and_lags_by_what_it_says():
+    """Off: the raw accumulator. On: an EMA advanced once a step, never once a read.
+
+    The second half is the one that could break silently. `wrench()` is called twice on
+    some steps by `benchmarks/live/free_settle.py` -- once for the per-step series and
+    once for the table -- so a filter that advanced on a read would have a time constant
+    set by how often somebody looked at it. Measured by reading it three times a step
+    and asserting the three agree.
+
+    A CPU world, 500 particles, four steps: this is about where the filter is driven
+    from, not about the fluid.
+    """
+    from openreynolds.live import sph
+    from openreynolds.live.world import Domain
+
+    def tank(**extra):
+        world = sph.SphWorld(
+            domain=Domain((0.0, 0.0, 0.0), (0.1, 0.1, 0.1), faces="wall"),
+            particle_radius=0.005, fluid="water", device="cpu", **extra)
+        world.boundary_from_domain()
+        world.fill_below(0.05)
+        return world
+
+    raw_world = tank()
+    raw = []
+    for _ in range(4):
+        raw_world.step()
+        first = raw_world.wrench(0)[0][2]
+        assert raw_world.wrench(0)[0][2] == first, (
+            "the raw wrench must not change between two reads of one step")
+        raw.append(float(first))
+    assert raw_world._wrench_mean is None, "off means no filter state at all"
+
+    alpha = 0.2
+    filtered_world = tank(wrench_filter=alpha)
+    got = []
+    for _ in range(4):
+        filtered_world.step()
+        three = [float(filtered_world.wrench(0)[0][2]) for _ in range(3)]
+        assert three[0] == three[1] == three[2], (
+            f"three reads of one step gave {three}: the EMA is advancing on a READ. It "
+            f"must advance in `step()` and nowhere else, or its time constant is a "
+            f"property of the reporting code"
+        )
+        got.append(three[0])
+
+    # The fluid is deterministic bit for bit (the module docstring's claim) and the
+    # filter does not touch it, so the raw series is reproduced and the EMA is exactly
+    # the recurrence over it. A loose absolute gate against forces of order 0.1 N,
+    # because only the float32 wrench atomics vary and they are bounded at 1.4e-8.
+    want = raw[0]
+    for index, sample in enumerate(raw):
+        want = sample if index == 0 else alpha * sample + (1.0 - alpha) * want
+        assert abs(got[index] - want) < 1.0e-6, (
+            f"step {index}: filtered {got[index]:.9g} N against the recurrence's "
+            f"{want:.9g} N over the raw series {raw}"
+        )
+
+    lines = "\n".join(filtered_world.report())
+    assert "4-step group delay" in lines, (
+        f"a filtered run has to say its own lag; alpha 0.2 is (1-a)/a = 4 steps. Got:\n"
+        f"{lines}"
+    )
+    # Ten samples of the measured noise reduce it 10.01x and not sqrt(10) = 3.16,
+    # because the noise is coherent rather than white (`PROGRESS_LIVE.md`). That claim
+    # is a property of the signal rather than of this code, so it is measured in
+    # `benchmarks/live/force_noise.py` and not asserted on a 500-particle CPU tank.
