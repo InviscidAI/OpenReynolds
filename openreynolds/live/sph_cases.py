@@ -1168,6 +1168,50 @@ def run_sph_hydrostatic(*, particle_radius: float = 0.0025, depth: float = 0.1,
     worst = int(np.argmax(np.abs(residual)))
     worst_depth = surface - positions[worst, 2]
     speed = float(np.nanmax(np.abs(world.velocities())))
+
+    # -- localising the pressure error, all REPORTED and none of it graded -------------
+    #
+    # The graded RMS runs over every particle, and the worst one sat 165.6% high at the
+    # very bottom of the column. That is the signature of kernel truncation at a wall
+    # rather than of a wrong pressure field: a particle within one support radius of a
+    # boundary sees an incomplete neighbourhood. This repository's own measurement of the
+    # same physics -- the solver's `dp/dh` check -- fitted the pressure *gradient* over a
+    # 280 mm tank and got 0.9855 rho g with 6.3% scatter, a different statistic over a
+    # different population, so the two numbers are not in contradiction yet.
+    #
+    # Report the three things one RMS cannot separate and let them say which it is.
+    # Nothing here moves a bound: if the interior is as bad as the whole column, the
+    # near-wall explanation is wrong and the solver owes a real one.
+    support = 4.0 * particle_radius           # the solver's h, named in its own report
+    lo, hi = positions.min(axis=0), positions.max(axis=0)
+    wall_gap = np.minimum(positions - lo, hi - positions).min(axis=1)
+    interior = wall_gap > support
+    near_wall = ~interior
+
+    def _residual_rms(mask: "np.ndarray") -> float:
+        return (float(np.sqrt(np.mean(residual[mask] ** 2)))
+                if bool(np.any(mask)) else float("nan"))
+
+    rms_interior, rms_wall = _residual_rms(interior), _residual_rms(near_wall)
+
+    # The gradient, fitted on the interior only: dp/dz against -rho g. A constant offset
+    # and a handful of near-wall outliers both leave this alone, which is why it is the
+    # statistic the solver's own hydrostatic check uses.
+    gradient = float("nan")
+    if int(np.count_nonzero(interior)) >= 8:
+        slope = float(np.polyfit(positions[interior, 2], pressure[interior], 1)[0])
+        gradient = slope / (-water.rho * GRAVITY)
+
+    lines.append(
+        f"  localised:  interior RMS {rms_interior:.3%} over "
+        f"{int(np.count_nonzero(interior)):,} particles further than one support radius "
+        f"({support * 1e3:.0f} mm) from a wall; near-wall RMS {rms_wall:.3%} over "
+        f"{int(np.count_nonzero(near_wall)):,}. REPORTED, not graded.")
+    lines.append(
+        f"  gradient:   dp/dz over the interior is {gradient:.4f} x (-rho g) -- the "
+        f"statistic the solver's own hydrostatic check uses, which measured 0.9855 on a "
+        f"280 mm tank. Insensitive to a constant offset and to near-wall outliers, so it "
+        f"separates a wrong field from a truncated kernel. REPORTED, not graded.")
     peak_max = max((row[1] for row in history), default=float("nan"))
     peak_mean = max((row[2] for row in history), default=float("nan"))
 
