@@ -388,9 +388,17 @@ only the lattice velocity, which moves both at once:
 | --- | --- | --- | --- | --- |
 | 0.055 | 0.764 | 0.095 | 4.3848 | +5.63% |
 | 0.0275 | 0.632 | 0.048 | 4.3907 | +5.77% |
+| 0.01375 | 0.566 | 0.024 | 4.3969 | **+5.92%** |
 
-Halving the Mach number and taking tau from 0.76 to 0.63 moves the error by 0.14%, in
-the wrong direction.
+A **fourfold** reduction in the Mach number, and tau from 0.76 to 0.57, moves the error
+by 0.29% -- and moves it the **wrong way**, growing slightly as the compressibility is
+removed. That is the opposite of a compressibility artefact.
+
+**Which is worth contrasting with the cylinder**, because the two cases fail for
+different reasons and the same experiment separates them: halving the Mach number takes
+Schaefer-Turek's `Cd_max` error from +11.73% to +7.16%, and takes the sphere's from
++5.63% to +5.77%. Strongly Mach-dependent there, flat-to-slightly-adverse here. So one
+sentence covering both failures would be wrong about one of them.
 
 **And not the reference.** This repository ships two correlations and at Re 10 they agree
 to **0.00%** -- Schiller-Naumann 4.1511 against Clift-Gauvin 4.1512 -- so the comfortable
@@ -403,7 +411,7 @@ and the measurement is 5.65% above both.
 So five candidates are eliminated with a number each: **resolution** (0.07% over a 50%
 refinement), **confinement** (0.28% from 12 to 20 diameters, small because the side faces
 are slip, so the Stokes wall correction does not apply), **the reference** (0.00%),
-**tau** and **the Mach number** (0.14%). What is left is the discretisation's own
+**tau** and **the Mach number** (0.29% over a fourfold change, adverse). What is left is the discretisation's own
 behaviour in the viscous limit, and the boundary treatment is where that would live: at
 Re 10 the boundary layer is thick compared with the sphere, and Bouzidi's interpolation
 is being asked for its accuracy across a curved surface in exactly the regime where the
