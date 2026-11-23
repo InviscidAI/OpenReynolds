@@ -1951,7 +1951,7 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
                       free_height: float = 6.0, cells_per_r: int = 12,
                       collision: str = "regularized", smagorinsky: float = 0.12,
                       device: str | None = None, out_dir: str | Path = ".",
-                      steps: int | None = None,
+                      steps: int | None = None, animate: bool = True,
                       progress: Callable[[str], None] | None = None,
                       **_: Any) -> dict[str, Any]:
     """One actuator disk at several heights over a ground plane, against the 1955 model.
@@ -1977,6 +1977,16 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
     airframe. A quadrotor graded against this model would be graded against a model that
     the later literature shows does not apply to it. The quadrotor is `quadrotor`, and
     it is a demo.
+
+    **`animate` writes two GIFs and not six.** The lowest graded height and the free-air
+    reference are the comparison this case *is* -- the same disk with the ground under it
+    and without -- and four more heights of the same jet is four more files rather than
+    more information. `run_cylinder` animates only its finest grid for the same reason.
+
+    The one thing `animate` changes about the numbers is that it samples the disk 200
+    times instead of 60, for a GIF long enough to watch. The graded average is the last
+    third of the samples, which is the same window at either density, so that is more
+    points inside the window and not a different measurement.
     """
     import warp  # noqa: F401
 
@@ -1992,10 +2002,12 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
     out = Path(out_dir)
     rows = []
     drawn = []
+    notes: list[str] = []
 
     for index, z_over_r in enumerate([*heights, free_height]):
         height = z_over_r * radius
         is_free = z_over_r == free_height
+        wants_gif = bool(animate) and (is_free or z_over_r == min(heights))
         if progress:
             progress(f"  disk at Z/R {z_over_r:g}"
                      f"{' (free air reference)' if is_free else ''} "
@@ -2034,6 +2046,7 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
         crossing = tall / max(v_free, 1e-9) / world.dt
         total = int(steps if steps else math.ceil(2.5 * crossing))
         samples: list[float] = []
+        frames: list[np.ndarray] = []
         node_z = world.node_coordinates(2)
         plane = int(np.argmin(np.abs(node_z - height)))
         xs = world.node_coordinates(0)
@@ -2041,12 +2054,30 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
         disk = ((xs[:, None] - centre[0]) ** 2
                 + (ys[None, :] - centre[1]) ** 2) <= radius * radius
 
-        def take(_index: int, world=world, samples=samples, plane=plane, disk=disk):
+        # The transient is discarded **here** rather than by `_advance`'s `settle`,
+        # because the average must not contain it and the animation is mostly made of
+        # it: the jet reaching the floor and turning into a wall jet happens inside the
+        # first 60% of the run, and a GIF that starts afterwards is a picture of a
+        # steady state. The averaging window is unchanged -- the same 0.6 of the run,
+        # and `induced` still takes the last third of what is sampled.
+        settle_at = int(total * 0.6)
+
+        def take(index: int, world=world, samples=samples, plane=plane, disk=disk,
+                 frames=frames, wants_gif=wants_gif, settle_at=settle_at):
+            # Gated on how many frames there are and on nothing else. A second modulus
+            # of the step index, inside a callback that `_advance` already fires on one,
+            # is how `crosscheck_2d1` collected exactly one frame: at 704,000 steps its
+            # two strides were 1,760 and 3,911, which are coprime, so both fired
+            # together only at index 0 -- and the refusal came after 457 s of H100.
+            if wants_gif and len(frames) < 200:
+                frames.append(figures.slice_frame(world, axis=1, component=2))
+            if index < settle_at:
+                return
             w = world.fields()["u"][:, :, plane, 2]
             samples.append(float(np.nanmean(np.where(disk, w, np.nan))))
 
-        _advance(world, total, sample_every=max(1, total // 60), sample=take,
-                 settle=0.6, progress=progress)
+        _advance(world, total, sample_every=max(1, total // (200 if animate else 60)),
+                 sample=take, settle=0.0, progress=progress)
         induced = abs(float(np.mean(samples[-max(1, len(samples) // 3):]))) \
             if samples else 0.0
         rows.append({"z_over_r": z_over_r, "height": height, "induced": induced,
@@ -2057,6 +2088,13 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
             component=2,
             title=f"actuator disk at Z/R {z_over_r:g}, mean w through the disk "
                   f"{induced:.3f} m/s"))
+        if frames:
+            gif = out / f"live-ground-effect-z{z_over_r:g}.gif"
+            made, note = _try_draw(
+                f"the {len(frames)}-frame animation at Z/R {z_over_r:g}",
+                lambda gif=gif, frames=frames: figures.animate(
+                    frames, gif, fps=20, component=True) or gif)
+            drawn.append(made) if made else notes.append(note or "")
 
     free = next(r for r in rows if r["free"])
     graded = [r for r in rows if not r["free"]]
@@ -2134,6 +2172,7 @@ def run_ground_effect(*, radius: float = 0.12, thrust: float = 2.72,
                      f"against {row['model']:.4f} ({row['error']:+.2%}); the model's "
                      f"thrust ratio at constant power is "
                      f"{row['thrust_ratio_model']:.4f}")
+    lines.extend(notes)
     return _result("ground_effect", checks, lines, drawn, rows=rows,
                    free_induced=free["induced"], momentum_theory=v_free)
 
@@ -2396,6 +2435,7 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
                    length_ratio: float = 3.0, collision: str = "trt",
                    smagorinsky: float = 0.0, device: str | None = None,
                    out_dir: str | Path = ".", steps: int | None = None,
+                   animate: bool = True,
                    progress: Callable[[str], None] | None = None,
                    **_: Any) -> dict[str, Any]:
     """A capsule towed through water, graded against the sphere it reduces to.
@@ -2412,6 +2452,18 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
     repository. What is said about it is the one thing that can be said honestly: it is
     lower than the sphere's on frontal area, which is what streamlining does, and here
     is by how much.
+
+    **`animate` costs nothing but a GIF.** The frames come off the sampling callback the
+    force history already runs, at the stride it already uses, so the animation changes
+    neither the sampled indices nor the averaging window. Both hulls get one, because
+    the two wakes side by side are the case's own argument: the same code, the same
+    voxelisation, one shape with a published answer and one without.
+
+    What it shows is a *steady* wake -- Re 100 is below the sphere's shedding threshold
+    and the sampling starts at three-quarters of the run -- so the frame-to-frame
+    difference is small by construction. That is the physics and not a dead encoder;
+    `figures.animate` refuses frames that collapse, and if this case's do, there is a
+    note in the report instead of a GIF.
     """
     import warp  # noqa: F401
 
@@ -2425,6 +2477,7 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
     out = Path(out_dir)
     rows = []
     drawn = []
+    notes: list[str] = []
     scaling = None
 
     for index, ratio in enumerate([0.0, float(length_ratio)]):
@@ -2456,13 +2509,30 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
         crossing = size[0] / dx / 0.04
         total = int(steps if steps else 3.0 * crossing)
         samples: list[float] = []
+        frames: list[np.ndarray] = []
 
-        def take(_index: int, world=world, samples=samples, body=body) -> None:
+        # The transient is dropped here and not by `_advance`'s `settle`, for the same
+        # reason as `run_ground_effect`: the animation is the wake forming, which is
+        # over long before the three-quarters mark the force average starts at. Sampled
+        # after it, at Re 100, the frames are a steady wake and differ by almost
+        # nothing. The averaged window is the same window as before.
+        settle_at = int(total * 0.75)
+
+        def take(index: int, world=world, samples=samples, body=body,
+                 frames=frames, settle_at=settle_at) -> None:
+            # On the frame count, not on a modulus of the step index: `_advance` has
+            # already returned early on one, and a second stride that is coprime with
+            # the first fires with it only at index 0. That cost `crosscheck_2d1` a
+            # one-frame GIF after 457 s of H100.
+            if animate and len(frames) < 200:
+                frames.append(figures.slice_frame(world, axis=2))
+            if index < settle_at:
+                return
             force, _ = world.wrench(body)
             samples.append(float(force[0]))
 
         _advance(world, total, sample_every=max(1, total // 300), sample=take,
-                 settle=0.75, progress=progress)
+                 settle=0.0, progress=progress)
         area = math.pi * radius * radius
         force = float(np.mean(samples[-max(1, len(samples) // 4):])) if samples else 0.0
         cd = 2.0 * force / (scaling.fluid.rho * u_inf * u_inf * area)
@@ -2471,6 +2541,14 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
         drawn.append(figures.slice_figure(
             world, out / f"live-underwater-f{1.0 + ratio:g}.png", axis=2,
             title=f"capsule, fineness {1.0 + ratio:g}, Re {reynolds:g}, Cd {cd:.4f}"))
+        if frames:
+            gif = out / f"live-underwater-f{1.0 + ratio:g}.gif"
+            made, note = _try_draw(
+                f"the {len(frames)}-frame animation of the fineness-{1.0 + ratio:g} "
+                f"hull",
+                lambda gif=gif, frames=frames: figures.animate(
+                    frames, gif, fps=15) or gif)
+            drawn.append(made) if made else notes.append(note or "")
 
     expected = curve.schiller_naumann_cd(reynolds)
     limit = REFERENCES["schiller_naumann"]["tolerance"]
@@ -2501,7 +2579,8 @@ def run_underwater(*, reynolds: float = 100.0, cells_per_d: int = 0,
              f"  hull:       Cd {elongated['cd']:.4f} at fineness "
              f"{elongated['fineness']:g}, {ratio:.2f}x the sphere's on the same frontal "
              f"area -- higher, because at Re 100 the extra wetted area costs more "
-             f"friction than the fairing saves in pressure drag"]
+             f"friction than the fairing saves in pressure drag",
+             *notes]
     for figure in drawn:
         figures.ensure_rgb(figure)
     return _result("underwater", checks, lines, drawn, rows=rows)
@@ -3175,9 +3254,17 @@ _FREE_SURFACE_REFERENCES = {
         "caveat": (
             "**Linear, so the amplitude has to be small.** The theory is the first term "
             "of an expansion in wave steepness, and a 5%-of-depth initial displacement "
-            "is where benchmarks/sph/ puts it for the same reason. Larger amplitudes "
-            "lengthen the period (a real tank's first mode softens), so a measured "
-            "period above the linear one at large amplitude is physics and not error. "
+            "is where benchmarks/sph/ puts it for the same reason. **Which way a finite "
+            "amplitude moves the period depends on the depth, and this caveat used to "
+            "have the sign backwards.** Concus 1962 (UCRL-10208) eq. (34) at delta = 0 "
+            "-- the capillary-gravity generalisation of Tadjbakhsh & Keller (1960), "
+            "whose original is paywalled -- gives w_2 = [-2 w0^5 - 3 w0 - 12 w0^-3 "
+            "+ 9 w0^-7] / 32 with w0^2 = tanh(k h), and w = w0 + (1/2) (k a)^2 w_2. It "
+            "returns exactly -1/4 in deep water and changes sign at the critical depth "
+            "k h = 1.058. BELOW that depth w_2 is positive and a larger amplitude "
+            "SHORTENS the period; above it, lengthens. This tank sits at k h = 0.9425, "
+            "so w_2 = +0.1179 and at k a = 0.0628 the shift is -0.027%. A measured "
+            "period ABOVE the linear one is therefore NOT the finite amplitude. "
             "It is also inviscid: the measured oscillation decays and the linear period "
             "does not, so the frequency is taken from the first few cycles"
         ),
@@ -3716,10 +3803,14 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     cross-checked against an FFT of the same trace; the check itself says why that way
     round, and both numbers are always reported because they fail differently.
 
-    `amplitude` is 2 mm on a 30 mm depth by default, which is 6.7% of it. Linear theory
-    is a small-amplitude expansion and a larger amplitude lengthens the period -- a real
-    tank's first mode softens -- so a measured period above the linear one at large
-    amplitude is physics rather than error. `REFERENCES` has it.
+    `amplitude` is 2 mm on a 30 mm depth by default, which is 6.7% of it, and `k a` is
+    0.0628. Linear theory is a small-amplitude expansion, and **which way a finite
+    amplitude moves the period depends on the depth: this docstring used to say it
+    lengthens it, and at this depth it shortens it.** Concus 1962 (UCRL-10208) eq. (34)
+    at `delta = 0` changes sign at `k h = 1.058`; this tank is at `k h = 0.9425`, below
+    that, so `w_2 = +0.1179` and the shift is **-0.027%**. A measured period *above* the
+    linear one is therefore not explained by the amplitude. `REFERENCES` has the formula
+    and its two checks.
     """
     import warp  # noqa: F401
 
@@ -3816,8 +3907,11 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
               "reported, not graded", None,
               f"the initial elevation at the wall as a fraction of the depth "
               f"({amplitude * 1e3:.2f} mm on {depth * 1e3:g} mm). Linear theory is the "
-              f"first term of an expansion in this, and a larger one lengthens the "
-              f"measured period rather than spoiling it"),
+              f"first term of an expansion in this. Which way a larger one moves the "
+              f"period depends on the depth: this tank is at k h = 0.9425, below the "
+              f"k h = 1.058 where Concus (1962) eq. (34) changes sign, so a larger "
+              f"amplitude SHORTENS the period -- -0.027% here, not the +0.4% this "
+              f"check used to claim, and the wrong way round"),
     ]
     out = Path(out_dir)
     drawn = [
@@ -4098,8 +4192,19 @@ def run_archimedes(*, cells: int = 160, side: float = 0.04, height: float = 0.04
     reached = float("nan")
     for index in range(int(settle_steps)):
         link.step()
-        link.state.body_qd.zero_()
-        link.state.body_q.assign(held_q)
+        # **`body_q` is not a solver input and never was.** `SolverMuJoCo` is
+        # reduced-coordinate: `_update_mjc_data` pushes `joint_q`/`joint_qd` into
+        # `qpos`/`qvel` every step and never reads `body_q`, and Newton's own
+        # `SolverMuJoCo.reset` says the `BODY_Q`/`BODY_QD` flags "are not actionable
+        # here and are ignored". So this pin was ignored: measured on an SPH rig, a
+        # held body drifted 0.060 -> 0.0055 m over 50 steps while the pinned array read
+        # 0.060000 throughout. **Any draft this case has reported is suspect.**
+        #
+        # `link.place` writes the body's free-joint coordinates and runs `eval_fk`,
+        # which both the solver and the fluid then agree with. Measured: a `body_q`
+        # write leaves the body at the origin; a `joint_q` write plus FK puts it exactly
+        # where asked.
+        link.place(body, held_q[body])
         if index % 200 == 199:
             settled, reached = world.at_rest()
             if progress:

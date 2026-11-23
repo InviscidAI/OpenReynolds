@@ -198,6 +198,87 @@ def _as_numpy(value: Any, length: int) -> tuple[float, ...]:
     return tuple(float(v) for v in flat)
 
 
+def place_body(model: Any, state: Any, body: int, pose: Any) -> None:
+    """Put `body` at rest at `pose`, **so that the physics engine agrees**.
+
+    `pose` is seven floats, `(x, y, z, qx, qy, qz, qw)` -- the packing of a
+    `wp.transform` and of a free joint's `joint_q`, which are the same seven numbers.
+
+    **Writing `state.body_q` does not move a body and never did.** `SolverMuJoCo` is a
+    reduced-coordinate solver: its `step` reads `state_in.joint_q` / `joint_qd`, pushes
+    them into MuJoCo's own `qpos` / `qvel`, integrates those, and *pulls* `body_q` back
+    out. `body_q` is an **output**. A pose written into it reads back perfectly from the
+    array and is discarded by the engine, so the body carries on doing whatever it was
+    doing and the next step overwrites the write with the result.
+
+    Measured on CPU with one free body, zero gravity, one step: a pose written to
+    `body_q` alone left the body at `(0, 0, 0)` -- it never moved -- while the same pose
+    written through `joint_q` put it at `(0.05, 0.06, 0.07)` exactly.
+    `tests/test_live_couple_backends.py` asserts both halves of that, and it is a
+    second's worth of CPU.
+
+    What that cost, so the next caller does not pay it again: `sph_cases._float_rig`
+    pinned a settling hull by zeroing `body_qd` and assigning `body_q` after each
+    `link.step()`. The engine's z drifted 0.060 -> 0.0055 m over fifty steps while the
+    pinned array read 0.060000 throughout, and the draft snapped to the engine's
+    accumulated position the moment the hold stopped: drafts of 268,395 mm against a
+    16 mm Archimedes target, in all four floating-body cases.
+    `newton.State.body_q`'s own docstring says it is a solver output, and Newton's
+    `SolverMuJoCo.reset` says it outright -- "``state.body_q`` / ``state.body_qd`` are
+    derived from the joint coordinates by forward kinematics on the next ``step``" and
+    the `BODY_Q` / `BODY_QD` reset flags "are not actionable here and are ignored".
+
+    **`coupling_notify_input_state_update` is not the fix either**, though it reads like
+    the documented one. It was tried: the engine's z is identical to six decimals with
+    the call and without it. `notify_model_changed` is for *model* properties -- inertia,
+    joint limits, shape scales -- and touches no state at all.
+
+    The `eval_fk` at the end is not for the solver, which reads `joint_q` directly. It is
+    for everything that reads `body_q` **before** the next step has pulled it:
+    `NewtonCoupling._push_poses` drives the fluid's body table and the boundary particles
+    from `body_q`, and `_Rig.pose` / an observation reads it. Without the FK the fluid
+    spends one step voxelising the hull where it used to be.
+
+    Velocity is always zeroed, because every caller in this repository wants a body at
+    rest -- a settling hull, a reset vehicle, a hull displaced for a heave-decay test.
+    A free joint's `joint_qd` component order is not the same as `body_qd`'s, so a
+    non-zero velocity is deliberately not offered here rather than offered wrongly;
+    ponytail: add a `velocity=` keyword, with the packing asserted by a test, when a
+    caller actually needs to launch a body.
+    """
+    import newton
+
+    kinds = model.joint_type.numpy()
+    children = model.joint_child.numpy()
+    body = int(body)
+    joint = next((j for j in range(int(model.joint_count))
+                  if int(children[j]) == body
+                  and int(kinds[j]) == int(newton.JointType.FREE)), None)
+    if joint is None:
+        # A body behind a hinge or a slider has no seven-coordinate pose to set, and a
+        # caller who thinks it does would otherwise write seven numbers over whatever
+        # coordinates its neighbours own. Refuse by name.
+        raise ValueError(
+            f"body {body} is not the child of a free joint, so it has no free pose to "
+            f"place. ModelBuilder.add_body() creates one; a body attached by a revolute "
+            f"or prismatic joint is positioned by setting that joint's own coordinates"
+        )
+    q_start = int(model.joint_q_start.numpy()[joint])
+    qd_start = int(model.joint_qd_start.numpy()[joint])
+
+    coords = state.joint_q.numpy()
+    coords[q_start:q_start + 7] = np.asarray(pose, dtype=np.float64).reshape(-1)[:7]
+    state.joint_q.assign(coords)
+    rates = state.joint_qd.numpy()
+    rates[qd_start:qd_start + 6] = 0.0
+    state.joint_qd.assign(rates)
+    # A whole-model FK, not a masked one. Newton 1.8 has `joint_mask` for editing one
+    # branch of an articulation while preserving the rest; every coupled body in this
+    # repository is a single free body in a fluid, where the two are the same thing.
+    # ponytail: pass a joint_mask if a coupled model ever has an articulation in it.
+    newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+
+
 def newton_shapes(model: Any) -> list[dict[str, Any]]:
     """Newton's shape table as plain Python, for inspection and for error messages.
 
@@ -509,6 +590,33 @@ class NewtonCoupling:
     def state(self) -> Any:
         """The current state: the one `step()` will read next, and the one just written."""
         return self.state_0
+
+    def place(self, body: int, pose: Any) -> None:
+        """Put `body` at rest at `pose`, in the engine and in the fluid both.
+
+        The way to hold, release or displace a coupled body. `place_body` says at length
+        why assigning `state.body_q` does none of those things, and this adds the two
+        bookkeeping steps that a caller of it would have to remember:
+
+        * **both states**, because `step()` swaps `state_0` and `state_1` and a caller
+          holding a reference to one of them across a step is holding the other one.
+          `state_1` is fully overwritten by the next step, so this is belt and braces --
+          but `_Rig.place` and `_Cup.place` already do it, and a pose that is right in
+          only one of two arrays is the kind of thing that shows up as an intermittent.
+        * **`_push_poses`**, because the fluid's body table, the shape poses and (on the
+          particle backend) the boundary particles are driven from `body_q` on the
+          device, and they are only resynced inside `step`. Without this, a hull that is
+          placed and then settled with `world.step()` is voxelised where it used to be.
+          That is not hypothetical: the constructor's `_push_poses` exists because the
+          same omission put a 40 mm box in the corner of the domain for four retracted
+          measurements.
+
+        A hold is therefore `link.place(body, held)` after each `link.step()`, and it
+        holds the body inside MuJoCo rather than lying about it in an array afterwards.
+        """
+        for state in (self.state_0, self.state_1):
+            place_body(self.model, state, body, pose)
+        self._push_poses()
 
     @property
     def _style(self) -> str:

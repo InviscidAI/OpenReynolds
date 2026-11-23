@@ -1689,11 +1689,13 @@ def run_sph_sloshing(*, particle_radius: float = 0.00125, length: float = 0.1,
               f"well that projected onto the mode; the rest went into the higher ones and "
               f"will show up in the estimator spread above"),
         Check("wave steepness", realised / depth, "reported, not graded", None,
-              f"linear theory is the first term of an expansion in this. A larger "
-              f"amplitude **lengthens** the measured period -- a real tank's first mode "
-              f"softens -- so a period slightly above theory at this steepness is physics "
-              f"rather than error, and cases.py puts the second-order correction at 0.4% "
-              f"for 6.7% of the depth"),
+              f"linear theory is the first term of an expansion in this. Which way a "
+              f"larger amplitude moves the period depends on the depth, and this check "
+              f"used to have it backwards: this tank is at k h = 0.9425, below the "
+              f"k h = 1.058 where Concus (1962) eq. (34) changes sign, so a larger "
+              f"amplitude **shortens** it. cases.py puts the second-order correction at "
+              f"**-0.027%** for 6.7% of the depth, not the +0.4% claimed before, so a "
+              f"period above theory is not explained by the steepness"),
         *health,
     ]
 
@@ -2045,14 +2047,12 @@ def run_sph_static_float(*, particle_radius: float = 0.002, beam: float = 0.064,
         passing throughout: the Akinci boundary particles are driven from `body_q`, which
         `hold` does keep correct.
         """
-        import newton as _newton
-
-        link.state.body_qd.zero_()
-        link.state.body_q.assign(held)
-        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
-        if notify is not None:
-            notify(link.state,
-                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
+        # `link.place` writes the free-joint coordinates and runs `eval_fk`, which is
+        # the only route `SolverMuJoCo` reads. `body_q.assign` is not one, and neither
+        # `coupling_notify_input_state_update` nor `notify_model_changed` makes it one --
+        # both target model properties, not state, which is why trying them changed
+        # nothing to six decimals.
+        link.place(body, held[body])
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       # **Settle the FLUID only, with Newton not stepping at all.**
@@ -2281,14 +2281,12 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
         passing throughout: the Akinci boundary particles are driven from `body_q`, which
         `hold` does keep correct.
         """
-        import newton as _newton
-
-        link.state.body_qd.zero_()
-        link.state.body_q.assign(held)
-        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
-        if notify is not None:
-            notify(link.state,
-                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
+        # `link.place` writes the free-joint coordinates and runs `eval_fk`, which is
+        # the only route `SolverMuJoCo` reads. `body_q.assign` is not one, and neither
+        # `coupling_notify_input_state_update` nor `notify_model_changed` makes it one --
+        # both target model properties, not state, which is why trying them changed
+        # nothing to six decimals.
+        link.place(body, held[body])
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       # **Settle the FLUID only, with Newton not stepping at all.**
@@ -2311,8 +2309,10 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
 
     pushed = held.copy()
     pushed[body][2] -= displacement * box.draft
-    link.state.body_q.assign(pushed)
-    link.state.body_qd.zero_()
+    # **The displacement has to reach the solver or there is nothing to decay from.**
+    # `body_q.assign` is not a solver input for `SolverMuJoCo`, so this release used to
+    # be invisible to MuJoCo and the decay was fitted to whatever `qpos` already held.
+    link.place(body, pushed[body])
 
     dt = _timestep(world)
     total = int(steps if steps else math.ceil(periods * estimate / dt))
@@ -2658,14 +2658,12 @@ def _heel_once(box: _Box, *, particle_radius: float, depth: float, span: float,
         passing throughout: the Akinci boundary particles are driven from `body_q`, which
         `hold` does keep correct.
         """
-        import newton as _newton
-
-        link.state.body_qd.zero_()
-        link.state.body_q.assign(held)
-        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
-        if notify is not None:
-            notify(link.state,
-                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
+        # `link.place` writes the free-joint coordinates and runs `eval_fk`, which is
+        # the only route `SolverMuJoCo` reads. `body_q.assign` is not one, and neither
+        # `coupling_notify_input_state_update` nor `notify_model_changed` makes it one --
+        # both target model properties, not state, which is why trying them changed
+        # nothing to six decimals.
+        link.place(body, held[body])
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       # **Settle the FLUID only, with Newton not stepping at all.**
@@ -2796,14 +2794,12 @@ def run_sph_force_noise(*, particle_radius: float = 0.002, side: float = 0.032,
         passing throughout: the Akinci boundary particles are driven from `body_q`, which
         `hold` does keep correct.
         """
-        import newton as _newton
-
-        link.state.body_qd.zero_()
-        link.state.body_q.assign(held)
-        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
-        if notify is not None:
-            notify(link.state,
-                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
+        # `link.place` writes the free-joint coordinates and runs `eval_fk`, which is
+        # the only route `SolverMuJoCo` reads. `body_q.assign` is not one, and neither
+        # `coupling_notify_input_state_update` nor `notify_model_changed` makes it one --
+        # both target model properties, not state, which is why trying them changed
+        # nothing to six decimals.
+        link.place(body, held[body])
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       # **Settle the FLUID only, with Newton not stepping at all.**

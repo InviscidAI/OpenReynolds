@@ -128,3 +128,90 @@ def test_a_particle_body_lands_where_it_was_put_not_half_a_metre_away() -> None:
         f"A particle backend takes no node offset: it works in metres, so subtracting "
         f"half a cell with inv_dx = 1 subtracts half a metre"
     )
+
+
+def _one_free_body(gravity: float = 0.0):
+    """One free body and a `SolverMuJoCo`, with the flags the floating cases use.
+
+    No fluid: a pose write is a kinematics question and a `FluidWorld` would add a
+    voxelisation and a second's compile to a test whose whole point is that it is cheap
+    enough to run on every commit. Gravity is zero so that the expected position after a
+    step is the position that was written, exactly, with no tolerance to argue about.
+    """
+    import newton
+    import warp as wp
+
+    builder = newton.ModelBuilder()
+    body = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, 0.0),
+                                               wp.quat_identity()), mass=1.0)
+    cfg = newton.ModelBuilder.ShapeConfig()
+    cfg.density = 500.0
+    cfg.has_shape_collision = False
+    builder.add_shape_box(body, hx=0.02, hy=0.02, hz=0.02, cfg=cfg)
+    model = builder.finalize()
+    model.set_gravity((0.0, 0.0, -gravity))
+    solver = newton.solvers.SolverMuJoCo(model, disable_contacts=True, solver="newton",
+                                         integrator="implicitfast", iterations=10)
+    return model, solver, body
+
+
+def test_a_placed_body_is_where_it_was_put_after_the_solver_steps() -> None:
+    """A pose write must survive a step. `place_body` does; `body_q` never did.
+
+    **This is the test that was missing for weeks.** `sph_cases._float_rig` held a
+    settling hull with `body_qd.zero_()` and `body_q.assign(held)` after each
+    `link.step()`. `SolverMuJoCo` keeps its own `qpos` / `qvel`, integrates from those
+    and does not re-read Newton's public arrays, so the hold was a lie told to an array:
+    the engine's z drifted 0.060 -> 0.0055 m over fifty steps while the pinned array
+    read 0.060000 throughout, the draft snapped to the engine's accumulated position on
+    release, and all four floating-body cases reported drafts of 268,395 mm against a
+    16 mm Archimedes target.
+
+    Every part of that was visible in one step of one body with no fluid in it, which is
+    what this is. The second assertion is the bug itself, kept as an assertion rather
+    than a comment: if a future Newton starts honouring `body_q` as an input it will fail
+    here, loudly, which is the right place to find that out.
+    """
+    pytest.importorskip("newton")
+    import numpy as np
+
+    from openreynolds.live.couple import place_body
+
+    target = (0.05, 0.06, 0.07, 0.0, 0.0, 0.0, 1.0)
+    model, solver, body = _one_free_body()
+    state_0, state_1, control = model.state(), model.state(), model.control()
+
+    place_body(model, state_0, body, target)
+    before = np.asarray(state_0.body_q.numpy()[body])
+    assert np.allclose(before[:3], target[:3], atol=1e-6), (
+        f"place_body left body_q at {tuple(before[:3])} rather than {target[:3]}. "
+        f"The eval_fk is what puts it there, and `NewtonCoupling._push_poses` drives "
+        f"the fluid's body table and its boundary particles off body_q before the next "
+        f"step has pulled it"
+    )
+
+    solver.step(state_0, state_1, control, None, 1e-3)
+    after = np.asarray(state_1.body_q.numpy()[body])
+    assert np.allclose(after[:3], target[:3], atol=1e-6), (
+        f"the body was placed at {target[:3]} and the solver put it at "
+        f"{tuple(after[:3])} one step later. With zero gravity and zero velocity it "
+        f"must not have moved at all, so the pose did not reach the engine: a pose goes "
+        f"through joint_q / joint_qd and forward kinematics, never through body_q"
+    )
+
+    # And the same write through `body_q`, which is what the bug did.
+    model, solver, body = _one_free_body()
+    state_0, state_1, control = model.state(), model.state(), model.control()
+    poses = state_0.body_q.numpy()
+    poses[body] = np.asarray(target, dtype=poses.dtype)
+    state_0.body_q.assign(poses)
+    state_0.body_qd.zero_()
+    solver.step(state_0, state_1, control, None, 1e-3)
+    ignored = np.asarray(state_1.body_q.numpy()[body])
+    assert np.allclose(ignored[:3], (0.0, 0.0, 0.0), atol=1e-6), (
+        f"a pose written to body_q alone reached the engine, putting the body at "
+        f"{tuple(ignored[:3])} instead of leaving it at the origin it was built at. "
+        f"That is a change in Newton's contract -- body_q has been a solver OUTPUT for "
+        f"SolverMuJoCo -- so check `place_body` and the four sph_cases holds against it "
+        f"before relaxing this"
+    )
