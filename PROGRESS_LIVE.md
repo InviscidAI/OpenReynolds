@@ -387,6 +387,37 @@ it is 0.2% of the period) and not gravity (the hydrostatic case measures the eff
 `g` to 1.3%, which is 0.6% of the period). Unexplained, and it is the one M5 number
 with no account of itself.
 
+### The dam break converges, and not to Ritter
+
+Three grids at a constant refinement ratio, so the observed order and the limit can be
+solved for together rather than one assumed:
+
+| cells | `h(dam)` / Ritter's `4 h0/9` | profile RMS / h0 |
+| --- | --- | --- |
+| 325 | 1.2450 | 9.02% |
+| 650 | 1.1837 | 7.55% |
+| 1300 | 1.1576 | 6.53% |
+| **observed order** | **1.232** | 0.527 |
+| **Richardson limit** | **1.1382** | 4.22% |
+
+So the scheme converges at better than first order, and it converges to a state
+**13.8% above** Ritter's depth at the dam -- **inside the 15% tolerance**, which the
+finite grids are not. That is the honest reading of this case: the grid-converged answer
+is acceptable and the affordable grids are not, and the gap to Ritter that survives
+refinement is physics rather than error. Ritter is inviscid and hydrostatic; a real
+collapse accelerates vertically and has a viscosity, and `REFERENCES["ritter"]` says
+measurements run 10 to 30% below it at late time, so a lattice sitting 14% *above* its
+depth at the dam is the same order of discrepancy from the same cause.
+
+**The first version of this analysis was circular and is worth recording as such.** A
+two-grid Richardson estimate needs the exact answer supplied; feeding it the reference
+and reading back "the limit is the reference" proves nothing, and it returned 1.0000 for
+three different cases, which is what gave it away. The three-point form solves for the
+order and the limit at once and needs no reference at all.
+
+The sloshing case has only two grids recorded, so its order cannot be separated from its
+limit the same way, and a third grid at the same ratio is running.
+
 The dam break's residual is a Reynolds-number effect rather than a discretisation one:
 Ritter is inviscid, `Re_eff` is 37, 101 and 202 at the three resolutions, and the ratio
 falls as the viscosity does. Reaching 15% looks like it needs roughly another doubling.
