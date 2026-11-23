@@ -2017,8 +2017,42 @@ def run_sph_static_float(*, particle_radius: float = 0.002, beam: float = 0.064,
     held = link.state.body_q.numpy().copy()
 
     def hold() -> None:
+        """Pin the hull, **including inside the physics engine**.
+
+        Writing `body_q` and `body_qd` is not enough. Those are Newton's public arrays;
+        MuJoCo keeps its own `qpos`/`qvel`, integrates from those, and does not re-read
+        the public ones unless it is told to. So the hull travelled underneath the pin:
+        measured on CPU, the engine's z climbed 0.0756 -> 0.9929 m over 60 steps while
+        the pinned array read 0.060000 throughout, and the reported pose snapped to the
+        engine's accumulated position the moment the hold stopped. That is where drafts
+        of 268,395 mm against a 16 mm Archimedes target came from -- all four floating
+        cases, and none of it the solver's doing.
+
+        **`coupling_notify_input_state_update` does not fix it.** It is the documented
+        hook for "a coupler has written the public state", and calling it changes
+        nothing: measured over 50 steps, the engine's z reads 0.060519 / 0.051971 /
+        0.005455 at steps 1 / 25 / 50 **with the call and without it, to six decimals**,
+        against a pin at 0.060000. The call is kept because it is correct to make and
+        costs nothing, but it is not the fix and this docstring must not imply it is.
+
+        What the real fix looks like: the body is integrated by MuJoCo because it has a
+        free joint and a mass, so the way to hold it is to stop it being integrated --
+        make it kinematic in the Newton model, or weld it -- rather than to overwrite the
+        result afterwards. That is a change to `_float_rig`'s model construction and is
+        not done yet.
+
+        The fluid never noticed, which is why "the tank was at rest before release" kept
+        passing throughout: the Akinci boundary particles are driven from `body_q`, which
+        `hold` does keep correct.
+        """
+        import newton as _newton
+
         link.state.body_qd.zero_()
         link.state.body_q.assign(held)
+        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
+        if notify is not None:
+            notify(link.state,
+                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       step=link.step, hold=hold, progress=progress)
@@ -2203,8 +2237,42 @@ def run_sph_heave_decay(*, particle_radius: float = 0.002, beam: float = 0.064,
     held = link.state.body_q.numpy().copy()
 
     def hold() -> None:
+        """Pin the hull, **including inside the physics engine**.
+
+        Writing `body_q` and `body_qd` is not enough. Those are Newton's public arrays;
+        MuJoCo keeps its own `qpos`/`qvel`, integrates from those, and does not re-read
+        the public ones unless it is told to. So the hull travelled underneath the pin:
+        measured on CPU, the engine's z climbed 0.0756 -> 0.9929 m over 60 steps while
+        the pinned array read 0.060000 throughout, and the reported pose snapped to the
+        engine's accumulated position the moment the hold stopped. That is where drafts
+        of 268,395 mm against a 16 mm Archimedes target came from -- all four floating
+        cases, and none of it the solver's doing.
+
+        **`coupling_notify_input_state_update` does not fix it.** It is the documented
+        hook for "a coupler has written the public state", and calling it changes
+        nothing: measured over 50 steps, the engine's z reads 0.060519 / 0.051971 /
+        0.005455 at steps 1 / 25 / 50 **with the call and without it, to six decimals**,
+        against a pin at 0.060000. The call is kept because it is correct to make and
+        costs nothing, but it is not the fix and this docstring must not imply it is.
+
+        What the real fix looks like: the body is integrated by MuJoCo because it has a
+        free joint and a mass, so the way to hold it is to stop it being integrated --
+        make it kinematic in the Newton model, or weld it -- rather than to overwrite the
+        result afterwards. That is a change to `_float_rig`'s model construction and is
+        not done yet.
+
+        The fluid never noticed, which is why "the tank was at rest before release" kept
+        passing throughout: the Akinci boundary particles are driven from `body_q`, which
+        `hold` does keep correct.
+        """
+        import newton as _newton
+
         link.state.body_qd.zero_()
         link.state.body_q.assign(held)
+        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
+        if notify is not None:
+            notify(link.state,
+                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       step=link.step, hold=hold, progress=progress)
@@ -2530,8 +2598,42 @@ def _heel_once(box: _Box, *, particle_radius: float, depth: float, span: float,
     held = link.state.body_q.numpy().copy()
 
     def hold() -> None:
+        """Pin the hull, **including inside the physics engine**.
+
+        Writing `body_q` and `body_qd` is not enough. Those are Newton's public arrays;
+        MuJoCo keeps its own `qpos`/`qvel`, integrates from those, and does not re-read
+        the public ones unless it is told to. So the hull travelled underneath the pin:
+        measured on CPU, the engine's z climbed 0.0756 -> 0.9929 m over 60 steps while
+        the pinned array read 0.060000 throughout, and the reported pose snapped to the
+        engine's accumulated position the moment the hold stopped. That is where drafts
+        of 268,395 mm against a 16 mm Archimedes target came from -- all four floating
+        cases, and none of it the solver's doing.
+
+        **`coupling_notify_input_state_update` does not fix it.** It is the documented
+        hook for "a coupler has written the public state", and calling it changes
+        nothing: measured over 50 steps, the engine's z reads 0.060519 / 0.051971 /
+        0.005455 at steps 1 / 25 / 50 **with the call and without it, to six decimals**,
+        against a pin at 0.060000. The call is kept because it is correct to make and
+        costs nothing, but it is not the fix and this docstring must not imply it is.
+
+        What the real fix looks like: the body is integrated by MuJoCo because it has a
+        free joint and a mass, so the way to hold it is to stop it being integrated --
+        make it kinematic in the Newton model, or weld it -- rather than to overwrite the
+        result afterwards. That is a change to `_float_rig`'s model construction and is
+        not done yet.
+
+        The fluid never noticed, which is why "the tank was at rest before release" kept
+        passing throughout: the Akinci boundary particles are driven from `body_q`, which
+        `hold` does keep correct.
+        """
+        import newton as _newton
+
         link.state.body_qd.zero_()
         link.state.body_q.assign(held)
+        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
+        if notify is not None:
+            notify(link.state,
+                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       step=link.step, hold=hold, progress=progress)
@@ -2618,8 +2720,42 @@ def run_sph_force_noise(*, particle_radius: float = 0.002, side: float = 0.032,
     held = link.state.body_q.numpy().copy()
 
     def hold() -> None:
+        """Pin the hull, **including inside the physics engine**.
+
+        Writing `body_q` and `body_qd` is not enough. Those are Newton's public arrays;
+        MuJoCo keeps its own `qpos`/`qvel`, integrates from those, and does not re-read
+        the public ones unless it is told to. So the hull travelled underneath the pin:
+        measured on CPU, the engine's z climbed 0.0756 -> 0.9929 m over 60 steps while
+        the pinned array read 0.060000 throughout, and the reported pose snapped to the
+        engine's accumulated position the moment the hold stopped. That is where drafts
+        of 268,395 mm against a 16 mm Archimedes target came from -- all four floating
+        cases, and none of it the solver's doing.
+
+        **`coupling_notify_input_state_update` does not fix it.** It is the documented
+        hook for "a coupler has written the public state", and calling it changes
+        nothing: measured over 50 steps, the engine's z reads 0.060519 / 0.051971 /
+        0.005455 at steps 1 / 25 / 50 **with the call and without it, to six decimals**,
+        against a pin at 0.060000. The call is kept because it is correct to make and
+        costs nothing, but it is not the fix and this docstring must not imply it is.
+
+        What the real fix looks like: the body is integrated by MuJoCo because it has a
+        free joint and a mass, so the way to hold it is to stop it being integrated --
+        make it kinematic in the Newton model, or weld it -- rather than to overwrite the
+        result afterwards. That is a change to `_float_rig`'s model construction and is
+        not done yet.
+
+        The fluid never noticed, which is why "the tank was at rest before release" kept
+        passing throughout: the Akinci boundary particles are driven from `body_q`, which
+        `hold` does keep correct.
+        """
+        import newton as _newton
+
         link.state.body_qd.zero_()
         link.state.body_q.assign(held)
+        notify = getattr(link.solver, "coupling_notify_input_state_update", None)
+        if notify is not None:
+            notify(link.state,
+                   _newton.StateFlags.BODY_Q | _newton.StateFlags.BODY_QD)
 
     settled = _settle(world, reference_speed=celerity, max_steps=int(settle_steps),
                       step=link.step, hold=hold, progress=progress)
