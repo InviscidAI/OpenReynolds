@@ -336,6 +336,38 @@ is not evidence about it.
 still with the right force cannot be floated, and a cup cannot be carried. Those numbers
 are not pending on compute; they are pending on this.
 
+### The demo animations: verified with PIL, not claimed
+
+`figures.ensure_rgb` flattens an image to RGB so an RGBA PNG does not render as a black
+panel in a thumbnail index. It did that to GIFs as well, keeping the first frame and
+discarding the rest, which is why three demo GIFs held exactly one frame while the cases
+had been collecting frames correctly the whole time. Fixed; `animate` now also refuses
+fewer than two frames, all-identical frames, and frames that collapse on encoding.
+
+Every GIF on disk, counted with PIL and with the mean absolute difference between
+consecutive frames, because a frame count alone does not prove motion:
+
+| frames | mean frame-to-frame difference | file |
+| --- | --- | --- |
+| **200** | 0.473 | `gif-quadrotor/live-quadrotor-z1.gif` |
+| **200** | 0.579 | `gif-quadrotor/live-quadrotor-z2.5.gif` |
+| **60** | 1.530 | `dam-n1300/live-dam-break.gif` |
+| **60** | 1.659 | `dam-n650/live-dam-break.gif` |
+| **60** | 1.949 | `dam-n325/live-dam-break.gif` |
+| 1 | -- | the eight older cylinder, crosscheck, falling-sphere and quadrotor files |
+
+So **five animate and eight are stills**, and the five are the quadrotor at two heights
+plus the dam break at three resolutions. The older single-frame files are from before the
+fix and are superseded, not repaired in place.
+
+Still outstanding, with the reason rather than a plan: `run_ground_effect` and
+`run_underwater` have **no `animate` parameter at all** -- they were written to emit PNG
+frames, not an animation -- so there is nothing to re-run for those two until they get
+one. And a re-run of `falling_sphere` and `ground_effect` was launched against the names
+`falling-sphere` and `ground-effect`, which do not exist: the case keys use underscores
+while the result labels use hyphens, so exactly the two multi-word cases failed and the
+two single-word ones did not. That is a naming inconsistency in this file worth removing.
+
 ### The empty-channel inlet check, and the step rate the cylinder actually runs at
 
 Both measured on an A100 before the long run was launched, because a blanket timeout is
