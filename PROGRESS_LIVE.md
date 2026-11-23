@@ -258,6 +258,59 @@ times larger, agrees with TRT to 0.3%), compressibility (Ma 0.061 is *worse* tha
 0.095, -15.1% against -8.9%), resolution (256 cells worse than 192), and
 under-convergence. Only the last was close, with the sign reversed.
 
+### The empty-channel inlet check, and the step rate the cylinder actually runs at
+
+Both measured on an A100 before the long run was launched, because a blanket timeout is
+not a plan. `benchmarks/live/cylinder_profile.py` is the script.
+
+**The inlet is not the cylinder's problem.** A 2D-2 channel with no cylinder in it, a
+parabolic velocity inlet, and the outlet profile compared against the parabola computed
+for the **effective** wall positions -- half a cell outside the first fluid node, not the
+cell count, or the measurement is of the measurer:
+
+| cells/D | outlet vs the effective parabola, RMS | max | flux drift | steps |
+| --- | --- | --- | --- | --- |
+| 32 | **0.294%** | 0.483% | 0.515% | 38,048 |
+| 64 | **0.099%** | 0.158% | 0.290% | 190,270 |
+
+Inside the 0.5% bar on the profile at both resolutions, and converging. The flux drift at
+32 cells is 0.515%, marginally over, and is 0.290% at 64 -- so the one number that misses
+does so at the coarse resolution and converges away. A +11.7% drag error does not come
+from a channel that transports its own inlet profile to 0.1%.
+
+**The step rate, and what the suspected cause is worth.** The brief's suspicion was
+per-step host readback of the forces serialising the GPU. It is real and it is small:
+
+| cells/D | no sampling | sampling every step | every 50 | substeps=50 |
+| --- | --- | --- | --- | --- |
+| 32 | 282.6 | 265.1 (**-6.2%**) | 284.9 | **525.5** |
+| 64 | 499.2 | 486.2 (**-2.6%**) | 499.1 | 622.9 |
+| 128 | 616.0 | 610.4 (**-0.9%**) | 616.0 | 672.7 |
+
+So sampling every step costs **6% at 32 cells and 1% at 128**, not a factor. Batching the
+force readback would buy almost nothing and the hypothesis is answered rather than
+assumed. What does matter is **substeps**: 282.6 -> 525.5 MLUPS at 32 cells, nearly
+double, which says the small cases are limited by per-step overhead and not by bandwidth.
+The effect fades with size (616.0 -> 672.7 at 128 cells), which is what being
+bandwidth-bound looks like.
+
+The 2D path peaks at **616 MLUPS against the 3D benchmark's 1,478**. The thin direction
+is three cells deep, so the lattice is a shape the memory system cannot stream well; that
+is the cost of running a 2D benchmark on a D3Q19 kernel and it is not a defect.
+
+**The projection the long run should have been launched with.** Measured rates, not the
+1,000 MLUPS the script assumes when nothing has been measured:
+
+| cells/D | updates | at the measured rate | timeout at x1.5 |
+| --- | --- | --- | --- |
+| 32 | 6.21e10 | 220 s | 329 s |
+| 64 | 9.93e11 | 1,989 s | 2,983 s |
+| 128 | **1.59e13** | **25,838 s (7.2 h)** | **38,757 s** |
+
+The 128-cell point was first launched under a 7,200 s ceiling, which was **3.6x too
+short**, and then under a blanket 72,000 s, which was **1.9x too long**. Both numbers
+were guesses and one of them cost an H100 run that died at 10% with nothing recorded.
+
 ### The cross-check's Strouhal number: a transverse acoustic mode in the lift
 
 Under either velocity inlet this case reports **St 1.22 against 0.166** and 181 shedding
