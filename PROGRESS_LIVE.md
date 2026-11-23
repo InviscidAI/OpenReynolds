@@ -308,11 +308,29 @@ configuration, not a coupling artefact, and it is what makes the floating cases 
 a hull held by a force twice its weight with half of it as noise cannot find a draft.
 
 It does not match the solver's own convergence sequence -- 1.1863 / 1.0992 / 1.0614 at
-3 / 4 / 5 particles across -- so the two differ in setup rather than in code, and finding
-which part of the setup is next. The candidates with numbers attached: this tank is 120 mm
-for a 32 mm box, 27% blockage; the box sits 29 mm off the floor with its top 29 mm below
-the surface; and the spacing gives only 3.2 particles across the hull, below the 3 that
-sequence starts at.
+3 / 4 / 5 particles across -- so the two differ in setup rather than in code.
+
+**A sweep over tank size, hull size and resolution was run and is being reported as
+inconclusive rather than as a finding**, because it is confounded:
+
+| tank | hull | across | blockage | fluid particles | mean Fz | RMS |
+| --- | --- | --- | --- | --- | --- | --- |
+| 120 mm | 32 mm | 3.2 | 27% | 1,296 | +2.297 | 54% |
+| 240 mm | 32 mm | 3.2 | 13% | 10,368 | +1.587 | 214% |
+| 240 mm | 32 mm | 6.4 | 13% | 82,944 | +0.034 | **1230%** |
+| 240 mm | 64 mm | 6.4 | 27% | 10,368 | -0.152 | 955% |
+
+Read naively this says refinement destroys the force, which would be a serious claim
+about the solver. It is not safe to read that way: **every row sampled from step 30 to
+step 90**, and a tank filled by `fill_below` has to settle before any of this means
+anything. 1,296 particles settle quickly; 82,944 have barely started to move by step 30,
+so the last two rows are measurements of the initial collapse and not of a resting fluid.
+The sweep says nothing and the time it took is the cost of not settling first.
+
+What a sound version needs: `_settle` on each configuration to the same velocity bound
+the cases already use -- and the cases *do* settle, their "the tank was at rest" checks
+pass, and they still produce drafts of order `1e5`. So the fault is real; this sweep just
+is not evidence about it.
 
 **This is why the M6 cases fail and M7 was not attempted.** A hull that cannot be held
 still with the right force cannot be floated, and a cup cannot be carried. Those numbers
