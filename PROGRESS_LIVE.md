@@ -275,6 +275,31 @@ the blockage needs, and the force comes out high. Give it four diameters of deve
 length and the drag lands inside the 5% tolerance; ten adds nothing, so four is the
 length the condition wants.
 
+**And the mechanism is compressibility.** Halving the Mach number with `tau` held fixed
+at 0.5355 -- which means pairing the lattice velocity with the resolution, legitimate here
+because resolution is already known not to matter (24/32/44 give 3.67, 3.61, 3.61):
+
+| cells / u_lattice | Ma | Cd_max | vs the interval | Cl_max | St |
+| --- | --- | --- | --- | --- | --- |
+| 32 / 0.0370 | 0.064 | 3.6088 | **+11.73%** | 1.1028 | 0.3025 |
+| 64 / 0.0185 | 0.032 | 3.4613 | **+7.16%** | 1.0575 | 0.3023 |
+
+The Strouhal number does not move (0.3025 to 0.3023) and both force coefficients fall
+toward their intervals. So the +11.7% is largely an `O(Ma)` or `O(Ma^2)` artefact, and
+which of the two decides whether this case can pass in the paper's own domain:
+extrapolating to zero Mach gives **+2.59%** if the error is linear in Ma and **+5.64%**
+if it is quadratic, against a 5% tolerance.
+
+**The linear reading has independent support.** Moving the inlet four diameters upstream
+at unchanged Mach gives +2.4%, which the linear limit matches to a sixth of a per cent
+and the quadratic misses by more than three. Two different routes out of the error --
+giving the inlet development length, and removing the compressibility -- landing on the
+same +2.5% is the kind of agreement that is hard to arrange by accident.
+
+A third Mach point at 0.016 is running, where the two readings predict +4.88% and
++6.02%; the gap is wider than the scatter between the points already measured, so it
+decides.
+
 **The graded case still runs the paper's domain and still fails**, and that is
 deliberate. 2D-2 *is* a 2.2 x 0.41 channel with the cylinder at x = 0.2; a run in a
 longer channel is not that benchmark and cannot be reported as it, the same way the
