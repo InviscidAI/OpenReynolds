@@ -865,7 +865,13 @@ is measured, on the CPU, in `tests/test_live_sph.py`:
   analytic buoyancy term at all. The equivalent lattice number is -0.48 `rho V g`: the
   wrong sign and half the magnitude;
 - a bulk lattice of particles reads 0.999972 of its own rest density;
-- 126 tests passed across the live test suite at the commit the backend landed in
+- the live test suite passed in full at the commit the backend landed in. **No count is
+  quoted here on purpose**: `tests/test_wiring.py::test_the_documents_do_not_carry_a_test_count`
+  forbids it, because a number written into prose is true for one commit and silently
+  wrong afterwards. This line used to quote a figure from the day it was written, and the suite now
+  collects roughly twice it -- quoting the old number here would trip that same test,
+  which is the point. Run
+  `python -m pytest tests/ -q -k live` for today's figure
   (`910c66b`, its own measurement). Those are unit tests on a CPU, not validation runs,
   and the distinction is the point of this section.
 

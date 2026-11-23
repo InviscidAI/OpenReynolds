@@ -148,7 +148,7 @@ def _one_free_body(gravity: float = 0.0):
     cfg.density = 500.0
     cfg.has_shape_collision = False
     builder.add_shape_box(body, hx=0.02, hy=0.02, hz=0.02, cfg=cfg)
-    model = builder.finalize()
+    model = builder.finalize(device="cpu")
     model.set_gravity((0.0, 0.0, -gravity))
     solver = newton.solvers.SolverMuJoCo(model, disable_contacts=True, solver="newton",
                                          integrator="implicitfast", iterations=10)

@@ -932,7 +932,17 @@ def test_the_host_side_poses_are_not_conditional_on_which_feature_is_on():
     shape_cfg.density = 3000.0
     shape_cfg.has_shape_collision = False
     builder.add_shape_sphere(body, radius=diameter / 2.0, cfg=shape_cfg)
-    model = builder.finalize()
+    # **`finalize()` takes Warp's preferred device, which is `cuda:0` wherever there is
+    # a GPU, while the fluid world above is pinned to the CPU.** The coupling then launches
+    # kernels over a CPU fluid array and CUDA Newton arrays in one go, and that is a
+    # **deterministic SIGSEGV** -- it killed seven Isaac Sim containers before anyone saw
+    # which test did it, because the harness lost its output buffer on the crash. It
+    # passes everywhere without a CUDA device, which is why local runs and CI never saw
+    # it and the "63 passed, 0 failed" recorded for a live Kit process predates this test.
+    #
+    # Pin both to the same device and the test says what it means to say about poses
+    # rather than about device placement.
+    model = builder.finalize(device="cpu")
     model.set_gravity((0.0, 0.0, 0.0))
     engine = newton.solvers.SolverFeatherstone(model)
 

@@ -607,9 +607,17 @@ the boundary conditions, at 32 cells per diameter:
 | --- | --- | --- |
 | mass gained | **+28.113%** | **+0.032%** |
 | late-time slope | +4.22e-2 %/1000 steps, still linear | +7.4e-9, flat |
-| mass flux out / in | **-0.60%, every step** | +0.053% |
+| **mass** flux out / in | **-0.601%, every step** | +0.053% |
+| **volume** flux out / in | -0.539% | +0.119% |
 | outlet profile vs the effective-wall parabola, max | 0.596% -- **fails 0.5%** | **0.322%** |
 | dp/dx against analytic Poiseuille | 1.1722x | 0.9778x |
+
+The two flux rows are **different quantities and both were measured**, which matters
+because `RELEASE_NOTES_v0.1.md` quotes the volume pair and this table quoted only the
+mass pair, so the two documents read as contradicting each other on one run. Mass is the
+conserved quantity and is the one that settles whether the outlet is a ratchet; volume
+differs from it by the density the extrapolating case has been accumulating, which is
+the defect itself. Both are listed so neither document has to be read against the other.
 
 Reproduced to every printed digit across two independent H100 runs. An integral audit
 closes the loop on the extrapolating case: net inflow integrated over the run predicts
