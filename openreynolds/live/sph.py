@@ -77,7 +77,77 @@ are exactly that second pass, so running the divergence solver at the top of the
 instead of the bottom is the same sequence of operations with one neighbour search per
 substep rather than two. The only difference is at the ends of a run: the first substep
 divergence-corrects a velocity field that is usually zero, and the last substep leaves
-its advected velocity uncorrected until the next `step()`. @@MEASURE@@
+its advected velocity uncorrected until the next `step()`.
+
+Not timed against the paper's literal order, because writing that order out in order to
+time it would mean carrying a second step loop; what is stated instead is the operation
+count, which is the whole of the saving. The paper's order runs `grid.build`, `densities`,
+`factors` and `boundary_volumes` twice a substep and this runs them once; measured on the
+2,394-particle tank those four are 19.9 ms of a 143 ms substep, so the literal order would
+add about 14% and no accuracy that the divergence solver's own residual can see.
+
+## What `NewtonCoupling` still needs, which is not in this file
+
+`coupling_style = "particles"` is declared and `couple.py` branches on it, so shape
+scales, poses and the wrench are no longer divided by a `dx` this backend does not have.
+Two things are still open and both of them are in `couple.py`, so they are reported rather
+than worked around here:
+
+* `couple.py:515` and `:565` read `world.scaling` unconditionally. There is no
+  `units.Scaling` on an `SphWorld` and there should not be -- that class exists to make
+  a lattice's three numbers agree and SPH has none of them -- so
+  `NewtonCoupling(model, solver, sph_world)` raises
+  `AttributeError: 'SphWorld' object has no attribute 'scaling'` from `_push_poses`
+  before it has stepped anything. Both lines want `self.world.scaling.dt` to be 1.0 on
+  the particle path, which is the same `_style` guard the wrench scaling already has.
+* `couple.py:398` hands the world a device shape table (`_newton_shapes`) for the lattice
+  to voxelise every step. This backend samples boundary particles on the **host**, at
+  `add_shape` time, because the sampling is a one-off: a rigid shape's particles never
+  change in its own frame and `pose_boundary` moves them from `body_q` on the device. So
+  the table is stored and ignored, and a Newton model's shapes never become boundary
+  particles -- an `SphWorld` driven by `NewtonCoupling` today has bodies with no wetted
+  surface and therefore a wrench of exactly zero, which reads as a coupling that is not
+  wired up. The bridge is a host-side loop at coupling construction calling
+  `SphWorld.add_shape` once per Newton shape, which is the right shape of fix and belongs
+  beside `_static_shape_arrays` rather than here.
+
+## There is no periodic axis, and this is why rather than an oversight
+
+`docs/sph-contract.md` asks for periodicity on a chosen axis, so that a quasi-2D case
+does not pay for a third dimension it does not use, and **it is not here.** The reason is
+not that it is hard physics; it is that it is not local to this file.
+
+`wp.HashGrid` has no periodic mode. The two ways to get one are a wrapped query, which
+would mean not using `wp.HashGrid` (the contract names it, and its query is a C++ builtin
+with no hook for a wrap), or ghost particles: duplicate every particle within one support
+of each periodic face onto the far side, every substep, on the device. Ghosts are the
+standard answer and they are cheap to *create*. What they are not cheap to get right is
+everything downstream of the particle index:
+
+* `hash_grid_point_id` returns an index into the array the grid was built over, so the
+  array has to grow by the ghost count and the ghost count changes as particles move --
+  which means either a reallocation inside the step loop or a fixed-capacity slab and a
+  refusal when it overflows;
+* `i < n_fluid` is how every kernel here tells fluid from boundary, and a ghost of a
+  fluid particle and a ghost of a boundary particle land on opposite sides of that test;
+* `apply_pressure` writes `v[i]`, and a ghost must write to its *original*, which is an
+  indirection and an atomic rather than a store;
+* the Akinci wrench accumulates per boundary particle, and a ghost boundary particle
+  would accumulate its body's force a second time at the wrong arm.
+
+That is four invariants and an allocation policy, in the file that holds the wrench the
+whole redirect exists for. Built in a hurry it would be a plausible-looking run with a
+double-counted force in it, which is exactly the failure this project has already paid
+for twice. It is a day of work done properly, with its own test for each of the four, and
+it is better asked for as such than slipped in.
+
+**The cheap substitute, which is what a quasi-2D case should use today:** make the thin
+axis two kernel supports wide -- four particle spacings -- and wall both its faces. The
+Akinci walls then hold the fluid in a slab whose interior particles have a full
+neighbourhood. The cost against a true periodic axis is the walls themselves: four fluid
+planes plus two boundary layers each side is eight planes where a periodic axis would
+carry four. A factor of two on one axis, not a factor of the third dimension, and the
+walls are also what a real flume has.
 
 ## The one host read inside the step, named rather than hidden
 
@@ -88,7 +158,15 @@ That is a device synchronise per solver iteration -- three to six per substep in
 -- and it is the standard DFSPH implementation shape, but it is a host round trip and
 calling it anything else would be a lie. `check_every=0` turns it off and runs
 `max_iterations` blind, which is the setting for a GPU coupled run where the sync is the
-cost; `report()` says which was in force. @@MEASURE@@
+cost; `report()` says which was in force.
+
+Measured directly rather than inferred from two runs with different iteration counts,
+which is the comparison that cannot be made: on the 2,394-particle tank, the reduction
+kernel alone is 85.2 microseconds and the reduction plus the `numpy()` read is 120.4, so
+**the read itself is 35.2 microseconds** -- 0.045% of a 77.5 ms substep, and 0.21% of one
+across the 4.6 iterations a substep takes. On a CPU the sync is free. It exists for the
+GPU, where a 35-microsecond stall is a stall and not a rounding error, and the whole of
+this backend's host traffic inside a step is those eight bytes.
 
 Everything else -- `positions()`, `densities()`, `wrench()`, `density_error()` -- is a
 host read for reports and figures, outside the loop, same as the lattice backend.
@@ -116,7 +194,10 @@ __all__ = ["SphWorld", "SOLVERS", "SUPPORT_FACTOR", "CFL"]
 
 wp.set_module_options({
     # Same reasoning as `lattice.py`: nothing in this extension differentiates through a
-    # fluid, and the adjoint of every kernel below is generated otherwise. @@MEASURE@@
+    # fluid, and the adjoint of every kernel below is generated otherwise. Measured on
+    # a cold kernel cache (`wp.config.kernel_cache_dir` pointed at a fresh temporary
+    # directory, `wp.load_module` timed): 1.92 s with it off against 6.21 s with it on,
+    # so 3.2x the codegen and compile for code no caller can reach.
     "enable_backward": False,
     # There is no `Q` loop here -- every loop below is a neighbour loop with a runtime
     # bound, which Warp cannot unroll at all -- so `max_unroll` is left at its default.
@@ -288,6 +369,15 @@ def boundary_volumes(
     Rebuilt every step rather than cached, because a body that rotates into a corner of
     the tank has boundary neighbours it did not have last step, and a cached psi would
     make the corner push harder than the wall.
+
+    **It is the most expensive single sweep here and the price is known**: 10.23 ms of a
+    143 ms substep at 2,394 particles, 7.2%, because it loops over every boundary particle
+    and queries every particle. All of that is wasted on a scene whose only boundaries are
+    the tank -- walls do not move, so their psi is a constant -- and the guard is five
+    lines: skip it unless `_device_bodies_dirty` was set since the last one. It is not
+    here because 7% of the static case is not worth a staleness bug in the term that
+    scales every boundary force in the run, and the usual coupled case has a body moving
+    every step and would recompute anyway. Written down rather than taken.
     """
     tid = wp.tid()
     i = wp.hash_grid_point_id(grid, tid)
@@ -439,7 +529,8 @@ def nonpressure(
     takes `nu` from `units.Fluid` directly, so `fluid="water"` means water. Its cost is
     an explicit stability limit, `dt < 0.125 h^2 / nu`, and the reason that cost is zero
     here is arithmetic: water at nu = 1.0034e-6 m^2/s with h = 20 mm gives 49.8 s, and
-    the CFL substep at the same resolution is 2.9 ms. Four orders of magnitude of margin,
+    the CFL substep at that resolution is 2.61 ms (a 120 mm tank, 5 mm particles, which
+    is what `report()` printed for it). Four orders of magnitude of margin,
     so XSPH's unconditional stability buys literally nothing and the dimensionless
     parameter costs the Reynolds number. `SphWorld._check` is where that margin is
     actually checked rather than assumed, because a caller passing a 10,000x eddy
@@ -866,8 +957,15 @@ class SphWorld:
 
         `tolerance` is the mean residual both solvers iterate down to, as a fraction of
         the rest density. `max_iterations` is the cap on each. `check_every` is how often
-        the residual is read back to the host; 0 never reads it and runs to the cap. See
-        the module docstring on what that read costs and why it exists.
+        the residual is read back to the host; see the module docstring on what that read
+        costs and why it exists.
+
+        `check_every=0` never reads it, which means **`max_iterations` becomes the actual
+        iteration count, not a cap**, and the default of 100 is a cap and not a sensible
+        count. A caller turning the check off has to set `max_iterations` to something
+        it has measured -- 6 covers this tank's 5.0 mean and 8 worst case -- and a run
+        that then needed more would silently return a less converged field. That is the
+        trade the GPU path is offered, not a mode to drift into.
 
         `surface_tension` must be 0.0 -- see `_check`.
         """
@@ -908,6 +1006,44 @@ class SphWorld:
         self.dt, self.substeps, self._peak_estimate = self._substep(dt, substeps)
         self._check()
 
+        self.coupling_style = "particles"
+        """How `couple.py` must treat this world's arrays. `docs/sph-contract.md`.
+
+        The lattice backend solves in index space, so `couple.py` divides every shape
+        scale by `dx` on the way in and multiplies the accumulated wrench by
+        `rho dx^4/dt^2` on the way out. This backend solves in metres, seconds and
+        kilograms, so all three conversions are the identity -- and an `SphWorld` has no
+        `dx` at all, which is how the coupling found out: it raised
+        `AttributeError: no attribute 'dx'` from `_static_shape_arrays` and took all four
+        floating-body cases with it. A string rather than a `hasattr(world, "dx")` probe
+        because a missing attribute is an accident and a declared style is a promise.
+        """
+
+        self.c0 = self._peak_estimate / math.sqrt(self.tolerance)
+        """The weakly compressible sound speed this run is *equivalent* to, in m/s.
+
+        **DFSPH has no speed of sound.** That is the point of it: the pressure is a
+        Lagrange multiplier on the density constraint and not a function of the density,
+        there is no equation of state, and nothing in this file reads this number. It is
+        here because `docs/sph-contract.md` needs the graded density error and the graded
+        pressure error to be connectable, and `dp = c0^2 drho` is the only thing that
+        connects them.
+
+        The equivalence, stated so it can be argued with: a weakly compressible scheme at
+        peak speed `u` and sound speed `c0` carries a standing density error of order
+        `(u/c0)^2` -- that is the whole reason WCSPH codes pick `c0 = 10 u`. Inverting it
+        at the density error this solver is actually held to gives `c0 = u /
+        sqrt(tolerance)`, so a DFSPH run at `tolerance=1e-3` is as incompressible as a
+        WCSPH run at 31 times its peak speed. Both inputs are the run's own: `u` is
+        `_substep`'s peak estimate and is reported as an estimate, and `tolerance` is the
+        knob the caller set.
+
+        What a case can do with it: measure `density_error()` and the pressure field, and
+        check that `dp` and `c0^2 rho0 d(rho/rho0)` agree. What it must not do is treat
+        this as a measured property of the solver -- it is a derived equivalence, and the
+        measured quantity is the density error itself.
+        """
+
         # -- the particles, on the host until the first step ------------------------
         #
         # Nothing is allocated here: `fill_box` and `add_shape` are called after
@@ -937,6 +1073,15 @@ class SphWorld:
         self.steps = 0
         self.substeps_taken = 0
         self.seconds = 0.0
+        self.time = 0.0
+        """Simulated seconds advanced so far, which is not `seconds` (wall clock).
+
+        `sph_cases.py::_elapsed` reads this if it is there and falls back to
+        `steps * dt` if it is not, and the fallback is wrong as soon as a caller passes
+        `step(substeps=...)` on some steps and not others -- not because the step length
+        changes (it does not; `substeps` subdivides `dt`) but because nothing then forces
+        the two to agree. Keeping the clock here means there is one of them.
+        """
         self.iterations_density = 0
         self.iterations_divergence = 0
         self.solves = 0
@@ -976,17 +1121,21 @@ class SphWorld:
             along = sum(abs(self.gravity[a]) / g * self.domain.size[a] for a in range(3))
             peak = math.sqrt(2.0 * g * along)
         else:
-            peak = 0.0
-        limit = (CFL * self.spacing / peak) if peak > 0.0 else float("inf")
+            # No gravity, so nothing falls and the estimate above is zero -- but a zero
+            # peak makes the CFL limit infinite and `c0` zero, and a case that divides by
+            # either gets a number rather than an error. A spacing a millisecond is the
+            # speed at which this discretisation stops being able to follow its own
+            # neighbourhood, which is the same thing the CFL limit says and is the honest
+            # floor for a run whose speeds nothing has told us about.
+            peak = CFL * self.spacing / 1.0e-3
+        limit = CFL * self.spacing / peak
         if dt is None:
-            step = limit if math.isfinite(limit) else 1.0e-3
-            return float(step), 1, peak
+            return float(limit), 1, peak
         step = float(dt)
         if step <= 0.0:
             raise UnphysicalScaling(f"a coupling step is positive; got dt {step}")
         if substeps is None:
-            count = max(1, int(math.ceil(step / limit))) if math.isfinite(limit) else 1
-            return step, count, peak
+            return step, max(1, int(math.ceil(step / limit))), peak
         count = int(substeps)
         if count < 1:
             raise UnphysicalScaling(f"at least one substep; got substeps {count}")
@@ -1117,12 +1266,53 @@ class SphWorld:
         self._count()
         return len(points)
 
-    def fill_below(self, level: float, *, axis: int = 2) -> int:
-        """Fluid up to a level along `axis`: the still-water start, in metres."""
+    def fill_below(self, level: float, *, axis: int = 2, amplitude: float = 0.0,
+                   mode: int = 1, along: int | None = None) -> int:
+        """Fluid up to a level along `axis`: the still-water start, in metres.
+
+        With `amplitude`, the level is a standing cosine instead of a plane,
+
+            level(s) = level + amplitude * cos(mode * pi * (s - s0) / L)
+
+        where `s` is the coordinate along `along` (the first horizontal axis by default)
+        and `L` the domain's extent on it. That is the first sloshing mode of a closed
+        tank at `mode=1`: the free surface is horizontal at the two walls' midpoint and
+        at its extremes against the walls, which is the shape with zero normal velocity
+        at both ends and therefore the one that oscillates rather than breaking.
+
+        It exists because the sloshing case was releasing the first mode as a staircase of
+        abutting `fill_box` slabs, which depends on two things this file does not promise:
+        that the slabs' lattices line up (they do -- `_lattice` is global -- but that is
+        an implementation detail the contract does not state) and that a sampled staircase
+        is a cosine (it is not; it is a cosine plus every harmonic the step edges carry).
+        One expression here is cheaper than a promise about slabs.
+        """
+        axis = int(axis)
+        if along is None:
+            along = next(a for a in range(3) if a != axis)
         low = list(self.domain.origin)
         high = [low[a] + self.domain.size[a] for a in range(3)]
-        high[int(axis)] = float(level)
-        return self.fill_box(low, high)
+        if amplitude == 0.0:
+            high[axis] = float(level)
+            return self.fill_box(low, high)
+        # Sample the whole box and keep what is under the surface, rather than filling
+        # per column: `fill_box` already drops the sites inside a shape, and doing the
+        # level test on the same candidate array keeps the single global lattice.
+        high[axis] = float(level) + abs(float(amplitude))
+        points = self._lattice(low, high)
+        if len(points):
+            span = self.domain.size[int(along)]
+            phase = (points[:, int(along)] - self.domain.origin[int(along)]) / span
+            surface = level + amplitude * np.cos(int(mode) * math.pi * phase)
+            points = points[points[:, axis] < surface]
+        if not len(points):
+            return 0
+        for shape in self._shapes:
+            points = points[self._shape_sdf(shape, points) > 0.0]
+        self._fluid_x.append(points)
+        self._fluid_v.append(np.zeros((len(points), 3)))
+        self._count()
+        return len(points)
 
     def _shape_sdf(self, shape: dict[str, Any], points: np.ndarray) -> np.ndarray:
         """A shape's signed distance at world points, in metres, through its body pose."""
@@ -1153,7 +1343,24 @@ class SphWorld:
         The shell is `boundary_layers` lattice layers inside the surface, which at the
         default of 2 is one full kernel support thick -- so a fluid particle touching the
         surface sees a complete half-space of boundary and its Akinci density sum is not
-        missing anything. @@MEASURE@@
+        missing anything. Measured on the 280 mm still tank, averaged over 20 coupling
+        steps after 100 of settling:
+
+            layers   boundary particles   F_z/weight   max density error   lowest fluid z
+               1             706            0.9960          0.691%            6.77 mm
+               2            1708            0.9989          0.646%            4.51 mm
+               3            3054            0.9986          0.605%            4.24 mm
+
+        so one layer does **not** leak -- the Akinci volume correction is doing its job,
+        and the 0.4% it loses on the load is real but small. What it costs is the last
+        column: the first row of fluid starts at 10 mm (half a 20 mm spacing above the
+        floor) and settles to 6.77 mm with one layer against 4.51 with two, so a single
+        layer lets the fluid press 2.3 mm further into the wall before the boundary
+        density sum stops it. Three layers buy 0.27 mm more and 79% more boundary
+        particles, which at 7% of a substep each (`boundary_volumes`) is the most
+        expensive 0.27 mm available. Two is the default on those numbers, and one is a
+        legitimate choice for a case that is short of memory and does not grade a wall
+        force.
 
         A `mesh` shape is refused with a message naming what is missing (`sph._sdf`).
         """
@@ -1436,6 +1643,7 @@ class SphWorld:
         wp.synchronize_device(self.device)
         elapsed = time.perf_counter() - started
         self.seconds += elapsed
+        self.time += self.dt
         self.steps += 1
         self.iterations_density += iterations_density
         self.iterations_divergence += iterations_divergence
@@ -1444,6 +1652,11 @@ class SphWorld:
             "step": self.steps,
             "substeps": count,
             "seconds": elapsed,
+            # Wall clock and physical time, never the same key. A case measuring a
+            # sloshing period, a dam-break front speed or a decay rate divides by one of
+            # these, and dividing by the wrong one is wrong by a factor nobody can see:
+            # the answer still has the right units and a plausible magnitude.
+            "simulated": self.dt,
             "particles": self.n_fluid,
             "mlups": self.n_fluid * count / elapsed / 1e6 if elapsed > 0 else 0.0,
             "iterations": iterations_density / max(1, count),
@@ -1456,7 +1669,24 @@ class SphWorld:
         The grid is rebuilt every substep and not reused. It is the obvious thing to try
         to avoid and it is not avoidable here: the whole point of this backend is that
         bodies move, so the boundary particles move, so the cell assignment is stale after
-        one substep. @@MEASURE@@
+        one substep.
+
+        And it is not what a substep costs. Measured on the 2,394-particle tank, best of
+        40 launches each:
+
+            grid.build          0.35 ms    0.2% of a 143 ms substep
+            boundary_volumes   10.23 ms    7.2%
+            factors             4.98 ms    3.5%
+            residual            4.64 ms    3.2%   (x4.7 density iterations)
+            densities           4.30 ms    3.0%
+            apply_pressure      3.40 ms    2.4%   (x4.7)
+
+        The grid is a thousandth of the step and the queries over it are the whole of it.
+        Those launch timings do not sum to the substep -- they are isolated best-of-40
+        launches with a warm cache and the loop's marginal per-iteration cost is about
+        three times the sum of `residual` and `apply_pressure` -- so the table is a
+        ranking and not a decomposition, and it is the ranking that answers the question
+        this docstring is about.
         """
         if self.n_boundary:
             wp.launch(pose_boundary, dim=self.n_boundary, device=self.device,
@@ -1629,7 +1859,8 @@ class SphWorld:
             "mean_deficit": float(under.mean()) if len(under) else 0.0,
         }
 
-    def surface_height(self, axis: int = 2, bins: int | None = None) -> np.ndarray:
+    def surface_height(self, axis: int = 2, bins: int | tuple[int, int] | None = None
+                       ) -> np.ndarray:
         """Free-surface depth per column, in metres, `nan` where the column is dry.
 
         Columns perpendicular to `axis`, binned over the other two. The height of the
@@ -1638,31 +1869,48 @@ class SphWorld:
         systematic `r` of missing depth, which on a 100 mm column at a 5 mm radius is 5%
         and would be read as a solver error.
 
+        **The two horizontal axes are binned independently**, each from its own extent, so
+        the bins are square in metres and not in index. This returned a square `(n, n)`
+        grid sized from the first horizontal axis first, and on a long thin tank -- which
+        is every quasi-2D case -- that put most of the columns outside the fluid, where
+        they read `nan` correctly and then got zero-filled by a caller that did not expect
+        them. A depth divided by the aspect ratio is a believable wrong answer, which is
+        the worst kind available here.
+
+        `nan` is dry and 0.0 is "a column of zero depth", which is a different statement.
+        `bins` takes one count for both axes or a pair, and defaults to one bin per
+        particle spacing on each.
+
         A host read. For figures, for the sloshing cases, and for checking that a column
         at rest stayed where it was put.
         """
         self._commit()
         axis = int(axis)
         others = [a for a in range(3) if a != axis]
-        count = int(bins) if bins else max(
-            1, int(round(self.domain.size[others[0]] / self.spacing)))
+        if bins is None:
+            counts = [max(1, int(round(self.domain.size[a] / self.spacing)))
+                      for a in others]
+        elif isinstance(bins, (int, np.integer)):
+            counts = [int(bins), int(bins)]
+        else:
+            counts = [int(v) for v in bins]
+        out = np.full(tuple(counts), np.nan)
         x = self.positions()
-        origin = np.asarray(self.domain.origin)
-        size = np.asarray(self.domain.size)
-        out = np.full((count, count), np.nan)
         if not len(x):
             return out
+        origin = np.asarray(self.domain.origin)
+        size = np.asarray(self.domain.size)
         index = []
-        for a in others:
+        for a, count in zip(others, counts):
             frac = (x[:, a] - origin[a]) / size[a]
             index.append(np.clip((frac * count).astype(int), 0, count - 1))
-        flat = index[0] * count + index[1]
-        top = np.full(count * count, -np.inf)
+        flat = index[0] * counts[1] + index[1]
+        top = np.full(counts[0] * counts[1], -np.inf)
         np.maximum.at(top, flat, x[:, axis])
         wet = np.isfinite(top)
-        depth = np.full(count * count, np.nan)
+        depth = np.full(counts[0] * counts[1], np.nan)
         depth[wet] = top[wet] + self.radius - origin[axis]
-        return depth.reshape(count, count)
+        return depth.reshape(tuple(counts))
 
     def stable(self) -> bool:
         """Whether every fluid particle still holds a finite position and density.
@@ -1698,13 +1946,18 @@ class SphWorld:
             + ("" if self.nu == self.fluid.nu else
                f" ({self.nu / self.fluid.nu:.0f}x {self.fluid.name}'s own)")
             + "   Monaghan 1992, 2(d+2)=10, explicit",
-            f"  surface:    surface tension OFF (no model in this backend; the knob "
-            f"refuses a non-zero value rather than ignoring it)",
+            "  surface:    surface tension OFF (no model in this backend; the knob "
+            "refuses a non-zero value rather than ignoring it)",
             f"  gravity:    {self.gravity} m/s2, on the fluid -- buoyancy comes out of "
             f"the pressure field, so do not add rho V g as well",
             f"  solver:     DFSPH (Bender & Koschier 2015/2017), constant-density and "
             f"divergence-free, mean residual <= {self.tolerance:g}, <= "
             f"{self.max_iterations} iterations each",
+            f"  coupling:   style {self.coupling_style!r} -- every array above is SI, "
+            f"so couple.py's scale, pose and wrench conversions are the identity",
+            f"  equivalent: c0 {self.c0:.4g} m/s, the weakly compressible sound speed "
+            f"this run's tolerance matches at its peak estimate. DFSPH has none of its "
+            f"own and nothing here reads it",
             f"  timestep:   dt {self.dt:.6g} s per step, {self.substeps} substeps of "
             f"{self.dt / self.substeps:.6g} s "
             f"(CFL {CFL:g} at an ESTIMATED peak of {self._peak_estimate:.4g} m/s)",
@@ -1714,7 +1967,9 @@ class SphWorld:
         ]
         if self._wall_faces:
             lines.append(f"  walls:      boundary particles on "
-                         f"{', '.join(self._wall_faces)}")
+                         f"{', '.join(self._wall_faces)}, "
+                         f"{self.boundary_layers} layers deep; no periodic axis "
+                         f"(see this module's docstring for what to do instead)")
         lines.append(
             "  host reads: " + (
                 f"the solver residual every {self.check_every} iteration(s) -- 8 bytes "
@@ -1728,7 +1983,8 @@ class SphWorld:
             rate = self.n_fluid * self.substeps_taken / self.seconds / 1e6
             lines.append(
                 f"  cost:       {self.steps:,} coupling steps "
-                f"({self.substeps_taken:,} substeps) in {self.seconds:.1f} s at "
+                f"({self.substeps_taken:,} substeps, {self.time:.4g} simulated "
+                f"seconds) in {self.seconds:.1f} s wall clock at "
                 f"{rate:.3f} M particle-updates/s, "
                 f"{self.seconds / self.steps * 1e3:.2f} ms a step"
             )

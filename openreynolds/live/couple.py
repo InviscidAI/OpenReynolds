@@ -399,6 +399,23 @@ class NewtonCoupling:
             self._shape_kinds, self._shape_body, self._shape_pose, self._shape_scale,
             self._shape_mesh,
         )
+        # **A particle backend cannot use that handoff and must be told so out loud.**
+        # The lattice re-voxelises Newton's shapes every step, because a moving body
+        # changes which cells are solid. SPH samples boundary particles once per shape,
+        # on the host, at `add_shape` time -- a rigid shape's particles never move in its
+        # own frame -- so it stores this tuple and ignores it. A caller who builds a
+        # Newton model, hands it here and expects the fluid to find the bodies gets
+        # bodies with no wetted surface and a wrench of **exactly zero**, which reads as
+        # a coupling that is running and finding no force rather than as a mistake.
+        if self._style == "particles" and not getattr(self.world, "shapes", None):
+            raise ValueError(
+                "this SPH world has no boundary particles, so every body would feel "
+                "exactly zero force and the run would look like it was working. "
+                "An SPH world samples a shape's boundary particles when the shape is "
+                "added, not from Newton each step: call world.add_shape(...) for each "
+                "coupled body (and world.boundary_from_domain() for the walls) before "
+                "constructing the coupling. docs/sph-contract.md has the signatures"
+            )
         # **Push the poses once, here, so the world is voxelised correctly before anybody
         # steps anything.** Until 2026-11-23 this happened only inside `step`, and the
         # consequence was quiet and expensive: `world.step()` syncs from the world's own
@@ -502,6 +519,18 @@ class NewtonCoupling:
         """Divide an SI length by this to get the solver's own coordinates."""
         return float(self.world.dx) if self._style == "lattice" else 1.0
 
+    @property
+    def _step_seconds(self) -> float:
+        """The solver's own timestep, for turning a velocity into solver units.
+
+        The lattice keeps this on a `Scaling`; a particle world has no lattice to scale
+        to and works in SI, so the conversion is 1. Read through this rather than
+        `world.scaling.dt` because an `SphWorld` has no `scaling` at all -- measured, not
+        predicted: a coupling raised `AttributeError: no attribute 'scaling'` from
+        `_push_poses` before it managed a single step.
+        """
+        return (float(self.world.scaling.dt) if self._style == "lattice" else 1.0)
+
     def _push_poses(self) -> None:
         """Newton's body state and shape poses to the lattice, on the device."""
         import warp as wp
@@ -512,7 +541,7 @@ class NewtonCoupling:
             L.poses_from_newton, dim=int(self.model.body_count),
             inputs=[self.state_0.body_q, self.state_0.body_qd, self.model.body_com,
                     self.world.body_pose, self.world.body_vel, self.world.body_com,
-                    origin, inv_dx, L.DTYPE(self.world.scaling.dt)],
+                    origin, inv_dx, L.DTYPE(self._step_seconds)],
             device=self.world.device)
         wp.launch(
             L.shapes_from_newton, dim=int(self.model.shape_count),
@@ -562,9 +591,12 @@ class NewtonCoupling:
         """The fluid's wrench, the buoyancy and the rotor reaction, into `body_f`."""
         import warp as wp
 
-        scaling = self.world.scaling
+        # `dt2` below is only used by the lattice force scales; a particle world keeps
+        # its wrench in SI and never reaches them, so this must not demand a `Scaling`
+        # it does not have.
+        dt_step = self._step_seconds
         rho = self.world.fluid.rho
-        dt2 = scaling.dt * scaling.dt
+        dt2 = dt_step * dt_step
         # The wrench accumulated one contribution per lattice substep; Newton wants the
         # mean over the interval it is about to integrate.
         per_substep = 1.0 / max(1, self.world.substeps)
