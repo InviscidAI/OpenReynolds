@@ -44,7 +44,7 @@ MARKER = "<!-- SUMMARY TABLE -->"
 
 MILESTONE_OF = {
     "poiseuille": "M1", "cavity-re100": "M1", "cavity-re1000": "M1", "cylinder": "M1",
-    "sphere": "M1", "crosscheck": "M1",
+    "sphere": "M1", "crosscheck": "M1", "crosscheck-2d1": "M1",
     "translating-sphere": "M2", "falling-sphere": "M2", "momentum": "M2",
     "falling-sphere-windowed": "M2",
     "ground-effect": "M3", "quadrotor": "M3", "underwater": "M3",

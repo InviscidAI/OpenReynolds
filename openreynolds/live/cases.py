@@ -2625,15 +2625,13 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
                    **_: Any) -> dict[str, Any]:
     """Schafer-Turek 2D-1: the same cylinder channel at Re 20, and **steady**.
 
-    **THIS CASE DOES NOT RUN YET AND IS NOT REGISTERED IN `CASES`.** The grading, the
-    reference and the reasoning below are final; the world construction is not. It is a
-    hand copy of `_cylinder_once`'s setup and the copy is wrong: it reaches NaN at step
-    **1**, and it does so **at Re 100 with that case's own `u_lattice` too**, which is
-    the configuration that passes. So the fault is in the copy and not in Re 20 --
-    something `_cylinder_once` does between building the world and stepping it is missing
-    here, and the fix is to drive this case through that same builder rather than to
-    debug a duplicate of it. Reusing it was the instruction given for this work and this
-    function did not follow it.
+    **What the first version of this function got wrong**, because it is the kind of
+    mistake that hides: it was a hand copy of `_cylinder_once`'s setup that dropped two
+    lines, and it reached NaN at step **1**. The two were the thin direction's faces
+    (`periodic`, not `slip`) and `world.initialise(velocity=...)` -- a lattice started at
+    rest behind a stiff velocity inlet has to absorb the inlet as an acoustic step and
+    does not survive it. The tell that it was the copy and not Re 20 was that the same
+    hand-built world NaN'd at Re 100 with the working case's own settings.
 
     **Why a second cross-check rather than a fix to the first.** The Re 100 cross-check
     reports a Strouhal number of 1.22 against 0.166 because the lift it measures carries
@@ -2683,7 +2681,11 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
                                    scheme="trt", les=False)
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
                     faces={"-x": "inlet", "+x": "outlet", "-y": "wall", "+y": "wall",
-                           "-z": "slip", "+z": "slip"})
+                           # **Periodic, not slip.** The thin direction is three cells of
+                           # a nominally 2D case, and slip faces there make it a very
+                           # shallow 3D duct instead of a 2D plane (DECISIONS_LIVE.md
+                           # D13 is the same choice for the free-surface cases).
+                           "-z": "periodic", "+z": "periodic"})
     world = FluidWorld(domain=domain, dx=dx, fluid="water", scaling=scaling,
                        substeps=1, collision="trt", smagorinsky=0.0, device=device)
 
@@ -2703,6 +2705,11 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
     # shape takes no offset. `_cylinder_once` says the same thing: passing the world
     # centre here puts the shape at twice the offset, which a voxeliser test caught once.
     world.add_shape("cylinder", body=body, scale=(diameter / 2.0, nz * dx, 0.0))
+    # **A uniform stream, not rest.** A lattice started at rest behind a stiff velocity
+    # inlet has to absorb the whole inlet step as an acoustic transient, and it does not:
+    # omitting this line reached NaN at step 1, at Re 100 with the working case's own
+    # settings as well as at Re 20, which is what proved the fault was the copy.
+    world.initialise(velocity=(u_mean, 0.0, 0.0))
 
     depth = nz * dx
     coefficient = 2.0 / (scaling.fluid.rho * u_mean * u_mean * diameter * depth)
@@ -4177,10 +4184,10 @@ CASES: dict[str, Case] = {
         "archimedes", "a box of half water's density is released at the surface: the "
         "static float draft against Archimedes, with no analytic buoyancy term",
         run_archimedes, {"cells": 160}, milestone="M6"),
-    # "crosscheck-2d1" is deliberately NOT here: `crosscheck_2d1` reaches NaN at step 1
-    # because its world construction is a bad hand copy of `_cylinder_once`'s. Registering
-    # it would spend a GPU run to record a divergence that is already understood, and
-    # would put a failing row in the summary table that says nothing about the physics.
+    "crosscheck-2d1": Case(
+        "crosscheck-2d1", "the same cylinder channel at Re 20 and steady, so the drag "
+        "can be compared between backends without a transverse acoustic mode in the lift",
+        crosscheck_2d1, {}, milestone="M1", heavy=True),
     "underwater": Case(
         "underwater", "a towed capsule in water, graded at zero length against the "
         "sphere it reduces to", run_underwater, {}, milestone="M3", heavy=True),
