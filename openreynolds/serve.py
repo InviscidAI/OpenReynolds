@@ -18,7 +18,7 @@ tools'. What this module adds is routing, a token and a long poll:
     GET    /studies/<study_id>/results
     GET    /studies/<study_id>/file?path=/work/<study>/results.json
     GET    /sessions/<session_id>?after_seq=0&wait=30
-    POST   /sessions/<session_id>/messages   {"text": "..."}
+    POST   /sessions/<session_id>/messages   {"text": "...", "upload_ids": [...]}
     POST   /sessions/<session_id>/approvals  {"decision": "approve"}
     DELETE /sessions/<session_id>
     GET    /                                 what each route does
@@ -193,8 +193,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif method == "POST" and len(segments) == 3 and segments[0] == "sessions" \
                 and segments[2] == "messages":
-            text = core.said_text(str(self._read_json().get("text") or ""))
-            host.say(segments[1], text)
+            body = self._read_json()
+            core.send_words(host, deliveries, segments[1], str(body.get("text") or ""),
+                            body.get("upload_ids"))
             self._json(HTTPStatus.OK,
                        {"sent": True, "next": "Read the session to see the answer."})
 

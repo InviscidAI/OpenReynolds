@@ -8,6 +8,22 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **Uploaded archives are unpacked, and `send_message` takes files (#216).** A zip or tar
+  (`.tar.gz`, `.tgz`, `.tar.xz` and the rest) is still placed as sent, and is now also
+  unpacked beside itself into `uploads/<name>/`; the agent is told what was unpacked, or
+  why not. A top folder named like the archive is taken off and any other kept, so a case
+  keeps its `system/` and `polyMesh/`. Links, names that climb out, and archiver clutter
+  (`__MACOSX`, `.DS_Store`) are left out, and names that clean up alike (two CJK names,
+  `a b` and `a_b`) are both kept. **The unpacking runs on the study's workspace**, not in
+  the process that took the upload: an archive is input to a decompressor, and four
+  review rounds of the in-process version each found another few-kilobyte file that
+  cost gigabytes or hours there. On the workspace it is held to 100 s and 2 GB of memory,
+  and a crafted archive can only slow the study it was sent to. `send_message` (the MCP
+  tool, `POST /sessions/<id>/messages` and `Study.send`) takes `upload_ids`, so a file
+  uploaded mid-study reaches the workspace; words sent while files are still on their way
+  wait behind them, so everything is read in the order it was sent.
+
+
 - **`export_doc.py`: a study's write-up as LaTeX or Word, from the `results.md` it
   already has.** `export_doc.py results.md --tex report.tex --docx report.docx`, or a case
   directory and it finds the markdown. `results.py` writes the working record and
@@ -337,6 +353,14 @@ All notable changes to this project are recorded here. The format follows
   deliberately not logged: they change on nearly every save and their history is the
   transcript's. A study with no log is reported as having no log, which is not the same
   as having changed nothing.
+
+### Changed
+
+- **Files wait for a late workspace instead of being dropped (#216).** They used to be
+  thrown away after 20 minutes with "upload them again"; now they wait as long as the
+  session lives, up to two hours, or until the workspace fails. They are placed one at a
+  time and each is crossed off as it lands, so a pass that fails part way never places
+  the first ones twice, and a file is given up on only after failing for ten minutes.
 
 ### Fixed
 
