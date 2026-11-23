@@ -1102,7 +1102,8 @@ def apply_faces(
         return
 
     if rule == FACE_OUTLET:
-        # **An extrapolating outlet does not conserve mass, and the channel fills up.**
+        # **An extrapolating outlet does not conserve mass, and the channel fills
+        # up.** `DECISIONS_LIVE.md` D18 is the decision and carries the measurements.
         # Copying the inward node's populations is the "do nothing" outflow -- first
         # order, unconditionally stable, and what XLB calls it too. With a velocity inlet
         # at the other end, nothing anchors the mass or the pressure level: the inlet

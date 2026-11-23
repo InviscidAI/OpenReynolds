@@ -880,7 +880,8 @@ def _cylinder_once(cells_per_d: int, *, u_lattice: float = 0.037,
     domain = Domain(origin=(0.0, 0.0, 0.0), size=(length, height, nz * dx),
                     faces={"-x": "inlet", "+x": "outlet", "-y": "wall", "+y": "wall",
                            "-z": "periodic", "+z": "periodic"})
-    # `outlet_rho` defaults to 0 here, the extrapolating outlet this case's +11.73%
+    # `outlet_rho` is the anchored outlet of `DECISIONS_LIVE.md` D18. Passing 0
+    # restores the extrapolating one this case's +11.73%
     # was measured with, so that number stays reproducible. Pass 1.0 to anchor the
     # density instead -- see `crosscheck_2d1`, where doing so took the drag from
     # +9.6% to +2.4% and stopped the domain gaining 7% of its mass in 12,000 steps.
@@ -2828,7 +2829,8 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
                            # shallow 3D duct instead of a 2D plane (DECISIONS_LIVE.md
                            # D13 is the same choice for the free-surface cases).
                            "-z": "periodic", "+z": "periodic"})
-    # **The outlet anchors the density, which the extrapolating one does not.** With a
+    # **The outlet anchors the density** (`DECISIONS_LIVE.md` D18), which the
+    # extrapolating one does not. With a
     # velocity inlet at the other end nothing holds the channel's mass: measured here,
     # the extrapolating outlet gained +7.06% of the domain's mass in 12,000 steps and the
     # drag climbed with it and never settled. Anchored, the same run holds mass to
