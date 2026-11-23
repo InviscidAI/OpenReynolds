@@ -369,13 +369,23 @@ sloshing period / theory      dam break h(dam) / Ritter        drift
  240 cells   1.063              650 cells   1.185              +2.6e-2  (650 cells)
 ```
 
-The sloshing estimators also close on each other as the lattice refines -- 523/363 ms at
-80 cells, 437/396 at 120, 443/407 at 240 -- which is the shape of a converging
-measurement rather than a wrong one. The measured period sits **above** linear theory at
-every resolution, and that is the direction a finite amplitude pushes it: the default
-release is 6.7% of the depth and linear theory is an expansion in that. An amplitude
-sweep at fixed resolution is running to separate the two, and until it reports, the 5%
-tolerance is **not met and not widened**.
+The sloshing estimators close on each other as the lattice refines -- 523/363 ms at 80
+cells over 2.6 cycles, 449/431 at 240 -- and their agreement now passes at 4.4%. The
+**period does not**: 1.0745 at 120 cells and 1.0553 at 240, against a 5% tolerance.
+
+**Damping is ruled out as the explanation**, which is worth recording because it was the
+best hypothesis. Linear theory is inviscid and a damped period is longer by
+`1/sqrt(1 - zeta^2)`, so `_damping_of` measures `zeta` from the logarithmic decrement of
+the envelope and the graded period has it removed. Measured: `zeta` is **0.0150** at 120
+cells and **0.0035** at 240, so the correction is four decimal places and changes
+nothing. The wave is barely damped and the period is still five per cent long.
+
+What that leaves: not resolution (the two resolutions agree to 2%), not the estimator
+(both of them, and their mean, sit above theory), not damping, not finite amplitude
+(the second-order correction at this steepness is 0.4%), not the depth (half a cell of
+it is 0.2% of the period) and not gravity (the hydrostatic case measures the effective
+`g` to 1.3%, which is 0.6% of the period). Unexplained, and it is the one M5 number
+with no account of itself.
 
 The dam break's residual is a Reynolds-number effect rather than a discretisation one:
 Ritter is inviscid, `Re_eff` is 37, 101 and 202 at the three resolutions, and the ratio
@@ -460,16 +470,44 @@ says it does, which is the answer that matters.
 `rho V g` from its own voxel count would make the equilibrium draft come out at
 `(rho_body/rho_water) H` almost by construction and test only the volume count.
 
-**It does not work yet, and the one encouraging number from it is unconfirmed.** One run
-at 160 cells -- sixteen through the draft -- reported a draft of **20.3809 mm against an
-exact 20.0000, +1.9%**, inside the brief's 2%, with wobble 1.3% of the draft and mass
-drift 3.1e-4, and then went non-finite after the measurement window. Every run since
-has diverged outright, at 80, 120 and 160 cells, across three different commits. Git
-confirms the +1.9% came from code that had both the pose fix and the pinned settle, so
-it is not obviously an artefact of either -- but **a single run of a case that later
-diverges is not a result**, and it is being re-run twice at its own commit before
-anything is concluded from it. If it does not reproduce it will be withdrawn like the
-four force measurements above.
+**It does not work, the encouraging number is withdrawn, and the fault is in the case
+rather than the solver.**
+
+The draft does not reproduce. One run at 160 cells reported 20.3809 mm against an exact
+20.0000 -- +1.9%, inside the brief's 2% -- and was reported here as a result. Re-running
+the **same code at the same commit** gives **20.9591 mm, +4.8%**, and a second pass
+raised. A case whose answer moves by three per cent between identical runs is not
+measuring a draft, so the +1.9% is withdrawn.
+
+Instrumenting it says why, and none of it is the free surface. With the hull pinned and
+the water given 2,000 steps to settle, the vertical force on it reads
+
+    step  500   +1.695 x weight      |u|max  91.7 mm/s
+    step 1000   +1.684               |u|max  53.1
+    step 1500   +0.208               |u|max  50.8
+    step 2000   +0.772               |u|max  87.9
+
+so the "settled" tank is still moving at tens of millimetres a second and the force on a
+stationary hull is swinging between a fifth of its weight and 1.7 times it. A draft
+averaged over that is an average of a transient, and the +1.9% was one sample of it.
+Two further defects came out of the same trace: the released body reports a draft of
+49.9 mm when it was placed at 20, because `waterline` averages the free surface over the
+**outer ring of columns** -- which is exactly where water thrown up the walls lands, so
+the probe reads the splash -- and `|u|max` reaches 1.3 m/s before the lattice goes
+non-finite, which is the fluid failing after the body has already been pushed around.
+
+What a working version of this case needs, in the order the evidence points:
+
+1. a **quiescent** initial condition. The tank is filled to a flat level with the hull
+   already in it, so the water the hull occupies is discarded and the surface has to
+   fall to a new level; that adjustment is the transient above. Filling to the level
+   that already accounts for the displaced volume removes it.
+2. a waterline probe away from the walls **and** the hull, rather than at the walls.
+3. a settle criterion on the fluid's own velocity, not a step count -- the current 3,000
+   steps demonstrably is not enough, and no fixed number can be known to be.
+
+The force itself is not in question: a submerged box in the same solver reads
+`+1.000 x rho V g` (above), so what is wrong here is how this case is posed.
 
 Two things were tried against the divergence and neither fixed it. `refill_vacated`
 closes a genuine hole -- a cell a hull vacates was marked gas, which is right above the
