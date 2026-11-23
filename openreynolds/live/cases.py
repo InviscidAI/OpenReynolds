@@ -2933,6 +2933,10 @@ def crosscheck_2d1(*, cells_per_d: int = 32, u_lattice: float = 0.04,
         # interval is used as an interval rather than through a relative tolerance on its
         # midpoint: Cl here is 0.01 against a drag of 5.6, a small difference of two large
         # surface integrals, and a relative bound on a near-zero quantity is a trap.
+        # `DECISIONS_LIVE.md` D20: this reads about a third of the paper's interval and
+        # is a known issue in the release notes rather than a blocker. The frame "it
+        # regressed from 0.01084" is withdrawn there -- that figure came from the run
+        # whose drag was +218% on a channel gaining 7% of its mass per 12,000 steps.
         Check("Cl against the paper's interval", cl,
               f"inside {reference['cl_interval']} (Schafer & Turek 1996, test case "
               f"2D-1). An absolute interval, not a relative tolerance: lift here is "

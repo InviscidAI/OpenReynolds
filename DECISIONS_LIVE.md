@@ -655,3 +655,91 @@ stays reproducible by naming it.
 real axial variation of the gradient. And the profile clears 0.5% at the outlet while
 peaking at **0.5477%** at the quarter station, so "the inlet profile survives the channel"
 holds where it was asked and not at every station.
+
+## D19. The floating cases are re-graded on a corrected surface probe
+
+**2026-11-23, the user's decision: approved.**
+
+`SphWorld.surface_height` returns the topmost particle's centre in a column **plus one
+particle radius**. That models a flat lattice fill, where a particle's centre sits half a
+spacing below the surface it stands for. At a **settled** free surface it is short,
+because the surface layer carries a density deficit and the topmost centre sits further
+down than the fill placed it.
+
+Measured with no dynamics in it at all: the same tank, the same settle to the same bound,
+the hull **held** at exactly the Archimedes draft with Newton never stepped -- `dz`
+**-0.0000 mm**, z wobble **0.000 um**, so the hull cannot have moved -- and the probe
+reports its draft as **15.0953 mm** instead of 16.0000. A **0.9047 mm** bias, repeatable
+to 0.01 mm across four runs at two resolutions.
+
+The reference it is measured against has no probe in it. The fill places
+`(36,864 x 60 - 4,096 x 16) / 4^3 = 33,536` cells and the run reports exactly 33,536, so
+`n dp^3` is the water's volume to the last digit and the waterline follows from it by
+division.
+
+On that reference the hull floats at **0.993x Archimedes, -0.66%**, inside its 2% bound.
+`sph_static_float` was passing and its probe was not.
+
+**Why this is a decision and not just a bug fix.** Correcting the probe changes four
+cases' verdicts, and a verdict that moves because the measuring instrument was repaired
+has to be visible as that rather than appear in a table as a pass. Every re-graded row
+says which probe produced it.
+
+**A unit error went with it and is corrected everywhere.** This document and several commit
+messages reported the draft as "13.7x Archimedes". The check reports **millimetres**
+against a target printed `16.0000 mm`. Only `16,774x` was ever a ratio -- 268,395/16 --
+and that division was done once and then not done again. 14.6 mm is **0.91x** and 13.7 mm
+is **0.86x**, so "wrong by an order of magnitude" was wrong: it was 14% low, and the 14%
+was the probe.
+
+## D20. The 2D-1 lift is a known issue in the release notes, not a blocker
+
+**2026-11-23, the user's decision.**
+
+`crosscheck-2d1` passes its drag check at **Cd 5.67801, +1.77%** of Schafer-Turek's 5.5795,
+and its steadiness check at 2.37e-05. Its lift reads **0.00354 against the paper's
+0.0104-0.0110** -- about a third of it.
+
+**The frame "it regressed from 0.01084" is wrong and is withdrawn.** That earlier figure
+came from the run whose **drag was 17.7483, +218%**, on a channel that was gaining 7% of
+its mass per 12,000 steps. It was right by coincidence inside a run that was wrong by a
+factor of three, so there is nothing to have regressed from. **0.00354 is the first lift
+this case has measured on a conservative channel.**
+
+The effective wall position is real and is not the explanation. The lattice's effective
+channel is **0.409375 m against the paper's 0.41** -- short by 0.625 mm at both 32 and 64
+cells per diameter -- which moves the cylinder's offset from the centreline from 5.0000 mm
+to **4.6875 mm, -6.25%**. The lift at Re 20 comes entirely from that asymmetry, so a 6%
+smaller offset buys about 6% less lift, not the 67% the measurement is short by.
+
+What makes it a known issue rather than a blocker: lift here is **0.01 against a drag of
+5.6**, a small difference of two large surface integrals, and `benchmarks/README.md`
+already records this same case's lift as reported-and-not-graded for that reason. The drag
+is the quantity the case exists to compare and it passes.
+
+## D21. SPH ships in v0.1 as beta; LBM single-phase is the stable backend
+
+**2026-11-23, the user's decision**, and it supersedes the scope statement in the first cut
+of `RELEASE_NOTES_v0.1.md`, which put SPH out of scope entirely.
+
+**Stable: the lattice Boltzmann backend for single-phase flow** -- air, and water with no
+surface in the picture. M2 two-way coupling 16/16, M3 robot demos 10/10, M4 at 1,478 MLUPS
+against a 1,000 target, and 5 of 7 M1 benchmark cases passing without qualification.
+
+**Beta: the SPH backend for free-surface liquids** -- cups, pouring, floating bodies. What
+beta means here, concretely, because the word on its own means nothing:
+
+* its fluid-only cases are **bit-for-bit reproducible** after a read-write race in the
+  viscous term was fixed, and its floating cases are **not** -- the wrench's float32
+  atomics are bounded at 1.4e-8 relative on a held body and that grows about five orders
+  over a 4,000-step settle, so **no floating-body number should be reported from a single
+  run**;
+* the per-step force noise on a **freely floating** hull is **101.5% RMS** against 23.0%
+  held, with the mean correct in both;
+* `sph_static_float` passes at 0.993x on the corrected probe (D19); the other floating
+  cases are re-graded on it and their verdicts carry which probe produced them.
+
+Why ship it rather than hold it: it is the only backend in this project that does what the
+extension exists for -- a cup of water carried by a robot arm -- and that path is verified
+inside a live Isaac Sim Kit process. Holding it back would ship the benchmarks and not the
+product.

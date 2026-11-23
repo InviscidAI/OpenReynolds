@@ -1896,6 +1896,9 @@ def _waterline(world: Any, box: _Box, plan: tuple[float, float],
                spacing: float) -> float:
     """The undisturbed water level: the **median** over columns the hull is not standing in.
 
+    `DECISIONS_LIVE.md` D19 and D21: the floating cases are re-graded on a corrected
+    surface probe, and SPH ships as beta with that stated.
+
     `PROGRESS_LIVE.md`'s first `run_archimedes` fix, and the reason is a measurement. That
     case read the mean over the outer ring of columns -- which is exactly where water
     thrown up by the hull lands, so the probe read the splash and reported a waterline

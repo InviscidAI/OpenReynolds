@@ -181,6 +181,13 @@ not the bytes: the 35 microseconds the old eight were measured at is already mor
 
 Everything else -- `positions()`, `densities()`, `wrench()`, `density_error()` -- is a
 host read for reports and figures, outside the loop, same as the lattice backend.
+
+
+**This backend ships as beta in v0.1** (`DECISIONS_LIVE.md` D21), beside the
+lattice backend for single-phase flow, which is stable. What beta means concretely:
+the fluid-only cases are bit-for-bit reproducible, the floating ones are not, and
+the per-step force noise on a freely floating hull is 101.5% RMS against 23.0% held
+with the mean correct in both. No floating-body number should come from one run.
 """
 
 from __future__ import annotations
@@ -1966,7 +1973,9 @@ class SphWorld:
         """Free-surface depth per column, in metres, `nan` where the column is dry.
 
         Columns perpendicular to `axis`, binned over the other two. The height of the
-        topmost particle in a column plus one particle radius -- the particle's centre is
+        topmost particle in a column plus one particle radius (`DECISIONS_LIVE.md`
+        D19 re-grades the floating cases on a corrected form of this) -- the
+        particle's centre is
         half a spacing below the surface it represents, and leaving that out is a
         systematic `r` of missing depth, which on a 100 mm column at a 5 mm radius is 5%
         and would be read as a solver error.
