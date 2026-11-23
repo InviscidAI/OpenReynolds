@@ -413,6 +413,34 @@ one. And a re-run of `falling_sphere` and `ground_effect` was launched against t
 while the result labels use hyphens, so exactly the two multi-word cases failed and the
 two single-word ones did not. That is a naming inconsistency in this file worth removing.
 
+### RESOLVED: the cylinder passes. The +11.73% was the outlet.
+
+**Cd_max 3.29976 against the paper's 3.22-3.24, which is +2.16% on the midpoint, and
+Strouhal 0.302461. Both graded checks pass.** The case had read +11.728% since it was
+first run.
+
+The cause was the extrapolating outlet, and the empty channel makes it unarguable: over
+704,000 steps with no cylinder in it, no wake, nothing but the boundary conditions, the
+domain gained **+28.1% of its mass**. With the density-anchored outlet it gains
+**+0.032%**, the inlet-to-outlet flux imbalance goes from -0.538% to +0.119%, and the
+pressure gradient sits within 2.2% of the analytic Poiseuille value.
+
+**The two independent estimates of what was left now agree.** The Mach sweep extrapolated
+the cylinder's residual error to **+2.6%** at zero Mach, and giving the inlet four more
+diameters of development length gave **+2.4%**. With the outlet fixed the measured error
+is **+2.16%**. Those were made separately, before this fix existed, and they predicted it.
+
+So the error decomposed into a mass-conservation defect worth about nine points and a
+compressibility residual worth about two, and the second was correctly characterised
+months of work before the first was found.
+
+**What this cost, and it is the same lesson twice.** The first attempt at this run passed
+`outlet_rho` through `--extra`; `run_cylinder` did not declare it, the keyword fell into
+`**_`, and 220 s of H100 returned Cd 3.6088 -- bit for bit the number already on record.
+Two identical numbers read as "the change made no difference". `run_case` now raises on
+an override its runner cannot accept, because a silent default is indistinguishable from
+a tested one in the recorded result.
+
 ### The inlet/outlet channel gains mass, and that is what the 2D-1 drag drift is
 
 `crosscheck-2d1` reads Cd **17.7483** against the paper's 5.5795. That is not a wrong
