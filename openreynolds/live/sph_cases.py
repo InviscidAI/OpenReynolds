@@ -1202,16 +1202,21 @@ def run_sph_hydrostatic(*, particle_radius: float = 0.0025, depth: float = 0.1,
         slope = float(np.polyfit(positions[interior, 2], pressure[interior], 1)[0])
         gradient = slope / (-water.rho * GRAVITY)
 
-    lines.append(
+    # Held as strings and appended once `lines` exists. Appending here is what the first
+    # version did, and `lines` is built further down, so the case raised
+    # `UnboundLocalError: cannot access local variable 'lines'` -- after 44 s of H100 and
+    # after every graded number had been computed. The same shape of mistake as the
+    # mangled f-string that threw away 1,087 s of cylinder run.
+    localised_lines = [
         f"  localised:  interior RMS {rms_interior:.3%} over "
         f"{int(np.count_nonzero(interior)):,} particles further than one support radius "
         f"({support * 1e3:.0f} mm) from a wall; near-wall RMS {rms_wall:.3%} over "
-        f"{int(np.count_nonzero(near_wall)):,}. REPORTED, not graded.")
-    lines.append(
+        f"{int(np.count_nonzero(near_wall)):,}. REPORTED, not graded.",
         f"  gradient:   dp/dz over the interior is {gradient:.4f} x (-rho g) -- the "
         f"statistic the solver's own hydrostatic check uses, which measured 0.9855 on a "
         f"280 mm tank. Insensitive to a constant offset and to near-wall outliers, so it "
-        f"separates a wrong field from a truncated kernel. REPORTED, not graded.")
+        f"separates a wrong field from a truncated kernel. REPORTED, not graded.",
+    ]
     peak_max = max((row[1] for row in history), default=float("nan"))
     peak_mean = max((row[2] for row in history), default=float("nan"))
 
@@ -1296,6 +1301,7 @@ def run_sph_hydrostatic(*, particle_radius: float = 0.0025, depth: float = 0.1,
              f"  surface:    measured at {surface * 1e3:.3f} mm against a fill level of "
              f"{depth * 1e3:g} mm",
              *health_lines,
+             *localised_lines,
              f"  reference:  {REFERENCES['hydrostatic']['source']}",
              *world.report()]
     return _result("sph_hydrostatic", checks, lines, drawn, pressure_rms=rms,
