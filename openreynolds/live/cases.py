@@ -3401,14 +3401,19 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
     pair_period = float(np.mean(both)) if both else float("nan")
     spread = (abs(measured_period - crossings_period)
               if len(both) == 2 else float("inf"))
+    # Linear theory is inviscid and this lattice is not, so the measured period is the
+    # DAMPED one and is longer by `1 / sqrt(1 - zeta^2)` by construction. `_damping_of`
+    # has the argument; the graded number is the undamped period recovered from it.
+    zeta, decay_note = _damping_of(times, elevation)
+    undamped = pair_period * math.sqrt(max(0.0, 1.0 - zeta * zeta))
     limit = REFERENCES["linear_sloshing"]["tolerance"]
     drift = world.mass_drift()
 
     checks = [
-        Check("first-mode period", pair_period,
+        Check("first-mode period, with the damping taken out", undamped,
               f"{period:.5f} s +/- {limit:.0%}",
-              abs(pair_period / period - 1.0) <= limit
-              if np.isfinite(pair_period) else False,
+              abs(undamped / period - 1.0) <= limit
+              if np.isfinite(undamped) else False,
               f"`omega^2 = g k tanh(k h)`, k = pi/L = {wavenumber:.4f} 1/m, "
               f"kh = {wavenumber * depth:.4f}. The graded number is the **mean of two "
               f"estimators** on the elevation at the -x wall, an FFT and the zero "
@@ -3421,7 +3426,20 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
               f"was lucky on the run that was looked at. An FFT bin is `1/T_total` "
               f"wide and a zero crossing is pulled by any drift in the mean; they fail "
               f"differently, so their mean is better than either and their spread is "
-              f"the honest width of the measurement"),
+              f"the honest width of the measurement. "
+              f"That mean is {pair_period * 1e3:.3f} ms as measured, and the graded "
+              f"number is it with the damping taken out -- `T sqrt(1 - zeta^2)` with "
+              f"zeta {zeta:.4f} from the decay envelope. **Linear theory is inviscid "
+              f"and this lattice is not**, so the measured period is the damped one and "
+              f"is longer than the theoretical one by construction; comparing them "
+              f"directly compares two different quantities. At the Reynolds numbers a "
+              f"free surface can afford that is not a small correction"),
+        Check("damping ratio from the decay envelope", zeta,
+              "reported, not graded", None,
+              f"{decay_note}. It is a property of the run and not an error: `Re_eff` "
+              f"here is a few hundred against tens of thousands for real water, so the "
+              f"wave really is heavily damped. It enters the graded period above and "
+              f"nothing else"),
         Check("the two estimators agree", spread / period,
               f"<= {limit:.0%} of the period",
               spread / period <= limit if np.isfinite(spread) else False,
@@ -3481,6 +3499,47 @@ def run_sloshing(*, cells: int = 120, length: float = 0.1, depth: float = 0.03,
                    theory=period, fft=measured_period, crossings=crossings_period,
                    spread=spread, drift=drift,
                    trace=[list(row) for row in trace])
+
+
+def _damping_of(times: np.ndarray, signal: np.ndarray) -> tuple[float, str]:
+    """The damping ratio of a decaying oscillation, from the envelope of its extrema.
+
+    **Needed because linear water-wave theory is inviscid and this lattice is not.** A
+    damped oscillator's period is `T_d = T / sqrt(1 - zeta^2)`, longer than the
+    undamped one, so comparing a measured period straight to `2 pi / sqrt(g k tanh k h)`
+    compares two different quantities and the measured one is biased long by
+    construction. At the Reynolds numbers a free surface can afford -- a few hundred,
+    see `units.Scaling.for_froude` -- that bias is not small.
+
+    The envelope is the successive extrema of the centred signal, and `zeta` comes from
+    the logarithmic decrement: `delta = ln(a_n / a_n+1)` over a half period, so
+    `zeta = delta / sqrt(delta^2 + pi^2)`. Fitted over all the extrema rather than taken
+    from the first pair, because a single pair is one sample of a noisy envelope.
+
+    Returns `(zeta, how)` and `zeta = 0` when there are too few extrema to fit, which is
+    the right default: it leaves the period comparison exactly where it was.
+    """
+    centred = np.asarray(signal, dtype=float)
+    centred = centred - centred.mean()
+    if len(centred) < 8:
+        return 0.0, "too few samples to fit a decay"
+    # Interior extrema: a sample larger (or smaller) than both its neighbours.
+    rising = np.diff(centred)
+    turns = np.flatnonzero(np.signbit(rising[:-1]) != np.signbit(rising[1:])) + 1
+    peaks = np.abs(centred[turns])
+    keep = peaks > 1e-12
+    turns, peaks = turns[keep], peaks[keep]
+    if len(peaks) < 4:
+        return 0.0, f"only {len(peaks)} extrema, not enough to fit a decay"
+    slope = float(np.polyfit(times[turns], np.log(peaks), 1)[0])
+    if slope >= 0.0:
+        return 0.0, "the envelope is not decaying"
+    # Half a period between successive extrema, so the decrement per half cycle is
+    # `-slope * dt_mean`, and per full cycle twice that.
+    half = float(np.mean(np.diff(times[turns])))
+    decrement = -slope * 2.0 * half
+    zeta = decrement / math.sqrt(decrement * decrement + 4.0 * math.pi * math.pi)
+    return float(zeta), f"{len(peaks)} extrema, log decrement {decrement:.4f}"
 
 
 def _period_of(times: np.ndarray, signal: np.ndarray,

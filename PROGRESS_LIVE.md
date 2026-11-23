@@ -455,14 +455,30 @@ cancel an absolute pressure `1/(3 g_lattice N)` times the hydrostatic difference
 the body -- 204 to 1 at twelve cells through a 40 mm draft -- and the measurement above
 says it does, which is the answer that matters.
 
-**So M6 is not blocked, and `run_archimedes` grades the hard version**:
+**So M6 is not blocked by the force, and `run_archimedes` grades the hard version**:
 `buoyancy=False`, the draft produced by the pressure field alone. Handing the body
 `rho V g` from its own voxel count would make the equilibrium draft come out at
-`(rho_body/rho_water) H` almost by construction and test only the volume count. A
-floating hull is still the harder case than the submerged box above -- its top is in gas,
-so the absolute pressure on the wetted part has less to cancel against -- and a
-resolution sweep is running to say whether it holds there. At 40 cells, which is four
-cells through the draft against the twelve the submerged box had, it diverges.
+`(rho_body/rho_water) H` almost by construction and test only the volume count.
+
+**It does not work yet, and the one encouraging number from it is unconfirmed.** One run
+at 160 cells -- sixteen through the draft -- reported a draft of **20.3809 mm against an
+exact 20.0000, +1.9%**, inside the brief's 2%, with wobble 1.3% of the draft and mass
+drift 3.1e-4, and then went non-finite after the measurement window. Every run since
+has diverged outright, at 80, 120 and 160 cells, across three different commits. Git
+confirms the +1.9% came from code that had both the pose fix and the pinned settle, so
+it is not obviously an artefact of either -- but **a single run of a case that later
+diverges is not a result**, and it is being re-run twice at its own commit before
+anything is concluded from it. If it does not reproduce it will be withdrawn like the
+four force measurements above.
+
+Two things were tried against the divergence and neither fixed it. `refill_vacated`
+closes a genuine hole -- a cell a hull vacates was marked gas, which is right above the
+waterline and a hole below it, and the floating box had **626 fluid cells touching gas**
+before it -- and the invariant now holds (zero such cells at every resolution). Its first
+version also handed each vacated cell a full cell of water, which for a heaving hull is
+a mass source every step and measured as one; it now writes populations and no mass and
+lets the exchange fill the cell. Both changes are right on their own terms and the case
+still diverges, so the cause is elsewhere.
 
 Also found and fixed on the way, both prerequisites for any hull:
 
