@@ -516,3 +516,75 @@ where its advantages are real.
 What this rules out: spending more on the LBM moving-contact-line problem. The findings
 above are kept so that nobody has to rediscover them, and `freesurface.FROZEN` says the
 same thing to anyone who constructs the class without the flag.
+
+## D16. The sphere is graded against Clift, Grace & Weber (1978)
+
+**2026-11-23, the user's decision.** Schiller-Naumann stays as an informational column
+and stops being the bar.
+
+The case read **Cd 4.38591 at Re 10 against Schiller-Naumann's 4.15107, +5.65%**, and
+failed a 5% bound on that one Reynolds number while Re 50, 100 and 200 all passed. Five
+explanations were eliminated with a number each -- resolution 0.07% over a 50%
+refinement, confinement 0.28%, tau and the Mach number 0.29% and in the adverse
+direction -- and a sixth, "the reference is uncertain", was eliminated at **0.00%** and
+then **withdrawn**, because that elimination was circular:
+
+    clift_gauvin_cd(Re) = schiller_naumann_cd(Re) + 0.42 / (1 + 42500 Re**-1.16)
+
+One correlation **calls** the other. At Re 10 the added term is 0.0034% of
+Schiller-Naumann, so the two agreed because they are the same formula plus a
+high-Reynolds plateau that has not switched on. The repository's own
+`test_clift_gauvin_adds_nothing_at_low_reynolds_and_a_plateau_at_high` asserts that
+identity, so the evidence against the claim was in the suite when the claim was written.
+
+**What the reference spread actually is**, across five genuinely distinct correlations at
+Re 10: Brown & Lawler 4.12751, Clift-Gauvin (1970, as published) 4.13474,
+Schiller-Naumann 4.15107, Cheng (2009) 4.25548, Clift, Grace & Weber (1978) **4.25839**.
+The spread is **3.13% of the mean** against a discrepancy of 5.65%, so the bound and the
+reference uncertainty are the same size, and which correlation is chosen decides the
+verdict. That is not a property a benchmark should have.
+
+CGW is the choice because it is the most widely used piecewise correlation for this
+range and the best-validated of the five: Feng (arXiv:2610.00334v3) reports average
+relative errors against 480 experimental points of **CGW 3.019%**, Brown & Lawler
+3.236%, Cheng 2.469%. Its branch for `0.01 < Re < 20` is
+`Cd = (24/Re)(1 + 0.1315 Re**(0.82 - 0.05 log10 Re))`.
+
+Against CGW the lattice reads **+2.99%** and clears the same 5% bound it failed.
+
+**The honest caveat, which this decision does not erase.** The primary text --
+*Bubbles, Drops, and Particles* (1978) -- could not be reached; the branch above was read
+from two independent code transcriptions that both cite it. By this project's standing
+rule an unreadable reference is recorded and not rounded into a pass, so the CGW
+comparison carries that caveat in the case's own target string. And the measurement sits
+above **every** correlation at Re 10, by +2.99% to +6.26%, so **the positive bias is real
+and is not scatter**; what changes is that its size is no longer stated as 5.65%, which
+was an artefact of the correlation chosen.
+
+## D17. 2D-1 is graded against Schafer-Turek (1996) only; Felix is dropped as a reference
+
+**2026-11-23, the user's decision.**
+
+The steady 2D-1 cross-check was built to compare the lattice backend against a second
+backend, because the unsteady cross-check's forces were unusable at the time. The second
+backend was **Felix**, this repository's own solver, through the run recorded in
+`benchmarks/felix/README.md`: 6,765 hexes one layer thick, steady at step 111, **Cd
+5.522** and **Cl 0.0010**.
+
+Felix is dropped for a reason that was visible from the start and is now decisive:
+
+* **Its lift is a factor of ten low** -- 0.0010 against the paper's 0.0104-0.0110 -- which
+  its own README attributes to mesh resolution and records rather than fixes. Grading
+  lift against it was never possible, and the case already said so.
+* **Its drag is itself outside the paper's interval**, at -1.04% of 5.5795 and outside
+  5.57-5.59. So the case was holding the lattice to a 2% window around a number that does
+  not sit in the reference interval, and the lattice's **Cd 5.67801 passes against the
+  paper (+1.77%) while failing against Felix (+2.83%)**. A comparison in which the better
+  answer fails is not a useful comparison.
+* A backend-to-backend check earns its place when neither side has a trusted reference.
+  2D-1 has one: Schafer-Turek give intervals, and the unsteady cross-check now agrees
+  with the OpenFOAM run to **-0.80% on drag and -0.053% on Strouhal**, so the
+  backend-to-backend job is being done elsewhere and better.
+
+Felix's numbers stay in the case's report as context, clearly labelled as not graded.
+Nothing about `benchmarks/felix/` changes; it is a different suite with its own purpose.
