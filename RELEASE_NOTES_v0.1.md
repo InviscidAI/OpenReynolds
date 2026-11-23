@@ -59,19 +59,29 @@ against the reference the case grades against today.
 | | Cl inside 0.0104-0.0110 (paper's interval) | an absolute interval | **not recorded** -- see note | **open** |
 | | the wake was steady when the forces were read | Cd's own sigma <= 1% of its mean | **not recorded** -- see note | **open** |
 | | Cd against the Felix backend | reported, not graded (D17) | 5.67801 vs Felix's 5.522 | -- |
-| **sphere** Re 10, 28 cells/D | Cd against Clift, Grace & Weber (D16) | 4.25839 +/- 5% | **4.38591** (+2.99%) | **PASS** |
-| **sphere** Re 50 | Cd against Schiller-Naumann | 1.5381 +/- 5% | **1.60141** (+4.12%) | **PASS** |
-| **sphere** Re 100 | Cd against Schiller-Naumann | 1.09173 +/- 5% | **1.11662** (+2.28%) | **PASS** |
-| **sphere** Re 200 | Cd against Schiller-Naumann | 0.80561 +/- 5% | **0.79894** (-0.83%) | **PASS** |
+| **sphere** Re 10, 20 cells/D | Cd against Clift, Grace & Weber (D16) | 4.25839 +/- 5% | **4.38591** (+2.99%) | **PASS** |
+| **sphere** Re 50, 20 cells/D | Cd against Schiller-Naumann | 1.5381 +/- 5% | **1.60141** (+4.12%) | **PASS** |
+| **sphere** Re 100, 20 cells/D | Cd against Schiller-Naumann | 1.09173 +/- 5% | **1.11662** (+2.28%) | **PASS** |
+| **sphere** Re 200, 28 cells/D | Cd against Schiller-Naumann | 0.80561 +/- 5% | **0.79894** (-0.83%) | **PASS** |
 
-**Five of the seven M1 cases pass every check they grade.** The two that do not are 2D-1
-and the sphere, and both are in section 7 with their numbers.
+**Five of the seven M1 cases pass every check they grade without qualification**:
+Poiseuille, both cavities, the cylinder and the unsteady cross-check. The other two carry
+one qualification each, and neither is a detail -- the sphere passes its Re 10 check only
+against the reference D16 installed today, and against the one its recorded run used it
+fails; 2D-1's lift check has no recorded number at all. Both are in section 7 with their
+numbers.
 
 ### What the table is sourced from, and the two gaps in it
 
 * Poiseuille, both cavities and the sphere are read out of
   `benchmarks/live/results/<case>/result.json`, H100 80GB, run at commit `2e60227` with a
   clean tree. `python benchmarks/live/summarise.py` regenerates those rows.
+* **The sphere's Re 10 pass is a re-grade, not a new run.** The measurement is the same
+  Cd 4.38591 the H100 produced; what changed is the reference, by D16, taken today. The
+  recorded row predates that change -- it carries no `reference` or `expected` field and
+  its stored error is the +5.657% against Schiller-Naumann -- while the code in this tree
+  grades Re 10 against CGW and the other three against Schiller-Naumann. So
+  `summarise.py` prints that row as a FAIL until the case is re-run.
 * **The cylinder and the unsteady cross-check rows are not in
   `benchmarks/live/results/`.** Those two cases were re-run after the outlet fix
   (section 3) and the results were never written back, so the directories
@@ -103,16 +113,17 @@ cross-check, a wrong converged value for 2D-1.
 The old `outlet` rule extrapolated populations from one cell inside -- the "do nothing"
 outflow. With a velocity inlet at the other end, **nothing in the domain anchors its
 mass.** The measurement that settles it needs no cylinder in it at all. An **empty**
-channel, 2D-2's geometry with the body removed, 32 cells per diameter, 704,000 steps on
-an A100 (`benchmarks/live/results/channel-704k/result.json`):
+channel, 2D-2's geometry with the body removed, 32 cells per diameter, 704,000 steps
+(`benchmarks/live/results/channel-704k/result.json`; that file records its device only as
+`cuda:0` and does not name it, which by this project's own rule it should):
 
 | outlet | mass change over 704,000 steps | inlet-to-outlet flux imbalance | dp/dx vs analytic Poiseuille |
 |---|---|---|---|
 | extrapolating (`outlet_rho = 0`) | **+28.113%** | **-0.538%** | 1.172 |
 | density-anchored (`outlet_rho = 1.0`) | **+0.032%** | +0.119% | 0.978 |
 
-The flux imbalance is the mechanism: mass flux out sits well under half a per cent below
-flux in, every step, forever, and it never corrects. Density rises, pressure rises, and a
+The flux imbalance is the mechanism: mass flux out sits **0.538%** below flux in, every
+step, forever, and it never corrects. Density rises, pressure rises, and a
 force that is a streamwise surface integral rises with it. Lift is a top-minus-bottom
 difference, so a rising background cancels out of it -- which is why 2D-1's lift landed
 inside the paper's interval while its drag climbed to Cd 17.75.
@@ -273,15 +284,18 @@ surface integrals -- which is why D17 grades it against the paper's absolute int
 rather than a relative tolerance.
 
 **The lattice free surface is frozen by decision** (D15), not broken-and-unfixed. It is
-correct for still water: `run_hydrostatic` passes 7 of 7, with `d(rho)/dz` within 0.5% of
-`-rho g / c_s^2`, and a fully submerged body in it feels +1.000 x `rho V g`. It fails for
-a *moving* rigid body, measured as interface cells per wet column on a released floating
+correct for still water: on D15's own numbers `run_hydrostatic` passes 7 of 7, with
+`d(rho)/dz` within 0.5% of `-rho g / c_s^2`, and a fully submerged body in it feels
++1.000 x `rho V g`. (The H100 run recorded in `results/hydrostatic/` also passes 7 of 7,
+on a different configuration, and reads that gradient ratio as 0.9787 against a 10%
+bound.) It fails for a
+*moving* rigid body, measured as interface cells per wet column on a released floating
 box: **0.957 pinned** (one layer, as the mass exchange requires), **1.391 after ten
 steps**, 1.584 after a hundred, and the run diverges later. Korner's formulation has no
 moving solids in it; this is missing rather than broken.
 
-**Long closed recirculating runs erode in float32.** A closed recirculating flow loses
-about **0.86% of accuracy per million steps**, straight over five points spanning a factor
+**Long closed recirculating runs erode in float32.** A closed recirculating flow gains
+about **0.86% of error per million steps**, straight over five points spanning a factor
 of nineteen in run length, so the Re 1000 cavity crosses its 2% tolerance at about 2.45
 million steps. M1's and M3's runs are clear of that by an order of magnitude, but it is
 why a long run needs its length justified rather than maximised.
