@@ -7,13 +7,16 @@ resumed session cannot tell the model what is still running.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
+import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 class TornRecord(Exception):
@@ -291,6 +294,10 @@ class Store:
         and a lock file held across a whole session would mean `label` refusing for
         hours, which is the thing #168 says should not be necessary.
         """
+        with _record_lock(self._session_path):
+            self._save_locked()
+
+    def _save_locked(self) -> None:
         mine = asdict(self.session)
         was = self._on_disk
         try:
@@ -542,6 +549,62 @@ def tag_name(word: str) -> str:
     capitalised it.
     """
     return "-".join(word.strip().lower().split())[:TAG_MAX]
+
+
+@contextlib.contextmanager
+def _record_lock(path: Path) -> Iterator[None]:
+    """Held across one `save()`'s read, merge and replace, and no longer.
+
+    Per-field merging (#168) assumed a writer only ever writes back what it changed.
+    It writes back everything it read, so two saves overlapping -- the hosted runner
+    titling the study as the agent appends a row -- let the slower one put the other's
+    fields back as they were a moment before: `capture_seq` went back and the next row
+    reused a seq, and `jobs` or `tokens` could go back the same way. A lock for the
+    microseconds of one save is not the session-long lock #168 refused; a writer that
+    cannot get it in a few seconds goes ahead unlocked, as every save did before."""
+    # Out of the studies tree altogether: a study's folder is the person's, the mirror
+    # and the listings read it, and code that lists studies takes every folder for
+    # one. The writers that race are processes on one machine, so a temp file named
+    # for the record's absolute path is one lock for all of them.
+    digest = hashlib.sha1(str(path.resolve()).encode("utf-8", "replace")).hexdigest()[:24]
+    lock = Path(tempfile.gettempdir()) / "openreynolds-locks" / f"{digest}.lock"
+    try:
+        lock.parent.mkdir(exist_ok=True)
+        handle = open(lock, "a+b")
+    except OSError:
+        yield
+        return
+    held = False
+    try:
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    break
+                time.sleep(0.005)
+        yield
+    finally:
+        try:
+            if held:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def _replace(tmp: Path, path: Path, tries: int = 20) -> None:
