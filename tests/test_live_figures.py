@@ -143,7 +143,12 @@ def test_animate_is_not_washed_out_by_a_few_extreme_cells(tmp_path):
 
 
 def test_animate_refuses_frames_that_collapse_on_encoding(tmp_path):
-    """Distinct arrays, one palette: the encoder writes a single frame and must say so."""
+    """Distinct arrays, one palette: the encoder writes a single frame and must say so.
+
+    Needs an encoder: without imageio `animate` writes nothing and returns None, so
+    there is no written file to have collapsed (the other GIF tests skip the same way)."""
+    pytest.importorskip("imageio")
+    pytest.importorskip("PIL.Image")
     base = np.random.default_rng(1).random((48, 32))
     nudged = [base + 1.0e-12 * index for index in range(20)]
     with pytest.raises(ValueError, match="collapsed"):
