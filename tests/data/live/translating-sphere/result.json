@@ -1,0 +1,91 @@
+{
+  "case": "translating_sphere",
+  "passed": true,
+  "checks": [
+    {
+      "name": "Galilean invariance: Cd moving / Cd held",
+      "measured": 1.0298388776020968,
+      "target": "1.0 +/- 5%, and this reference is exact",
+      "passed": true,
+      "note": "both measured here, same box, same resolution, same window, so the ratio carries only what the moving-boundary treatment costs"
+    },
+    {
+      "name": "Cd held in a stream",
+      "measured": 1.125355142448416,
+      "target": "1.0917 (Schiller-Naumann), reported not graded",
+      "passed": null,
+      "note": "+3.08% on the correlation; the difference is resolution and the 8.3% blockage of a 12-diameter box, which the ratio above cancels"
+    },
+    {
+      "name": "Cd moving through still fluid",
+      "measured": 1.1589344768028245,
+      "target": "1.0917 (Schiller-Naumann), reported not graded",
+      "passed": null,
+      "note": "+6.16% on the correlation"
+    },
+    {
+      "name": "fresh nodes refilled, moving",
+      "measured": 50560,
+      "target": "> 0, or nothing moved",
+      "passed": true,
+      "note": "the count this case exists to exercise: a sphere that uncovered no lattice node has not tested the refilling at all"
+    },
+    {
+      "name": "fresh nodes refilled, held",
+      "measured": 0,
+      "target": "0, it does not move",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "diameters travelled",
+      "measured": "8.00",
+      "target": "reported, not graded",
+      "passed": null,
+      "note": ""
+    },
+    {
+      "name": "Bouzidi fallbacks",
+      "measured": "0 held, 0 moving",
+      "target": "reported, not graded",
+      "passed": null,
+      "note": ""
+    }
+  ],
+  "report": [
+    "# translating sphere: Re 100, 20 cells per diameter, held and moving in the same box",
+    "  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)",
+    "  lattice:    dx 0.0005 m   dt 0.00274068 s   dx/dt 0.182436 m/s",
+    "  viscosity:  nu_lattice 0.011   tau_plus 0.53300   tau_minus 6.18182",
+    "  relaxation: trt  omega_plus 1.876173  omega_minus 0.161765",
+    "  speeds:     u_ref 0.010034 m/s -> 0.055 lattice (Ma 0.0953), peak 0.055 lattice",
+    "  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be",
+    "  held:       Cd 1.1254 (+3.08% on Schiller-Naumann), 0 refills",
+    "  moving:     Cd 1.1589 (+6.16% on Schiller-Naumann), 50,560 refills over 8.00 diameters",
+    "  Galilean:   moving/held = 1.0298, and 1.0 is exact",
+    "  realtime:   0.096x (simulated seconds per wall-clock second)",
+    "  refilled:   50,560 fresh nodes since the start"
+  ],
+  "figures": [
+    "live-translating-sphere-held.png",
+    "live-translating-sphere-history.png",
+    "live-translating-sphere.png"
+  ],
+  "ratio": 1.0298388776020968,
+  "cd_held": 1.125355142448416,
+  "cd_moving": 1.1589344768028245,
+  "schiller_naumann": 1.0917310910948732,
+  "refilled": 50560,
+  "seconds": 190.00501346588135,
+  "milestone": "M2",
+  "about": "a sphere moving through still fluid: the moving-boundary and fresh-node refilling check, against Galilean invariance",
+  "report_text": "# translating sphere: Re 100, 20 cells per diameter, held and moving in the same box\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.0005 m   dt 0.00274068 s   dx/dt 0.182436 m/s\n  viscosity:  nu_lattice 0.011   tau_plus 0.53300   tau_minus 6.18182\n  relaxation: trt  omega_plus 1.876173  omega_minus 0.161765\n  speeds:     u_ref 0.010034 m/s -> 0.055 lattice (Ma 0.0953), peak 0.055 lattice\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  held:       Cd 1.1254 (+3.08% on Schiller-Naumann), 0 refills\n  moving:     Cd 1.1589 (+6.16% on Schiller-Naumann), 50,560 refills over 8.00 diameters\n  Galilean:   moving/held = 1.0298, and 1.0 is exact\n  realtime:   0.096x (simulated seconds per wall-clock second)\n  refilled:   50,560 fresh nodes since the start\n\n  PASS  Galilean invariance: Cd moving / Cd held  1.02984   against 1.0 +/- 5%, and this reference is exact\n                                                  (both measured here, same box, same resolution, same window, so the ratio carries only what the moving-boundary treatment costs)\n        Cd held in a stream                       1.12536   against 1.0917 (Schiller-Naumann), reported not graded\n                                                  (+3.08% on the correlation; the difference is resolution and the 8.3% blockage of a 12-diameter box, which the ratio above cancels)\n        Cd moving through still fluid             1.15893   against 1.0917 (Schiller-Naumann), reported not graded\n                                                  (+6.16% on the correlation)\n  PASS  fresh nodes refilled, moving              50560   against > 0, or nothing moved\n                                                  (the count this case exists to exercise: a sphere that uncovered no lattice node has not tested the refilling at all)\n  PASS  fresh nodes refilled, held                0   against 0, it does not move\n        diameters travelled                       8.00   against reported, not graded\n        Bouzidi fallbacks                         0 held, 0 moving   against reported, not graded\n\n  3/3 graded checks passed\n  took 3 m 09 s\n  figure:     /tmp/tmpjx83j7h9/live-translating-sphere.png\n  figure:     /tmp/tmpjx83j7h9/live-translating-sphere-held.png\n  figure:     /tmp/tmpjx83j7h9/live-translating-sphere-history.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04",
+  "provenance": {
+    "commit": "2e602271ddfbe492cf9ac46ecbfe885ef80e660d",
+    "dirty": false,
+    "dirty_files": 0
+  }
+}

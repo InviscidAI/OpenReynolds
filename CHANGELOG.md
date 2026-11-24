@@ -23,6 +23,91 @@ All notable changes to this project are recorded here. The format follows
   uploaded mid-study reaches the workspace; words sent while files are still on their way
   wait behind them, so everything is read in the order it was sent.
 
+### Changed
+
+- **Files wait for a late workspace instead of being dropped (#216).** They used to be
+  thrown away after 20 minutes with "upload them again"; now they wait as long as the
+  session lives, up to two hours, or until the workspace fails. They are placed one at a
+  time and each is crossed off as it lands, so a pass that fails part way never places
+  the first ones twice, and a file is given up on only after failing for ten minutes.
+
+## [0.5.0] - 2026-11-24
+
+### Added
+
+- **The cheap recovery moves when a run diverges, and how the log ended.**
+  `openreynolds/toolbox/recover.py`, from #274. Merged into this release rather than left
+  under Unreleased, because it is on `main` and a tag of `main` publishes it either way --
+  a changelog that omits what the artefact contains is the kind of drift this file exists
+  to prevent.
+
+- **`openreynolds[live]` v0.1: a GPU lattice Boltzmann fluid in lockstep with Newton.** An
+  optional extra; nothing in the core install changes and core imports without it.
+  `RELEASE_NOTES_v0.1.md` is the release record and `docs/live-sync.md` is the page.
+
+  **v0.1 is the lattice Boltzmann backend (`backend="lbm"`) for single-phase flow** --
+  air, and water with no free surface in the picture. D3Q19 on NVIDIA Warp, TRT / BGK /
+  regularized collision, Bouzidi interpolated walls, momentum-exchange forces, two-way
+  coupled to Newton's MuJoCo-Warp solver with no host round trips in the step loop. It
+  reaches **1,478.7 MLUPS on an H100 80GB** at 384^3 against a 1,000 target, and 1,095.2
+  at 128^3. **M0 4/4, M2 16/16 over all four cases, M3 10/10 over all three** -- re-tallied
+  from the recorded `result.json` files for this release. **M1: five of its seven cases
+  pass every check they grade**, with the per-case table, the measured values and the two
+  provenance gaps in `RELEASE_NOTES_v0.1.md`.
+
+  It runs inside a live Isaac Sim 6.2 Kit process on **Kit's own Warp 1.17.0 and Newton
+  1.6.1**, two minor versions below what the benchmarks pin, with no shim -- **63 tests
+  passed, 0 failed** -- and the coupling is two-way there, confirmed by two numbers that
+  arrive on independent routes (fluid drag / thrust **0.815**, momentum balance **0.879**,
+  over 347 wrench samples). `openreynolds.live.isaac.HoverFluidEnv` is a quadrotor hover
+  task conforming to Isaac Lab's `DirectRLEnv` interface method for method; it is **not** a
+  `DirectRLEnv` subclass and cannot be, because that requires a USD stage, and `isaac.py`
+  states what that costs.
+
+  **The SPH backend is out of scope for v0.1.** Not beta: out of scope. `sph.py` and
+  `sph_cases.py` are in the tree and import, and that is all this release claims about
+  them -- their eight validation cases do not have passing numbers, they are not graded
+  here, and nothing in v0.1 is supported on `backend="sph"` or `free_surface=True`. The
+  lattice free surface is likewise **frozen by decision** (`DECISIONS_LIVE.md` D15), not
+  broken-and-unfixed. So a boat, a cup, a tank that pours or a hull at a waterline is not
+  a v0.1 capability on either backend.
+
+  **The engineering result of the release is an outlet boundary condition.** Three M1
+  failures -- the cylinder, the unsteady cross-check and 2D-1 -- traced to one boundary,
+  and each had first been blamed on something else. The old outlet extrapolated
+  populations, so with a velocity inlet nothing anchored the domain's mass: an **empty**
+  channel, no cylinder and no wake, gained **+28.113% of its mass over 704,000 steps**,
+  with mass flux out 0.538% below flux in every step and never correcting. A
+  density-anchored outlet holds it to **+0.032%**. The cylinder went from +11.73% to
+  **+2.16%** on Cd and the cross-check from +25.6% and Strouhal +636% to **-0.80%** and
+  **-0.053%**. **The anchor is opt-in and off by default**: `run_cylinder` and
+  `crosscheck` still default `outlet_rho=0.0` so the recorded numbers stay reproducible,
+  so a default run of those two cases reproduces the failure, and the passing runs used
+  `--extra '{"outlet_rho": 1.0}'`.
+
+  Also in the extra: an agent tool and an `openreynolds live` CLI, validation cases that
+  each carry the reference they are graded against, a `PROGRESS_LIVE.md` summary table
+  generated from the recorded results rather than typed, and `DECISIONS_LIVE.md` for the
+  choices made along the way. Every `[live]` dependency is permissively licensed, checked
+  against its installed metadata for this release: warp-lang 1.19.0, newton 1.8.0 and
+  mujoco-warp 4.0.1 are Apache-2.0, numpy 2.3.2 is BSD, matplotlib 3.10.5 is PSF. No
+  `LICENSES` file is owed: `sph.py` was written from the Bender & Koschier and Akinci
+  papers and carries no SPlisHSPlasH code, which its header states and this release
+  verified by reading it.
+
+  **Known limitations, each with its number**, in `RELEASE_NOTES_v0.1.md` section 7: the
+  sphere at Re 10 reads +2.99% against Clift, Grace & Weber -- the reference it is now
+  graded against (D16) -- and +5.66% against Schiller-Naumann, and since it sits above all
+  five candidate correlations the positive bias is real rather than scatter; 2D-1's lift
+  check is open and its post-fix Cl is not recorded in the tree; the frozen lattice free
+  surface is correct for still water and its one-cell interface invariant breaks within
+  ten steps of releasing a moving hull; a closed recirculating float32 run erodes about
+  0.86% per million steps. Of the 23 GIFs in the tree, **12 animate and 11 hold exactly
+  one frame**, counted with PIL for this release -- eight of the twelve are lattice demos
+  and four are Isaac Sim RTX renders; the single-frame files are superseded duplicates or
+  diagnostics except `results/crosscheck/live-crosscheck-cylinder.gif`, which is current
+  and holds one frame.
+
 
 - **`export_doc.py`: a study's write-up as LaTeX or Word, from the `results.md` it
   already has.** `export_doc.py results.md --tex report.tex --docx report.docx`, or a case
@@ -353,14 +438,6 @@ All notable changes to this project are recorded here. The format follows
   deliberately not logged: they change on nearly every save and their history is the
   transcript's. A study with no log is reported as having no log, which is not the same
   as having changed nothing.
-
-### Changed
-
-- **Files wait for a late workspace instead of being dropped (#216).** They used to be
-  thrown away after 20 minutes with "upload them again"; now they wait as long as the
-  session lives, up to two hours, or until the workspace fails. They are placed one at a
-  time and each is crossed off as it lands, so a pass that fails part way never places
-  the first ones twice, and a file is given up on only after failing for ten minutes.
 
 ### Fixed
 
@@ -737,7 +814,6 @@ All notable changes to this project are recorded here. The format follows
     known. A study on Reynolds' model is never priced in money here, as the service's
     own spending cap is not.
 
-### Fixed
 
 - **A GPU solve refused at the study's spending ceiling was told to the model and to
   nobody else.** `felix run` is itself a workspace job, so when foamd pauses a study at
@@ -2212,7 +2288,8 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.3.2...v0.4.0

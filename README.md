@@ -439,6 +439,47 @@ than editing the wrong faces; handing it back tells the session what the patches
 web app, and it is mentioned here because it changes the same workspace a CLI session is
 working in.
 
+## Robot policies against real water and air — the `[live]` extra
+
+New in 0.5.0, and optional. Nothing in the core install changes, and the core imports
+without it.
+
+    pip install 'openreynolds[live]'
+
+A GPU fluid that steps in lockstep with [Newton](https://github.com/newton-physics/newton),
+so a policy trains against water and air that push back. It runs **inside Isaac Sim**, in a
+live Kit process, on Kit's own Warp build rather than a pinned one.
+
+**There are two solvers in here and they are not at the same level of trust**, which is the
+first thing to know:
+
+| | **lattice Boltzmann** | **SPH** |
+| --- | --- | --- |
+| state | **stable** | **beta** |
+| for | air, and water with no free surface — a drone, a submerged hull, an internal passage | liquid with a surface — a cup, pouring, a floating hull |
+| select it with | the default, or `backend="lbm"` | `free_surface=True`, or `backend="sph"` |
+
+The lattice side is two-way coupled with no host round trips in the step loop, reaches
+**1,478 MLUPS** on an H100, and passes its coupling and robot-demo suites outright. The SPH
+side is what a cup of water on a robot arm needs; it is newer, and
+[`RELEASE_NOTES_v0.1.md`](RELEASE_NOTES_v0.1.md) says plainly what beta means for it,
+including which numbers should not be read from a single run.
+
+An Isaac Lab task ships with it — a quadrotor hover with the fluid on, and a robot arm
+carrying a cup without spilling it:
+
+```python
+from openreynolds.live.carry import CarryFluidEnv, CarryFluidEnvCfg
+
+env = CarryFluidEnv(CarryFluidEnvCfg())
+obs, _ = env.reset(seed=0)
+obs, reward, terminated, truncated, extras = env.step(policy(obs["policy"]))
+```
+
+[docs/live-sync.md](docs/live-sync.md) is the page to read; it leads with the backend split
+and ends with the known issues and their numbers. It does **not** replace the OpenFOAM
+path, which is unchanged and is still where a defensible answer comes from.
+
 ## The toolbox
 
 Small scripts kept on the instance and **offered, never imposed**: geometry and mesh
@@ -558,6 +599,7 @@ down to **0.567**.
 | `openreynolds serve` | Serve this machine's own studies over HTTP, for a program that would rather speak REST than MCP: `--bind`, `--port`, `--token`, `--local`. A local control surface, not the hosted API. See *Driving it from a program*. |
 | `openreynolds webhook <url>...` | POST a study's events to a URL as they happen, reading `--output-format stream-json` on stdin and writing every line back out. `--format json\|slack\|discord`, `--event TYPE` (repeatable), `--all`, `--secret`, `--quiet`. One attempt per event, no retries and no queue. See *Driving it from a program*. |
 | `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
+| `openreynolds live cases\|run\|bench\|crosscheck` | The optional live backend, on this machine next to your own GPU: a D3Q19 lattice Boltzmann fluid in lockstep with the Newton physics engine, so a robot feels real aerodynamic and hydrodynamic forces every step it takes. `openreynolds live cases` lists what it can run; `openreynolds live run <case>` or `openreynolds live run <case.yaml>` runs one and grades it against a published or committed reference; `openreynolds live bench` measures the lattice update rate on whatever device is here and names it; and `openreynolds live crosscheck` runs the OpenFOAM cylinder committed under `tests/data/` on both backends and reports the difference. It needs the `[live]` extra (`pip install 'openreynolds[live]'`, which pulls Warp and Newton); without it each subcommand says so in one sentence and exits 1, and nothing else in OpenReynolds is affected. It does not replace the OpenFOAM path, which is unchanged and is still what a defensible answer comes from. See [docs/live-sync.md](docs/live-sync.md). |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
@@ -754,7 +796,7 @@ and nothing more: `--output-format stream-json` already carries the outcome and
 between a workflow and those two facts.
 
 ```yaml
-- uses: InviscidAI/OpenReynolds@v0.4.2
+- uses: InviscidAI/OpenReynolds@v0.5.0
   with:
     task: drag coefficient of this hull at 6 knots, SI units
     api-key: ${{ secrets.ANTHROPIC_API_KEY }}

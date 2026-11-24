@@ -6,8 +6,27 @@
 # That is a discipline problem, and discipline had already failed twice, so it stops
 # being discipline here.
 #
-# Takes about half a minute. `git commit --no-verify` skips it when you genuinely mean
-# to, which is rarer than it feels.
+# This hook used to be `pytest -q --no-header -x`, and `-x` made it useless. Two test
+# files fail for environment reasons (a drifted local OpenCASCADE install) and they sort
+# early, so the run stopped there every time and the hook never once reported anything
+# further down the suite. It hid a genuine failure for several commits, and it taught
+# everyone to type `--no-verify`, which is a hook that protects nothing.
+#
+# So: no `-x`. The test files are dealt into shards, one pytest process each, and two
+# lists beside this file say what is left out and why -- `known-failures.txt` (fails
+# because of a drifted local install; re-checked every run, so one that starts passing is
+# reported) and `slow-tests.txt` (one test, measured at a fifth of the suite's wall
+# clock, and flaky; CI runs it on every push).
+#
+# A shard that goes red is retried once, alone: some tests here mind a busy box, and a
+# test that passes on its own is reported as FLAKY rather than blocking you. A real
+# failure fails both times -- including a whole shard that dies of an access violation
+# or a MemoryError, which eight ~1 GB pytest processes can do on a smaller box.
+# `PRECOMMIT_JOBS=4` halves the shards and the memory with them.
+#
+# `git commit --no-verify` still skips it when you genuinely mean to, which is rarer than
+# it feels. `scripts/precommit_tests.py --all` runs the slow tier too, and
+# `PRECOMMIT_JOBS=1` runs it serially if you are debugging the hook itself.
 
 set -e
 
@@ -16,15 +35,4 @@ if ! command -v python >/dev/null 2>&1; then
     exit 0
 fi
 
-echo "pre-commit: running the suite..."
-if ! python -m pytest -q --no-header -x >/tmp/openreynolds-precommit.log 2>&1; then
-    echo >&2
-    echo "pre-commit: the suite is red, so this commit is not going out." >&2
-    echo >&2
-    tail -n 25 /tmp/openreynolds-precommit.log >&2
-    echo >&2
-    echo "(fix it, or --no-verify if you truly mean to)" >&2
-    exit 1
-fi
-
-echo "pre-commit: green."
+exec python -X utf8 "$(git rev-parse --show-toplevel)/scripts/precommit_tests.py"

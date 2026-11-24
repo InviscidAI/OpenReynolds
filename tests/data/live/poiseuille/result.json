@@ -1,0 +1,69 @@
+{
+  "case": "poiseuille",
+  "passed": true,
+  "checks": [
+    {
+      "name": "profile, max |u - u_exact| / u_max",
+      "measured": 0.0007843971252441406,
+      "target": "<= 2.0e-03",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "u_max against the closed form",
+      "measured": 0.049948595464229584,
+      "target": "0.050000 +/- 1%",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "residual at stop",
+      "measured": 1.7359852790877622e-05,
+      "target": "reported, not graded",
+      "passed": null,
+      "note": ""
+    }
+  ],
+  "report": [
+    "# poiseuille: 64 cells across, exact parabola",
+    "  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)",
+    "  lattice:    dx 0.001 m   dt 0.0996612 s   dx/dt 0.010034 m/s",
+    "  viscosity:  nu_lattice 0.1   tau_plus 0.80000   tau_minus 1.12500",
+    "  relaxation: trt  omega_plus 1.250000  omega_minus 0.888889",
+    "  speeds:     u_ref 0.0005017 m/s -> 0.05 lattice (Ma 0.0866), peak 0.05 lattice",
+    "  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be",
+    "  steps:      33,600 (stalled at the single-precision floor, residual 1.736e-05)",
+    "  stopped:    the residual stopped falling: 12 consecutive checks without a 10% improvement on 1.914e-05, which is the single-precision floor for this field rather than a failure to converge",
+    "  cost:       33,600 coupling steps (33,600 lattice steps) in 5.2 s at 5.0 MLUPS, 0.15 ms a step",
+    "  realtime:   648.366x (simulated seconds per wall-clock second)"
+  ],
+  "figures": [
+    "live-poiseuille.png"
+  ],
+  "scaling": [
+    "  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)",
+    "  lattice:    dx 0.001 m   dt 0.0996612 s   dx/dt 0.010034 m/s",
+    "  viscosity:  nu_lattice 0.1   tau_plus 0.80000   tau_minus 1.12500",
+    "  relaxation: trt  omega_plus 1.250000  omega_minus 0.888889",
+    "  speeds:     u_ref 0.0005017 m/s -> 0.05 lattice (Ma 0.0866), peak 0.05 lattice"
+  ],
+  "stopped": {
+    "steps": 33600,
+    "residual": 1.7359852790877622e-05,
+    "converged": false,
+    "stalled": true,
+    "why": "the residual stopped falling: 12 consecutive checks without a 10% improvement on 1.914e-05, which is the single-precision floor for this field rather than a failure to converge"
+  },
+  "seconds": 20.96292209625244,
+  "milestone": "M1",
+  "about": "a force-driven channel against the exact parabola, which the two-relaxation-time wall makes exact rather than second-order",
+  "report_text": "# poiseuille: 64 cells across, exact parabola\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.001 m   dt 0.0996612 s   dx/dt 0.010034 m/s\n  viscosity:  nu_lattice 0.1   tau_plus 0.80000   tau_minus 1.12500\n  relaxation: trt  omega_plus 1.250000  omega_minus 0.888889\n  speeds:     u_ref 0.0005017 m/s -> 0.05 lattice (Ma 0.0866), peak 0.05 lattice\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  steps:      33,600 (stalled at the single-precision floor, residual 1.736e-05)\n  stopped:    the residual stopped falling: 12 consecutive checks without a 10% improvement on 1.914e-05, which is the single-precision floor for this field rather than a failure to converge\n  cost:       33,600 coupling steps (33,600 lattice steps) in 5.2 s at 5.0 MLUPS, 0.15 ms a step\n  realtime:   648.366x (simulated seconds per wall-clock second)\n\n  PASS  profile, max |u - u_exact| / u_max  0.000784397   against <= 2.0e-03\n  PASS  u_max against the closed form       0.0499486   against 0.050000 +/- 1%\n        residual at stop                    1.73599e-05   against reported, not graded\n\n  2/2 graded checks passed\n  took 20.8 s\n  figure:     /tmp/tmp6id44ap4/live-poiseuille.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06",
+  "provenance": {
+    "commit": "2e602271ddfbe492cf9ac46ecbfe885ef80e660d",
+    "dirty": false,
+    "dirty_files": 0
+  }
+}

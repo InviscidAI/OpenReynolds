@@ -256,8 +256,53 @@ def test_every_script_says_how_to_run_it(script):
     assert "python" in doc, f"{script.name} does not show how to run it"
 
 
+def cli_group_names() -> set[str]:
+    """Every `@main.group("x")` in the CLI, by the name it registers.
+
+    Needed because a group's subcommands are also declared with a `.command(...)`
+    decorator, and they are not `openreynolds <name>` -- they are
+    `openreynolds <group> <name>`. `openreynolds live` is the first group in this CLI
+    and it made `cli_command_names` collect `cases`, `run`, `bench` and `crosscheck`
+    as though they were top-level, so the README guard demanded `openreynolds cases`
+    and three siblings that do not exist.
+    """
+    found = set()
+    for node in parsed(CLI).body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "group"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+            ):
+                found.add(node.name)
+    return found
+
+
 def cli_command_names() -> list[str]:
-    """Every subcommand click will register, from the decorators themselves."""
+    """Every command click will register, from the decorators themselves.
+
+    A group's subcommand is qualified with its group: `@live_group.command("run")` on
+    a function whose group was declared `@main.group("live")` yields `live run`, so the
+    README is asked for `openreynolds live run`. That is what a reader types.
+    """
+    groups = {}
+    for node in parsed(CLI).body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "group"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+            ):
+                groups[node.name] = decorator.args[0].value
+
     names = []
     for node in parsed(CLI).body:
         if not isinstance(node, ast.FunctionDef):
@@ -270,7 +315,9 @@ def cli_command_names() -> list[str]:
                 and decorator.args
                 and isinstance(decorator.args[0], ast.Constant)
             ):
-                names.append(decorator.args[0].value)
+                owner = getattr(decorator.func.value, "id", None)
+                prefix = f"{groups[owner]} " if owner in groups else ""
+                names.append(prefix + decorator.args[0].value)
     return names
 
 

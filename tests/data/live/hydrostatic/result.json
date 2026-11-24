@@ -1,0 +1,109 @@
+{
+  "case": "hydrostatic",
+  "passed": true,
+  "checks": [
+    {
+      "name": "water volume at the start",
+      "measured": 150.00033378601077,
+      "target": "150.0000 mL +/- 2%",
+      "passed": true,
+      "note": "a partly filled interface cell has to count as its fraction; counting it as a whole cell or as none is a whole cell of error on every surface"
+    },
+    {
+      "name": "surface height against the compressible prediction",
+      "measured": 59.86145883798599,
+      "target": "59.8530 mm +/- 2% of the depth (filled to 60.00 mm, less 0.245% compression)",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "surface flatness",
+      "measured": 0.00036178116715746,
+      "target": "<= 2% of the depth",
+      "passed": true,
+      "note": "the standard deviation of the free surface over the tank; still water that is not flat is the atmospheric reconstruction pushing on it"
+    },
+    {
+      "name": "hydrostatic pressure gradient",
+      "measured": 0.9787190658296813,
+      "target": "1.0 +/- 10% (-81.5205 kg/m4 exact)",
+      "passed": true,
+      "note": "d(rho)/dz against `-rho g / c_s^2`, fitted over the fluid cells. **The most important number in this case**: pressure rising with depth at the right rate is what buoyancy IS, so a solver that gets a draft right while getting this wrong gets it right by accident. It rings acoustically for the first few hundred steps and settles; at 600 steps it read 0.94x and by 5,000 it reads 0.995x"
+    },
+    {
+      "name": "fluid cells touching gas cells",
+      "measured": 0,
+      "target": "exactly 0",
+      "passed": true,
+      "note": "the invariant the whole algorithm rests on: the interface is a closed layer one cell thick, and a hole in it means the cells around it stream in populations nothing ever wrote. A tank filled to a level that lands on a cell boundary used to produce exactly that, with no interface cells at all and a free surface that could not move"
+    },
+    {
+      "name": "mass drift",
+      "measured": -3.923981257476054e-05,
+      "target": "<= 1e-3 of the initial mass",
+      "passed": true,
+      "note": "over 5,000 steps and 0 cell conversions"
+    },
+    {
+      "name": "lattice finite",
+      "measured": true,
+      "target": "True",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "predicted compression",
+      "measured": "0.2450%",
+      "target": "reported, not graded",
+      "passed": null,
+      "note": "rho g h / (2 rho c_s^2) with c_s the lattice speed of sound in physical units, 10.96 m/s here"
+    }
+  ],
+  "report": [
+    "# hydrostatic: 60 mm of water in a 100 mm tank, 64 cells",
+    "  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)",
+    "  lattice:    dx 0.0015625 m   dt 8.2309e-05 s   dx/dt 18.9833 m/s",
+    "  viscosity:  nu_lattice 0.01   tau_plus 0.53000   tau_minus 6.75000   (chosen, not derived: nu_eff 0.0002966 m2/s is 296x the fluid's)",
+    "  relaxation: trt  omega_plus 1.886792  omega_minus 0.148148",
+    "  speeds:     u_ref 0.767203 m/s -> 0.0404145 lattice (Ma 0.0700), peak 0.080829 lattice",
+    "  froude:     1.0000 on 0.06 m, matched by construction",
+    "  reynolds:   155 achieved, against 45876 for real water: this lattice runs 296x the fluid's viscosity, because a free surface's timestep is set by gravity and water's viscosity at that timestep is a tau of 0.50002",
+    "  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be",
+    "  volume:     150.0003 mL against an exact 150.0000 mL",
+    "  surface:    59.8615 mm against a predicted 59.8530 (+0.014% of the depth), flat to 0.0217 mm",
+    "  pressure:   d(rho)/dz -79.7857 against an exact -81.5205 kg/m4 (0.9787x)",
+    "  interface:  0 fluid cells touching gas (must be 0)",
+    "  realtime:   0.025x (simulated seconds per wall-clock second)",
+    "  cells:      38,912 fluid, 1,024 interface, 25,600 gas, 0 solid",
+    "  mass:       drift -4.828e-05 of the initial mass over 0 conversions"
+  ],
+  "figures": [
+    "live-hydrostatic-pressure.png",
+    "live-hydrostatic-surface.png",
+    "live-hydrostatic.png"
+  ],
+  "volume": 0.00015000033378601078,
+  "surface": 0.05986145883798599,
+  "flatness": 2.17068700294476e-05,
+  "drift": {
+    "initial": 39321.51171875,
+    "now": 39319.96875,
+    "displaced": 0.0,
+    "unplaceable": 0.0,
+    "drift": -3.923981257476054e-05,
+    "conversions": 0
+  },
+  "gradient_ratio": 0.9787190658296813,
+  "seconds": 79.34144878387451,
+  "milestone": "M5",
+  "about": "still water in a closed tank: the volume it was filled with, a flat surface, and no mass drift. The free surface's first check",
+  "report_text": "# hydrostatic: 60 mm of water in a 100 mm tank, 64 cells\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.0015625 m   dt 8.2309e-05 s   dx/dt 18.9833 m/s\n  viscosity:  nu_lattice 0.01   tau_plus 0.53000   tau_minus 6.75000   (chosen, not derived: nu_eff 0.0002966 m2/s is 296x the fluid's)\n  relaxation: trt  omega_plus 1.886792  omega_minus 0.148148\n  speeds:     u_ref 0.767203 m/s -> 0.0404145 lattice (Ma 0.0700), peak 0.080829 lattice\n  froude:     1.0000 on 0.06 m, matched by construction\n  reynolds:   155 achieved, against 45876 for real water: this lattice runs 296x the fluid's viscosity, because a free surface's timestep is set by gravity and water's viscosity at that timestep is a tau of 0.50002\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  volume:     150.0003 mL against an exact 150.0000 mL\n  surface:    59.8615 mm against a predicted 59.8530 (+0.014% of the depth), flat to 0.0217 mm\n  pressure:   d(rho)/dz -79.7857 against an exact -81.5205 kg/m4 (0.9787x)\n  interface:  0 fluid cells touching gas (must be 0)\n  realtime:   0.025x (simulated seconds per wall-clock second)\n  cells:      38,912 fluid, 1,024 interface, 25,600 gas, 0 solid\n  mass:       drift -4.828e-05 of the initial mass over 0 conversions\n\n  PASS  water volume at the start                           150   against 150.0000 mL +/- 2%\n                                                            (a partly filled interface cell has to count as its fraction; counting it as a whole cell or as none is a whole cell of error on every surface)\n  PASS  surface height against the compressible prediction  59.8615   against 59.8530 mm +/- 2% of the depth (filled to 60.00 mm, less 0.245% compression)\n  PASS  surface flatness                                    0.000361781   against <= 2% of the depth\n                                                            (the standard deviation of the free surface over the tank; still water that is not flat is the atmospheric reconstruction pushing on it)\n  PASS  hydrostatic pressure gradient                       0.978719   against 1.0 +/- 10% (-81.5205 kg/m4 exact)\n                                                            (d(rho)/dz against `-rho g / c_s^2`, fitted over the fluid cells. **The most important number in this case**: pressure rising with depth at the right rate is what buoyancy IS, so a solver that gets a draft right while getting this wrong gets it right by accident. It rings acoustically for the first few hundred steps and settles; at 600 steps it read 0.94x and by 5,000 it reads 0.995x)\n  PASS  fluid cells touching gas cells                      0   against exactly 0\n                                                            (the invariant the whole algorithm rests on: the interface is a closed layer one cell thick, and a hole in it means the cells around it stream in populations nothing ever wrote. A tank filled to a level that lands on a cell boundary used to produce exactly that, with no interface cells at all and a free surface that could not move)\n  PASS  mass drift                                          -3.92398e-05   against <= 1e-3 of the initial mass\n                                                            (over 5,000 steps and 0 cell conversions)\n  PASS  lattice finite                                      yes   against True\n        predicted compression                               0.2450%   against reported, not graded\n                                                            (rho g h / (2 rho c_s^2) with c_s the lattice speed of sound in physical units, 10.96 m/s here)\n\n  7/7 graded checks passed\n  took 79.2 s\n  figure:     /tmp/tmpj_2ydn3l/live-hydrostatic.png\n  figure:     /tmp/tmpj_2ydn3l/live-hydrostatic-pressure.png\n  figure:     /tmp/tmpj_2ydn3l/live-hydrostatic-surface.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06",
+  "provenance": {
+    "commit": "e5b1698cb10624b2c1ba715b73b48842a10446c1",
+    "dirty": false,
+    "dirty_files": 0
+  }
+}
