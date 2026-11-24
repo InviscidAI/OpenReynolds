@@ -466,9 +466,11 @@ class Deliveries:
         after = int(said.get("seq") or 0)
         # An answering line, not just any row: an event the runner writes before it
         # records the words would otherwise end the wait while the turn still says
-        # "user", and the caller would be told `waiting_for_input`. Words delivered
-        # here are never a slash command (`send_words` sends those straight through),
-        # so the person's line is always recorded.
+        # "user", and the caller would be told `waiting_for_input`. Words that leave no
+        # line of their own -- an opening task that is a slash command, or words that
+        # answer an open approval -- wait for the agent's next line or for
+        # `SAID_TTL_S`, reading `starting` or `working` meanwhile: a state that keeps a
+        # caller polling, where the old rule could tell it to stop.
         heard = any(isinstance(i, dict) and isinstance(i.get("seq"), int) and i["seq"] > after
                     and str(i.get("kind") or "") in ANSWERING_KINDS
                     for i in (picture or {}).get("items") or [])

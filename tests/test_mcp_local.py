@@ -625,6 +625,13 @@ def test_the_opening_task_reads_starting_even_when_the_study_is_resumed():
     assert core.look_once(host, deliveries, "sess")[2] == "starting", "said, not yet in the transcript"
 
     deliveries._clear("sess")
+    deliveries.record("sess", {"task": "again", "files": [{"key": "k", "name": "a.stl"}],
+                               "at": time.time(), "opening": True})
+    core.send_words(host, deliveries, "sess", "and this", ["b" * 32])
+    assert deliveries.pending("sess")["opening"] is True, "words merged into the opening task keep it opening"
+    assert core.look_once(host, deliveries, "sess")[2] == "starting"
+
+    deliveries._clear("sess")
     core.send_words(host, deliveries, "sess", "and this", ["b" * 32])
     assert core.look_once(host, deliveries, "sess")[2] == "working", "words to a study under way"
 
