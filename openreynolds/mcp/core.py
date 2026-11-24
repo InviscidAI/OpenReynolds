@@ -440,7 +440,8 @@ class Deliveries:
             # session reads them a moment later. Until it does, the turn still says
             # "user", and a status read in that gap would tell the caller the agent had
             # finished a turn it had not begun. So where the transcript stood is kept.
-            said = {"said": text, "at": time.time(), "seq": last_seq(picture)}
+            said = {"said": text, "at": time.time(), "seq": last_seq(picture),
+                    "opening": opening(current)}
             self.host.kv.set(self._key(session_id), json.dumps(said), ttl_s=SAID_TTL_S)
         if left:
             self.host.discard_staged(left)
@@ -457,14 +458,23 @@ class Deliveries:
     def unseen(self, session_id: str, picture: dict[str, Any] | None) -> bool:
         """Whether words this class said have had no answer in the transcript yet.
 
-        Anything new past where the transcript stood counts, not the words themselves:
-        the session records a message after parsing it, and a slash command is not
-        recorded as the person's line at all."""
+        Any answering line past where the transcript stood counts, not the words
+        themselves: the session records a message after parsing it."""
         said = self.pending(session_id)
         if not said or "said" not in said:
             return False
-        if (time.time() - float(said.get("at") or 0) <= SAID_TTL_S
-                and last_seq(picture) <= int(said.get("seq") or 0)):
+        after = int(said.get("seq") or 0)
+        # An answering line, not just any row: an event the runner writes before it
+        # records the words would otherwise end the wait while the turn still says
+        # "user", and the caller would be told `waiting_for_input`. Words that leave no
+        # line of their own -- an opening task that is a slash command, or words that
+        # answer an open approval -- wait for the agent's next line or for
+        # `SAID_TTL_S`, reading `starting` or `working` meanwhile: a state that keeps a
+        # caller polling, where the old rule could tell it to stop.
+        heard = any(isinstance(i, dict) and isinstance(i.get("seq"), int) and i["seq"] > after
+                    and str(i.get("kind") or "") in ANSWERING_KINDS
+                    for i in (picture or {}).get("items") or [])
+        if time.time() - float(said.get("at") or 0) <= SAID_TTL_S and not heard:
             return True
         # Answered: forget it, but only if it is still that record. `add` may have put
         # new words in its place since it was read.
@@ -478,6 +488,14 @@ class Deliveries:
         return False
 
 
+def opening(pending: dict[str, Any] | None) -> bool:
+    """Whether a delivery carries the study's opening task rather than words sent to a
+    study under way. Records written before the mark existed: `add` always sets `keys`
+    and `begin_study` never did."""
+    pending = pending or {}
+    return bool(pending.get("opening", "keys" not in pending and "said" not in pending))
+
+
 def last_seq(picture: dict[str, Any] | None) -> int:
     return max((i["seq"] for i in (picture or {}).get("items") or []
                 if isinstance(i, dict) and isinstance(i.get("seq"), int)), default=0)
@@ -486,7 +504,8 @@ def last_seq(picture: dict[str, Any] | None) -> int:
 # -- what a status answer says ----------------------------------------------------------
 
 
-def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bool) -> str:
+def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bool,
+             opening: bool = False) -> str:
     status = str(row.get("status") or "")
     if status in ("ended", "error"):
         return status
@@ -498,9 +517,15 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
     if session.get("status") in ("ended", "error"):
         return str(session["status"])
     if delivering and session.get("workspace") == WORKSPACE_READY:
-        # Files on their way to a running study: working, unless it is waiting on an
-        # approval, which no message moves past.
-        return "waiting_for_approval" if open_approvals(picture) else "working"
+        # Files on their way to a running study. An open approval shows, because no
+        # message moves past one. Words sent to a study under way: working. The opening
+        # task -- a resumed study's too, whose transcript already holds the last run --
+        # falls through to `starting` until it is in the transcript, or a caller reads
+        # a quiet prompt as the study being done with it (prod, 2026-10-30).
+        if open_approvals(picture):
+            return "waiting_for_approval"
+        if not opening:
+            return "working"
     if delivering or (session.get("workspace") != WORKSPACE_READY and picture.get("turn") != "user"):
         return "starting"
     if open_approvals(picture):
@@ -810,7 +835,8 @@ def begin_study(host: Host, deliveries: "Deliveries", task: str, *,
     session = host.start_session(body)
     session_id = str(session.get("session_id") or "")
     if files:
-        deliveries.record(session_id, {"task": task.strip(), "files": files, "at": time.time()})
+        deliveries.record(session_id, {"task": task.strip(), "files": files, "at": time.time(),
+                                       "opening": True})
         deliveries.watch(session_id)
     answer = {
         "session_id": session_id, "study_id": session.get("study_id") or study_id or None,
@@ -838,6 +864,7 @@ def look_once(host: Host, deliveries: "Deliveries",
     row, picture = host.observe(session_id)
     delivering = False
     pending = deliveries.pending(session_id)
+    first = opening(pending)
     if pending is not None:
         if "said" not in pending:
             # Placed by a watching thread, started here if this process has none (a
@@ -847,7 +874,7 @@ def look_once(host: Host, deliveries: "Deliveries",
             delivering = True
         else:
             delivering = deliveries.unseen(session_id, picture)
-    return row, picture, state_of(row, picture, delivering)
+    return row, picture, state_of(row, picture, delivering, first)
 
 
 def wait_for_change(host: Host, deliveries: "Deliveries", session_id: str,

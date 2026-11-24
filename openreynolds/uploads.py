@@ -142,6 +142,14 @@ def place_upload(backend: Any, home: str, name: str, data: bytes,
                 extras.append(f"{root}/{rel}")
             except BackendError:
                 break          # the original is up; partial derivatives are fine
+        # The derive's line names what it made, not where: say where, and claim only
+        # what landed.
+        if derived and len(extras) == len(derived):
+            made = f"unpacked to {root}/: {made}" if made else f"{len(extras)} files made in {root}/"
+        elif extras:
+            made = f"{len(extras)} of {len(derived)} files made in {root}/; the rest could not be written"
+        elif derived:
+            made = "nothing could be made of it on the workspace"
     return target, extras, made
 
 
@@ -149,4 +157,4 @@ def placed_line(target: str, extras: list[str], made: str) -> str:
     """How one placed file is named to the agent: its path and what came of it."""
     if made:
         return f"{target} ({made})"
-    return target + (f" (and {len(extras)} derived files beside it)" if extras else "")
+    return target

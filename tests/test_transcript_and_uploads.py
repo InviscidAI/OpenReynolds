@@ -62,7 +62,20 @@ def test_a_derived_file_goes_under_the_originals_stem():
     backend = Backend()
     target, extras, made = place_upload(backend, "/work/s", "plan.pdf", b"%PDF",
                                         derive=lambda path, data: ([("page-1.png", b"png")], "1 page"))
-    assert extras == ["/work/s/uploads/plan/page-1.png"] and made == "1 page"
+    assert extras == ["/work/s/uploads/plan/page-1.png"] and made == "unpacked to /work/s/uploads/plan/: 1 page"
+
+
+def test_a_derived_line_claims_only_the_files_that_landed():
+    class Full(Backend):
+        def put_file(self, path, data):
+            if path.endswith("text.md"):
+                raise BackendError("disk full")
+            super().put_file(path, data)
+    made_of = lambda path, data: ([("page-1.png", b"p"), ("text.md", b"t")], "page-1.png and text.md")  # noqa: E731
+    _, extras, made = place_upload(Full(), "/work/s", "plan.pdf", b"%PDF", derive=made_of)
+    assert extras == ["/work/s/uploads/plan/page-1.png"]
+    assert made == "1 of 2 files made in /work/s/uploads/plan/; the rest could not be written"
+    assert placed_line("/work/s/uploads/plan.pdf", extras, made) == f"/work/s/uploads/plan.pdf ({made})"
 
 
 @pytest.mark.parametrize("name, safe", [("../../etc/passwd", "passwd"), ("wing section.stl", "wing_section.stl"),
