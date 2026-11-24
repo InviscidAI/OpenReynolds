@@ -83,7 +83,6 @@ All notable changes to this project are recorded here. The format follows
   diagnostics except `results/crosscheck/live-crosscheck-cylinder.gif`, which is current
   and holds one frame.
 
-### Added
 
 - **`export_doc.py`: a study's write-up as LaTeX or Word, from the `results.md` it
   already has.** `export_doc.py results.md --tex report.tex --docx report.docx`, or a case
@@ -790,7 +789,6 @@ All notable changes to this project are recorded here. The format follows
     known. A study on Reynolds' model is never priced in money here, as the service's
     own spending cap is not.
 
-### Fixed
 
 - **A GPU solve refused at the study's spending ceiling was told to the model and to
   nobody else.** `felix run` is itself a workspace job, so when foamd pauses a study at
