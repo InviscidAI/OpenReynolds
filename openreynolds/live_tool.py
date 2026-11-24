@@ -152,6 +152,12 @@ def handler(ctx: Any, args: dict[str, Any]) -> str:
     `read_file` attaches one on request, and `on_render` has already told the interface
     to show them.
     """
+    case = str(args.get("case") or "").strip()
+    if not case:
+        # Before the extra is asked for: a call that names nothing is answered the same
+        # on every machine, and needs nothing installed to be answered.
+        return "nothing was run: no case was named; `case=list` lists what can be run"
+
     from . import live
 
     if not live.available():
@@ -160,9 +166,6 @@ def handler(ctx: Any, args: dict[str, Any]) -> str:
         except ImportError as exc:
             return str(exc)
 
-    case = str(args.get("case") or "").strip()
-    if not case:
-        return "nothing was run: no case was named; `case=list` lists what can be run"
     if case == "list":
         return "\n".join(live.describe_cases())
 
