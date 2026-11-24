@@ -311,6 +311,15 @@ class Store:
         for key, value in disk.items():
             if key not in mine or was.get(key, value) == mine[key]:
                 payload[key] = value
+        # The transcript's counter only goes forward. Per-field last-writer-wins let a
+        # writer holding an older record put a lower `capture_seq` on disk, and this
+        # Store, not having touched the field since, took it back: the next row was
+        # numbered like the last one, and a reader keyed on `seq` dropped it as seen.
+        try:
+            payload["capture_seq"] = max(int(mine.get("capture_seq") or 0),
+                                         int(disk.get("capture_seq") or 0))
+        except (TypeError, ValueError):
+            payload["capture_seq"] = mine.get("capture_seq") or 0
         # A temp name of this writer's own: with one shared name, a second save
         # truncates the file the first is about to move into place.
         tmp = self._session_path.with_name(
