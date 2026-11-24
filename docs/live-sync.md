@@ -798,6 +798,24 @@ own Warp 1.17.0 and Newton 1.6.1, 63 passed and 0 failed.
 
 | | measured | against | what is known |
 |---|---|---|---|
+> **STALE AS OF 0.5.0, and left in place rather than rewritten.** The two rows below --
+> the cylinder at +11.7% and the cross-check at +25.6% drag with a sevenfold Strouhal --
+> were **both fixed by the density-anchored outlet** (`DECISIONS_LIVE.md` D18). The
+> cylinder now reads **+2.16%** and the cross-check **-0.80% on drag and -0.053% on
+> Strouhal**, and both pass. `RELEASE_NOTES_v0.1.md` carries the current figures.
+>
+> The diagnoses below are kept because they are instructive and because one of them was
+> **wrong**: the cross-check's row attributes its Strouhal failure to a transverse
+> acoustic mode, on a 4% agreement between a measured period and one candidate wave mode.
+> Every statement in it is still true and the inference was not -- the cause was a channel
+> gaining 28% of its mass. A 4% match against one of several candidate modes is weak
+> evidence, and it read as strong because the streamwise mode had been eliminated first.
+>
+> The cylinder's row is the opposite case and also worth keeping: its Mach extrapolation
+> to **+2.59%** and its inlet-distance probe at **+2.4%** were both measured before the
+> outlet fix existed, and the post-fix measurement is **+2.16%**. Two independent
+> estimates predicted the answer.
+
 | `cylinder` Cd_max, 44 cells per diameter | **3.61376 (+11.7%)** | 3.2300 +/- 5% (Schaefer and Turek 2D-2, interval 3.22-3.24) | **largely compressibility, and localised rather than mysterious.** Halving the Mach number at fixed `tau` takes it to +7.16%; extrapolating to zero Mach gives **+2.59%** linear and +5.64% quadratic, and the linear reading has independent support -- moving the inlet four diameters upstream at unchanged Mach gives **+2.4%**, which the linear limit matches to a sixth of a per cent. The graded case still runs the paper's own 2.2 x 0.41 channel and still fails, deliberately: a run in a longer channel is not that benchmark. `run_cylinder(upstream=...)` is the knob. `PROGRESS_LIVE.md`, "The cylinder's +11%, localised" |
 | `cylinder` observed order of convergence on the drag error | **0.297** | >= 1.0 | the same fault seen from the other side: an error dominated by a boundary-condition artefact does not improve with resolution (24/32/44 cells give 3.67, 3.61, 3.61) |
 | `sphere` Cd at Re 10 | **4.38591 (+5.65%)** | 4.1511 +/- 5% (Schiller-Naumann) | **parked for v0.1, and characterised rather than explained.** Five candidates eliminated with a number each: resolution (0.07% over a 50% refinement), confinement (0.28% from 12 to 20 diameters), the reference (Schiller-Naumann and Clift-Gauvin agree to **0.00%** here), `tau` and the Mach number (0.29% over a fourfold change, and *adverse*). The error is monotonic in Reynolds number and changes sign near Re 230, which is the shape of an error in the viscous-dominated limit; the boundary treatment is where that would live. Re 50, 100 and 200 all pass. `PROGRESS_LIVE.md`, "The sphere at Re 10" |
@@ -911,7 +929,8 @@ without one.
   ([above](#openreynolds-live-cases)).
 - **`--out DIR` is dropped on the way through** on `live run`, `live crosscheck` and the
   agent tool, so figures land in the working directory ([above](#openreynolds-live-run-case)).
-- **The Isaac Lab hover task applies its rotors' attitude moment twice when the fluid is
+- **FIXED, and this entry is kept as the record.** The Isaac Lab hover task applied its
+  rotors' attitude moment twice when the fluid was
   on**, which is exactly the comparison that task exists to make. It is the last entry
   under *Limitations* and it is the one entry there that is a defect.
 
@@ -979,8 +998,10 @@ measuring it.
   `1/(2 dx)` error into every one of them. The immersed-boundary alternative is better
   for thin membranes and worse for drag on a bluff body; a swimmer with a thin fin is the
   case that would want it (`DECISIONS_LIVE.md` D4).
-- **The Isaac Lab task applies its rotors' attitude moment twice when the fluid is on,
-  as of 2026-11-23.** `FluidWorld.rotor_reaction` returns six numbers, force and torque,
+- **FIXED on 2026-11-23.** The Isaac Lab task applied its rotors' attitude moment twice
+  when the fluid was on. `openreynolds/live/isaac.py` now reads "Both halves arrive
+  through `rotor_reaction`, so neither is added here." The description below is the
+  record of what was wrong. `FluidWorld.rotor_reaction` returns six numbers, force and torque,
   and `NewtonCoupling` adds all six to `state.body_f`. `isaac._Rig.apply` adds the same
   moment again through `control.joint_f`, on the belief -- stated in its own docstring
   and in a comment at the call site -- that `rotor_reaction` carries force only, which

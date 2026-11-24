@@ -1110,6 +1110,15 @@ def _live_cases() -> Any:
     try:
         live.require()
         from .live import cases
+
+        # **Register the SPH cases before anything reads the catalogue.** They live in
+        # their own module and register themselves on import, deferred because
+        # `sph_cases` needs `Case` and the grading helpers from `cases` and a
+        # module-level import either way round is a cycle. Without this call
+        # `openreynolds live cases` listed sixteen while `live run` accepted
+        # twenty-four -- so the eight free-surface cases were runnable and invisible,
+        # and a reader who had just installed the extra could not find them.
+        cases.load_sph_cases()
     except ImportError as exc:
         # markup=False, not escape(): the message carries `pip install
         # 'openreynolds[live]'`, and `[live]` is a rich style tag.
