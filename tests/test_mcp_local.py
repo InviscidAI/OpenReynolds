@@ -485,10 +485,10 @@ def test_files_on_their_way_do_not_hide_an_open_approval():
     picture = {"session": {"workspace": core.WORKSPACE_READY}, "turn": "user",
                "items": [{"kind": "approval", "state": "open", "request_id": "r1"}]}
     assert core.state_of({"status": "running"}, picture, delivering=True) == "waiting_for_approval"
-    picture["items"] = [{"kind": "user", "text": "go"}, {"kind": "assistant", "text": "on it"}]
-    assert core.state_of({"status": "running"}, picture, delivering=True) == "working"
+    assert core.state_of({"status": "running"}, picture, delivering=True, opening=True) == "waiting_for_approval"
     picture["items"] = []
-    assert core.state_of({"status": "running"}, picture, delivering=True) == "starting", (
+    assert core.state_of({"status": "running"}, picture, delivering=True) == "working"
+    assert core.state_of({"status": "running"}, picture, delivering=True, opening=True) == "starting", (
         "the opening task is not in the transcript yet, so the study has not started")
 
 
@@ -587,8 +587,46 @@ def test_forgetting_an_answered_message_never_forgets_a_new_one():
             deliveries.add("sess", "new", [{"key": "k9", "name": "n.stl"}])
         return answer
     deliveries.pending = pending
-    assert deliveries.unseen("sess", {"items": [{"seq": 5}]}) is False
+    assert deliveries.unseen("sess", {"items": [{"seq": 5, "kind": "user"}]}) is False
     assert real_pending("sess")["task"] == "new"
+
+
+def test_said_words_wait_for_an_answering_line_not_any_row():
+    """An event the runner writes before it records the words is not their answer: the
+    turn still says "user", and ending the wait there read `waiting_for_input`."""
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    host.kv.set(deliveries._key("sess"), json.dumps({"said": "go", "at": time.time(), "seq": 3}))
+    events = {"items": [{"seq": 4, "kind": "event"}]}
+    assert deliveries.unseen("sess", events) is True
+    assert deliveries.unseen("sess", {"items": [{"seq": 4, "kind": "event"}, {"seq": 5, "kind": "user"}]}) is False
+    assert deliveries.pending("sess") is None
+
+
+def test_the_opening_task_reads_starting_even_when_the_study_is_resumed():
+    """A resumed study's transcript already holds the last run, so whether anyone has
+    spoken cannot tell the opening task from words sent mid-study: the record says."""
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    host.staged = lambda upload_id: core.Staged(key=upload_id, name="a.stl", size=1)
+    host.check = lambda session_id: None
+    resumed = {"session": {"workspace": core.WORKSPACE_READY, "instance_id": "i-1", "study_id": "s1",
+                           "home": "/work/s1"}, "turn": "user",
+               "items": [{"seq": 1, "kind": "user", "text": "last run"}, {"seq": 2, "kind": "assistant", "text": "done"}]}
+    host.observe = lambda session_id: ({"status": "running"}, resumed)
+    deliveries = core.Deliveries(host)
+    deliveries.watch = lambda session_id: None
+
+    deliveries.record("sess", {"task": "again", "files": [{"key": "k", "name": "a.stl"}],
+                               "at": time.time(), "opening": True})
+    assert core.look_once(host, deliveries, "sess")[2] == "starting"
+    assert deliveries.attempt("sess") is True
+    assert deliveries.pending("sess")["opening"] is True, "the said record keeps the mark"
+    assert core.look_once(host, deliveries, "sess")[2] == "starting", "said, not yet in the transcript"
+
+    deliveries._clear("sess")
+    core.send_words(host, deliveries, "sess", "and this", ["b" * 32])
+    assert core.look_once(host, deliveries, "sess")[2] == "working", "words to a study under way"
 
 
 def test_a_short_outage_does_not_give_a_file_up():
