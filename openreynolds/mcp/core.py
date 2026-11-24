@@ -498,9 +498,14 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
     if session.get("status") in ("ended", "error"):
         return str(session["status"])
     if delivering and session.get("workspace") == WORKSPACE_READY:
-        # Files on their way to a running study: working, unless it is waiting on an
-        # approval, which no message moves past.
-        return "waiting_for_approval" if open_approvals(picture) else "working"
+        # Files on their way to a running study. An open approval shows, because no
+        # message moves past one. A study already under way is working. The opening
+        # task falls through to `starting` until it is in the transcript, or a caller
+        # reads a quiet prompt as the study being done with it (prod, 2026-10-30).
+        if open_approvals(picture):
+            return "waiting_for_approval"
+        if conversed(picture):
+            return "working"
     if delivering or (session.get("workspace") != WORKSPACE_READY and picture.get("turn") != "user"):
         return "starting"
     if open_approvals(picture):
@@ -514,6 +519,12 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
 ANSWERING_KINDS = frozenset({"user", "assistant", "turn_failed"})
 """The transcript items that say who spoke last: the person, the agent, or the failed
 request that ended the agent's turn."""
+
+
+def conversed(picture: dict[str, Any] | None) -> bool:
+    """Whether either side has said anything in this picture's transcript yet."""
+    return any(str(item.get("kind") or "") in ANSWERING_KINDS
+               for item in (picture or {}).get("items") or [] if isinstance(item, dict))
 
 
 def answered(picture: dict[str, Any] | None) -> bool:

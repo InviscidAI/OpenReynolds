@@ -485,8 +485,11 @@ def test_files_on_their_way_do_not_hide_an_open_approval():
     picture = {"session": {"workspace": core.WORKSPACE_READY}, "turn": "user",
                "items": [{"kind": "approval", "state": "open", "request_id": "r1"}]}
     assert core.state_of({"status": "running"}, picture, delivering=True) == "waiting_for_approval"
-    picture["items"] = []
+    picture["items"] = [{"kind": "user", "text": "go"}, {"kind": "assistant", "text": "on it"}]
     assert core.state_of({"status": "running"}, picture, delivering=True) == "working"
+    picture["items"] = []
+    assert core.state_of({"status": "running"}, picture, delivering=True) == "starting", (
+        "the opening task is not in the transcript yet, so the study has not started")
 
 
 def test_words_without_files_wait_behind_files_still_on_their_way(monkeypatch):
@@ -513,7 +516,7 @@ def test_a_status_call_never_places_files_itself(monkeypatch):
     monkeypatch.setattr(deliveries, "watch", watched.append)
     deliveries.record("sess", {"task": "drag", "files": [{"key": "k", "name": "w.zip"}], "at": time.time()})
     _, _, state = core.look_once(host, deliveries, "sess")
-    assert host.placed == [] and watched == ["sess"] and state == "working"
+    assert host.placed == [] and watched == ["sess"] and state == "starting"
 
 
 def test_a_file_that_fails_is_not_placed_twice_and_is_given_up_on(monkeypatch):
