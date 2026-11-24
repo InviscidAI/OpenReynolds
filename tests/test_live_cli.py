@@ -74,6 +74,7 @@ def cases(monkeypatch):
     for name in ("run_case", "run_case_file", "benchmark", "crosscheck"):
         setattr(stub, name, record(name))
     stub.report = lambda result: "\n".join(result["report"])
+    stub.load_sph_cases = lambda: stub.calls.append(("load_sph_cases", (), {}))
     monkeypatch.setattr(live, "cases", stub, raising=False)
     monkeypatch.setattr(live, "require", lambda: None)
     return stub
@@ -131,6 +132,16 @@ def test_cases_lists_one_line_each(cases):
     result = invoke("cases")
     assert result.exit_code == 0, result.output
     assert "cavity" in result.output and "Ghia" in result.output
+
+
+def test_cases_registers_the_sph_cases_before_it_lists(cases):
+    """`live cases` listed sixteen while `live run` accepted twenty-four: the SPH cases
+    register on import of their own module, and nothing had imported it yet."""
+    listed = cases.describe_cases
+    cases.describe_cases = lambda: (cases.calls.append(("describe_cases", (), {})), listed())[1]
+    assert invoke("cases").exit_code == 0
+    order = [what for what, _, _ in cases.calls]
+    assert "load_sph_cases" in order and order.index("load_sph_cases") < order.index("describe_cases")
 
 
 def test_cases_json_names_each_case_and_what_it_is(cases):

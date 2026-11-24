@@ -64,20 +64,39 @@ All notable changes to this project are recorded here. The format follows
   `DirectRLEnv` subclass and cannot be, because that requires a USD stage, and `isaac.py`
   states what that costs.
 
-  **The SPH backend is out of scope for v0.1.** Not beta: out of scope. `sph.py` and
-  `sph_cases.py` are in the tree and import, and that is all this release claims about
-  them -- their eight validation cases do not have passing numbers, they are not graded
-  here, and nothing in v0.1 is supported on `backend="sph"` or `free_surface=True`. The
-  lattice free surface is likewise **frozen by decision** (`DECISIONS_LIVE.md` D15), not
-  broken-and-unfixed. So a boat, a cup, a tank that pours or a hull at a waterline is not
-  a v0.1 capability on either backend.
+  **The SPH backend ships as beta** (`DECISIONS_LIVE.md` D21), for free-surface liquids:
+  cups, pouring, floating bodies. This paragraph said "out of scope, not beta" until the
+  release was cut; that was written before D21 and is corrected here, because the README,
+  the release notes and tryreynolds.com all say beta and a changelog that disagrees with
+  the artefact is worse than no changelog.
+
+  What beta means is two specific things rather than a hedge. A run with a **floating**
+  body is not bit-for-bit repeatable -- float32 rounding in the force sum grows over a long
+  settle -- so no floating-body number should be read from a single run; fluid-only cases
+  are repeatable, after a read-write race in the viscous term was fixed. And the draft a
+  hull settles at **does not pass its 2% check**: the case reports 14.51 mm where 16.00 is
+  expected, while a second implementation of the same mass-conserving calculation gives
+  15.90 mm on the same settled state. Two implementations of one quantity differing by
+  1.4 mm means at least one is wrong and which has not been established.
+
+  What does work, measured: a tank's floor carries **0.9999** of the weight of the water in
+  it, a submerged body feels **1.0010 rho V g** with no analytic buoyancy term anywhere,
+  per-step force noise on a floating body is **1.3%** of its weight where it was 12.9%, and
+  a robot arm carrying a cup runs inside Isaac Sim with the spill measured in grams.
+
+  The **lattice** free surface is separately **frozen by decision** (`DECISIONS_LIVE.md`
+  D15), not broken-and-unfixed: it is correct for still water and loses its one-cell
+  interface within ten steps of a hull moving in it. That is why free-surface liquid is
+  SPH's job and not the lattice's.
 
   **The engineering result of the release is an outlet boundary condition.** Three M1
   failures -- the cylinder, the unsteady cross-check and 2D-1 -- traced to one boundary,
   and each had first been blamed on something else. The old outlet extrapolated
   populations, so with a velocity inlet nothing anchored the domain's mass: an **empty**
   channel, no cylinder and no wake, gained **+28.113% of its mass over 704,000 steps**,
-  with mass flux out 0.538% below flux in every step and never correcting. A
+  with mass flux out 0.601% below flux in every step and never correcting
+  (the volume flux, a different quantity the same run measured, is 0.539%; D18 lists
+  both because two documents quoting different ones read as contradicting each other). A
   density-anchored outlet holds it to **+0.032%**. The cylinder went from +11.73% to
   **+2.16%** on Cd and the cross-check from +25.6% and Strouhal +636% to **-0.80%** and
   **-0.053%**. **The anchor is opt-in and off by default**: `run_cylinder` and
