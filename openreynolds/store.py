@@ -288,11 +288,11 @@ class Store:
         the project and the tags; neither reverts the other, and neither has to know
         the other exists.
 
-        This is last-writer-wins per field rather than a lock. Two processes changing
-        the *same* field within the microseconds between this read and its `os.replace`
-        is still a lost update -- but it is one field's update, not a destroyed record,
-        and a lock file held across a whole session would mean `label` refusing for
-        hours, which is the thing #168 says should not be necessary.
+        Per field, and each save under a lock held only for its own read, merge and
+        replace (`_record_lock`): without it a save overlapping another writer's put
+        back the fields it had read and never changed. Not a lock across the session,
+        which would mean `label` refusing for hours -- the thing #168 says should not
+        be necessary.
         """
         with _record_lock(self._session_path):
             self._save_locked()
@@ -570,7 +570,10 @@ def _record_lock(path: Path) -> Iterator[None]:
     lock = Path(tempfile.gettempdir()) / "openreynolds-locks" / f"{digest}.lock"
     try:
         lock.parent.mkdir(exist_ok=True)
-        handle = open(lock, "a+b")
+        # Not followed if somebody else put a link or a pipe there: an open that
+        # blocks would hang every save, and the deadline below starts after it.
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        handle = os.fdopen(os.open(lock, flags, 0o600), "r+b")
     except OSError:
         yield
         return
