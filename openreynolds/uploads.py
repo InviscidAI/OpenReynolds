@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -118,16 +119,21 @@ def place_upload(backend: Any, home: str, name: str, data: bytes,
     the derived files and a line saying what was derived. Raises `BackendError` when
     the workspace refuses the file."""
     base = safe_filename(name)
-    target = f"{home}/uploads/{base}"
     # A second upload of the same name sits beside the first, not over it: the first
-    # may already be what a running job is reading.
+    # may already be what a running job is reading. Every name is checked before it is
+    # used, the last numbered one too; past them a random tag, so the 21st upload of a
+    # name does not land on the 20th.
     stem, dot, ext = base.partition(".")
-    for n in range(2, 21):
+    tags = [str(n) for n in range(2, 21)] + [uuid.uuid4().hex[:8] for _ in range(3)]
+    for tag in [None, *tags]:
+        target = f"{home}/uploads/{base}" if tag is None else \
+            f"{home}/uploads/{stem}-{tag}{dot}{ext}" if dot else f"{home}/uploads/{stem}-{tag}"
         try:
             backend.stat(target)
         except BackendError:
             break
-        target = f"{home}/uploads/{stem}-{n}{dot}{ext}" if dot else f"{home}/uploads/{stem}-{n}"
+    else:
+        raise BackendError(f"no free name for {base} under {home}/uploads/")
     backend.put_file(target, data)
     extras: list[str] = []
     made = ""

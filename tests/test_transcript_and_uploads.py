@@ -58,6 +58,25 @@ def test_a_second_upload_of_a_name_sits_beside_the_first():
     assert backend.files[first] == b"1"
 
 
+def test_an_upload_past_the_numbered_names_never_overwrites_one():
+    backend = Backend()
+    placed = [place_upload(backend, "/work/s", "wing.stl", str(i).encode())[0] for i in range(25)]
+    assert len(set(placed)) == 25, "every upload of a name lands at its own path"
+    assert [backend.files[p] for p in placed] == [str(i).encode() for i in range(25)]
+    assert placed[19] == "/work/s/uploads/wing-20.stl"
+    assert all(p.startswith("/work/s/uploads/wing-") and p.endswith(".stl") for p in placed[20:])
+
+
+def test_the_last_numbered_name_is_checked_before_it_is_written():
+    backend = Backend()
+    backend.files["/work/s/uploads/wing.stl"] = b"first"
+    for n in range(2, 21):
+        backend.files[f"/work/s/uploads/wing-{n}.stl"] = f"kept {n}".encode()
+    target, _, _ = place_upload(backend, "/work/s", "wing.stl", b"new")
+    assert target not in {"/work/s/uploads/wing.stl", *(f"/work/s/uploads/wing-{n}.stl" for n in range(2, 21))}
+    assert backend.files["/work/s/uploads/wing-20.stl"] == b"kept 20"
+
+
 def test_a_derived_file_goes_under_the_originals_stem():
     backend = Backend()
     target, extras, made = place_upload(backend, "/work/s", "plan.pdf", b"%PDF",
