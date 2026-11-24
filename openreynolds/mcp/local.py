@@ -33,7 +33,7 @@ from ..mirror import OutsideMirror, local_for
 from ..store import Store, TornRecord, list_studies
 from ..study_style import normalize_style, preferences_for
 from ..transcript import TranscriptTail, read_items
-from ..uploads import place_upload, safe_filename
+from ..uploads import place_upload, placed_line, safe_filename
 from ..view import View, plain_console
 from ..watch import NOTHING
 from .core import (ACTIVE, MAX_UPLOAD_BYTES, WORKSPACE_FAILED, WORKSPACE_READY, WORKSPACE_STARTING,
@@ -448,8 +448,8 @@ class LocalHost(HostDefaults):
         for item in files:
             folder = self.staging_dir / str(item["key"])
             source = folder / str(item["name"])
-            target, extras, _made = place_upload(backend, home, item["name"], source.read_bytes())
-            placed.append(target + (f" (and {len(extras)} derived files beside it)" if extras else ""))
+            target, extras, made = place_upload(backend, home, item["name"], source.read_bytes())
+            placed.append(placed_line(target, extras, made))
         return placed
 
     def discard_staged(self, files: list[dict[str, Any]]) -> None:

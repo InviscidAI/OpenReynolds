@@ -18,14 +18,16 @@ should read is either `McpError` or something `Host.explain` turns into words.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Iterator, Protocol
 
 from ..study_style import NOTES_MAX
 
@@ -40,7 +42,26 @@ MAX_WAIT_S = 50
 (60 s) with room to answer."""
 POLL_S = 2.0
 DELIVERY_WAIT_S = 20 * 60
-"""How long staged files wait for a workspace before the task is said without them."""
+"""How long a delivery is looked at every few seconds; after it, every `DELIVERY_SLOW_S`."""
+DELIVERY_SLOW_S = 15.0
+DELIVERY_GIVE_UP_S = 2 * 3600
+"""How long staged files wait for a workspace before the task is said without them.
+
+It was `DELIVERY_WAIT_S`, and a workspace that took longer (a busy region, a queue for
+capacity) got the task with a note to upload again, and the files were thrown away
+(#216). The files can only land on a workspace, so they wait for one: as long as the
+session lives, up to this. A workspace that has failed is not waited for."""
+DELIVERY_LOCK_S = 20 * 60
+"""How long one placement may hold a delivery without news, refreshed after each file.
+One archive can take minutes: the upload itself, then its unpacked tree, each with
+the hosted backend's 300 s timeout and a retry. A lock that lapsed mid-placement
+would let another face's pass place the same file again."""
+PLACE_TRIES = 3
+PLACE_GIVE_UP_S = 10 * 60
+"""A file is given up on, and named as missing, once it has failed `PLACE_TRIES`
+passes over at least this long: long enough that a workspace restarting or a network
+blip is waited out, short enough that a file that cannot be placed is not retried
+for hours."""
 DELIVERY_TTL_S = 6 * 3600
 SAID_TTL_S = 10 * 60
 """How long a delivered task is remembered after it is said, so the status reads
@@ -183,16 +204,24 @@ class MemoryKv:
 
 
 class Deliveries:
-    """A task waiting for its workspace, with the files it names.
+    """Words waiting for a workspace, with the files they name.
 
     `start_study` with files starts the session with no first message and records the
-    task here, then a thread waits for the workspace, places the files in the study's
-    `uploads/` and says the task with their paths. `study_status` nudges it too, so a
-    server whose waiting thread is gone does not strand a task. A lock makes sure the
-    files are placed once."""
+    task here; `send_message` with files records its words the same way (`add`). A
+    thread waits for the workspace, places the files in the study's `uploads/` and says
+    the words with their paths. `study_status` nudges it too, so a server whose waiting
+    thread is gone does not strand a task.
+
+    Two locks. The place lock is held by the one pass placing files, which may take
+    minutes for an archive; it is refreshed after each file. The edit lock is held only
+    to read-and-write the record, so a message sent meanwhile never waits on an unpack.
+    Files are placed one at a time and each is crossed off as it lands, so a pass that
+    fails part way does not place the first ones again on the next."""
 
     def __init__(self, host: Host):
         self.host = host
+        self._watching: set[str] = set()
+        self._watching_lock = threading.Lock()
 
     def _key(self, session_id: str) -> str:
         return f"mcp:deliver:{session_id}"
@@ -207,96 +236,228 @@ class Deliveries:
     def _clear(self, session_id: str) -> None:
         self.host.kv.delete(self._key(session_id))
 
-    def _lock(self, session_id: str) -> bool:
-        return bool(self.host.kv.set(self._key(session_id) + ":lock", "1", ttl_s=300, only_new=True))
+    def _lock(self, session_id: str) -> str | None:
+        """The place lock, as a token only its holder has, or None when it is held."""
+        token = uuid.uuid4().hex
+        taken = self.host.kv.set(self._key(session_id) + ":lock", token, ttl_s=DELIVERY_LOCK_S, only_new=True)
+        return token if taken else None
 
-    def _unlock(self, session_id: str) -> None:
-        self.host.kv.delete(self._key(session_id) + ":lock")
+    def _refresh(self, session_id: str, token: str) -> bool:
+        """Extend the place lock if it is still this holder's. False when it lapsed and
+        someone else took it: this pass must stop placing."""
+        key = self._key(session_id) + ":lock"
+        if self.host.kv.get(key) != token:
+            return False
+        self.host.kv.set(key, token, ttl_s=DELIVERY_LOCK_S)
+        return True
+
+    def _unlock(self, session_id: str, token: str) -> None:
+        key = self._key(session_id) + ":lock"
+        if self.host.kv.get(key) == token:      # never another holder's
+            self.host.kv.delete(key)
+
+    @contextlib.contextmanager
+    def _editing(self, session_id: str, wait_s: float = 10.0) -> Iterator[None]:
+        """Hold the record for one read-and-write. Never held across a placement."""
+        key = self._key(session_id) + ":edit"
+        deadline = time.monotonic() + wait_s
+        while not self.host.kv.set(key, "1", ttl_s=30, only_new=True):
+            if time.monotonic() > deadline:
+                raise McpError("this study's files are being recorded; send again in a moment")
+            time.sleep(0.05)
+        try:
+            yield
+        finally:
+            self.host.kv.delete(key)
+
+    def add(self, session_id: str, text: str, files: list[dict[str, Any]]) -> None:
+        """Queue words, with or without files, on a running session (`send_message`).
+        Words still waiting are added to rather than replaced, so nothing is lost and
+        everything is said in the order it was sent."""
+        with self._editing(session_id):
+            pending = self.pending(session_id)
+            if pending is None or "said" in pending:
+                pending = {"task": text, "files": [], "placed": [], "at": time.time()}
+            else:
+                pending = {**pending, "task": f"{pending['task']}\n\n{text}"}
+            known = {f["key"] for f in pending.get("files") or []} | set(pending.get("keys") or [])
+            fresh = []
+            for f in files:                     # an upload named twice is placed once
+                if f["key"] not in known:
+                    known.add(f["key"])
+                    fresh.append(f)
+            pending["files"] = list(pending.get("files") or []) + fresh
+            pending["keys"] = sorted(known)
+            self.record(session_id, pending)
+        self.watch(session_id)
 
     def watch(self, session_id: str) -> None:
-        """Wait for the workspace on a thread of this process, and deliver."""
+        """Wait for the workspace on a thread of this process, and deliver. One thread
+        per session: a second call while one is watching leaves it to that one."""
+        with self._watching_lock:
+            if session_id in self._watching:
+                return
+            self._watching.add(session_id)
+
         def run() -> None:
-            deadline = time.monotonic() + DELIVERY_WAIT_S + 30
-            while time.monotonic() < deadline:
-                try:
-                    if self.attempt(session_id):
-                        return
-                except Exception:  # noqa: BLE001 - try again on the next tick
-                    log.exception("mcp delivery for %s failed a pass", session_id[:8])
-                time.sleep(3.0)
+            began = time.monotonic()
+            try:
+                while time.monotonic() < began + DELIVERY_GIVE_UP_S + 60:
+                    try:
+                        if self.attempt(session_id):
+                            with self._watching_lock:
+                                # Something `add`ed after the pass, while this thread
+                                # still counted as watching, is this thread's to place.
+                                again = self.pending(session_id)
+                                if again is None or "said" in again:
+                                    self._watching.discard(session_id)
+                                    return
+                            continue
+                    except Exception:  # noqa: BLE001 - try again on the next tick
+                        log.exception("mcp delivery for %s failed a pass", session_id[:8])
+                    time.sleep(3.0 if time.monotonic() - began < DELIVERY_WAIT_S else DELIVERY_SLOW_S)
+            finally:
+                with self._watching_lock:
+                    self._watching.discard(session_id)
         context = contextvars.copy_context()
         threading.Thread(target=context.run, args=(run,), name=f"mcp-deliver-{session_id[:8]}",
                          daemon=True).start()
 
     def attempt(self, session_id: str) -> bool:
-        """Place the files and say the task, if the workspace is up. True when there is
+        """Place the files and say the words, if the workspace is up. True when there is
         nothing left to do for this session."""
         pending = self.pending(session_id)
         if pending is None or "said" in pending:
             return True
         row, picture = self.host.observe(session_id)
         if str(row.get("status") or "") not in ACTIVE:
-            self._drop(pending, session_id)
+            self._drop(session_id)
             return True
         session = (picture or {}).get("session") or {}
         instance_id = str(session.get("instance_id") or row.get("instance_id") or "")
         study_id = str(session.get("study_id") or row.get("study_id") or "")
         ready = session.get("workspace") == WORKSPACE_READY
+        failed = session.get("workspace") == WORKSPACE_FAILED
         waited = time.time() - float(pending.get("at") or time.time())
         if not (ready and instance_id and study_id):
-            if waited < DELIVERY_WAIT_S:
+            if waited < DELIVERY_GIVE_UP_S and not failed:
                 return False
-            # The workspace never came up in time: say the task anyway, and say why
+            # The workspace failed, or never came up: say the words anyway, and say why
             # the files are not there, rather than leave the session silent.
-            if not self._lock(session_id):
+            token = self._lock(session_id)
+            if token is None:
                 return False
             try:
-                text = pending["task"] + (
-                    "\n\n(The caller also uploaded files, but the workspace was not ready "
-                    "to receive them; ask the caller to upload them again with upload_file.)"
-                    if pending.get("files") else "")
-                self.host.say(session_id, text)
-                self._said(pending, session_id, text, picture)
+                return self._say(session_id, picture, gave_up=True)
             finally:
-                self._unlock(session_id)
-            return True
-        if not self._lock(session_id):
+                self._unlock(session_id, token)
+        token = self._lock(session_id)
+        if token is None:
             return False
         try:
-            again = self.pending(session_id)
-            if again is None or "said" in again:   # someone else finished it
-                return True
             home = str(session.get("home") or "").rstrip("/") or f"/work/{study_id}"
-            placed = self.host.place_files(session_id, instance_id, home, list(pending.get("files") or []))
-            if placed is None:
+            while True:
+                current = self.pending(session_id)
+                if current is None or "said" in current:
+                    return True
+                files = list(current.get("files") or [])
+                if not files:
+                    if self._say(session_id, picture):
+                        return True
+                    continue                      # more files came in as it was said
+                item = files[0]
+                try:
+                    lines = self.host.place_files(session_id, instance_id, home, [item])
+                except Exception:
+                    log.exception("mcp delivery for %s could not place %s", session_id[:8], item.get("name"))
+                    self._failed_once(session_id, item)
+                    return False
+                if lines is None:
+                    return False
+                self._placed(session_id, item, lines)
+                if not self._refresh(session_id, token):
+                    return False
+        finally:
+            self._unlock(session_id, token)
+
+    def _placed(self, session_id: str, item: dict[str, Any], lines: list[str]) -> None:
+        # A long wait: a file placed and not crossed off would be placed again.
+        with self._editing(session_id, wait_s=120):
+            current = self.pending(session_id)
+            if current is None or "said" in current:
+                return                          # dropped meanwhile: the session ended
+            files = list(current.get("files") or [])
+            current["files"] = [f for f in files if f["key"] != item["key"]]
+            current["placed"] = list(current.get("placed") or []) + list(lines)
+            current["fails"] = 0
+            current.pop("failing_since", None)
+            self.record(session_id, current)
+        self.host.discard_staged([item])
+
+    def _failed_once(self, session_id: str, item: dict[str, Any]) -> None:
+        """Count a failed placement; after `PLACE_TRIES` the file is given up on and
+        named as missing when the words are said, rather than retried for hours."""
+        gave_up = False
+        with self._editing(session_id):
+            current = self.pending(session_id)
+            if current is None or "said" in current:
+                return
+            current["fails"] = int(current.get("fails") or 0) + 1
+            since = float(current.setdefault("failing_since", time.time()))
+            if current["fails"] >= PLACE_TRIES and time.time() - since >= PLACE_GIVE_UP_S:
+                current["files"] = [f for f in current.get("files") or [] if f["key"] != item["key"]]
+                current["failed"] = list(current.get("failed") or []) + [str(item.get("name") or "")]
+                current["fails"] = 0
+                current.pop("failing_since", None)
+                gave_up = True
+            self.record(session_id, current)
+        if gave_up:
+            self.host.discard_staged([item])
+
+    def _say(self, session_id: str, picture: dict[str, Any] | None, gave_up: bool = False) -> bool:
+        """Say the words with the files placed so far. False when files are still to be
+        placed (one came in as this was called), unless the workspace was given up on."""
+        with self._editing(session_id):
+            current = self.pending(session_id)
+            if current is None or "said" in current:
+                return True
+            left = list(current.get("files") or [])
+            if left and not gave_up:
                 return False
-            text = pending["task"]
+            text = current["task"]
+            placed = list(current.get("placed") or [])
             if placed:
                 text += "\n\nInput files, uploaded by the caller:\n" + "\n".join(f"- {p}" for p in placed)
+            if left:
+                text += ("\n\n(The caller also uploaded files, but the workspace did not start "
+                         "to receive them; ask the caller to upload them again with upload_file.)")
+            failed = [n for n in current.get("failed") or [] if n]
+            if failed:
+                text += (f"\n\n(These uploaded files could not be placed on the workspace: "
+                         f"{', '.join(failed)}; ask the caller to upload them again with upload_file.)")
             self.host.say(session_id, text)
-            self._said(pending, session_id, text, picture)
-            return True
-        finally:
-            self._unlock(session_id)
+            # The words are on the session's queue but not yet in its transcript: the
+            # session reads them a moment later. Until it does, the turn still says
+            # "user", and a status read in that gap would tell the caller the agent had
+            # finished a turn it had not begun. So where the transcript stood is kept.
+            said = {"said": text, "at": time.time(), "seq": last_seq(picture)}
+            self.host.kv.set(self._key(session_id), json.dumps(said), ttl_s=SAID_TTL_S)
+        if left:
+            self.host.discard_staged(left)
+        return True
 
-    def _drop(self, pending: dict[str, Any], session_id: str) -> None:
-        self._clear(session_id)
-        self.host.discard_staged(list(pending.get("files") or []))
-
-    def _said(self, pending: dict[str, Any], session_id: str, text: str,
-              picture: dict[str, Any] | None) -> None:
-        """The task is on the session's queue but not yet in its transcript: the session
-        reads it a moment later. Until it does, the turn still says "user", and a status
-        read in that gap would tell the caller the agent had finished a turn it had not
-        begun. So where the transcript stood when it was said is kept for a while."""
-        self.host.discard_staged(list(pending.get("files") or []))
-        said = {"said": text, "at": time.time(), "seq": last_seq(picture)}
-        self.host.kv.set(self._key(session_id), json.dumps(said), ttl_s=SAID_TTL_S)
+    def _drop(self, session_id: str) -> None:
+        with self._editing(session_id):
+            current = self.pending(session_id)
+            if current is None or "said" in current:
+                return
+            self._clear(session_id)
+        self.host.discard_staged(list(current.get("files") or []))
 
     def unseen(self, session_id: str, picture: dict[str, Any] | None) -> bool:
-        """Whether a task this class said has had no answer in the transcript yet.
+        """Whether words this class said have had no answer in the transcript yet.
 
-        Anything new past where the transcript stood counts, not the task's own words:
+        Anything new past where the transcript stood counts, not the words themselves:
         the session records a message after parsing it, and a slash command is not
         recorded as the person's line at all."""
         said = self.pending(session_id)
@@ -305,7 +466,15 @@ class Deliveries:
         if (time.time() - float(said.get("at") or 0) <= SAID_TTL_S
                 and last_seq(picture) <= int(said.get("seq") or 0)):
             return True
-        self._clear(session_id)
+        # Answered: forget it, but only if it is still that record. `add` may have put
+        # new words in its place since it was read.
+        try:
+            with self._editing(session_id, wait_s=0):
+                again = self.pending(session_id)
+                if again is not None and "said" in again:
+                    self._clear(session_id)
+        except McpError:
+            pass                                  # someone is editing it; leave it be
         return False
 
 
@@ -328,6 +497,10 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
     session = picture.get("session") or {}
     if session.get("status") in ("ended", "error"):
         return str(session["status"])
+    if delivering and session.get("workspace") == WORKSPACE_READY:
+        # Files on their way to a running study: working, unless it is waiting on an
+        # approval, which no message moves past.
+        return "waiting_for_approval" if open_approvals(picture) else "working"
     if delivering or (session.get("workspace") != WORKSPACE_READY and picture.get("turn") != "user"):
         return "starting"
     if open_approvals(picture):
@@ -541,7 +714,9 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "send_message": (
         "Say something to Reynolds in a running study: answer its question, add a requirement, "
-        "or change course. It reads it at its next step. Slash commands work too (/status, "
+        "or change course. It reads it at its next step. upload_ids: files staged with "
+        "upload_file, placed in the study's uploads/ and named in the message (an archive is "
+        "unpacked beside itself). Slash commands work too (/status, "
         "/model <id>, /mode auto|partial|structured), and \"/btw <question>\" asks a side "
         "question: answered without interrupting the study or entering its conversation, "
         "under `side` in study_status."
@@ -588,6 +763,24 @@ def description(host: Host | None, tool: str) -> str:
 # exists to prevent. `build_server` below is now a thin async wrapper over these.
 
 
+def staged_files(host: Host, upload_ids: list[str] | None) -> list[dict[str, Any]]:
+    """The staged uploads named by `upload_ids`, as a delivery carries them; refused
+    with words when one is not an id, has no file yet, or is too big."""
+    if upload_ids is not None and not isinstance(upload_ids, list):
+        raise McpError("upload_ids is a list of ids from upload_file")
+    files: list[dict[str, Any]] = []
+    for upload_id in dict.fromkeys(upload_ids or []):   # an id named twice is one file
+        if not UPLOAD_ID.match(str(upload_id or "")):
+            raise McpError(f"{upload_id!r} is not an upload id")
+        found = host.staged(upload_id)
+        if found is None:
+            raise McpError(f"upload {upload_id} has no file yet -- run its curl command first")
+        if found.size > MAX_UPLOAD_BYTES:
+            raise McpError(f"upload {upload_id} is {found.size} bytes; the limit is {MAX_UPLOAD_BYTES}")
+        files.append({"key": found.key, "name": found.name})
+    return files
+
+
 def begin_study(host: Host, deliveries: "Deliveries", task: str, *,
                 upload_ids: list[str] | None = None, study_id: str | None = None,
                 depth: str = "quick", mode: str = "auto", model: str | None = None,
@@ -596,16 +789,7 @@ def begin_study(host: Host, deliveries: "Deliveries", task: str, *,
     """Start a study (or continue one) and answer with its session_id."""
     if not task or not task.strip():
         raise McpError("say what to simulate in task")
-    files: list[dict[str, Any]] = []
-    for upload_id in upload_ids or []:
-        if not UPLOAD_ID.match(upload_id or ""):
-            raise McpError(f"{upload_id!r} is not an upload id")
-        found = host.staged(upload_id)
-        if found is None:
-            raise McpError(f"upload {upload_id} has no file yet -- run its curl command first")
-        if found.size > MAX_UPLOAD_BYTES:
-            raise McpError(f"upload {upload_id} is {found.size} bytes; the limit is {MAX_UPLOAD_BYTES}")
-        files.append({"key": found.key, "name": found.name})
+    files = staged_files(host, upload_ids)
     note = CALLER_NOTE + (f"\n\n{notes.strip()}" if notes and notes.strip() else "")
     body: dict[str, Any] = {
         "style": depth, "mode": mode, "notes": note[:NOTES_MAX],
@@ -653,9 +837,16 @@ def look_once(host: Host, deliveries: "Deliveries",
     a state that is no longer `starting` or `working`."""
     row, picture = host.observe(session_id)
     delivering = False
-    if deliveries.pending(session_id) is not None:
-        done = deliveries.attempt(session_id)
-        delivering = not done or deliveries.unseen(session_id, picture)
+    pending = deliveries.pending(session_id)
+    if pending is not None:
+        if "said" not in pending:
+            # Placed by a watching thread, started here if this process has none (a
+            # server restarted since the task was recorded). Never on this call's own
+            # thread: unpacking an archive takes longer than a status call may.
+            deliveries.watch(session_id)
+            delivering = True
+        else:
+            delivering = deliveries.unseen(session_id, picture)
     return row, picture, state_of(row, picture, delivering)
 
 
@@ -718,6 +909,32 @@ def said_text(text: str) -> str:
     if not text or not text.strip():
         raise McpError("nothing to say")
     return text.strip()
+
+
+def send_words(host: Host, deliveries: "Deliveries", session_id: str, text: str,
+               upload_ids: list[str] | None = None) -> None:
+    """`send_message`: say `text` on the session, or, with files, place them first and
+    say it with their paths, the way `begin_study` says a task.
+
+    Words with no files go straight to the session. With files they go through
+    `deliveries`, which waits for the workspace if it is not up yet, so a file sent
+    mid-study reaches the workspace rather than staying staged (#216)."""
+    files = staged_files(host, upload_ids)
+    if not files:
+        words = said_text(text)
+        waiting = deliveries.pending(session_id)
+        if words.startswith("/") or waiting is None or "said" in waiting:
+            host.say(session_id, words)
+            return
+    else:
+        words = (text or "").strip() or "Here are more input files."
+        if words.startswith("/"):
+            raise McpError("a slash command cannot carry files; send the files with a message")
+    host.check(session_id)
+    row, _ = host.observe(session_id)
+    if str(row.get("status") or "") not in ACTIVE:
+        raise McpError("this session is not running; start_study with its study_id to continue it")
+    deliveries.add(session_id, words, files)   # after any files still on their way
 
 
 APPROVAL_WORDS = {"approve": "/yes", "decline": "/no", "approve_all": "/all"}
@@ -850,9 +1067,9 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
                                                 int(after_seq or 0)))
 
     @server.tool(description=describe("send_message"))
-    async def send_message(session_id: str, text: str) -> dict[str, Any]:
+    async def send_message(session_id: str, text: str, upload_ids: list[str] | None = None) -> dict[str, Any]:
         def run() -> dict[str, Any]:
-            host.say(session_id, said_text(text))
+            send_words(host, deliveries, session_id, text, upload_ids)
             return {"sent": True, "next": "Call study_status to see the answer."}
         return await call(run)
 

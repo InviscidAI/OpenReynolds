@@ -129,11 +129,12 @@ class Study:
             pass
         return answer or self.status()
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, *, upload_ids: list[str] | None = None) -> None:
         """Say something to the running study: an answer, a requirement, a change of
         course, or a slash command (`/status`, `/btw <question>`, `/mode ...`). It is
-        read at the session's next step."""
-        self.host.say(self.session_id, core.said_text(text))
+        read at the session's next step. `upload_ids` are files staged with `upload`,
+        placed in the study's `uploads/` and named in the message."""
+        core.send_words(self.host, self._deliveries, self.session_id, text, upload_ids)
 
     def answer(self, decision: str, note: str = "") -> str:
         """Answer the open approval: `approve`, `decline` (the note says why) or
