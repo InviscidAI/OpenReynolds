@@ -166,13 +166,16 @@ def record(
 
 LOCK_ATTEMPTS = 400
 LOCK_WAIT_S = 0.005
+LOCK_STALE_S = 5.0
 
 
 @contextmanager
 def _manifest_lock(study: Path) -> Iterator[None]:
     """Lock the manifest with an `O_EXCL` lock file; bare appends lose records (#120).
 
-    Past `LOCK_ATTEMPTS` the write goes ahead unlocked, so a stale lock can't block it.
+    A write holds the lock for milliseconds, so a lock older than `LOCK_STALE_S` was
+    left by a writer that crashed: it is removed and taken. Past `LOCK_ATTEMPTS` the
+    write goes ahead unlocked, so a lock that can't be removed still can't block it.
     """
     directory = study / STATE_DIR
     directory.mkdir(parents=True, exist_ok=True)
@@ -183,7 +186,15 @@ def _manifest_lock(study: Path) -> Iterator[None]:
             os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             held = True
             break
-        except (FileExistsError, PermissionError):  # Windows: lock still being deleted
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > LOCK_STALE_S:
+                    os.unlink(lock)
+                    continue
+            except OSError:
+                pass  # its holder released it meanwhile, or it can't be removed
+            time.sleep(LOCK_WAIT_S)
+        except PermissionError:  # Windows: lock still being deleted
             time.sleep(LOCK_WAIT_S)
         except OSError:
             break  # a directory that will not take a lock file still takes the record

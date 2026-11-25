@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -73,13 +75,17 @@ def test_concurrent_writers_lose_no_records_and_cut_no_lines(state, study):
     assert not (study / ".reynolds" / "manifest.jsonl.lock").exists()
 
 
-def test_a_stale_lock_does_not_silence_the_manifest_forever(state, study, monkeypatch):
-    monkeypatch.setattr(state, "LOCK_ATTEMPTS", 2)
-    monkeypatch.setattr(state, "LOCK_WAIT_S", 0)
-    (study / ".reynolds" / "manifest.jsonl.lock").write_text("held by nobody", encoding="utf-8")
+def test_a_stale_lock_is_removed_and_costs_no_wait(state, study):
+    lock = study / ".reynolds" / "manifest.jsonl.lock"
+    lock.write_text("held by a writer that crashed", encoding="utf-8")
+    old = time.time() - 60
+    os.utime(lock, (old, old))
+    started = time.perf_counter()
     state.record("other", "a.png", root=study)
     state.record_rung(1, "pass", root=study, class_key="c")
     state.record_rung(1, "fail", root=study, class_key="c")
+    assert time.perf_counter() - started < 1.0
+    assert not lock.exists()
     kinds = [r["kind"] for r in state.artifacts(root=study)]
     assert kinds == ["other", state.RUNG_KIND]
     assert state.artifacts(root=study)[-1]["meta"]["status"] == "fail"
