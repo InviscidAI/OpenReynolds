@@ -4270,16 +4270,38 @@ def _bring_up(
                     "asks the person to raise the ceiling, and the workspace is "
                     "started again once it is raised."
                 )
+            elif hosted.out_of_reach(exc):
+                # The service could not be reached, which the start already tried
+                # again for a while (`Starter`). It is sent again when the person next
+                # speaks (`_refused_turn`), rather than standing until the study is
+                # resumed: a moment's outage must not cost the rest of the session.
+                # Armed below, with the promise failed, after the view is told.
+                again = lambda: _start_again(  # noqa: E731
+                    pending, starter, store, view, loop, tracker, browser, resuming,
+                )
+                loop.post(
+                    f"The workspace could not be started ({exc}). The service could "
+                    "not be reached; the start is sent again when the person sends "
+                    "their next message."
+                )
             else:
                 loop.post(
                     f"The workspace could not be started ({exc}). Every tool call will "
                     "fail with that error until the session is resumed."
                 )
-            pending.fail(exc)
+            # The view and the bar first, the promise last: a message waiting on the
+            # promise may send the start again the moment it fails (`_start_again`),
+            # and this thread's "failed" must not land on top of that one's
+            # "starting again".
+            if hosted.out_of_reach(exc) and ceiling.paused(exc) is None:
+                # Safe before the promise fails: `_start_again` sends nothing until
+                # there is a failure to reopen.
+                loop.start_again = again
             tracker.workspace_ready()
             console.print(f"[red]Could not start the workspace:[/] {exc}")
             view.notice(f"the workspace could not be started: {exc}")
             _say_workspace_failed(view, str(exc))
+            pending.fail(exc)
             return
         if getattr(live, "was_already_running", False):
             console.print(_join_notice(pending.instance_id, getattr(live, "instances_held", 0)))
@@ -4323,32 +4345,42 @@ def _start_again(
     tracker: Any,
     browser: Browser | None,
     resuming: bool,
-) -> None:
-    """Send a workspace start that met the study's ceiling again, now it is raised.
+) -> bool:
+    """Send a workspace start that failed again. True when a new start is under way.
 
-    Called from `ceiling.resolve` (as `ToolContext.on_ceiling_raised`) before the
-    paused call goes again. The pending backend is reopened here, on the caller's
-    thread, so that call waits for the new start instead of raising the old error;
-    the rest is the ordinary start: the bar says the workspace is coming, and
-    `_bring_up` makes it this study's, resolves the waiting calls and tells the view.
-    Once only: a start that meets the ceiling again sets it up again (`_bring_up`)."""
-    loop.ctx.on_ceiling_raised = None
+    Two callers. `ceiling.resolve` (as `ToolContext.on_ceiling_raised`), before the
+    paused call goes again, for a start that met the study's ceiling and now finds it
+    raised. And `_refused_turn` (as `Loop.start_again`), for a start that could not
+    reach the service, when the person sends their next message. The pending backend
+    is reopened here, on the caller's thread, so what comes next waits for the new
+    start instead of raising the old error; the rest is the ordinary start: the bar
+    says the workspace is coming, and `_bring_up` makes it this study's, resolves the
+    waiting calls and tells the view. Once only: a start that fails again sets the
+    way to send it again up again (`_bring_up`)."""
+    raised = loop.ctx.on_ceiling_raised is not None
     restart = getattr(starter, "restart", None)
     refused = pending.error
     if restart is None or refused is None or not pending.reopen():
-        return
+        # Nothing to send again yet (the failure is not settled) or at all: the hooks
+        # are left as they are, so the next message or raise can still use them.
+        return False
+    loop.ctx.on_ceiling_raised = None
+    loop.start_again = None
     if not restart():
         # Nothing was sent, so nothing is coming: the calls fail as they did.
         pending.fail(refused)
-        return
+        return False
+    loop.refusal_said = None
     tracker.workspace_starting(getattr(loop.cfg, "workspace_eta_s", 0.0))
-    view.notice("starting the workspace again now that the ceiling is raised")
+    view.notice("starting the workspace again now that the ceiling is raised" if raised
+                else "starting the workspace again")
     threading.Thread(
         target=_bring_up,
         args=(pending, starter, store, view, loop, tracker, browser, resuming),
         name="workspace-ready",
         daemon=True,
     ).start()
+    return True
 
 
 def _with_mode(blurb: str, loop: Loop) -> str:
@@ -5591,13 +5623,36 @@ def _refused_turn(loop: Any, view: View, error: Exception) -> bool:
     if ceiling.paused(error) is not None and ctx is not None:
         if ceiling.resolve(ctx, error):
             return _run_turn(loop, view)
+    again = getattr(loop, "start_again", None)
+    if again is not None and not getattr(loop, "start_resent", False) and again():
+        # The service could not be reached when the workspace was asked for; the
+        # person speaking is the moment to ask again, and the turn goes ahead of the
+        # start like any first turn (`_start_refused` waits for its answer). Once per
+        # message: if it fails again, `_bring_up` says so and sets this up for the
+        # NEXT message, and `start_resent` keeps this turn from sending it a third time.
+        loop.start_resent = True
+        try:
+            return _run_turn(loop, view)
+        finally:
+            loop.start_resent = False
     reason = getattr(ctx, "stopped", None) or f"the workspace could not be started: {error}"
     loop.start_refusal = reason
     loop.blocked_reason = reason
+    if getattr(loop, "refusal_said", None) == str(error):
+        # The first refusal is said in the transcript by the start itself (`_bring_up`
+        # posts it, and `Loop.run` puts it there beside the message it held back).
+        # Every later message got nothing there: the page's line below is gone at the
+        # next turn, so a person who asked again saw their message and no answer
+        # (2026-11-22). Each one is answered now.
+        _record_event(loop, (NOT_SENT_YET if getattr(loop, "start_again", None) is not None
+                             else NOT_SENT).format(reason=reason))
+    loop.refusal_said = str(error)
     console.print(
         f"[yellow]The agent was not asked: {reason}.[/]\n"
-        "[yellow]Your message is kept in the study; the agent answers it when the "
-        "study is resumed and its workspace starts.[/]"
+        + ("[yellow]Your message is kept in the study; your next message starts the "
+           "workspace again.[/]" if getattr(loop, "start_again", None) is not None else
+           "[yellow]Your message is kept in the study; the agent answers it when the "
+           "study is resumed and its workspace starts.[/]")
     )
     view.info("waiting for you - the workspace could not be started, so the agent "
               "was not asked; your message is kept for when it can")
@@ -5612,6 +5667,28 @@ def _spoke_or_left(loop: Any) -> bool:
     return bool(heard is not None and heard()) or bool(getattr(loop, "leaving", False))
 
 
+NOT_SENT = ("This message was not sent to the agent: {reason}. It is kept in the study, "
+            "and the agent answers it when the study is resumed and its workspace starts.")
+"""The transcript's answer to a message held back by a workspace that could not start,
+after the first (`_refused_turn`)."""
+
+NOT_SENT_YET = ("This message was not sent to the agent: {reason}. It is kept in the "
+                "study, and the next message starts the workspace again.")
+"""`NOT_SENT` for a start that could not reach the service, which the next message sends
+again (`Loop.start_again`)."""
+
+
+def _record_event(loop: Any, text: str) -> None:
+    """Put a line in the transcript as an event the person can see. Never raises."""
+    event = getattr(loop, "event", None)
+    if event is None:
+        return
+    try:
+        event(text)
+    except Exception:  # noqa: BLE001 - a line not recorded must not end the session
+        pass
+
+
 FAILED_TURN = "The model request failed, so this turn ended: {said}"
 """The transcript's record of a turn a model-API failure ended (`_run_turn`)."""
 
@@ -5620,13 +5697,7 @@ def _record_failure(loop: Any, said: str) -> None:
     """Put a failed request in the transcript as an event the person can see.
 
     Never raises: the session is already handling one failure."""
-    event = getattr(loop, "event", None)
-    if event is None:
-        return
-    try:
-        event(FAILED_TURN.format(said=said))
-    except Exception:  # noqa: BLE001 - see docstring
-        pass
+    _record_event(loop, FAILED_TURN.format(said=said))
 
 
 def _run_interactive(
