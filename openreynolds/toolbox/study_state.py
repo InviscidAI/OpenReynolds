@@ -166,46 +166,62 @@ def record(
 
 LOCK_ATTEMPTS = 400
 LOCK_WAIT_S = 0.005
-LOCK_STALE_S = 5.0
 
 
 @contextmanager
 def _manifest_lock(study: Path) -> Iterator[None]:
-    """Lock the manifest with an `O_EXCL` lock file; bare appends lose records (#120).
+    """Hold an OS lock on `manifest.jsonl.lock`; bare appends lose records (#120).
 
-    A write holds the lock for milliseconds, so a lock older than `LOCK_STALE_S` was
-    left by a writer that crashed: it is removed and taken. Past `LOCK_ATTEMPTS` the
-    write goes ahead unlocked, so a lock that can't be removed still can't block it.
+    `flock` on POSIX, `msvcrt.locking` on Windows, the same as `store.py`. The OS
+    drops the lock when its holder exits, crashed or not, so there is no stale lock
+    to detect and remove, and no window where two writers both remove one and both
+    believe they hold it. The lock file is never deleted: it is empty, and deleting
+    it would let a writer lock a file the next writer no longer opens.
+
+    The lock is on its own file, not on the manifest: `_drop_rung_rows` replaces the
+    manifest, and a lock on the replaced file would no longer exclude anyone. Past
+    `LOCK_ATTEMPTS` the write goes ahead unlocked, so a holder that hangs, or a
+    directory that won't take a lock file, still can't silence the manifest.
     """
     directory = study / STATE_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    lock = directory / (MANIFEST + ".lock")
-    held = False
-    for _ in range(LOCK_ATTEMPTS):
-        try:
-            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            held = True
-            break
-        except FileExistsError:
-            try:
-                if time.time() - lock.stat().st_mtime > LOCK_STALE_S:
-                    os.unlink(lock)
-                    continue
-            except OSError:
-                pass  # its holder released it meanwhile, or it can't be removed
-            time.sleep(LOCK_WAIT_S)
-        except PermissionError:  # Windows: lock still being deleted
-            time.sleep(LOCK_WAIT_S)
-        except OSError:
-            break  # a directory that will not take a lock file still takes the record
     try:
+        # Not followed if a link or a pipe was put there: an open that blocks would
+        # hang every write before the retry budget even starts.
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        handle = os.open(directory / (MANIFEST + ".lock"), flags, 0o600)
+    except OSError:
+        yield
+        return
+    held = False
+    try:
+        for _ in range(LOCK_ATTEMPTS):
+            try:
+                _os_lock(handle, take=True)
+                held = True
+                break
+            except OSError:
+                time.sleep(LOCK_WAIT_S)
         yield
     finally:
-        if held:
-            try:
-                os.unlink(lock)
-            except OSError:
-                pass
+        try:
+            if held:
+                _os_lock(handle, take=False)
+        finally:
+            os.close(handle)
+
+
+def _os_lock(handle: int, *, take: bool) -> None:
+    """Take (without waiting) or release an exclusive OS lock on an open file."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(handle, 0, os.SEEK_SET)  # msvcrt locks from the current position
+        msvcrt.locking(handle, msvcrt.LK_NBLCK if take else msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle, (fcntl.LOCK_EX | fcntl.LOCK_NB) if take else fcntl.LOCK_UN)
 
 
 def _append_row(study: Path, row: dict[str, Any]) -> None:
