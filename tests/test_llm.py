@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import anthropic
+import httpx
 import openai
 import pytest
 
@@ -17,6 +18,9 @@ from openreynolds.llm.responses_api import ResponsesProvider
 from openreynolds.llm.base import stream_with_retries, transient
 
 from conftest import FakeMessages, message, text_block, tool_block
+
+# The request a fake API error carries: openai reads its headers when the error is built.
+_REQUEST = httpx.Request("POST", "https://api.example/v1")
 
 # -- the neutral turn ------------------------------------------------------------
 
@@ -164,7 +168,7 @@ def test_anthropic_goes_lean_when_a_compatible_endpoint_refuses_the_extras():
                 self.calls.append(kwargs)
                 raise anthropic.BadRequestError(
                     "unknown parameter: thinking",
-                    response=SimpleNamespace(status_code=400, headers={}, request=None),
+                    response=httpx.Response(400, request=_REQUEST),
                     body=None,
                 )
             return super().stream(**kwargs)
@@ -462,7 +466,7 @@ def test_anthropic_wraps_status_errors():
         def stream(self, **kwargs):
             raise anthropic.RateLimitError(
                 "slow down",
-                response=SimpleNamespace(status_code=429, headers={}, request=None),
+                response=httpx.Response(429, request=_REQUEST),
                 body=None,
             )
 
@@ -610,7 +614,7 @@ def test_openai_sends_its_own_raw_message_back():
 def test_openai_falls_back_on_unknown_parameters_and_remembers():
     def bad(text):
         return openai.BadRequestError(
-            text, response=SimpleNamespace(status_code=400, headers={}, request=None),
+            text, response=httpx.Response(400, request=_REQUEST),
             body={"error": {"message": text}},
         )
 
@@ -653,7 +657,7 @@ def test_openai_complete_returns_the_text():
 
 def test_openai_wraps_status_errors():
     provider = openai_provider(
-        [openai.AuthenticationError("bad key", response=SimpleNamespace(status_code=401, headers={}, request=None), body=None)]
+        [openai.AuthenticationError("bad key", response=httpx.Response(401, request=_REQUEST), body=None)]
     )
     with pytest.raises(llm.ProviderError) as caught:
         provider.complete(model="m", system="s", prompt="p", max_tokens=5)
@@ -684,7 +688,7 @@ def test_anthropic_probe_with_vision_sends_an_image_and_reads_the_refusal():
             if self.reject:
                 raise anthropic.BadRequestError(
                     "This model does not support image input",
-                    response=SimpleNamespace(status_code=400, headers={}, request=None), body=None,
+                    response=httpx.Response(400, request=_REQUEST), body=None,
                 )
             return SimpleNamespace(input_tokens=9)
 
@@ -712,7 +716,7 @@ def test_anthropic_probe_falls_back_to_a_ping_when_counting_is_forbidden():
         def count_tokens(self, **kwargs):
             raise anthropic.PermissionDeniedError(
                 "not authorized to perform: bedrock-mantle:CountTokens",
-                response=SimpleNamespace(status_code=403, headers={}, request=None), body=None)
+                response=httpx.Response(403, request=_REQUEST), body=None)
 
         def create(self, **kwargs):
             self.created.append(kwargs)
@@ -732,7 +736,7 @@ def test_openai_probe_with_vision_uses_a_data_uri_and_reads_the_refusal():
 
     blind = openai_provider([
         openai.BadRequestError("Invalid content type. image_url is only supported by certain models.",
-                               response=SimpleNamespace(status_code=400, headers={}, request=None),
+                               response=httpx.Response(400, request=_REQUEST),
                                body={"error": {"message": "Invalid content type. image_url is only supported by certain models."}})
     ])
     with pytest.raises(llm.ProviderError) as refused:
@@ -855,7 +859,7 @@ def test_responses_complete_asks_for_little_reasoning_and_drops_it_when_refused(
         if len(sent) == 1:
             raise openai.BadRequestError(
                 "reasoning is not supported",
-                response=SimpleNamespace(status_code=400, headers={}, request=None),
+                response=httpx.Response(400, request=_REQUEST),
                 body={"error": {"message": "reasoning.effort is not supported"}})
         return SimpleNamespace(output_text=" busy meshing ")
 
