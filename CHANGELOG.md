@@ -25,6 +25,15 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- **A workspace start that cannot reach the service is tried again.** A 502 or 504 from
+  the gateway in front of the service, or a connection that fails, used to end the
+  session's chance of a workspace on the spot: every later message was held back until
+  the study was resumed. The start is now sent again for a few minutes, and if it
+  still fails, the person's next message sends it again. A refusal (a plan limit, a quota, a
+  study paused at its ceiling) still stands. An HTML error page from a gateway is read
+  as its title ("504 Gateway Time-out") instead of being passed on as markup, and each
+  later message held back by a start that failed now gets its own line in the
+  transcript instead of none.
 - **Files wait for a late workspace instead of being dropped (#216).** They used to be
   thrown away after 20 minutes with "upload them again"; now they wait as long as the
   session lives, up to two hours, or until the workspace fails. They are placed one at a
