@@ -22,6 +22,10 @@ def test_tool_list_is_deterministic():
         "job_check",
         "job_kill",
         "job_start",
+        # The one tool here that does not run in the workspace or call a model: it runs
+        # the live backend on the user's own machine (`live_tool.py`), and `tools_for`
+        # withholds it where the `[live]` extra is not installed.
+        "live_sim",
         "mesh_review",
         "read_file",
         "send_to_agent",
@@ -57,8 +61,13 @@ def test_the_tool_list_is_the_same_object_in_every_mode(ctx):
     for mode in ("auto", "partial", "structured", "auto"):
         ctx.mode = mode
         lists.append(tools_for(ctx))
-    assert all(offered is TOOLS for offered in lists)
-    names = [tool["name"] for tool in TOOLS]
+    # Against the first answer rather than against `TOOLS`, because one tool in it is
+    # conditional on an installed package rather than on the context: where the
+    # `[live]` extra is absent, `live_sim` is withheld and the answer is the one
+    # derived list, remembered and handed back by identity (`tools_for`). What this
+    # test is about -- the mode not changing it -- holds either way.
+    assert all(offered is lists[0] for offered in lists)
+    names = [tool["name"] for tool in lists[0]]
     assert "checkpoint" in names and names == sorted(names)
 
 
@@ -129,11 +138,16 @@ def test_the_cad_tool_is_offered_only_when_there_is_a_desk_behind_it(ctx):
     assert "cad" not in [tool["name"] for tool in tools_for(ctx)]
     ctx.cad = object()
     assert "cad" in [tool["name"] for tool in tools_for(ctx)]
-    # With every conditional tool wired the list is `TOOLS` itself, the same object
-    # each call, so the prefix the cache is keyed on never moves between requests.
+    # With every conditional tool wired the list is one object, the same each call, so
+    # the prefix the cache is keyed on never moves between requests. It is `TOOLS`
+    # itself on a machine that can serve every tool in it; where the `[live]` extra is
+    # not installed `live_sim` is withheld too, and then the answer is the derived list
+    # -- remembered, so the identity holds there as well.
+    from openreynolds import live_tool
+
     ctx.reviewer = object()
-    assert tools_for(ctx) is TOOLS
-    assert tools_for(ctx) is TOOLS
+    assert tools_for(ctx) is tools_for(ctx)
+    assert (tools_for(ctx) is TOOLS) == live_tool.offered()
 
 
 def test_the_mesh_review_tool_is_offered_only_when_there_is_a_reviewer_behind_it(ctx):

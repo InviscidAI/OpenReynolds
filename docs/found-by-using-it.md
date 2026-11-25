@@ -443,3 +443,41 @@ and asks for one byte to prove the volume will hand bytes over, and the desk ope
 itself. Inlining the contents would be worse than useless for a STEP — it invites reading
 geometry out of ISO-10303 entity lines, and the thing that should read that file is OCCT,
 on the workspace where the kernel is.
+
+## A killed session leaves its kernel running, and they accumulate forever
+
+Running forty-odd native studies in a morning put **104 python processes** on the laptop
+and took free memory to 1.9 GB of 32. Ninety-eight of them were `.kernel/<hash>/driver.py`
+and its `ipykernel_launcher` child: one pair per study, and the oldest had been running
+since 03:05 the previous day, from a session nobody remembered.
+
+The design is right and that is what makes it easy to miss. `LocalBackend.close()` stops
+the kernel, with a comment explaining exactly why it must: *"it is this session's, holds
+this session's bindings, and nothing else can use it, so it goes down here."* On a normal
+exit that runs and the kernel goes.
+
+It never runs when the session is killed. A study that outruns its timeout, or a batch
+stopped with `taskkill /T`, dies without unwinding, and the kernel is not inside the
+killed process tree, so it survives its owner indefinitely. Nothing afterwards looks for
+it: there is no reaper, and `doctor` does not count them. Each one is idle and cheap on
+its own, which is why they go unnoticed until there are a hundred and the machine starts
+swapping. The background shell on this session was reaped by the harness for low memory
+before the cause was found, which is a long way from the cause.
+
+Reaping the ninety-six older than that morning's work freed **2.46 GB** and took the
+process count from 104 to 8, with the running study unaffected.
+
+**Fixed, and not the way this paragraph first guessed.** It said the shape of a fix was a
+stale-owner reap: record the owning session in each kernel's directory, and have a
+starting workspace take down any kernel whose owner is gone. That is three moving parts,
+and the size of it is why the fix was put off.
+
+Reading the failure instead of estimating it gave something much smaller. Every request,
+control and reply between a session and its kernel travels through a file in the kernel's
+own directory, so a kernel whose directory is gone cannot be reached by anything, ever.
+It does not need to know who owned it. It only needs to notice, which it now does about
+once a second, and exit. No reaper, no pids, no lifecycle.
+
+Worth saying plainly that the hosted workspace never had this problem, because the
+instance goes away and takes everything with it. It is a native-workspace bug, and native
+is what a laptop runs.

@@ -473,6 +473,86 @@ here, so the honest state is: **listed as a gap**. Shipping `24/Re` with no meas
 beside it is what [`../README.md`](../README.md) does not do with Blasius either, and for
 the same reason.
 
+## cht_wall.py -- a two-region mesh, and the answer a conjugate solve owes
+
+`advise.py` offers a `conjugate-heat-transfer` family, `chtMultiRegionFoam` and its
+steady twin, and until this there was **no case for either** in this repository: no
+template, no row here, nothing graded. It was the only named family in `advise.FAMILIES`
+with nothing behind it.
+
+**What it builds.** A fluid layer then a solid layer, heat along x, the span two cells
+each way so it is a real 3D mesh solving a 1D problem. Two `blockMesh` blocks carrying
+the cell-zone names `fluid` and `solid`, then `splitMeshRegions -cellZones -overwrite`,
+then `checkMesh -allRegions`.
+
+**The mesh recipe is not invented.** It follows
+[`docs/cad-acceptance/artifacts/desk/T8/build.py`](../../docs/cad-acceptance/artifacts/desk/T8/build.py),
+a recorded run against this image, and three of its findings are the reason this template
+is short:
+
+- the zone name is a token in the `hex` entry, so **no `topoSet` is needed**;
+- the interface faces are named in **no patch at all** -- they merge as internal and
+  `splitMeshRegions` turns them into the mappedWall pair by itself;
+- the unsplit `constant/polyMesh`, `constant/cellToRegion` and `0/` must be **removed**
+  afterwards, because `cellToRegion` is a field of neither region and anything reading
+  the base mesh is reading the wrong mesh. The template removes them and says so.
+
+**The sides are named adiabatic walls, and that is physics.** The reference is 1D series
+conduction, which is only the answer if no heat leaves through the span faces. Left
+unnamed they fall into `defaultFaces`, whose type is a setting rather than a statement,
+and a side that conducts makes the reference wrong while the run still converges.
+
+**What is known before any solver starts.** With gravity set to zero the fluid cannot
+convect, so both regions conduct and the steady answer is exact -- series resistance,
+derived and graded in [`../../openreynolds/toolbox/conjugate.py`](../../openreynolds/toolbox/conjugate.py):
+
+| | |
+|---|---|
+| flux, one value through both regions | **2944.78527607 W/m^2** |
+| temperature at the interface | **301.84049080 K** |
+| drop across the fluid / the solid | **98.159509 K** / **1.840491 K** |
+
+Gravity is off deliberately and that is a modelling choice: a fluid layer with a
+side-to-side temperature difference convects at any Rayleigh number, so a case left under
+gravity has no closed form to be graded against. `constant/g` carries it where a reader
+can see it.
+
+**The trap, and it is a real one.** OpenFOAM's fluid `thermophysicalProperties` has **no
+`kappa` entry**: conductivity comes out of the Prandtl number as `kappa = mu Cp / Pr`.
+Asking for a fluid conductivity therefore means setting `Pr`, and a template that wrote
+`kappa` somewhere would be setting nothing at all. This one inverts it --
+`Pr = 0.001 * 4181 / 0.6 = 6.968333` -- and prints the arithmetic, because `Pr` read as a
+property of the fluid rather than as the place `kappa` is specified is how the wrong
+conductivity gets solved with nobody noticing.
+
+**It does not invent the solver dictionaries -- it copies them off the image.** The
+per-region thermophysical files and the coupled thermal boundary condition are spelled
+differently in the ESI and Foundation builds (`thermophysicalProperties` against
+`physicalProperties`, `turbulenceProperties` against `momentumTransport`) and nothing
+here had run `chtMultiRegionSimpleFoam` to settle which this image takes. Guessing them
+would be a case nobody has run that looks like one that works.
+
+So they come from `$FOAM_TUTORIALS/heatTransfer/chtMultiRegionFoam/multiRegionHeater`,
+which is `chem0d.py`'s pattern and for its reason -- that template copies `reactions` and
+`thermo` out of the image's own tutorial so the data is the image's file byte for byte.
+Here:
+
+- **every file** in the tutorial's fluid-region and solid-region `constant/` directories
+  is copied, *without enumerating their names*, because the names are the thing not
+  known. Whatever this image's tutorial carries, the case gets;
+- the **coupled thermal condition is read out of the tutorial's own `T` field**, by
+  finding the entry on its `<region>_to_<region>` patch and keeping that block verbatim.
+  That is the single entry a guess is most likely to get wrong;
+- only `Pr` (the fluid) and `kappa` (the solid) are then patched, with **asserted**
+  replacements: a file with no such entry, or two of them, is refused by name. A property
+  silently keeping the tutorial's value would be a case solved for somebody else's fluid,
+  converging happily with the wrong answer.
+
+Off the image it refuses and says which path it wanted, so one run on the image finds a
+moved tutorial. **No solved result exists in this repository yet**, no agreement is
+quoted, and a journey test that solves this mesh and grades the interface temperature
+against the number above is the next item.
+
 ## What every one of them has baked in
 
 Four things the templates handle identically, which is most of what makes a hand-built

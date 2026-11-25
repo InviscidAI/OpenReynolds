@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import random
+import re
 import tarfile
 import threading
 import time
@@ -162,6 +163,23 @@ def _retry_after_of(response: httpx.Response | None) -> float | None:
         return None
 
 
+def _plain_text(text: str) -> str:
+    """An error body as words: an HTML page reduced to its title.
+
+    A gateway in front of the service (the load balancer, a proxy) answers a 502 or 504
+    with its own HTML page, not the service's JSON. Passed on whole, that page was what a
+    person read when their workspace would not start (2026-11-22): "http_error
+    (504): <html>\\r\\n<head><title>504 Gateway Time-out</title>...", and what the model
+    read in every tool error of that kind. The title is the whole of what such a page
+    says; a page without one is its text with the markup taken out."""
+    if not re.match(r"\s*<(!doctype|html|head|body)\b", text, re.IGNORECASE):
+        return text
+    title = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    if title and title.group(1).strip():
+        return " ".join(title.group(1).split())
+    return " ".join(re.sub(r"<[^>]+>", " ", text).split())[:300]
+
+
 def _decode_error(response: httpx.Response) -> BackendError:
     """Decode either error shape the service produces.
 
@@ -174,7 +192,7 @@ def _decode_error(response: httpx.Response) -> BackendError:
     try:
         body: Any = response.json()
     except Exception:
-        text = (response.text or "").strip()
+        text = _plain_text((response.text or "").strip())
         return BackendError(text or f"HTTP {status}", code="http_error", status=status,
                             retry_after=after)
 
@@ -1646,6 +1664,30 @@ def _comparable_time(value: Any) -> str:
     return value[:-1] + "+00:00" if value.endswith("Z") else value
 
 
+START_RETRY_DELAYS_S = (3.0, 7.0, 15.0, 20.0)
+"""The waits between start calls that could not reach the service (`Starter`): about
+three quarters of a minute in all, which is longer than foamd takes to come back from a
+restart and short enough that a session whose service is really down says so soon."""
+
+START_RETRY_BUDGET_S = 150.0
+"""No start is sent again once this long has passed since the first (`Starter`): each
+gateway error can itself take a while to come back. The send that is already out may
+still take the client's whole 180 s, so a start gives up within about five minutes,
+inside the tools' wait for the workspace (`pending.WAIT_CEILING_S`, 600 s)."""
+
+
+def out_of_reach(exc: BaseException) -> bool:
+    """Whether a failure says the service could not be reached, rather than that it
+    answered no: a connection that failed or timed out, or a gateway's 502, 503 or 504
+    (a 500 is the service itself failing, which waiting does not mend). Such a failure may be gone a moment later, so a
+    workspace start that met one is worth sending again."""
+    if not isinstance(exc, BackendError):
+        return False
+    if exc.code in ("unreachable", "timeout"):
+        return True
+    return exc.code == "http_error" and exc.status in (502, 503, 504)
+
+
 class Starter:
     """The slow half of getting a workspace: bringing its container up.
 
@@ -1683,6 +1725,19 @@ class Starter:
         self._backend: HostedBackend | None = None
         self._error: BackendError | None = None
         self._cancelled = False
+        self._lost_answer = False
+        """Whether a start call failed out of reach, which leaves it unknown whether
+        the service took it and booted the workspace. Kept across `restart`: the
+        start sent on the person's next message then finds the workspace up because
+        of this session's own earlier call, and its `started_new: false` would leave
+        it running at End. The listing read before the first start answers instead.
+        That listing may be stale if somebody else started the workspace since. Once
+        the workspace is up, End does not rest on it alone: it leaves a workspace up
+        when it finds anyone else's work there, or cannot look (`cli._close_down`).
+        An End while the start is still pending has no such look
+        (`cli._close_down_pending`); with one workspace per study, another session
+        starting this one in those seconds is the rare case, and a workspace left up
+        for the reaper after every lost answer the common one."""
 
     def start(self) -> None:
         """Begin bringing the workspace up, on a background thread. Idempotent."""
@@ -1694,7 +1749,7 @@ class Starter:
 
     def _run(self) -> None:
         try:
-            reply = self.client.start_instance(self.instance_id)
+            reply = self._start_patiently()
         except BackendError as exc:
             self._error = exc
         except BaseException as exc:  # noqa: BLE001 - a thread's exception goes nowhere on its own
@@ -1715,16 +1770,58 @@ class Starter:
             # an older service still works: there the pre-start listing is all there
             # is, which is the behaviour this has always had.
             started_new = reply.get("started_new") if isinstance(reply, dict) else None
+            # Not after a lost answer: a start the gateway timed out on may have been
+            # taken, and booted the workspace, so the call that got through finds it
+            # running and says `started_new: false` about the session's own workspace.
+            # Believed, that left it up at End for the reaper. The listing read
+            # before any start is the honest answer there.
             backend.was_already_running = (
-                self.listed_as_running if started_new is None else not bool(started_new)
+                self.listed_as_running if started_new is None or self._lost_answer
+                else not bool(started_new)
             )
             self._backend = backend
         finally:
             self._done.set()
 
+    def _start_patiently(self) -> Any:
+        """The start call, sent again while the way to the service is what failed.
+
+        A gateway error (a 502 or 504 from the load balancer, a connection refused or
+        timed out) says nothing about the workspace: it is the service being out of
+        reach for a moment -- foamd restarting, a task being replaced. One of those
+        used to end the session's chances of a workspace on the spot (2026-11-22: a 504
+        ten seconds into a session, every later message refused until the study was
+        resumed). Sending the start again is safe: foamd's start is idempotent, and a
+        second one joins the container the first may have begun.
+
+        Only those failures are tried again. A refusal (a plan limit, a quota, a study
+        paused at its ceiling) is the service's answer and stands. A 503 the client
+        already tries again itself (`FoamdClient.request`). A read timeout is not
+        sent again here: each one is the client's whole 180 s, and a handful of them
+        would outlast the tools' wait for the workspace (`pending.WAIT_CEILING_S`);
+        the person's next message sends it again instead (`cli._start_again`)."""
+        delays = list(START_RETRY_DELAYS_S)
+        began = time.monotonic()
+        while True:
+            try:
+                return self.client.start_instance(self.instance_id)
+            except BackendError as exc:
+                if not out_of_reach(exc):
+                    raise
+                # Even a connection error may come after the request went out (the
+                # client cannot always tell, `FoamdClient.request`); see `_lost_answer`.
+                self._lost_answer = True
+                if (not delays or exc.code == "timeout"
+                        or exc.status == 503
+                        or time.monotonic() - began + delays[0] > START_RETRY_BUDGET_S):
+                    raise
+                time.sleep(delays.pop(0))
+
     def restart(self) -> bool:
         """Send the start again, after one that answered with an error -- a study
-        paused at its ceiling, whose ceiling has since been raised. True when a new
+        paused at its ceiling, whose ceiling has since been raised, or a start that
+        could not reach the service and is sent again when the person next speaks
+        (`cli._start_again`). True when a new
         start is under way; False when the last one has not answered, succeeded, or
         was called off, none of which a second start would mend."""
         if not self._done.is_set() or self._error is None or self._cancelled:

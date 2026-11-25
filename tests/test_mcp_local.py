@@ -52,6 +52,7 @@ class FakeBackend:
     def put_file(self, path: str, data: bytes) -> None:
         self.files[path] = data
 
+
     def get_file(self, path: str, offset: int = 0, limit: int | None = None, **_: Any) -> bytes:
         return self.files[path][offset: None if limit is None else offset + limit]
 
@@ -379,3 +380,299 @@ def test_the_sharing_notice_is_in_the_first_answer_and_that_study_is_shared(worl
             break
         time.sleep(0.05)
     assert [c["sharing"] for c in world.studies.calls] == [True, True]
+
+
+# -- files sent mid-study, and files that wait for a late workspace (#216) -------------------
+
+
+def test_files_sent_with_a_message_reach_the_running_study(world):
+    world.studies.ready.set()
+    sid = call(world, "start_study", task="first")["session_id"]
+    first = until(world, sid, "waiting_for_input")
+    study = first["study_id"]
+
+    (world.tmp / "flap.stl").write_bytes(b"solid flap")
+    up = call(world, "upload_file", filename="flap.stl")
+    sent = call(world, "send_message", session_id=sid, text="use this geometry", upload_ids=[up["upload_id"]])
+    assert sent["sent"] is True
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        later = call(world, "study_status", session_id=sid, after_seq=first["next_after_seq"], wait_seconds=0)
+        if later["state"] == "waiting_for_input" and later["transcript"]:
+            break
+        time.sleep(0.05)
+    files = world.studies.browsers[study].backend.files
+    assert files[f"/work/{study}/uploads/flap.stl"] == b"solid flap"
+    said = [r["text"] for r in later["transcript"] if r.get("from") == "caller"]
+    assert said == [f"use this geometry\n\nInput files, uploaded by the caller:\n- /work/{study}/uploads/flap.stl"]
+    assert not (world.tmp / "staging" / up["upload_id"]).exists()
+
+    with pytest.raises(core.McpError, match="not an upload id"):
+        call(world, "send_message", session_id=sid, text="x", upload_ids=["../etc"])
+    (world.tmp / "again.stl").write_bytes(b"solid")
+    again = call(world, "upload_file", filename="again.stl")
+    with pytest.raises(core.McpError, match="slash command"):
+        call(world, "send_message", session_id=sid, text="/status", upload_ids=[again["upload_id"]])
+
+
+class DeliveryHost(core.HostDefaults):
+    """Just what `Deliveries` reads: a session whose workspace a test moves along."""
+
+    def __init__(self) -> None:
+        self.kv = core.MemoryKv()
+        self.workspace = core.WORKSPACE_STARTING
+        self.said: list[str] = []
+        self.placed: list[list[str]] = []
+        self.discarded: list[str] = []
+
+    def observe(self, session_id: str):
+        session = {"workspace": self.workspace, "instance_id": "i-1", "study_id": "s1", "home": "/work/s1"}
+        return {"status": "running"}, {"session": session, "items": []}
+
+    def place_files(self, session_id, instance_id, home, files):
+        names = [f"{home}/uploads/{f['name']}" for f in files]
+        self.placed.append(names)
+        return names
+
+    def say(self, session_id: str, text: str) -> None:
+        self.said.append(text)
+
+    def discard_staged(self, files) -> None:
+        self.discarded += [f["key"] for f in files]
+
+
+def test_files_wait_for_a_late_workspace_instead_of_being_dropped(monkeypatch):
+    """Before #216 a workspace up after 20 minutes got the task with "upload them again",
+    and the staged files were deleted."""
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    deliveries.record("sess", {"task": "drag", "files": [{"key": "k1", "name": "wing.stl"}],
+                               "at": time.time() - core.DELIVERY_WAIT_S - 60})
+    assert deliveries.attempt("sess") is False and host.said == [] and host.discarded == []
+    host.workspace = core.WORKSPACE_READY
+    assert deliveries.attempt("sess") is True
+    assert host.said == ["drag\n\nInput files, uploaded by the caller:\n- /work/s1/uploads/wing.stl"]
+    assert host.discarded == ["k1"]
+
+
+def test_a_failed_workspace_or_a_long_wait_says_the_task_without_the_files():
+    for workspace, waited in ((core.WORKSPACE_FAILED, 0), (core.WORKSPACE_STARTING, core.DELIVERY_GIVE_UP_S + 1)):
+        host = DeliveryHost()
+        host.workspace = workspace
+        deliveries = core.Deliveries(host)
+        deliveries.record("sess", {"task": "drag", "files": [{"key": "k1", "name": "wing.stl"}],
+                                   "at": time.time() - waited})
+        assert deliveries.attempt("sess") is True
+        assert host.said[0].startswith("drag\n\n(The caller also uploaded files") and host.placed == []
+
+
+def test_a_second_message_with_files_joins_one_still_waiting(monkeypatch):
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    monkeypatch.setattr(deliveries, "watch", lambda session_id: None)
+    deliveries.add("sess", "first", [{"key": "k1", "name": "a.stl"}])
+    deliveries.add("sess", "second", [{"key": "k2", "name": "b.stl"}])
+    host.workspace = core.WORKSPACE_READY
+    assert deliveries.attempt("sess") is True
+    assert host.said == ["first\n\nsecond\n\nInput files, uploaded by the caller:\n"
+                         "- /work/s1/uploads/a.stl\n- /work/s1/uploads/b.stl"]
+    deliveries.add("sess", "third", [{"key": "k3", "name": "c.stl"}])
+    assert deliveries.pending("sess")["task"] == "third", "a said one is not added to"
+
+
+def test_files_on_their_way_do_not_hide_an_open_approval():
+    picture = {"session": {"workspace": core.WORKSPACE_READY}, "turn": "user",
+               "items": [{"kind": "approval", "state": "open", "request_id": "r1"}]}
+    assert core.state_of({"status": "running"}, picture, delivering=True) == "waiting_for_approval"
+    assert core.state_of({"status": "running"}, picture, delivering=True, opening=True) == "waiting_for_approval"
+    picture["items"] = []
+    assert core.state_of({"status": "running"}, picture, delivering=True) == "working"
+    assert core.state_of({"status": "running"}, picture, delivering=True, opening=True) == "starting", (
+        "the opening task is not in the transcript yet, so the study has not started")
+
+
+def test_words_without_files_wait_behind_files_still_on_their_way(monkeypatch):
+    host = DeliveryHost()
+    host.staged = lambda upload_id: core.Staged(key=upload_id, name="a.stl", size=1)
+    host.check = lambda session_id: None
+    deliveries = core.Deliveries(host)
+    monkeypatch.setattr(deliveries, "watch", lambda session_id: None)
+    core.send_words(host, deliveries, "sess", "use this", ["a" * 32])
+    core.send_words(host, deliveries, "sess", "and make it fast")
+    core.send_words(host, deliveries, "sess", "/status")
+    assert host.said == ["/status"], "a slash command is not queued; words are"
+    host.workspace = core.WORKSPACE_READY
+    assert deliveries.attempt("sess") is True
+    assert host.said[1] == ("use this\n\nand make it fast\n\nInput files, uploaded by the caller:\n"
+                            "- /work/s1/uploads/a.stl")
+
+
+def test_a_status_call_never_places_files_itself(monkeypatch):
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    deliveries = core.Deliveries(host)
+    watched = []
+    monkeypatch.setattr(deliveries, "watch", watched.append)
+    deliveries.record("sess", {"task": "drag", "files": [{"key": "k", "name": "w.zip"}], "at": time.time()})
+    _, _, state = core.look_once(host, deliveries, "sess")
+    assert host.placed == [] and watched == ["sess"] and state == "starting"
+
+
+def test_a_file_that_fails_is_not_placed_twice_and_is_given_up_on(monkeypatch):
+    monkeypatch.setattr(core, "PLACE_GIVE_UP_S", 0)
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    calls = []
+
+    def place(session_id, instance_id, home, files):
+        calls.append(files[0]["name"])
+        if files[0]["name"] == "bad.stl":
+            raise OSError("disk full")
+        return [f"{home}/uploads/{files[0]['name']}"]
+    host.place_files = place
+    deliveries = core.Deliveries(host)
+    deliveries.record("sess", {"task": "drag", "at": time.time(),
+                               "files": [{"key": "k1", "name": "good.stl"}, {"key": "k2", "name": "bad.stl"}]})
+    for _ in range(core.PLACE_TRIES - 1):
+        assert deliveries.attempt("sess") is False
+    assert deliveries.attempt("sess") is False          # the last try gives the file up
+    assert deliveries.attempt("sess") is True
+    assert calls == ["good.stl"] + ["bad.stl"] * core.PLACE_TRIES, "good.stl was placed once"
+    assert host.said == ["drag\n\nInput files, uploaded by the caller:\n- /work/s1/uploads/good.stl\n\n"
+                         "(These uploaded files could not be placed on the workspace: bad.stl; ask the "
+                         "caller to upload them again with upload_file.)"]
+    assert sorted(host.discarded) == ["k1", "k2"]
+
+
+def test_words_sent_during_a_long_placement_do_not_wait_for_it():
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    deliveries = core.Deliveries(host)
+    gate, inside = threading.Event(), threading.Event()
+
+    def slow(session_id, instance_id, home, files):
+        inside.set()
+        gate.wait(10)
+        return [f"{home}/uploads/{files[0]['name']}"]
+    host.place_files = slow
+    deliveries.record("sess", {"task": "first", "at": time.time(), "files": [{"key": "k1", "name": "a.zip"}]})
+    worker = threading.Thread(target=deliveries.attempt, args=("sess",))
+    worker.start()
+    assert inside.wait(5)
+    began = time.monotonic()
+    deliveries.add("sess", "second", [])
+    deliveries.add("sess", "third", [{"key": "k2", "name": "b.stl"}])
+    assert time.monotonic() - began < 1, "add never waits on a placement"
+    gate.set()
+    worker.join(10)
+    assert host.said == ["first\n\nsecond\n\nthird\n\nInput files, uploaded by the caller:\n"
+                         "- /work/s1/uploads/a.zip\n- /work/s1/uploads/b.stl"]
+
+
+def test_forgetting_an_answered_message_never_forgets_a_new_one():
+    """`unseen` clears the record of words already answered. Words `add`ed between its
+    read and its clear used to be cleared with it, files and all."""
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    deliveries.watch = lambda session_id: None
+    host.kv.set(deliveries._key("sess"), json.dumps({"said": "old", "at": time.time(), "seq": 0}))
+    real_pending = deliveries.pending
+    raced = []
+
+    def pending(session_id):
+        answer = real_pending(session_id)
+        if not raced and answer and "said" in answer:
+            raced.append(1)
+            deliveries.add("sess", "new", [{"key": "k9", "name": "n.stl"}])
+        return answer
+    deliveries.pending = pending
+    assert deliveries.unseen("sess", {"items": [{"seq": 5, "kind": "user"}]}) is False
+    assert real_pending("sess")["task"] == "new"
+
+
+def test_said_words_wait_for_an_answering_line_not_any_row():
+    """An event the runner writes before it records the words is not their answer: the
+    turn still says "user", and ending the wait there read `waiting_for_input`."""
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    host.kv.set(deliveries._key("sess"), json.dumps({"said": "go", "at": time.time(), "seq": 3}))
+    events = {"items": [{"seq": 4, "kind": "event"}]}
+    assert deliveries.unseen("sess", events) is True
+    assert deliveries.unseen("sess", {"items": [{"seq": 4, "kind": "event"}, {"seq": 5, "kind": "user"}]}) is False
+    assert deliveries.pending("sess") is None
+
+
+def test_the_opening_task_reads_starting_even_when_the_study_is_resumed():
+    """A resumed study's transcript already holds the last run, so whether anyone has
+    spoken cannot tell the opening task from words sent mid-study: the record says."""
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    host.staged = lambda upload_id: core.Staged(key=upload_id, name="a.stl", size=1)
+    host.check = lambda session_id: None
+    resumed = {"session": {"workspace": core.WORKSPACE_READY, "instance_id": "i-1", "study_id": "s1",
+                           "home": "/work/s1"}, "turn": "user",
+               "items": [{"seq": 1, "kind": "user", "text": "last run"}, {"seq": 2, "kind": "assistant", "text": "done"}]}
+    host.observe = lambda session_id: ({"status": "running"}, resumed)
+    deliveries = core.Deliveries(host)
+    deliveries.watch = lambda session_id: None
+
+    deliveries.record("sess", {"task": "again", "files": [{"key": "k", "name": "a.stl"}],
+                               "at": time.time(), "opening": True})
+    assert core.look_once(host, deliveries, "sess")[2] == "starting"
+    assert deliveries.attempt("sess") is True
+    assert deliveries.pending("sess")["opening"] is True, "the said record keeps the mark"
+    assert core.look_once(host, deliveries, "sess")[2] == "starting", "said, not yet in the transcript"
+
+    deliveries._clear("sess")
+    deliveries.record("sess", {"task": "again", "files": [{"key": "k", "name": "a.stl"}],
+                               "at": time.time(), "opening": True})
+    core.send_words(host, deliveries, "sess", "and this", ["b" * 32])
+    assert deliveries.pending("sess")["opening"] is True, "words merged into the opening task keep it opening"
+    assert core.look_once(host, deliveries, "sess")[2] == "starting"
+
+    deliveries._clear("sess")
+    core.send_words(host, deliveries, "sess", "and this", ["b" * 32])
+    assert core.look_once(host, deliveries, "sess")[2] == "working", "words to a study under way"
+
+
+def test_a_short_outage_does_not_give_a_file_up():
+    host = DeliveryHost()
+    host.workspace = core.WORKSPACE_READY
+    down = [True]
+
+    def place(session_id, instance_id, home, files):
+        if down[0]:
+            raise OSError("502 from the workspace")
+        return [f"{home}/uploads/{files[0]['name']}"]
+    host.place_files = place
+    deliveries = core.Deliveries(host)
+    deliveries.record("sess", {"task": "drag", "at": time.time(), "files": [{"key": "k1", "name": "a.stl"}]})
+    for _ in range(core.PLACE_TRIES * 3):
+        assert deliveries.attempt("sess") is False
+    down[0] = False
+    assert deliveries.attempt("sess") is True
+    assert host.said == ["drag\n\nInput files, uploaded by the caller:\n- /work/s1/uploads/a.stl"]
+
+
+def test_an_upload_named_twice_is_placed_once():
+    host = DeliveryHost()
+    host.staged = lambda upload_id: core.Staged(key=upload_id, name="a.stl", size=1)
+    files = core.staged_files(host, ["a" * 32, "a" * 32])
+    assert len(files) == 1
+    deliveries = core.Deliveries(host)
+    deliveries.watch = lambda session_id: None
+    deliveries.add("sess", "x", files + files)
+    assert len(deliveries.pending("sess")["files"]) == 1
+
+
+def test_a_lapsed_place_lock_is_neither_refreshed_nor_released_by_its_old_holder():
+    host = DeliveryHost()
+    deliveries = core.Deliveries(host)
+    mine = deliveries._lock("sess")
+    assert mine and deliveries._lock("sess") is None
+    host.kv.delete(deliveries._key("sess") + ":lock")          # it lapsed
+    theirs = deliveries._lock("sess")
+    assert deliveries._refresh("sess", mine) is False
+    deliveries._unlock("sess", mine)
+    assert host.kv.get(deliveries._key("sess") + ":lock") == theirs

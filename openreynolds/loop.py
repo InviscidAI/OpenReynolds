@@ -167,6 +167,13 @@ class Loop:
         self.start_refusal: str | None = None
         """What the last refused turn was refused with (`StartRefused`), for a
         one-shot run to end on. Cleared by a turn that runs."""
+        self.start_again: Callable[[], bool] | None = None
+        """Sends a workspace start that could not reach the service again; set by the
+        start that failed (`cli._bring_up`) and used by the next refused turn
+        (`cli._refused_turn`). True when a new start is under way."""
+        self.refusal_said: str | None = None
+        """The start failure the transcript has already said, so a later message held
+        back by the same one is answered with a line of its own (`cli._refused_turn`)."""
         self.recorder: Any | None = None
         """The study's trace, when this machine shares (`sharing.Recorder`, wired by
         `cli.session`): told every model turn, tool call and recorded message. It hears

@@ -38,6 +38,7 @@ requests would cost the whole conversation at the uncached rate on every side qu
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 import shlex
@@ -47,6 +48,11 @@ from typing import Any, Callable
 
 from . import ceiling, convergence, images
 from . import solvers, trace
+# `live_tool` imports pathlib and nothing else at module scope: the Warp import is
+# behind `openreynolds.live.__getattr__`, and this module is imported by every session,
+# every CLI command and the MCP server. If that ever changes, `openreynolds --help` on
+# a machine with no GPU stops working, which `tests/test_live_optional.py` is for.
+from . import live_tool
 from .progress import (
     case_dir_from_cmd,
     felix_job_facts,
@@ -228,9 +234,20 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     sub-agent beats the bash the caller already has. With both wired the list is
     `TOOLS` itself, the same object every call, so the cache prefix does not move.
 
-    Neither of those can change during a session: the desk and the reviewer are built
-    once, before the first request, and the solver is fixed. Nothing else is
-    conditional. `checkpoint` used to be -- offered only in structured mode, so a
+    `live_sim` is conditional on the same grounds and on a third thing: not a model key
+    but an installed package. It runs a GPU lattice Boltzmann solver on the user's own
+    machine (`live_tool.py`, and `DECISIONS_LIVE.md` D6 for why not in the workspace),
+    which the optional `[live]` extra installs and most installs will not have. Offered
+    where it can run and withheld where it cannot, by `live_tool.offered()`, for the
+    reason above said once more: a tool whose only possible answer is `pip install
+    'openreynolds[live]'` is a round trip spent learning what the harness already knew.
+    The refusal text still exists -- `live_tool.handler` returns it -- because a call
+    can arrive from a replayed transcript or another harness without passing this list.
+
+    None of the three can change during a session: the desk and the reviewer are built
+    once, before the first request, the solver is fixed, and nothing pip-installs Warp
+    into a running interpreter. Nothing else is conditional. `checkpoint` used to be --
+    offered only in structured mode, so a
     `/mode` switch into or out of it changed the tool list mid-conversation, which
     rewrote the prompt cache from position 0 and, worse, invalidated every thinking
     block in the thread: a thinking block is bound to the system prompt, the tool
@@ -245,6 +262,8 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
         withheld.add("cad")
     if ctx.reviewer is None:
         withheld.add("mesh_review")
+    if not live_tool.offered():
+        withheld.add("live_sim")
     solver = getattr(ctx, "solver", solvers.OPENFOAM)
     # No `auto` branch. A study still choosing used to be offered `choose_solver`
     # alone and then, mid-conversation, the chosen solver's prompt and tools -- and a
@@ -254,13 +273,29 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     # list both differ"), and the turn ended with nothing said. The solver is now
     # settled before the first request (`desk.route`), so the list is the solver's
     # from turn one; `auto` is never asked for here, and is OpenFOAM's if it were.
-    if solver == solvers.FELIX:
-        offered = FELIX_TOOLS
-    else:
-        offered = TOOLS if not withheld else [
-            tool for tool in TOOLS if tool["name"] not in withheld
-        ]
+    # One object per distinct answer, remembered. It used to be a fresh list on every
+    # request whenever anything was withheld, which was harmless while the only
+    # withheld tools were `cad` and `mesh_review` -- those are absent from
+    # `FELIX_TOOLS` too, so a Felix study got that list itself. `live_sim` is in both
+    # lists and withheld by the environment rather than by the context, so on a machine
+    # without the `[live]` extra every request would have built its own list; equal
+    # bytes, but no longer the one object the comment on `FELIX_TOOLS` promises.
+    key = (solver, frozenset(withheld))
+    remembered = _OFFERED.get(key)
+    if remembered is not None:
+        return remembered
+    whole = FELIX_TOOLS if solver == solvers.FELIX else TOOLS
+    kept = [tool for tool in whole if tool["name"] not in withheld]
+    # `whole` itself when nothing was actually taken out: a withheld name that this
+    # list never had (`cad` in a Felix study) must not cost the identity.
+    _OFFERED[key] = offered = whole if len(kept) == len(whole) else kept
     return offered
+
+
+_OFFERED: dict[tuple[str, frozenset[str]], list[dict[str, Any]]] = {}
+"""`(solver, withheld) -> the list handed back`, so that each answer is one object for
+the life of the process. Keyed on what was withheld rather than on the context, so a
+later call that can serve more tools gets a longer list rather than this one."""
 
 
 FRESH_SHELL = (
@@ -511,6 +546,7 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["cmd"],
         },
     },
+    live_tool.TOOL,
     {
         "name": "mesh_review",
         "description": (
@@ -625,7 +661,14 @@ FELIX_FRESH_SHELL = (
 
 FELIX_ONLY = frozenset({"cad", "mesh_review"})
 """Withheld from a Felix study: the CAD desk and the reviewer build and judge OpenFOAM
-meshes, and a Felix case needs a tagged `.vtu`."""
+meshes, and a Felix case needs a tagged `.vtu`.
+
+`live_sim` is deliberately not one of them. What puts a tool in here is being tied to
+OpenFOAM, and the live backend is tied to neither solver: it does not touch the
+workspace, it writes its figures to the user's own machine, and a Felix study's
+questions about a bluff body or a cavity are the same questions. Withholding it would
+also make the backend selector `DECISIONS_LIVE.md` D2 argues for -- one case, two
+backends, comparable -- unreachable from half the studies."""
 
 
 def _felix_variant(tool: dict[str, Any]) -> dict[str, Any]:
@@ -849,7 +892,61 @@ def _handled(ctx: ToolContext, handler: Callable[[ToolContext, dict[str, Any]], 
 # -- handlers ------------------------------------------------------------------
 
 
+_ROOT_SEARCH = re.compile(
+    r"(?:^|[;&|]\s*)(?:sudo\s+)?"
+    r"(?:find\s+(?:-[A-Za-z]+\s+)*/(?=\s|$)"
+    r"|grep\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:[^;&|]*\s)?/(?=\s|$)"
+    r"|ls\s+-[A-Za-z]*R[A-Za-z]*\s+/(?=\s|$))"
+)
+"""A recursive search anchored at `/`, at the start of a command or just after a separator.
+
+Anchored so that `find /work -name x` and `grep -r thing /work/.toolbox` are untouched:
+only a walk of the whole disk matches. The separator alternative is what catches the
+real case, which arrived as the third command of a one-line chain."""
+
+ROOT_SEARCH_REFUSED = """refused: this would search the whole filesystem.
+
+This workspace is not a container. It is the machine the person is sitting at, and `/`
+is their own disk, so a search from there walks every file they have. It is not slow
+the way a large mesh is slow: a study on 2026-11-22 ran `find / -name nozzle.py` as a
+fallback, spent twenty-seven minutes inside it, and was killed before it answered
+anything at all.
+
+Nothing the toolbox ships needs finding. It is all in one directory:
+
+    ls /work/.toolbox              every script, including the one you are after
+    cat /work/.toolbox/README.md   what each of them is for
+
+That is the search you wanted and it costs nothing. If you do need to look outside
+`/work`, name the directory you mean rather than the root of the disk."""
+
+
+def _root_search_refusal(cmd: str) -> str | None:
+    """The refusal for a whole-disk search on a native workspace, or None.
+
+    A guard rather than a line in `ENVIRONMENT.md`, and the difference was settled by
+    testing rather than taste. The note was written first and does not work: a session
+    looks for the script before it reads the file that says where the script is, so a
+    correction sitting in that file never reaches the command that would have opened
+    it. Given the original prompt on the branch carrying the note, a run still wrote
+    `cd /work; ls .toolbox; find / -name nozzle.py -not -path "*/proc/*"`, with the
+    `ls` already successful ahead of it. This lands at the moment of the mistake
+    instead, and answers the question the search was asking.
+
+    Native only. In the image `/` is a small sealed filesystem where the same search
+    costs nothing and is sometimes the right move.
+    """
+    if os.environ.get("OPENREYNOLDS_LOCAL", "").strip().lower() != "native":
+        return None
+    return ROOT_SEARCH_REFUSED if _ROOT_SEARCH.search(cmd) else None
+
+
 def _bash(ctx: ToolContext, args: dict[str, Any]) -> str:
+    refusal = _root_search_refusal(args["cmd"])
+    if refusal:
+        # Before `exec`, deliberately. The cost of this command is paid the moment it
+        # starts, so a note attached to its output arrives half an hour too late.
+        return refusal
     asked = int(args.get("timeout_s") or 120)
     started = time.monotonic()
     result = ctx.backend.exec(_pipefail(args["cmd"]), cwd=args.get("cwd") or ctx.home,
@@ -2224,6 +2321,7 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,
+    "live_sim": live_tool.handler,
     "mesh_review": _mesh_review,
     "read_file": _read_file,
     "send_to_agent": _send_to_agent,

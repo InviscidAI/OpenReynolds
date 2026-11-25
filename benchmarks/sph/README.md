@@ -57,10 +57,15 @@ and the exact answer is arithmetic rather than an experiment.
 
 Sampled over the middle half of the tank only. The ends carry the wall's own error, which
 is a different quantity and is what the sloshing case measures instead. The worst
-individual particle is always at the free surface, where the kernel support is truncated
-and there is no fluid above to sum -- that is a property of SPH and not a defect of this
-implementation, and it is graded on a separate, looser bound so that it is visible rather
-than averaged away.
+individual particle sits at the free surface once the water has settled, where the kernel
+support is truncated and there is no fluid above to sum -- that is a property of SPH and
+not a defect of this implementation, and it is graded on a separate, looser bound so that
+it is visible rather than averaged away. The grader measures where it is rather than
+asserting it: at the default settings it comes out 17.4 mm below the surface of a 100 mm
+tank, 83% of the way up, with the ten worst all in the top fifth. It is not a law. On a
+coarse, unsettled run the worst sat 47% of the way up, because the error had not yet
+collected at the top, and the grader says so in that case instead of repeating a reason
+that does not apply.
 
 ## The sloshing period, which is also exact
 
@@ -126,9 +131,11 @@ error of `drho/rho` is a pressure error of `400 drho/rho` as a fraction of the `
 being measured. Before the density diffusion was added this read 67%, with operators that
 balance gravity to 3% and a density rate identically zero on a static field: nothing was
 wrong with the discretisation, the noise was simply being amplified. The worst particle
-is always at the free surface, where the kernel support is truncated and there is no
-fluid above to sum, which is a property of SPH and not of this implementation -- hence a
-separate, looser bound on it rather than averaging it into the RMS.
+sits at the free surface on a settled run, where the kernel support is truncated and there
+is no fluid above to sum, which is a property of SPH and not of this implementation --
+hence a separate, looser bound on it rather than averaging it into the RMS. The grader
+reports the position it measured, because "always" was an assertion nobody had checked and
+it does not hold before the water settles.
 
 **Where the difference comes from, sloshing: the sign is the diagnosis.** The period
 comes out **short**, and short means the effective tank is shorter than the one the case

@@ -74,6 +74,44 @@ CASES: tuple[tuple[str, tuple[str, ...], str, bool, bool], ...] = (
     ("a year of wind composed, exceedance",
      ("openreynolds/toolbox/wind_comfort.py", "--check"),
      "the fraction of the year above the threshold, exact", False, True),
+    ("particle relaxation and two terminal velocities",
+     ("benchmarks/particles/grade.py", "drag"),
+     "v(t) = U(1 - exp(-t/tau_p)) and w_t = tau_p g (1 - rho_f/rho_p), both exact under\n"
+     "      Stokes drag; and the Schiller-Naumann terminal against its implicit root,\n"
+     "      where Re_p = 42.8 makes Stokes the wrong law", False, True),
+    ("a tracer orbit in solid-body rotation",
+     ("benchmarks/particles/grade.py", "tracer"),
+     "the orbit closes exactly after one period, and RK4 must show order 4", False, True),
+    ("turbulent pipe friction and the law of the wall",
+     ("openreynolds/toolbox/pipe_friction.py", "--check"),
+     "one exact branch (f = 64/Re) and two fits to Nikuradse, so what is graded"
+     " is the arithmetic and the agreement between correlations: Colebrook"
+     " satisfying its own implicit equation, Haaland within its claimed 2% of"
+     " it, and the wall law crossing inside wall.py own buffer band",
+     False, True),
+    ("conjugate heat transfer, the two-region reference",
+     ("openreynolds/toolbox/conjugate.py", "--check"),
+     "steady series conduction, exact, and the two continuities a conjugate"
+     " interface owes at once; plus the shell-versus-slab factor, graded"
+     " against its own algebra rather than a printed per cent",
+     False, True),
+    ("quasi-1D compressible relations",
+     ("openreynolds/toolbox/nozzle.py", "--check"),
+     "exact closed forms, and three identities: A/A* = 1 at the throat,"
+     " the Prandtl relation M1* M2* = 1 derived independently of the jump"
+     " relations it checks, and total pressure falling through every shock",
+     False, True),
+    ("the laminar flat plate, Blasius",
+     ("openreynolds/toolbox/blasius.py", "--check"),
+     "the Blasius similarity solution, exact: the published f''(0) ="
+     " 0.3320573362151963, and reference_area.py's typed 1.328 held to 4 f''(0)."
+     " Both conventions printed, since 0.4696 is the same answer sqrt(2) away",
+     False, True),
+    ("critical Stokes number for capture on a cylinder",
+     ("benchmarks/particles/grade.py", "capture"),
+     "1/8 in the St = tau_p U_inf / R convention. Robinson et al.\n"
+     "      (arXiv:2310.03474v2) III.3 states 1/4 for St = m U/(l_y xi) with U = 2 U_inf\n"
+     "      at the stagnation point, the same result a factor of two apart", True, True),
 )
 
 VERDICT = re.compile(r"\b(PASS|PASSED|FAIL|FAILED|DISAGREES|agrees)\b")

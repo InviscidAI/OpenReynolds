@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import families
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
@@ -66,13 +67,20 @@ def flat(text: str) -> str:
 # -- every runnable case is findable ---------------------------------------------------
 
 
-@pytest.mark.parametrize("family", ["lbm", "sph", "felix", "moving_mesh", "thermal_stress"])
+@pytest.mark.parametrize("family", families())
 def test_the_tutorial_index_names_every_benchmark_family(family):
     """A case family under `benchmarks/` that the tutorial index does not name is a case
     nobody reading the tutorials can find. `benchmarks/README.md` has its own version of
-    this check; this one is about the index a reader is sent to first."""
+    this check; this one is about the index a reader is sent to first.
+
+    The name is matched **with its slash**, because the bare word is not evidence: the
+    index says "complete-combustion" and "boundary particles" in prose, so grepping
+    `combustion` and `particles` passed while `combustion/` and `particles/` appeared
+    nowhere. A check that a word occurs somewhere on a long page is close to vacuous.
+    """
     assert f"{family}/" in index(), (
-        f"benchmarks/{family}/ holds runnable cases and the tutorial index does not name it")
+        f"benchmarks/{family}/ holds runnable cases and the tutorial index does not name "
+        f"it (as `{family}/` -- a bare mention in prose is not a link to its account)")
 
 
 @pytest.mark.parametrize("template", sorted(p.name for p in TEMPLATES.glob("*.py")))
@@ -94,13 +102,20 @@ def test_the_tier_two_page_names_nothing_that_is_not_a_template():
 
 
 def test_the_numpy_solvers_are_findable_without_an_openfoam():
-    """The two cheapest cases in the repository and the only ones that need no OpenFOAM,
-    no workspace, no model and no account. They are also the two whose graders *solve*
-    rather than reading a finished run, so they are the only cases a reader can re-derive
-    from nothing but this package."""
+    """The cheapest cases in the repository: no OpenFOAM, no workspace, no model, no
+    account. These three graders *solve* rather than reading a finished run, which is
+    what lets a reader re-derive the answer from nothing but this package.
+
+    The docstring here used to say "the two cheapest cases ... and the only ones",
+    written when `lbm/` and `sph/` were the whole of it. `particles/` solves too, and
+    `panel.py`, `acoustics.py` and `wind_comfort.py` need no OpenFOAM either, so "the
+    only ones" was wrong in the direction of underselling the product -- which is still
+    wrong, and in the one place a reader checks what a laptop can do.
+    """
     text = flat(index())
     for command in ("python benchmarks/lbm/grade.py poiseuille",
-                    "python benchmarks/sph/grade.py sloshing"):
+                    "python benchmarks/sph/grade.py sloshing",
+                    "python benchmarks/particles/grade.py tracer"):
         assert command in text, f"the index does not show how to run {command}"
     assert "numpy only" in text.lower(), (
         "the index does not say that a tier of these cases needs nothing installed")
@@ -131,7 +146,12 @@ def test_the_index_states_a_normalisation_for_every_case_row():
     scales = ("exact", "channel height", "step height", "diameter", "cavity side",
               "lattice units", "chord", "superficial", "depth", "tank length",
               "hydraulic diameter", "lid speed", "mixed mean", "pascals",
-              "thickness", "closed form", "could not be read", "no reference")
+              "thickness", "closed form", "could not be read", "no reference",
+              # A length and a velocity scale the list lacked until a row needed them:
+              # the capture threshold is normalised on the cylinder radius and the
+              # freestream speed, and that row exists because one published value is
+              # in circulation in two conventions a factor of two apart.
+              "radius", "freestream")
     rows = case_rows()
     assert len(rows) >= 18, f"the index lists only {len(rows)} cases across its tiers"
     for row in rows:

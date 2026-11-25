@@ -469,9 +469,16 @@ def test_tools_felix_list_is_the_same_bytes_every_call(felix):
 
 
 def test_tools_openfoam_list_is_unchanged(ctx):
+    """`TOOLS` itself where every tool in it can be served. `live_sim` is conditional
+    on an installed package rather than on the context (`tools_for`), so without the
+    `[live]` extra the answer is the one derived list instead -- the same object every
+    call, which is what the cache prefix needs."""
+    from openreynolds import live_tool
+
     ctx.cad = object()
     ctx.reviewer = object()
-    assert tools_for(ctx) is TOOLS
+    assert tools_for(ctx) is tools_for(ctx)
+    assert (tools_for(ctx) is TOOLS) == live_tool.offered()
 
 
 def test_tools_felix_structured_mode_still_has_its_checkpoint(felix):

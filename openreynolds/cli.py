@@ -105,9 +105,13 @@ OUTPUT_FORMATS = ("text", "stream-json")
 """`text` is a person reading a terminal. `stream-json` is one JSON object per line and
 nothing else on stdout, for an agent or a script driving this."""
 
-JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard"})
+JSON_CAPABLE_COMMANDS = frozenset({"studies", "doctor", "compare", "dashboard", "live"})
 """Subcommands that have a structured answer for the group's `--output-format` to mean
-something. Everything else it is given with is refused rather than answered in prose."""
+something. Everything else it is given with is refused rather than answered in prose.
+
+`live` is the group, not its subcommands: `invoked_subcommand` is one word deep, and
+every command under it answers `--json`, so the name of the group is the honest entry.
+"""
 
 
 def _json_asked(ctx: click.Context) -> bool:
@@ -1070,6 +1074,224 @@ def site_cmd(lat: float, lon: float, name: str, radius: float, start: str, end: 
         raise SystemExit(1)
 
 
+LIVE_COLLISIONS = ("trt", "bgk", "regularized")
+"""The collision operators `openreynolds/live/lattice.py` compiles, as a flag's
+choices. Named here rather than imported from there, because importing it to build a
+`click.Choice` would pull Warp at module scope and break `openreynolds --help` on every
+machine without the extra -- which is the one thing this whole group is arranged to
+avoid. `tests/test_live_cli.py` asserts the two agree."""
+
+LIVE_FLUIDS = ("air", "water")
+"""`live/units.py::FLUIDS`, for the same reason and checked by the same test. A caller
+with a third fluid passes a `units.Fluid` of their own in Python; a flag cannot carry
+the provenance that type exists to carry."""
+
+
+def _live_cases() -> Any:
+    """`openreynolds.live.cases`, or the install line and exit 1.
+
+    Every `live` subcommand starts here, and nothing in the group imports anything
+    under `openreynolds.live` at module scope. That is not a style choice: `live/world.py`
+    imports Warp and numpy when it is read, so a single module-scope import in this
+    file would make `openreynolds --help`, `openreynolds studies` and a plain session
+    fail on any machine that has not installed the extra -- which is almost all of
+    them, by design (`pyproject.toml`'s `live` extra, and `DECISIONS_LIVE.md` D1 on why
+    the extra stays skippable).
+
+    `require()` rather than `available()`: `available()` only answers whether the spec
+    is findable, and an extra that is half-installed -- a Warp wheel for the wrong
+    Python, a CUDA driver mismatch -- is exactly the case where the import's own words
+    are worth more than ours. `LiveUnavailable` is an `ImportError`, and so is what a
+    broken install raises, so one `except` covers both and the message says which it
+    was.
+    """
+    from . import live
+
+    try:
+        live.require()
+        from .live import cases
+
+        # **Register the SPH cases before anything reads the catalogue.** They live in
+        # their own module and register themselves on import, deferred because
+        # `sph_cases` needs `Case` and the grading helpers from `cases` and a
+        # module-level import either way round is a cycle. Without this call
+        # `openreynolds live cases` listed sixteen while `live run` accepted
+        # twenty-four -- so the eight free-surface cases were runnable and invisible,
+        # and a reader who had just installed the extra could not find them.
+        cases.load_sph_cases()
+    except ImportError as exc:
+        # markup=False, not escape(): the message carries `pip install
+        # 'openreynolds[live]'`, and `[live]` is a rich style tag.
+        console.print(str(exc), highlight=False, markup=False)
+        raise SystemExit(1) from None
+    return cases
+
+
+def _live_answer(result: dict[str, Any], cases: Any, as_json: bool) -> None:
+    """Print one live result and exit as it did.
+
+    The exit code is the verdict, because that is the whole point of a validation: a
+    script that runs `openreynolds live crosscheck` in CI needs the answer without
+    parsing anything, and `benchmarks/*/grade.py` already set that convention here.
+    """
+    if as_json:
+        sys.stdout.write(json.dumps(result, default=str) + "\n")
+    else:
+        console.print(cases.report(result), highlight=False, markup=False)
+    if not result.get("passed"):
+        raise SystemExit(1)
+
+
+@main.group("live")
+def live_group() -> None:
+    """Run the live GPU backend on this machine (needs the [live] extra).
+
+    A lattice Boltzmann fluid that runs here, next to your own GPU, rather than in the
+    study's workspace: the workspace image has no Warp and no CUDA toolchain, and
+    `DECISIONS_LIVE.md` D6 is the record of why it is not going to get them. With no
+    GPU the same kernels run on Warp's CPU backend, correctly and much more slowly:
+    the physics is device-independent and only the rate is not. `PROGRESS_LIVE.md`
+    names the device beside every number, because a rate without a device is not a
+    measurement.
+
+    `pip install 'openreynolds[live]'` installs it. Without that, every subcommand here
+    says so and exits 1, and nothing else in OpenReynolds is affected.
+    """
+
+
+@live_group.command("cases")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_cases_cmd(ctx: click.Context, as_json: bool) -> None:
+    """List the cases the live backend can run, one line each."""
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    if as_json:
+        sys.stdout.write(json.dumps({
+            "cases": [{"name": name, "about": case.about}
+                      for name, case in cases.CASES.items()],
+        }, default=str) + "\n")
+        return
+    for line in cases.describe_cases():
+        console.print(line, highlight=False, markup=False)
+
+
+@live_group.command("run")
+@click.argument("case")
+@click.option("--resolution", type=int, default=None,
+              help="Cells across the domain's longest side. Default: the case's own.")
+@click.option("--steps", type=int, default=None,
+              help="Lattice steps. Default: what the case's reference measurement needs.")
+@click.option("--collision", type=click.Choice(LIVE_COLLISIONS), default=None,
+              help="Collision operator. Default: the case's own (trt for the graded ones).")
+@click.option("--fluid", type=click.Choice(LIVE_FLUIDS), default=None,
+              help="Fluid, at 20 C. Default: the one the case's reference was measured in.")
+@click.option("--out", "out", type=click.Path(file_okay=False, path_type=Path),
+              default=Path("."), show_default=True, help="Where the figures go.")
+@click.option("--device", default="", help="Warp device, e.g. cuda:0 or cpu. Default: the best one here.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_run_cmd(ctx: click.Context, case: str, resolution: int | None, steps: int | None,
+                 collision: str | None, fluid: str | None, out: Path, device: str,
+                 as_json: bool) -> None:
+    """Run one case, or a case file, and report what it measured.
+
+    CASE is a name from `openreynolds live cases`, or a path to a case file ending
+    .yaml or .yml -- the same file format, with the `backend:` selector
+    `DECISIONS_LIVE.md` D2 explains: `live` runs it here, `openfoam` answers with the
+    OpenFOAM case the same description corresponds to.
+
+    Only the flags you give are passed on. A case's defaults are part of what it
+    validates against -- the resolution Ghia's cavity needs to agree with Ghia is not a
+    taste -- so an unset flag leaves the case's own number alone rather than
+    substituting a default of this file's choosing.
+
+    Exits 0 if every check passed and 1 if any did not, so a script needs read nothing.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    # `out_dir`, which is the keyword `cases.run_case` and every runner takes.
+    # It was `out` until 2026-11-23, and `out` is not a parameter of any of
+    # them -- it travelled through `**overrides` into the runner and was
+    # swallowed by its trailing `**_`, so `--out` was accepted, ignored, and
+    # every figure landed in the working directory instead. Silent, because
+    # the runners ignore unknown keywords on purpose (see `run_case`).
+    overrides: dict[str, Any] = {"out_dir": str(out)}
+    for name, value in (("resolution", resolution), ("steps", steps),
+                        ("collision", collision), ("fluid", fluid)):
+        if value is not None:
+            overrides[name] = value
+    if device:
+        overrides["device"] = device
+    if case.lower().endswith((".yaml", ".yml")):
+        result = cases.run_case_file(case, **overrides)
+    else:
+        result = cases.run_case(case, **overrides)
+    _live_answer(result, cases, as_json)
+
+
+@live_group.command("bench")
+@click.option("--resolution", "resolutions", type=int, multiple=True,
+              help="Cells across the longest side. Repeatable: two of them measure both "
+                   "in one go, which is the only way the rate's scaling is a measurement "
+                   "rather than an extrapolation.")
+@click.option("--steps", type=int, default=None, help="Lattice steps per resolution.")
+@click.option("--collision", type=click.Choice(LIVE_COLLISIONS), default=None,
+              help="Collision operator to measure. Default: the benchmark's own.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_bench_cmd(ctx: click.Context, resolutions: tuple[int, ...], steps: int | None,
+                   collision: str | None, as_json: bool) -> None:
+    """Measure the lattice update rate on this machine's device.
+
+    Prints MLUPS for whatever device it is run on and names the device, because a rate
+    with no device beside it is not a number anybody can use. The 1000 MLUPS target in
+    the brief is an H100 claim and is recorded as not measured until this is run on one
+    (`DECISIONS_LIVE.md` D7).
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    kwargs: dict[str, Any] = {}
+    if resolutions:
+        kwargs["resolutions"] = list(resolutions)
+    if steps is not None:
+        kwargs["steps"] = steps
+    if collision is not None:
+        kwargs["collision"] = collision
+    _live_answer(cases.benchmark(**kwargs), cases, as_json)
+
+
+@live_group.command("crosscheck")
+@click.option("--resolution", type=int, default=None, help="Cells across the longest side.")
+@click.option("--steps", type=int, default=None, help="Lattice steps.")
+@click.option("--out", "out", type=click.Path(file_okay=False, path_type=Path),
+              default=Path("."), show_default=True, help="Where the figures go.")
+@click.option("--json", "as_json", is_flag=True, help="One JSON object, for a script.")
+@click.pass_context
+def live_crosscheck_cmd(ctx: click.Context, resolution: int | None, steps: int | None,
+                        out: Path, as_json: bool) -> None:
+    """Run the live backend on the committed OpenFOAM cylinder and report the difference.
+
+    Two backends, one case. `tests/data/moving_mesh/viv_fixed/` is a finished OpenFOAM
+    run that ships with this repository -- a fixed cylinder at Re = 100 in water, with
+    its force coefficients intact -- and `benchmarks/moving_mesh/grade.py` reads the
+    Strouhal number and the mean drag straight out of those files. This runs the same
+    case on the live backend and reports the difference against them.
+
+    So it needs no cluster, no OpenFOAM install and no network, and if the OpenFOAM
+    numbers ever move the comparison moves with them: they are read, not copied into a
+    constant here.
+    """
+    as_json = as_json or _json_asked(ctx)
+    cases = _live_cases()
+    kwargs: dict[str, Any] = {"out_dir": str(out)}
+    if resolution is not None:
+        kwargs["resolution"] = resolution
+    if steps is not None:
+        kwargs["steps"] = steps
+    _live_answer(cases.crosscheck(**kwargs), cases, as_json)
+
+
 @main.command("config")
 @click.option(
     "--from-env",
@@ -1110,9 +1332,7 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
         cfg.foamd_url = (
             click.prompt("Service URL", default=cfg.foamd_url or "").strip().rstrip("/")
         )
-        cfg.foamd_api_key = click.prompt(
-            "Service API key", default=cfg.foamd_api_key or "", hide_input=True
-        ).strip()
+        cfg.foamd_api_key = _prompt_secret("Service API key", cfg.foamd_api_key or "")
         if not provider:
             console.print("Model providers: " + ", ".join(sorted(PRESETS)))
             chosen = click.prompt(
@@ -1126,9 +1346,7 @@ def config_cmd(from_env: bool, key_file: Path | None, provider: str | None) -> N
         elif chosen_preset is not None and not chosen_preset.needs_key:
             console.print(f"  ({chosen_preset.note})")
         else:
-            cfg.llm_api_key = click.prompt(
-                "Model API key", default=cfg.llm_api_key or "", hide_input=True
-            ).strip()
+            cfg.llm_api_key = _prompt_secret("Model API key", cfg.llm_api_key or "")
         cfg.model = click.prompt("Model", default=cfg.model).strip()
         if chosen_preset is not None and chosen_preset.name == REYNOLDS:
             # The service serves two families; the desk and the window follow the one
@@ -1521,6 +1739,57 @@ def stop_cmd(study_id: str | None, force: bool) -> None:
     raise SystemExit(0 if report.clean else 1)
 
 
+def _studys_own_workspace(cfg: Config, store: Store, study_id: str) -> None:
+    """Find the workspace a study this machine has no record of is on (#215).
+
+    `files`, `pull` and `push` take `--study <id>` for any study of the account, and a
+    study started in the browser, or on another machine, has no `session.json` here, so
+    no workspace on record. `hosted.acquire` with none attaches to the account's newest
+    workspace, and since every study has its own (#91) that is usually another
+    study's: the pull came back with somebody else's files, or nothing, and started a
+    workspace that was not this study's. So the platform's row is asked first, and its
+    workspace and home are what the command works on.
+
+    The same goes for a study recorded here with no workspace: one quit before its
+    first message settled where it runs, or one refused at the cap.
+
+    A study with a workspace on record keeps it, as before. One the platform has no
+    workspace for, or cannot be asked about, is refused rather than guessed at.
+    Nothing is saved: the row is read again next time, and a later resume reads it for
+    itself."""
+    if store.session.instance_id:
+        return
+    client = hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key)
+    try:
+        row = client.get_study(study_id)
+    except BackendError as exc:
+        _drop_if_empty(store)
+        if getattr(exc, "status", None) == 404:
+            console.print(f"[red]No study {study_id} here or on your account.[/]")
+        else:
+            console.print(f"[red]Could not ask the workspace service about {study_id}:[/] {exc}")
+        raise SystemExit(1) from exc
+    finally:
+        client.close()
+    _adopt_study_row(store, row)
+    if not store.session.instance_id:
+        _drop_if_empty(store)
+        console.print(
+            f"[red]Study {study_id} has no workspace any more, so there is nothing to "
+            "reach.[/] A workspace is released once its study has been idle for a few days."
+        )
+        raise SystemExit(1)
+
+
+def _drop_if_empty(store: Store) -> None:
+    """Take back the directory `Store` made for a study that turned out not to be
+    reachable, so a refused `--study` leaves nothing behind."""
+    try:
+        store.dir.rmdir()
+    except OSError:
+        pass
+
+
 @main.command("files")
 @click.argument("path", default="")
 @click.option("--study", "study_id", default=None, help="Which study. Defaults to the newest.")
@@ -1542,8 +1811,8 @@ def files_cmd(
     involved and is not told.
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
@@ -1552,14 +1821,12 @@ def files_cmd(
     if open_dir:
         _open_folder(store.dir, ConsoleView(console))
         return
+    _studys_own_workspace(cfg, store, chosen)
 
     path = workspace_path(path)
     cat_path = workspace_path(cat_path) if cat_path else None
     pull_path = workspace_path(pull_path) if pull_path else None
 
-    # No instance recorded is not a reason to refuse to show anything: the workspace
-    # is a volume that outlives instances, and someone asking to see their files does
-    # not want a lecture about bookkeeping. Reuse whatever is already up.
     try:
         backend, _client, instance = hosted.acquire(
             cfg.foamd_url, cfg.foamd_api_key, store.session.instance_id or None
@@ -1621,12 +1888,13 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     brings only what can be read).
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
     store = Store(cfg.studies_dir, chosen)
+    _studys_own_workspace(cfg, store, chosen)
 
     try:
         backend, _client, instance = hosted.acquire(
@@ -1670,12 +1938,13 @@ def push_cmd(local: Path, dest: str | None, study_id: str | None) -> None:
     spends no tokens.
     """
     cfg = Config.load()
-    studies = list_studies(cfg.studies_dir)
-    if not studies:
+    studies = [] if study_id else list_studies(cfg.studies_dir)
+    if not study_id and not studies:
         console.print(f"No studies under {cfg.studies_dir}")
         raise SystemExit(1)
     chosen = study_id or studies[0].study_id
     store = Store(cfg.studies_dir, chosen)
+    _studys_own_workspace(cfg, store, chosen)
     home = store.session.home or f"{WORKSPACE_ROOT}/{chosen}"
 
     # A --to is a workspace path (undo any Git-Bash mangling); a bare name hangs off
@@ -2155,8 +2424,12 @@ def _check_native_foam() -> tuple[str, bool, str]:
         if local_backend._numpy_here(backend):
             return "local solvers (native)", True, (
                 "no OpenFOAM here, so its meshers and solvers will fail. The toolbox's "
-                "own solvers do not need it: lbm.py (lattice Boltzmann) and sph.py "
-                "both run in numpy, and advise.py says which suits a case. For "
+                "own solvers do not need it: lbm.py (lattice Boltzmann), sph.py, "
+                "tracks.py (particles) and panel.py (potential flow) all solve in "
+                "numpy, and acoustics.py and wind_comfort.py need no solve at all. "
+                "benchmarks/tutorials/README.md's tier 1 lists every case and what it "
+                "is measured against; run_tier1.py runs them. advise.py says which "
+                "suits a case. For "
                 "OpenFOAM, set OPENREYNOLDS_FOAM_BASHRC to an installation's "
                 "etc/bashrc, or use the Docker workspace (--local)")
         return "local solvers (native)", False, (
@@ -2204,6 +2477,22 @@ def _redact(secret: str) -> str:
     if not secret:
         return ""
     return f"{secret[:12]}..." if len(secret) > 12 else "set"
+
+
+def _prompt_secret(label: str, stored: str) -> str:
+    """Ask for a secret, and say what is already stored rather than defaulting to it.
+
+    Hidden input with a default is a trap: the default cannot be seen, so pressing Enter
+    silently keeps the old value while the command goes on to print "Saved". That is how
+    a key the API has already rejected survives a reconfigure -- the reason this function
+    exists rather than a `default=` argument. An empty answer means keep, and says so.
+    """
+    if stored:
+        console.print(
+            f"  Stored: {_redact(stored)}. Enter keeps it; paste a new value to replace it."
+        )
+    typed = click.prompt(label, default="", hide_input=True, show_default=False).strip()
+    return typed or stored
 
 
 def _check_settings(cfg: Config) -> tuple[str, bool, str]:
@@ -3472,6 +3761,13 @@ def _recover_session(store: Store, client: Any, study_id: str | None) -> None:
         row = client.get_study(study_id)
     except Exception:  # noqa: BLE001 - an older service, or none reachable
         return
+    _adopt_study_row(store, row)
+
+
+def _adopt_study_row(store: Store, row: Any) -> None:
+    """What the platform's row says about a study this machine does not know: its id
+    there, its home, its workspace, its title and its solver. Nothing already known
+    here is overwritten."""
     if not isinstance(row, dict) or not row.get("id"):
         return
     store.session.remote_study_id = str(row["id"])
@@ -3974,16 +4270,38 @@ def _bring_up(
                     "asks the person to raise the ceiling, and the workspace is "
                     "started again once it is raised."
                 )
+            elif hosted.out_of_reach(exc):
+                # The service could not be reached, which the start already tried
+                # again for a while (`Starter`). It is sent again when the person next
+                # speaks (`_refused_turn`), rather than standing until the study is
+                # resumed: a moment's outage must not cost the rest of the session.
+                # Armed below, with the promise failed, after the view is told.
+                again = lambda: _start_again(  # noqa: E731
+                    pending, starter, store, view, loop, tracker, browser, resuming,
+                )
+                loop.post(
+                    f"The workspace could not be started ({exc}). The service could "
+                    "not be reached; the start is sent again when the person sends "
+                    "their next message."
+                )
             else:
                 loop.post(
                     f"The workspace could not be started ({exc}). Every tool call will "
                     "fail with that error until the session is resumed."
                 )
-            pending.fail(exc)
+            # The view and the bar first, the promise last: a message waiting on the
+            # promise may send the start again the moment it fails (`_start_again`),
+            # and this thread's "failed" must not land on top of that one's
+            # "starting again".
+            if hosted.out_of_reach(exc) and ceiling.paused(exc) is None:
+                # Safe before the promise fails: `_start_again` sends nothing until
+                # there is a failure to reopen.
+                loop.start_again = again
             tracker.workspace_ready()
             console.print(f"[red]Could not start the workspace:[/] {exc}")
             view.notice(f"the workspace could not be started: {exc}")
             _say_workspace_failed(view, str(exc))
+            pending.fail(exc)
             return
         if getattr(live, "was_already_running", False):
             console.print(_join_notice(pending.instance_id, getattr(live, "instances_held", 0)))
@@ -4027,32 +4345,42 @@ def _start_again(
     tracker: Any,
     browser: Browser | None,
     resuming: bool,
-) -> None:
-    """Send a workspace start that met the study's ceiling again, now it is raised.
+) -> bool:
+    """Send a workspace start that failed again. True when a new start is under way.
 
-    Called from `ceiling.resolve` (as `ToolContext.on_ceiling_raised`) before the
-    paused call goes again. The pending backend is reopened here, on the caller's
-    thread, so that call waits for the new start instead of raising the old error;
-    the rest is the ordinary start: the bar says the workspace is coming, and
-    `_bring_up` makes it this study's, resolves the waiting calls and tells the view.
-    Once only: a start that meets the ceiling again sets it up again (`_bring_up`)."""
-    loop.ctx.on_ceiling_raised = None
+    Two callers. `ceiling.resolve` (as `ToolContext.on_ceiling_raised`), before the
+    paused call goes again, for a start that met the study's ceiling and now finds it
+    raised. And `_refused_turn` (as `Loop.start_again`), for a start that could not
+    reach the service, when the person sends their next message. The pending backend
+    is reopened here, on the caller's thread, so what comes next waits for the new
+    start instead of raising the old error; the rest is the ordinary start: the bar
+    says the workspace is coming, and `_bring_up` makes it this study's, resolves the
+    waiting calls and tells the view. Once only: a start that fails again sets the
+    way to send it again up again (`_bring_up`)."""
+    raised = loop.ctx.on_ceiling_raised is not None
     restart = getattr(starter, "restart", None)
     refused = pending.error
     if restart is None or refused is None or not pending.reopen():
-        return
+        # Nothing to send again yet (the failure is not settled) or at all: the hooks
+        # are left as they are, so the next message or raise can still use them.
+        return False
+    loop.ctx.on_ceiling_raised = None
+    loop.start_again = None
     if not restart():
         # Nothing was sent, so nothing is coming: the calls fail as they did.
         pending.fail(refused)
-        return
+        return False
+    loop.refusal_said = None
     tracker.workspace_starting(getattr(loop.cfg, "workspace_eta_s", 0.0))
-    view.notice("starting the workspace again now that the ceiling is raised")
+    view.notice("starting the workspace again now that the ceiling is raised" if raised
+                else "starting the workspace again")
     threading.Thread(
         target=_bring_up,
         args=(pending, starter, store, view, loop, tracker, browser, resuming),
         name="workspace-ready",
         daemon=True,
     ).start()
+    return True
 
 
 def _with_mode(blurb: str, loop: Loop) -> str:
@@ -5295,13 +5623,36 @@ def _refused_turn(loop: Any, view: View, error: Exception) -> bool:
     if ceiling.paused(error) is not None and ctx is not None:
         if ceiling.resolve(ctx, error):
             return _run_turn(loop, view)
+    again = getattr(loop, "start_again", None)
+    if again is not None and not getattr(loop, "start_resent", False) and again():
+        # The service could not be reached when the workspace was asked for; the
+        # person speaking is the moment to ask again, and the turn goes ahead of the
+        # start like any first turn (`_start_refused` waits for its answer). Once per
+        # message: if it fails again, `_bring_up` says so and sets this up for the
+        # NEXT message, and `start_resent` keeps this turn from sending it a third time.
+        loop.start_resent = True
+        try:
+            return _run_turn(loop, view)
+        finally:
+            loop.start_resent = False
     reason = getattr(ctx, "stopped", None) or f"the workspace could not be started: {error}"
     loop.start_refusal = reason
     loop.blocked_reason = reason
+    if getattr(loop, "refusal_said", None) == str(error):
+        # The first refusal is said in the transcript by the start itself (`_bring_up`
+        # posts it, and `Loop.run` puts it there beside the message it held back).
+        # Every later message got nothing there: the page's line below is gone at the
+        # next turn, so a person who asked again saw their message and no answer
+        # (2026-11-22). Each one is answered now.
+        _record_event(loop, (NOT_SENT_YET if getattr(loop, "start_again", None) is not None
+                             else NOT_SENT).format(reason=reason))
+    loop.refusal_said = str(error)
     console.print(
         f"[yellow]The agent was not asked: {reason}.[/]\n"
-        "[yellow]Your message is kept in the study; the agent answers it when the "
-        "study is resumed and its workspace starts.[/]"
+        + ("[yellow]Your message is kept in the study; your next message starts the "
+           "workspace again.[/]" if getattr(loop, "start_again", None) is not None else
+           "[yellow]Your message is kept in the study; the agent answers it when the "
+           "study is resumed and its workspace starts.[/]")
     )
     view.info("waiting for you - the workspace could not be started, so the agent "
               "was not asked; your message is kept for when it can")
@@ -5316,6 +5667,28 @@ def _spoke_or_left(loop: Any) -> bool:
     return bool(heard is not None and heard()) or bool(getattr(loop, "leaving", False))
 
 
+NOT_SENT = ("This message was not sent to the agent: {reason}. It is kept in the study, "
+            "and the agent answers it when the study is resumed and its workspace starts.")
+"""The transcript's answer to a message held back by a workspace that could not start,
+after the first (`_refused_turn`)."""
+
+NOT_SENT_YET = ("This message was not sent to the agent: {reason}. It is kept in the "
+                "study, and the next message starts the workspace again.")
+"""`NOT_SENT` for a start that could not reach the service, which the next message sends
+again (`Loop.start_again`)."""
+
+
+def _record_event(loop: Any, text: str) -> None:
+    """Put a line in the transcript as an event the person can see. Never raises."""
+    event = getattr(loop, "event", None)
+    if event is None:
+        return
+    try:
+        event(text)
+    except Exception:  # noqa: BLE001 - a line not recorded must not end the session
+        pass
+
+
 FAILED_TURN = "The model request failed, so this turn ended: {said}"
 """The transcript's record of a turn a model-API failure ended (`_run_turn`)."""
 
@@ -5324,13 +5697,7 @@ def _record_failure(loop: Any, said: str) -> None:
     """Put a failed request in the transcript as an event the person can see.
 
     Never raises: the session is already handling one failure."""
-    event = getattr(loop, "event", None)
-    if event is None:
-        return
-    try:
-        event(FAILED_TURN.format(said=said))
-    except Exception:  # noqa: BLE001 - see docstring
-        pass
+    _record_event(loop, FAILED_TURN.format(said=said))
 
 
 def _run_interactive(
@@ -5745,6 +6112,36 @@ _staged_toolboxes: dict[str, Path] = {}
 _staging_lock = threading.Lock()
 
 
+NATIVE_ENVIRONMENT_NOTE = """# Read this first: this workspace is not a sandbox
+
+This study is running natively, so the workspace is the machine the person is sitting
+at rather than a container. Two things the rest of this file says are true in the image
+and false here, and both have cost a study.
+
+- **This is somebody's own computer, and its disk is theirs.** The filesystem is not a
+  small image: a search from the root (`find /`, `grep -r /`, `ls -R /`) walks every
+  file they have and can run for tens of minutes. One study spent twenty-seven of them
+  that way and was killed before it answered. Nothing needs looking for: every script
+  the toolbox ships is in this directory, `/work/.toolbox/`, and `README.md` beside this
+  file lists them by name. Work inside `/work`.
+- **The network is not sealed here.** There may well be one. That is not an invitation:
+  what is installed is still what is below, and reaching outside it is still a dead end
+  for this study rather than a slow success.
+
+Everything after this line describes the toolbox and the Python that are present, and
+that part is accurate on this machine too.
+
+"""
+"""Prepended to `ENVIRONMENT.md` for a native workspace.
+
+`ENVIRONMENT.md` is written for the sandbox and opens by calling it one. On `--native`
+that opening is wrong in the two ways above, and an agent that believes it is in a
+sealed container reasons accordingly: it will fall back to a root-level `find` for a
+file that is already beside it, because in a container that costs nothing. It is
+prepended rather than appended because the sentences it corrects are the first ones
+the agent reads."""
+
+
 def _toolbox_for(solver: str) -> Path:
     """The toolbox as one solver's study gets it, staged once per process.
 
@@ -5775,6 +6172,18 @@ def _toolbox_for(solver: str) -> Path:
             for item in sorted(TOOLBOX_SOURCE.iterdir()):
                 if item.is_file() and is_felix(item.name):
                     shutil.copy2(item, staged / item.name)
+            # `references/` goes to every study whatever solves it. The split above is
+            # by solver because most of this toolbox writes or reads OpenFOAM cases and
+            # is useless to Felix, but a published constant has no solver: Ghia's
+            # tabulated cavity profiles and the drag on a sphere are the same numbers
+            # whichever code produced the flow. Leaving them out had a cost that was
+            # visible before the cause was: study 20261122-143650-ce93 ran three spheres
+            # on Felix, needed the standard drag correlations, found nothing to read and
+            # worked from memory, saying so three times in its own write-up.
+            source_refs = TOOLBOX_SOURCE / "references"
+            if source_refs.is_dir():
+                shutil.copytree(source_refs, staged / "references",
+                                ignore=shutil.ignore_patterns("__pycache__"))
         else:
             shutil.copytree(
                 TOOLBOX_SOURCE, staged,
@@ -5783,6 +6192,12 @@ def _toolbox_for(solver: str) -> Path:
                     if n == "__pycache__" or (Path(folder) == TOOLBOX_SOURCE and is_felix(n))
                 ],
             )
+        env_note = staged / "ENVIRONMENT.md"
+        if env_note.is_file() and local_workspace() == "native":
+            env_note.write_text(
+                NATIVE_ENVIRONMENT_NOTE + env_note.read_text(encoding="utf-8"),
+                encoding="utf-8")
+
         readme = TOOLBOX_SOURCE / "README.md"
         if readme.is_file():
             kept: list[str] = []

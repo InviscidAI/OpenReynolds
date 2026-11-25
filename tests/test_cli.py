@@ -2989,3 +2989,216 @@ def test_logout_with_no_key_saved_says_so_and_names_an_environment_key(monkeypat
     assert result.exit_code == 0, result.output
     assert "nothing to remove" in _logout_said(result) and "Still signed in through FOAMD_API_KEY" in _logout_said(result)
     assert not (tmp_path / "c.json").exists()
+
+
+# -- the secret prompts ------------------------------------------------------------
+#
+# `config` asks for two secrets with hidden input. Giving those prompts a `default=` is
+# a trap, because the default cannot be seen: pressing Enter keeps the old value and the
+# command still prints "Saved", so a key the API has already rejected survives every
+# attempt to replace it. These two tests pin both halves of the contract.
+
+
+def _config_answers(*, service_key: str, model_key: str) -> str:
+    """Stdin for the whole `config` prompt sequence, in order."""
+    return "\n".join(["https://api.example.com", service_key, "anthropic", model_key,
+                      "claude-sonnet-5-5"]) + "\n"
+
+
+def _configured(tmp_path, monkeypatch, stored: dict) -> object:
+    import json
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    monkeypatch.setenv("OPENREYNOLDS_CONFIG", str(path))
+    for leaked in ("ANTHROPIC_API_KEY", "FOAMD_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(leaked, raising=False)
+    monkeypatch.setattr(cli, "_can_prompt", lambda: True)
+    return path
+
+
+def test_pressing_enter_keeps_the_stored_key_and_says_which_one(tmp_path, monkeypatch):
+    import json
+    path = _configured(tmp_path, monkeypatch,
+                       {"llm_api_key": "sk-ant-api03-keepme-0123456789", "provider": "anthropic",
+                        "model": "claude-sonnet-5-5", "foamd_api_key": "of_live_keepme_0123"})
+
+    result = CliRunner().invoke(cli.main, ["config"],
+                                input=_config_answers(service_key="", model_key=""))
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["llm_api_key"] == "sk-ant-api03-keepme-0123456789"
+    assert saved["foamd_api_key"] == "of_live_keepme_0123"
+    # The whole point: it has to be visible that Enter kept something, and which.
+    assert "sk-ant-api03" in result.output, result.output
+    assert "Enter keeps it" in result.output
+    # Never the whole secret, in either prompt.
+    assert "keepme-0123456789" not in result.output
+    assert "of_live_keepme_0123" not in result.output
+
+
+def test_a_pasted_key_replaces_the_stored_one(tmp_path, monkeypatch):
+    import json
+    path = _configured(tmp_path, monkeypatch,
+                       {"llm_api_key": "sk-ant-api03-rejected-99", "provider": "anthropic",
+                        "model": "claude-sonnet-5-5", "foamd_api_key": "of_live_old_0123"})
+
+    result = CliRunner().invoke(
+        cli.main, ["config"],
+        input=_config_answers(service_key="of_live_new_4567", model_key="sk-ant-usr-fresh-01"))
+
+    assert result.exit_code == 0, result.output
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["llm_api_key"] == "sk-ant-usr-fresh-01", "a typed key must win over the stored one"
+    assert saved["foamd_api_key"] == "of_live_new_4567"
+
+
+# -- the native workspace is not a sandbox -------------------------------------------
+#
+# `ENVIRONMENT.md` is written for the container: it opens by calling the workspace a
+# sandbox and says the network is sealed. Both are false under `--native`, where the
+# workspace is the user's own machine, and the difference is not cosmetic. A study on
+# 2026-11-22 ran `find / -name nozzle.py` as an unconditional fallback for a file that
+# was already in `/work/.toolbox/`, spent twenty-seven minutes walking a laptop's disk
+# and was killed by its timeout before answering. In a container that search is free,
+# which is exactly why an agent told it is in a container will reach for it.
+
+
+def _staged_env(monkeypatch, value: str | None) -> str:
+    """The ENVIRONMENT.md an OpenFOAM study would be given, for this workspace kind."""
+    if value is None:
+        monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
+    else:
+        monkeypatch.setenv("OPENREYNOLDS_LOCAL", value)
+    cli._staged_toolboxes.clear()   # the staging is cached per solver, per process
+    staged = cli._toolbox_for(cli.solvers.OPENFOAM)
+    return (staged / "ENVIRONMENT.md").read_text(encoding="utf-8")
+
+
+def test_a_native_workspace_is_told_it_is_not_a_sandbox(monkeypatch):
+    text = _staged_env(monkeypatch, "native")
+
+    assert text.startswith("# Read this first: this workspace is not a sandbox"), text[:200]
+    # The two corrections have to be present, and the root search has to be named,
+    # because naming it is the whole point of the note.
+    assert "find /" in text
+    assert "/work/.toolbox/" in text
+    assert "network is not sealed" in text
+    # And the file it corrects must still be there underneath it, not replaced.
+    assert "## Python (`python3`)" in text
+
+
+def test_the_sandbox_note_is_absent_where_it_would_be_wrong(monkeypatch):
+    """A hosted or Docker workspace really is a sealed container, so the note would be
+    a false statement in the other direction."""
+    for value in (None, "docker"):
+        text = _staged_env(monkeypatch, value)
+        assert "this workspace is not a sandbox" not in text, value
+        assert text.lstrip().startswith("# What is on this instance"), (value, text[:120])
+
+
+def test_the_note_does_not_accumulate_across_stagings(monkeypatch):
+    """Staging twice in one process must not prepend it twice: the cache is keyed by
+    solver, and a second native study in the same process re-reads the staged copy."""
+    first = _staged_env(monkeypatch, "native")
+    second = _staged_env(monkeypatch, "native")
+    assert first == second
+    assert second.count("# Read this first") == 1
+
+
+# -- the whole-disk search guard -----------------------------------------------------
+#
+# A note in ENVIRONMENT.md was tried first and does not work, which is why there is a
+# guard as well. A session looks for a script before it reads the file that says where
+# the script is, so the correction never reaches the command that would have opened it:
+# given the original prompt on the branch carrying only the note, a run still wrote
+# `cd /work; ls .toolbox; find / -name nozzle.py -not -path "*/proc/*"` with the `ls`
+# already successful ahead of it. These pin the guard that replaced it.
+
+
+def _refuses(cmd: str) -> bool:
+    from openreynolds.tools import _root_search_refusal
+    return _root_search_refusal(cmd) is not None
+
+
+def test_a_whole_disk_search_is_refused_on_a_native_workspace(monkeypatch):
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    # The command that actually happened, chain and all.
+    assert _refuses('cd /work; ls .toolbox; find / -name nozzle.py '
+                    '-not -path "*/proc/*" 2>/dev/null | head')
+    for cmd in ("find / -name nozzle.py", "sudo find / -name x",
+                "grep -r pattern /", "ls -R /"):
+        assert _refuses(cmd), cmd
+
+
+def test_a_search_that_names_a_directory_is_left_alone(monkeypatch):
+    """The guard must cost nothing to ordinary work, or it will be worked around."""
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    for cmd in ("find /work -name nozzle.py", 'find /work/.toolbox -name "*.py"',
+                "grep -r pattern /work/.toolbox", "ls -R /work", "ls /work/.toolbox",
+                "python3 /work/.toolbox/nozzle.py --check"):
+        assert not _refuses(cmd), cmd
+
+
+def test_the_guard_is_native_only(monkeypatch):
+    """In the image `/` is a small sealed filesystem: the same search is cheap there,
+    and refusing it would be a rule for a problem that does not exist."""
+    for workspace in ("docker", ""):
+        monkeypatch.setenv("OPENREYNOLDS_LOCAL", workspace)
+        assert not _refuses("find / -name nozzle.py"), workspace
+    monkeypatch.delenv("OPENREYNOLDS_LOCAL", raising=False)
+    assert not _refuses("find / -name nozzle.py")
+
+
+def test_the_refusal_says_where_the_toolbox_is(monkeypatch):
+    """A refusal that does not answer the question just gets retried another way."""
+    monkeypatch.setenv("OPENREYNOLDS_LOCAL", "native")
+    from openreynolds.tools import _root_search_refusal
+    said = _root_search_refusal("find / -name nozzle.py")
+    assert "ls /work/.toolbox" in said
+    assert "README.md" in said
+
+
+# -- references reach every study ----------------------------------------------------
+#
+# The toolbox is split by solver, because most of it writes or reads OpenFOAM cases and
+# is useless to Felix. Published constants are not like that: Ghia's cavity profiles and
+# the drag on a sphere are the same numbers whichever code produced the flow.
+#
+# Leaving them on the OpenFOAM side had a cost that showed up before the cause did.
+# Study 20261122-143650-ce93 solved three spheres on Felix, needed the standard drag
+# correlations, found nothing in its toolbox to read, and worked from memory -- saying so
+# three times in its own write-up. A Felix study used to receive two files in total.
+
+
+def _staged_for(solver):
+    cli._staged_toolboxes.clear()
+    return cli._toolbox_for(solver)
+
+
+def test_a_felix_study_gets_the_published_references():
+    staged = _staged_for(cli.solvers.FELIX)
+    refs = staged / "references"
+    assert refs.is_dir(), sorted(p.name for p in staged.iterdir())
+    assert any(p.suffix in (".json", ".py") for p in refs.iterdir()), sorted(refs.iterdir())
+
+
+def test_the_felix_references_are_the_same_files_as_the_openfoam_ones():
+    """One set of references, not a Felix edition that can drift."""
+    felix = {p.name for p in (_staged_for(cli.solvers.FELIX) / "references").iterdir()}
+    foam = {p.name for p in (_staged_for(cli.solvers.OPENFOAM) / "references").iterdir()}
+    assert felix == foam, (felix ^ foam)
+
+
+def test_the_solver_split_itself_still_holds():
+    """The point of the split is that a Felix study is not handed OpenFOAM machinery.
+    Shipping references must not quietly ship the rest."""
+    staged = _staged_for(cli.solvers.FELIX)
+    top = {p.name for p in staged.iterdir() if p.is_file()}
+    assert "render.py" not in top and "case_gen.py" not in top, top
+    assert not (staged / "templates").exists()
+
+
+def test_no_pycache_rides_along():
+    refs = _staged_for(cli.solvers.FELIX) / "references"
+    assert not (refs / "__pycache__").exists()

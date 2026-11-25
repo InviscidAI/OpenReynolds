@@ -331,3 +331,59 @@ def test_several_writers_at_once_never_show_a_reader_half_a_record(tmp_path):
     left = {p.name for p in (root / "s1").iterdir()}
     assert left == {"session.json", "revisions.jsonl"}, left
     assert not any(".tmp" in name for name in left)
+
+
+def test_a_stale_writer_never_turns_the_transcript_counter_back(tmp_path):
+    """Hosted, 2026-11-24: another writer saved the record with `capture_seq` one
+    behind. The session had not touched the field since its last save, so per-field
+    merging took the lower value back, and the next row reused the last one's seq. The
+    hosted page keys rows on seq and never showed the agent's reply."""
+    import json
+
+    store = Store(tmp_path, "s1")
+    store.append_message("user", "and a sphere")
+    store.append_message("event", "the workspace is ready")
+    record = store.dir / "session.json"
+    stale = json.loads(record.read_text())
+    stale["capture_seq"] = 1                    # what a writer holding an older record puts back
+    record.write_text(json.dumps(stale))
+    store.session.title = "and a sphere"
+    store.save()
+    seq = store.append_message("assistant", "You said: and a sphere")
+    seqs = [json.loads(line)["seq"] for line in (store.dir / "messages.jsonl").read_text().splitlines()]
+    assert seq == 2 and seqs == [0, 1, 2], seqs
+    assert json.loads(record.read_text())["capture_seq"] == 3
+
+
+def test_a_second_writer_titling_the_study_never_rolls_the_session_back(tmp_path):
+    """The hosted runner keeps a Store of its own and titles the study while the
+    agent's Store appends rows and counts tokens. Neither may put the other's fields
+    back as they were when it read them."""
+    import json
+
+    agent = Store(tmp_path, "s1")
+    agent.save()
+    stop = threading.Event()
+
+    def title_it():
+        runner = Store(tmp_path, "s1")
+        n = 0
+        while not stop.is_set():
+            n += 1
+            runner.session.title = f"title {n}"
+            runner.save()
+
+    other = threading.Thread(target=title_it)
+    other.start()
+    try:
+        for i in range(300):
+            agent.append_message("user", f"row {i}")
+            agent.session.runtime_s = float(i + 1)
+            agent.save()
+    finally:
+        stop.set()
+        other.join()
+    seqs = [json.loads(line)["seq"] for line in (agent.dir / "messages.jsonl").read_text().splitlines()]
+    record = json.loads((agent.dir / "session.json").read_text())
+    assert seqs == list(range(300)), "a seq was given twice"
+    assert record["capture_seq"] == 300 and record["runtime_s"] == 300.0

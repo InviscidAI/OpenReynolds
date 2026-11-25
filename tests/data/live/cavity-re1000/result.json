@@ -1,0 +1,96 @@
+{
+  "case": "cavity",
+  "passed": true,
+  "checks": [
+    {
+      "name": "u on x = 0.5, RMS against Ghia Table I (15 interior points)",
+      "measured": 0.002381585211121613,
+      "target": "<= 2% of the lid speed",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "v on y = 0.5, RMS against Ghia Table II (15 interior points)",
+      "measured": 0.006415255293617536,
+      "target": "<= 2% of the lid speed",
+      "passed": true,
+      "note": ""
+    },
+    {
+      "name": "the same RMS over all 17 of Ghia's points, walls included",
+      "measured": "u 0.0111, v 0.0084",
+      "target": "reported, not graded",
+      "passed": null,
+      "note": "his first and last rows are the boundary condition, not a solution, and a lattice has no node on the wall to sample them at"
+    },
+    {
+      "name": "u minimum on x = 0.5",
+      "measured": -0.3851967779072848,
+      "target": "-0.38289 (Ghia)",
+      "passed": null,
+      "note": ""
+    },
+    {
+      "name": "v extremes on y = 0.5",
+      "measured": "-0.52252 to +0.37351",
+      "target": "-0.51550 to +0.37095 (Ghia)",
+      "passed": null,
+      "note": ""
+    },
+    {
+      "name": "residual at stop",
+      "measured": 6.57005743546474e-05,
+      "target": "reported, not graded",
+      "passed": null,
+      "note": ""
+    }
+  ],
+  "report": [
+    "# cavity: Re 1000, 192 cells a side",
+    "  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)",
+    "  lattice:    dx 0.00520833 m   dt 0.285488 s   dx/dt 0.0182436 m/s",
+    "  viscosity:  nu_lattice 0.01056   tau_plus 0.53168   tau_minus 6.41856",
+    "  relaxation: trt  omega_plus 1.880831  omega_minus 0.155798",
+    "  speeds:     u_ref 0.0010034 m/s -> 0.055 lattice (Ma 0.0953), peak 0.055 lattice",
+    "  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be",
+    "  steps:      180,000 (stalled at the single-precision floor, residual 6.570e-05)",
+    "  stopped:    the residual stopped falling: 12 consecutive checks without a 10% improvement on 6.414e-05, which is the single-precision floor for this field rather than a failure to converge",
+    "  timescale:  one convective time is cells/u_lattice = 3,491 steps; the budget was 698,181 (200 of them) and it ran 52. One diffusive time is 3,490,909 steps, which this case deliberately does NOT run to: float32 erosion costs about 0.8% of the answer per million steps",
+    "  reference:  Ghia, U., Ghia, K.N. and Shin, C.T. (1982), 'High-Re solutions for incompressible flow using the Navier-Stokes equations and a multigrid method', Journal of Computational Physics 48:387-411, Tables I and II",
+    "  caveat:     Ghia solved on a 129x129 grid to second order, and his Re 1000 centreline extrema sit 1.46%, 1.59% and 2.20% from Botella and Peyret's (1998) spectral benchmark -- so an agreement tighter than about 1.5% at Re 1000 is partly luck, which benchmarks/README.md already says about the Felix run of this same case. The Re 100 v column rests on a single OCR of the 1982 scan",
+    "  cost:       180,000 coupling steps (180,000 lattice steps) in 38.8 s at 513.5 MLUPS, 0.22 ms a step",
+    "  realtime:   1325.608x (simulated seconds per wall-clock second)"
+  ],
+  "figures": [
+    "live-cavity-re1000-n192-centrelines.png",
+    "live-cavity-re1000-n192.png"
+  ],
+  "reynolds": 1000.0,
+  "cells": 192,
+  "u_rms": 0.002381585211121613,
+  "v_rms": 0.006415255293617536,
+  "u_rms_all": 0.01112740645156029,
+  "v_rms_all": 0.00839892796287766,
+  "stopped": {
+    "steps": 180000,
+    "residual": 6.57005743546474e-05,
+    "converged": false,
+    "stalled": true,
+    "why": "the residual stopped falling: 12 consecutive checks without a 10% improvement on 6.414e-05, which is the single-precision floor for this field rather than a failure to converge",
+    "diffusive_time_steps": 3490909.0909090913,
+    "convective_time_steps": 3490.909090909091,
+    "budget": 698181
+  },
+  "seconds": 52.679927587509155,
+  "milestone": "M1",
+  "about": "the lid-driven cavity at Re 100 and Re 1000 against Ghia, Ghia and Shin (1982) Tables I and II",
+  "report_text": "# cavity: Re 1000, 192 cells a side\n  fluid:      water (nu 1.003e-06 m2/s, rho 998.2 kg/m3)\n  lattice:    dx 0.00520833 m   dt 0.285488 s   dx/dt 0.0182436 m/s\n  viscosity:  nu_lattice 0.01056   tau_plus 0.53168   tau_minus 6.41856\n  relaxation: trt  omega_plus 1.880831  omega_minus 0.155798\n  speeds:     u_ref 0.0010034 m/s -> 0.055 lattice (Ma 0.0953), peak 0.055 lattice\n  graded:     subgrid model off (smagorinsky = 0), as a laminar benchmark's official numbers must be\n  steps:      180,000 (stalled at the single-precision floor, residual 6.570e-05)\n  stopped:    the residual stopped falling: 12 consecutive checks without a 10% improvement on 6.414e-05, which is the single-precision floor for this field rather than a failure to converge\n  timescale:  one convective time is cells/u_lattice = 3,491 steps; the budget was 698,181 (200 of them) and it ran 52. One diffusive time is 3,490,909 steps, which this case deliberately does NOT run to: float32 erosion costs about 0.8% of the answer per million steps\n  reference:  Ghia, U., Ghia, K.N. and Shin, C.T. (1982), 'High-Re solutions for incompressible flow using the Navier-Stokes equations and a multigrid method', Journal of Computational Physics 48:387-411, Tables I and II\n  caveat:     Ghia solved on a 129x129 grid to second order, and his Re 1000 centreline extrema sit 1.46%, 1.59% and 2.20% from Botella and Peyret's (1998) spectral benchmark -- so an agreement tighter than about 1.5% at Re 1000 is partly luck, which benchmarks/README.md already says about the Felix run of this same case. The Re 100 v column rests on a single OCR of the 1982 scan\n  cost:       180,000 coupling steps (180,000 lattice steps) in 38.8 s at 513.5 MLUPS, 0.22 ms a step\n  realtime:   1325.608x (simulated seconds per wall-clock second)\n\n  PASS  u on x = 0.5, RMS against Ghia Table I (15 interior points)   0.00238159   against <= 2% of the lid speed\n  PASS  v on y = 0.5, RMS against Ghia Table II (15 interior points)  0.00641526   against <= 2% of the lid speed\n        the same RMS over all 17 of Ghia's points, walls included     u 0.0111, v 0.0084   against reported, not graded\n                                                                      (his first and last rows are the boundary condition, not a solution, and a lattice has no node on the wall to sample them at)\n        u minimum on x = 0.5                                          -0.385197   against -0.38289 (Ghia)\n        v extremes on y = 0.5                                         -0.52252 to +0.37351   against -0.51550 to +0.37095 (Ghia)\n        residual at stop                                              6.57006e-05   against reported, not graded\n\n  2/2 graded checks passed\n  took 52.6 s\n  figure:     /tmp/tmpjtxqb32e/live-cavity-re1000-n192.png\n  figure:     /tmp/tmpjtxqb32e/live-cavity-re1000-n192-centrelines.png",
+  "device": "cuda:0",
+  "layout": "",
+  "gpu_name": "NVIDIA H100 80GB HBM3, 81559 MiB, 620.70.06",
+  "provenance": {
+    "commit": "2e602271ddfbe492cf9ac46ecbfe885ef80e660d",
+    "dirty": false,
+    "dirty_files": 0
+  }
+}

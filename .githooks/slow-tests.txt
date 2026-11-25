@@ -1,0 +1,46 @@
+# Tests the pre-commit hook defers, and why.
+#
+# One node id per line; `#` and blank lines are comments. These are deselected from the
+# hook's run and nothing else happens to them -- no baseline, no pass/fail expectation.
+# `python -X utf8 scripts/precommit_tests.py --all` runs them, and so does CI, on every
+# push and pull request across eight OS/Python combinations (.github/workflows/tests.yml
+# runs a plain `python -m pytest -q`). So a line here is deferred, not skipped.
+#
+# The bar for a line here is high and numeric: it has to be a measurable fraction of the
+# suite's wall clock on its own. Enumerated by node id, never by file, for the same
+# reason as known-failures.txt -- test_cad_agent.py holds 90 other tests that run in
+# about 50 seconds between them, and deferring the file would take all 90 out of the hook
+# to buy nothing.
+#
+# Being merely flaky is not enough either. The hook retries a failed shard once, alone,
+# and reports a test that then passes as FLAKY without blocking the commit; that is the
+# answer to load-sensitivity. A line belongs here when it is *expensive*, and the one
+# below happens to be both.
+#
+# A test that is merely annoying does not belong here. Make it faster instead.
+
+# -- 2026-11-23: the single most expensive test in the suite, and it is flaky ----------
+#
+# Measured solo on an idle 8-core box with `--durations`:
+#
+#     318.73s  tests/test_cad_agent.py entire
+#     265.48s  ...::test_the_append_invariant_holds_under_randomised_drive
+#
+# so one test is five sixths of its file and roughly a fifth of the whole suite's serial
+# wall clock. It replays fifty randomised drives, each with a real `kernel_restart()`
+# and a `kernel_run()` -- fifty live Jupyter kernels, on purpose, because the invariant
+# it checks "fails on the sequence nobody looked at". That is a good test. It is not a
+# good gate on `git commit`.
+#
+# It is also flaky under load, which is the part that decides it. The same test passed
+# in two whole-suite runs and then failed solo with
+#
+#     BackendError: kernel_stuck: the kernel did not answer a restart
+#
+# A four-and-a-half-minute test that fails for reasons unrelated to the diff is the
+# fastest way to teach a team `--no-verify`, which is the exact failure this hook is
+# being rebuilt to undo. CI runs it; the hook does not.
+#
+# Nobody had seen either the cost or the flake, because `-x` stopped the hook at
+# test_buildup_cad_export.py, the 13th of 185 files, and test_cad_agent.py is the 23rd.
+tests/test_cad_agent.py::test_the_append_invariant_holds_under_randomised_drive

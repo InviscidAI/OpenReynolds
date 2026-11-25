@@ -85,7 +85,9 @@ def test_the_slow_cases_are_the_ones_quick_skips_and_they_are_named():
     """--quick has to say what it left out, or a green run means less than it looks."""
     module = runner()
     slow = [name for name, _c, _a, is_slow, _g in module.CASES if is_slow]
-    assert len(slow) == 3, f"slow cases are {slow}"
+    # The cavity at n = 128, the sloshing tank, the SPH dam break and the capture
+    # threshold, which bisects over 91 samples and takes 71 s on one laptop.
+    assert len(slow) == 4, f"slow cases are {slow}"
     done = subprocess.run([sys.executable, "-X", "utf8", str(RUNNER), "--list", "--quick"],
                           capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stdout + done.stderr
@@ -126,10 +128,35 @@ def test_a_missing_flag_is_reported_as_absent_rather_than_as_no_verdict():
     assert "--definitely-not-a-flag" in found["headline"]
 
 
-@pytest.mark.parametrize("case", ["lbm/", "sph/"])
+@pytest.mark.parametrize("case", ["lbm/", "sph/", "particles/"])
 def test_the_graders_the_table_calls_are_the_ones_the_index_lists(case):
     """The runner and the index have to agree about which families are tier 1."""
     module = runner()
     called = {cmd[0] for _n, cmd, _a, _s, _g in module.CASES}
     assert any(case in path for path in called), f"no tier 1 case calls {case}"
     assert case in INDEX.read_text(encoding="utf-8")
+
+
+def test_every_script_the_table_calls_starts_under_isolated_mode():
+    """`run_one` invokes with `-I`, which removes the script's own directory from
+    sys.path -- so a toolbox script that imports a sibling the ordinary way starts fine
+    by hand and dies here.
+
+    The failure this is for, found while adding `nozzle.py`: it imported `compressible`
+    for a cross-check, exited 1 in 0.078 s under `-I`, and the runner reported "no
+    verdict in its output" -- a graded case reading as ungraded, which is precisely the
+    distinction `run_tier1.py` exists to keep. The fix is `advise.py:91-94`'s pattern, a
+    `sys.path.insert` of the script's own parent before the sibling import.
+
+    `--help` rather than the real flags: argparse exits 0 after printing usage, so this
+    costs a tenth of a second a script and still fails on any import that cannot be
+    satisfied in isolation.
+    """
+    module = runner()
+    for name, cmd, _against, _slow, _graded in module.CASES:
+        done = subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / cmd[0]),
+                               "--help"],
+                              capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, (
+            f"{name}: {cmd[0]} cannot start under -I, which is how run_one calls it.\n"
+            f"{(done.stderr or done.stdout)[-400:]}")

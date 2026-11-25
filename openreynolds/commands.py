@@ -385,6 +385,9 @@ TOOL_HELP: tuple[tuple[str, str], ...] = (
     ("mesh_review", "has an independent reviewer look at a mesh that already exists from "
                     "several views and say whether it is the shape that was asked for; "
                     "it changes nothing and runs no checkMesh"),
+    ("live_sim", "runs one of the live backend's flow cases on this machine rather than "
+                 "on the workspace, and reports its measurements against a reference; "
+                 "offered only where 'pip install openreynolds[live]' has been run"),
     ("checkpoint", "structured mode only: shows you a stage summary and what comes next, "
                    "and waits for your answer"),
     ("send_to_agent", "used only by a side question (/btw): passes your words on to the "

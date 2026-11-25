@@ -66,7 +66,10 @@ connection is waited through; only a refusal or the code expiring ends it.
 
 `--native` runs the workspace here rather than in a container: no Docker, no image to
 pull, no sandbox. With the toolbox extra it solves without OpenFOAM at all, because
-`lbm.py` and `sph.py` are solvers in numpy rather than wrappers around one.
+several of the toolbox's scripts are solvers in numpy rather than wrappers around
+one. [Tier 1 of the tutorial index](benchmarks/tutorials/README.md) is the list --
+every case that needs nothing installed, with the reference it is measured against
+and the agreement a run really got -- and `run_tier1.py` runs all of them at once.
 
 ```bash
 pip install 'openreynolds[toolbox]'
@@ -402,9 +405,11 @@ ESI v2512, so another version or fork will differ in places.
 pip install 'openreynolds[toolbox]'
 ```
 
-`lbm.py` and `sph.py` in the toolbox are a lattice-Boltzmann and an SPH solver written
-in numpy, so they need no image and no OpenFOAM; `advise.py` lists them beside the
-OpenFOAM applications and marks which are actually here. The `[toolbox]` extra is what
+`lbm.py`, `sph.py`, `tracks.py` and `panel.py` in the toolbox are a lattice-Boltzmann,
+an SPH, a particle and a potential-flow solver written in numpy, so they need no
+image and no OpenFOAM, and `acoustics.py` and `wind_comfort.py` are exact
+instruments that need no solve at all; `advise.py` lists them beside the OpenFOAM
+applications and marks which are actually here. The `[toolbox]` extra is what
 puts numpy and the rest on your own machine, where the image would otherwise have
 provided them -- a plain `pip install openreynolds` ships both solvers and nothing they
 import, so they exit on `ModuleNotFoundError: No module named 'numpy'`. Measured on a
@@ -433,6 +438,47 @@ than editing the wrong faces; handing it back tells the session what the patches
 **None of this is in this package.** It needs a pointer and a 3D view, so it lives in the
 web app, and it is mentioned here because it changes the same workspace a CLI session is
 working in.
+
+## Robot policies against real water and air — the `[live]` extra
+
+New in 0.5.0, and optional. Nothing in the core install changes, and the core imports
+without it.
+
+    pip install 'openreynolds[live]'
+
+A GPU fluid that steps in lockstep with [Newton](https://github.com/newton-physics/newton),
+so a policy trains against water and air that push back. It runs **inside Isaac Sim**, in a
+live Kit process, on Kit's own Warp build rather than a pinned one.
+
+**There are two solvers in here and they are not at the same level of trust**, which is the
+first thing to know:
+
+| | **lattice Boltzmann** | **SPH** |
+| --- | --- | --- |
+| state | **stable** | **beta** |
+| for | air, and water with no free surface — a drone, a submerged hull, an internal passage | liquid with a surface — a cup, pouring, a floating hull |
+| select it with | the default, or `backend="lbm"` | `free_surface=True`, or `backend="sph"` |
+
+The lattice side is two-way coupled with no host round trips in the step loop, reaches
+**1,478 MLUPS** on an H100, and passes its coupling and robot-demo suites outright. The SPH
+side is what a cup of water on a robot arm needs; it is newer, and
+[`RELEASE_NOTES_v0.1.md`](RELEASE_NOTES_v0.1.md) says plainly what beta means for it,
+including which numbers should not be read from a single run.
+
+An Isaac Lab task ships with it — a quadrotor hover with the fluid on, and a robot arm
+carrying a cup without spilling it:
+
+```python
+from openreynolds.live.carry import CarryFluidEnv, CarryFluidEnvCfg
+
+env = CarryFluidEnv(CarryFluidEnvCfg())
+obs, _ = env.reset(seed=0)
+obs, reward, terminated, truncated, extras = env.step(policy(obs["policy"]))
+```
+
+[docs/live-sync.md](docs/live-sync.md) is the page to read; it leads with the backend split
+and ends with the known issues and their numbers. It does **not** replace the OpenFOAM
+path, which is unchanged and is still where a defensible answer comes from.
 
 ## The toolbox
 
@@ -542,7 +588,7 @@ down to **0.567**.
 | `openreynolds history` | What was changed about one study's setup, and where it came from. `session.json` is rewritten on every save, so the record on disk has only ever said what a study is **now**: a study whose model was swapped mid-run, whose solver was settled after the first mesh, or that was filed under a project and then refiled, kept none of that, and one token total with two models behind it cannot be split apart afterwards. Each such change is appended to the study's own `revisions.jsonl` as it happens, and this prints them with both values. It also walks `cloned_from`, which `clone` and `rerun` have always written and nothing read, so a study three reruns deep can say what it is a rerun of. It does not compare two studies' answers -- `openreynolds compare` does that. No session, no workspace, no model: it reads `./studies`. `--study` chooses one, `--json` answers in one object. |
 | `openreynolds site --lat <deg> --lon <deg>` | Fetch wind, OpenStreetMap building footprints and terrain for a real location, on this machine, and write one self-describing `site.json`. It runs here and not in the workspace because the workspace has no outbound network (`docker/workspace/install-guard.sh`), so the fetch happens on this side and the workspace reads a file; `openreynolds push site.json` puts it there, and `toolbox/site_abl.py` and `toolbox/site_stl.py` are what read it. Three free sources, no key for any of them: Open-Meteo's ERA5 archive for hourly wind at 10 m and 100 m (a 12-sector rose, per-sector speed statistics, the prevailing sector and a two-height shear fit), Overpass for footprints with their heights and where each height came from, and Copernicus DEM GLO-90 for an elevation grid. Every block names the URL, the query sent, the retrieval time, its units and its licence, and the wind block records the reanalysis grid cell it actually answered for and how far that is from the coordinates asked for -- 5.4 km, on the first real fetch. A source that fails leaves its sentence in place of its block instead of taking the other two down. Nothing personal is sent: the User-Agent is `openreynolds/<version>` and no request carries a name, an address or an account id. `--radius`, `--from`/`--to`, `--samples`, `--no-weather`/`--no-buildings`/`--no-terrain`, `-o`, `--json`. |
 | `openreynolds files` | What is in the workspace, and what has been copied down. |
-| `openreynolds pull` | Bring this study's files down to this machine. |
+| `openreynolds pull` | Bring this study's files down to this machine: everything, or `--readable-only` for images, reports, logs and case dictionaries. `--study <id>` takes any study on your account, including one started in the browser or on another machine: its own workspace is looked up and started if it is asleep. This is how to copy a whole study to your computer: files up to 500 MB each and 5 GB per pull; anything over that is named as left on the workspace. |
 | `openreynolds push` | Send a local file (a geometry, say) up to the instance. |
 | `openreynolds capture --study <id>` | Send the service the transcript rows it is missing for a study. It asks which seqs it holds and posts only the absent ones, so it cannot duplicate anything -- capture itself never retries, for that reason. `--dry-run` names the gap and sends nothing. |
 | `openreynolds renders` | Every picture and assembled animation. |
@@ -553,6 +599,7 @@ down to **0.567**.
 | `openreynolds serve` | Serve this machine's own studies over HTTP, for a program that would rather speak REST than MCP: `--bind`, `--port`, `--token`, `--local`. A local control surface, not the hosted API. See *Driving it from a program*. |
 | `openreynolds webhook <url>...` | POST a study's events to a URL as they happen, reading `--output-format stream-json` on stdin and writing every line back out. `--format json\|slack\|discord`, `--event TYPE` (repeatable), `--all`, `--secret`, `--quiet`. One attempt per event, no retries and no queue. See *Driving it from a program*. |
 | `openreynolds sharing [on\|off\|status]` | Whether this machine shares a trace of each study while signed in. `off` also discards what is queued. See *Sharing*. |
+| `openreynolds live cases\|run\|bench\|crosscheck` | The optional live backend, on this machine next to your own GPU: a D3Q19 lattice Boltzmann fluid in lockstep with the Newton physics engine, so a robot feels real aerodynamic and hydrodynamic forces every step it takes. `openreynolds live cases` lists what it can run; `openreynolds live run <case>` or `openreynolds live run <case.yaml>` runs one and grades it against a published or committed reference; `openreynolds live bench` measures the lattice update rate on whatever device is here and names it; and `openreynolds live crosscheck` runs the OpenFOAM cylinder committed under `tests/data/` on both backends and reports the difference. It needs the `[live]` extra (`pip install 'openreynolds[live]'`, which pulls Warp and Newton); without it each subcommand says so in one sentence and exits 1, and nothing else in OpenReynolds is affected. It does not replace the OpenFOAM path, which is unchanged and is still what a defensible answer comes from. See [docs/live-sync.md](docs/live-sync.md). |
 
 In a session, `/status` answers locally with no model turn, `/btw <question>` asks a
 side question that is answered apart from the conversation without interrupting the
@@ -749,7 +796,7 @@ and nothing more: `--output-format stream-json` already carries the outcome and
 between a workflow and those two facts.
 
 ```yaml
-- uses: InviscidAI/OpenReynolds@v0.4.2
+- uses: InviscidAI/OpenReynolds@v0.5.0
   with:
     task: drag coefficient of this hull at 6 knots, SI units
     api-key: ${{ secrets.ANTHROPIC_API_KEY }}
