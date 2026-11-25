@@ -41,8 +41,9 @@ import os
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 STATE_DIR = ".reynolds"
 MANIFEST = "manifest.jsonl"
@@ -153,12 +154,89 @@ def record(
     """Register one artifact and return the row that was written.
 
     `path` is stored relative to the study root when it is underneath it, so a
-    manifest copied home still points at something. Appending is one `open(...,
-    "a")` and one line: two scripts writing at once interleave lines, never
-    halves of a line, which is why this is JSONL and not a JSON array that has to
-    be read, edited and rewritten.
+    manifest copied home still points at something. Appended as one JSONL line
+    under `_manifest_lock`.
     """
     study = find_root(root)
+    row = _row(study, kind, path, case, label, meta)
+    with _manifest_lock(study):
+        _append_row(study, row)
+    return row
+
+
+LOCK_ATTEMPTS = 400
+LOCK_WAIT_S = 0.005
+
+
+@contextmanager
+def _manifest_lock(study: Path) -> Iterator[None]:
+    """Hold an OS lock on `manifest.jsonl.lock`; bare appends lose records (#120).
+
+    `flock` on POSIX, `msvcrt.locking` on Windows, the same as `store.py`. The OS
+    drops the lock when its holder exits, crashed or not, so there is no stale lock
+    to detect and remove, and no window where two writers both remove one and both
+    believe they hold it. The lock file is never deleted: it is empty, and deleting
+    it would let a writer lock a file the next writer no longer opens.
+
+    The lock is on its own file, not on the manifest: `_drop_rung_rows` replaces the
+    manifest, and a lock on the replaced file would no longer exclude anyone. Past
+    `LOCK_ATTEMPTS` the write goes ahead unlocked, so a holder that hangs, or a
+    directory that won't take a lock file, still can't silence the manifest.
+    """
+    directory = study / STATE_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        # Not followed if a link or a pipe was put there: an open that blocks would
+        # hang every write before the retry budget even starts.
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        handle = os.open(directory / (MANIFEST + ".lock"), flags, 0o600)
+    except OSError:
+        yield
+        return
+    held = False
+    try:
+        for _ in range(LOCK_ATTEMPTS):
+            try:
+                _os_lock(handle, take=True)
+                held = True
+                break
+            except OSError:
+                time.sleep(LOCK_WAIT_S)
+        yield
+    finally:
+        try:
+            if held:
+                _os_lock(handle, take=False)
+        finally:
+            os.close(handle)
+
+
+def _os_lock(handle: int, *, take: bool) -> None:
+    """Take (without waiting) or release an exclusive OS lock on an open file."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(handle, 0, os.SEEK_SET)  # msvcrt locks from the current position
+        msvcrt.locking(handle, msvcrt.LK_NBLCK if take else msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle, (fcntl.LOCK_EX | fcntl.LOCK_NB) if take else fcntl.LOCK_UN)
+
+
+def _append_row(study: Path, row: dict[str, Any]) -> None:
+    """Append one line. Call under `_manifest_lock`."""
+    line = (json.dumps(row, sort_keys=True) + "\n").encode("utf-8")
+    handle = os.open(study / STATE_DIR / MANIFEST, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    try:
+        os.write(handle, line)
+    finally:
+        os.close(handle)
+
+
+def _row(
+    study: Path, kind: str, path: Path | str, case: str, label: str, meta: dict[str, Any]
+) -> dict[str, Any]:
     target = Path(path)
     stored = str(target)
     try:
@@ -175,11 +253,6 @@ def record(
     }
     if meta:
         row["meta"] = meta
-    directory = study / STATE_DIR
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / MANIFEST).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
-        handle.flush()
     return row
 
 
@@ -244,7 +317,7 @@ def _drop_rung_rows(study: Path, class_key: str, number: int) -> None:
     would leave a later reader to guess which is current. Every other line is kept
     byte-for-byte, including ones that do not parse, so the manifest stays the same
     file it was; the rewrite goes through a temporary file and `os.replace` like
-    `save_phases` does, so a reader never sees half of it.
+    `save_phases` does, so a reader never sees half of it. Call under `_manifest_lock`.
     """
     manifest = study / STATE_DIR / MANIFEST
     if not manifest.exists():
@@ -296,7 +369,7 @@ def record_rung(
     if status not in RUNG_STATUSES:
         raise ValueError(f"status must be one of {', '.join(RUNG_STATUSES)}; got {status!r}")
     number = int(number)
-    _drop_rung_rows(find_root(root), class_key, number)
+    study = find_root(root)
     meta: dict[str, Any] = {"class": class_key, "rung": number, "name": name, "status": status}
     if value is not None:
         meta["value"] = value
@@ -312,7 +385,11 @@ def record_rung(
         where = where.resolve()
     except OSError:
         pass
-    return record(RUNG_KIND, where, root=root, case=case, label=label, **meta)
+    row = _row(study, RUNG_KIND, where, case, label, meta)
+    with _manifest_lock(study):  # one hold for both, so no duplicate rung rows
+        _drop_rung_rows(study, class_key, number)
+        _append_row(study, row)
+    return row
 
 
 def rung_evidence(*, root: Path | str = ".", case: str = "") -> list[dict[str, Any]]:
