@@ -49,7 +49,7 @@ from .loop import Loop, StartRefused, forwarded_note
 from . import video as video_mod
 from . import viewer
 from .desk import OFF as SIDE_OFF, SideChat, route as route_solver, routed_line, routed_notice
-from .mirror import LiveMirror, OutsideMirror, local_for, sync as mirror_sync
+from .mirror import LiveMirror, OutsideMirror, Skip, local_for, sync as mirror_sync
 from .progress import Tracker, felix_job_facts
 from .stopping import running_solvers, settle_after_shutdown, stop_everything
 from .store import Store, TornRecord, list_studies, new_study_id
@@ -1886,6 +1886,10 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
     again, for asking about one directory, or for everything when the default judgement
     about what is worth keeping is the wrong one for this study (`--readable-only`
     brings only what can be read).
+
+    Files a sync leaves for their size (over its one-file limit, or past its budget)
+    are then fetched whole from the workspace's copy, however large, as long as this
+    disk keeps a gigabyte free.
     """
     cfg = Config.load()
     studies = [] if study_id else list_studies(cfg.studies_dir)
@@ -1923,8 +1927,14 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
         big = fetch_big(cfg.foamd_url, cfg.foamd_api_key, chosen, report.skipped, store.files_dir,
                         say=lambda line: console.print(line, highlight=False, markup=False))
         done = big.done()
-        report.skipped = [s for s in report.skipped
-                          if not (s.too_big and str(local_for(store.files_dir, s.path)) in done)]
+
+        def fetched(skip: Skip) -> bool:
+            try:
+                return skip.too_big and str(local_for(store.files_dir, skip.path)) in done
+            except OutsideMirror:
+                return False
+
+        report.skipped = [s for s in report.skipped if not fetched(s)]
 
     for line in report.lines():
         console.print(line, highlight=False, markup=False)
