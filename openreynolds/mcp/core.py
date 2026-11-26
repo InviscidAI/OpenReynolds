@@ -150,6 +150,10 @@ class Host(Protocol):
     def say_text(self, text: Any) -> str: ...
     def approval_card(self, title: str, detail: str, style: str) -> dict[str, Any] | None: ...
     def explain(self, exc: BaseException) -> str | None: ...
+    # The files part of delivered words (`files_note` is the default). `via` is what
+    # `Deliveries.add` was given: who sent the files, for a host that takes them more
+    # than one way.
+    def files_note(self, via: str, placed: list[str], left: list[str], failed: list[str]) -> str: ...
 
 
 class HostDefaults:
@@ -166,6 +170,25 @@ class HostDefaults:
 
     def explain(self, exc: BaseException) -> str | None:  # noqa: ARG002
         return None
+
+    def files_note(self, via: str, placed: list[str], left: list[str], failed: list[str]) -> str:  # noqa: ARG002
+        return files_note(placed, left, failed)
+
+
+def files_note(placed: list[str], left: list[str], failed: list[str]) -> str:
+    """What `Deliveries` adds to the words it says: where the files went, and which did
+    not get there. Worded for an MCP caller, who uploads again with upload_file; a host
+    whose files come another way words its own (`Host.files_note`, by `via`)."""
+    note = ""
+    if placed:
+        note += "\n\nInput files, uploaded by the caller:\n" + "\n".join(f"- {p}" for p in placed)
+    if left:
+        note += ("\n\n(The caller also uploaded files, but the workspace did not start "
+                 "to receive them; ask the caller to upload them again with upload_file.)")
+    if failed:
+        note += (f"\n\n(These uploaded files could not be placed on the workspace: "
+                 f"{', '.join(failed)}; ask the caller to upload them again with upload_file.)")
+    return note
 
 
 # -- a small store for the deliveries -----------------------------------------------
@@ -270,14 +293,17 @@ class Deliveries:
         finally:
             self.host.kv.delete(key)
 
-    def add(self, session_id: str, text: str, files: list[dict[str, Any]]) -> None:
+    def add(self, session_id: str, text: str, files: list[dict[str, Any]], via: str = "") -> None:
         """Queue words, with or without files, on a running session (`send_message`).
         Words still waiting are added to rather than replaced, so nothing is lost and
-        everything is said in the order it was sent."""
+        everything is said in the order it was sent. `via` reaches `Host.files_note`
+        when the words are said; the first words waiting set it."""
         with self._editing(session_id):
             pending = self.pending(session_id)
             if pending is None or "said" in pending:
                 pending = {"task": text, "files": [], "placed": [], "at": time.time()}
+                if via:
+                    pending["via"] = via
             else:
                 pending = {**pending, "task": f"{pending['task']}\n\n{text}"}
             known = {f["key"] for f in pending.get("files") or []} | set(pending.get("keys") or [])
@@ -424,17 +450,14 @@ class Deliveries:
             left = list(current.get("files") or [])
             if left and not gave_up:
                 return False
-            text = current["task"]
-            placed = list(current.get("placed") or [])
-            if placed:
-                text += "\n\nInput files, uploaded by the caller:\n" + "\n".join(f"- {p}" for p in placed)
-            if left:
-                text += ("\n\n(The caller also uploaded files, but the workspace did not start "
-                         "to receive them; ask the caller to upload them again with upload_file.)")
-            failed = [n for n in current.get("failed") or [] if n]
-            if failed:
-                text += (f"\n\n(These uploaded files could not be placed on the workspace: "
-                         f"{', '.join(failed)}; ask the caller to upload them again with upload_file.)")
+            placed = [str(p) for p in current.get("placed") or []]
+            failed = [str(n) for n in current.get("failed") or [] if n]
+            names = [str(f.get("name") or "") for f in left]
+            via = str(current.get("via") or "")
+            words = getattr(self.host, "files_note", None)
+            note = (words(via, placed, names, failed) if callable(words)
+                    else files_note(placed, names, failed))
+            text = current["task"] + note
             self.host.say(session_id, text)
             # The words are on the session's queue but not yet in its transcript: the
             # session reads them a moment later. Until it does, the turn still says

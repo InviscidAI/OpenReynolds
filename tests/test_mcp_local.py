@@ -676,3 +676,31 @@ def test_a_lapsed_place_lock_is_neither_refreshed_nor_released_by_its_old_holder
     assert deliveries._refresh("sess", mine) is False
     deliveries._unlock("sess", mine)
     assert host.kv.get(deliveries._key("sess") + ":lock") == theirs
+
+
+def test_a_host_words_the_files_note_for_whoever_sent_the_files():
+    """The default note tells an MCP caller to use upload_file again. A host that takes
+    files another way (the hosted web page) says it its own way, by the `via` the words
+    were added with; words added without one keep the default."""
+    class WebHost(DeliveryHost):
+        def files_note(self, via, placed, left, failed):
+            if via != "web":
+                return core.files_note(placed, left, failed)
+            return f"\n(web: placed {placed}, not started {left}, failed {failed})"
+
+    host = WebHost()
+    host.workspace = core.WORKSPACE_READY
+    deliveries = core.Deliveries(host)
+    deliveries.add("sess", "drag", [{"key": "k1", "name": "wing.stl"}], via="web")
+    assert deliveries.attempt("sess") is True
+    assert host.said == ["drag\n(web: placed ['/work/s1/uploads/wing.stl'], not started [], failed [])"]
+
+    host.workspace = core.WORKSPACE_FAILED
+    deliveries.add("sess2", "lift", [{"key": "k2", "name": "flap.stl"}], via="web")
+    assert deliveries.attempt("sess2") is True
+    assert host.said[-1] == "lift\n(web: placed [], not started ['flap.stl'], failed [])"
+
+    host.workspace = core.WORKSPACE_READY
+    deliveries.add("sess3", "drag", [{"key": "k3", "name": "wing.stl"}])
+    assert deliveries.attempt("sess3") is True
+    assert host.said[-1] == "drag\n\nInput files, uploaded by the caller:\n- /work/s1/uploads/wing.stl"
