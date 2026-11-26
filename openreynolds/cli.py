@@ -29,7 +29,7 @@ from .backend.local import LocalBackend
 from .backend.base import Backend, BackendError, WORKSPACE_ROOT, extra_note, renewal_day, without_money
 from .backend.pending import PendingBackend
 from .cad import mesh_index
-from .browse import Browser
+from .browse import Browser, human
 from . import capture as capture_mod
 from . import casebundle
 from .capture import Capture
@@ -1914,12 +1914,33 @@ def pull_cmd(path: str, study_id: str | None, selective: bool) -> None:
         _release(backend)
         backend.close()
 
+    # What the sync left for its size alone, straight from the workspace's copy in S3:
+    # a file of any size (InviscidAI/ui#137). `--readable-only` asked for less.
+    big = None
+    if not selective and any(s.too_big for s in report.skipped):
+        from .bigfiles import fetch as fetch_big
+
+        big = fetch_big(cfg.foamd_url, cfg.foamd_api_key, chosen, report.skipped, store.files_dir,
+                        say=lambda line: console.print(line, highlight=False, markup=False))
+        done = big.done()
+        report.skipped = [s for s in report.skipped
+                          if not (s.too_big and str(local_for(store.files_dir, s.path)) in done)]
+
     for line in report.lines():
         console.print(line, highlight=False, markup=False)
+    if big is not None and big.pulled:
+        console.print(f"fetched {len(big.pulled)} large files ({human(big.bytes_pulled)}) "
+                      "from the workspace's copy", highlight=False, markup=False)
+    for failed in big.failed if big is not None else []:
+        console.print(f"[yellow]not fetched:[/] {failed}", highlight=False)
     console.print(f"\n[dim]your copy of this study is in {store.files_dir}[/]")
     # A sync that reached nothing and had something to complain about is a failure,
     # and someone who put this in a script needs to be able to tell.
-    raise SystemExit(1 if report.warnings and not report.pulled else 0)
+    # A large file asked for and not fetched fails the pull, whatever else came: a
+    # script that pulls for that file has to be able to tell.
+    if big is not None and big.failed:
+        raise SystemExit(1)
+    raise SystemExit(1 if report.warnings and not (report.pulled or (big is not None and big.pulled)) else 0)
 
 
 @main.command("push")
