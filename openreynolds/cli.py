@@ -32,6 +32,7 @@ from .cad import mesh_index
 from .browse import Browser, human
 from . import capture as capture_mod
 from . import casebundle
+from . import earlier as earlier_mod
 from .capture import Capture
 from . import cad, commands, images, switch
 from . import ceiling, convergence, modes, solvers, study_style
@@ -3074,6 +3075,14 @@ def session(
             client,
             connect=lambda: hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key),
             study_id=lambda: store.session.remote_study_id,
+        )
+    if cfg.capture and not local and cfg.foamd_url and cfg.foamd_api_key:
+        # A follow-up study starts on an empty workspace of its own; `import_study`
+        # copies an earlier one in from the service's copy of it (OpenReynolds#212).
+        ctx.earlier = earlier_mod.Earlier(
+            connect=lambda: client or hosted.FoamdClient(cfg.foamd_url, cfg.foamd_api_key),
+            study_id=lambda: store.session.remote_study_id,
+            workspace=lambda: getattr(backend, "wait", lambda: None)(),
         )
     browser = Browser(backend, store, home=store.session.home)
     live_mirror = LiveMirror(browser, interval_s=cfg.mirror_interval_s)

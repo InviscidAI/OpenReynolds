@@ -380,6 +380,8 @@ TOOL_HELP: tuple[tuple[str, str], ...] = (
     ("job_check", "reports a job's status and new log lines, and can wait for it to finish"),
     ("job_kill", "stops a running job"),
     ("fetch", "copies files from the workspace to this machine"),
+    ("import_study", "copies an earlier study's files into this study's workspace, which "
+                     "starts empty; hosted service only"),
     ("cad", "hands a shape described in words, or a CAD file already on the workspace, "
             "to the CAD desk: a second agent that builds it, meshes it and checks it"),
     ("mesh_review", "has an independent reviewer look at a mesh that already exists from "

@@ -1022,6 +1022,26 @@ class FoamdClient:
     def list_studies(self) -> list[dict[str, Any]]:
         return _json(self.request("GET", "/v1/studies"))
 
+    def import_study(self, study_id: str, from_study: str, path: str = "",
+                     into: str | None = None) -> dict[str, Any]:
+        """`POST /v1/studies/{id}/workspace/import`: copy an earlier study's files (or
+        `path` under it) from the service's copy of its workspace into this study's
+        running workspace, under `<home>/<into>/` (`from-<from_study>` by default).
+        The workspace's own daemon fetches them, so nothing passes through here.
+        `{into, from, as_of, files, bytes, already, failed: [{path, error}], left,
+        complete}`; a 409 while the workspace is not running, a 413 past what one
+        import takes.
+
+        Repeatable although a POST: a file already there as the copy has it is left
+        alone, so asking again carries on where an import stopped. One attempt with a
+        long wait, because a large study is minutes of copying; the service answers
+        within its own deadline, under this one."""
+        body: dict[str, Any] = {"from_study": from_study, "path": path}
+        if into:
+            body["into"] = into
+        return _json(self.request("POST", f"/v1/studies/{study_id}/workspace/import", json=body,
+                                  timeout=IMPORT_TIMEOUT_S, repeatable=True, max_attempts=1))
+
     def post_messages(self, study_id: str, messages: list[dict[str, Any]]) -> None:
         self.request("POST", f"/v1/studies/{study_id}/messages", json=messages)
 
@@ -1053,6 +1073,12 @@ class FoamdClient:
             data={"kind": kind} if kind else None,
             timeout=180.0,
         )
+
+
+IMPORT_TIMEOUT_S = 900.0
+"""An earlier study copied in. The service stops starting files at 600 s and answers by
+about 750 s (foamd `IMPORT_DEADLINE_S` and `IMPORT_GRACE_S`), so this is never the
+limit that ends an import."""
 
 
 class HostedBackend(KernelHost, Backend):
