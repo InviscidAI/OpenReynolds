@@ -6,6 +6,8 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-26
+
 ### Added
 
 - **Uploaded archives are unpacked, and `send_message` takes files (#216).** A zip or tar
@@ -53,6 +55,23 @@ All notable changes to this project are recorded here. The format follows
   does not read decomposed data. The case bundle, the report and
   `study_state.discover_cases` recognise the collated name too; `toolbox/disk.py`'s
   prune candidates are unchanged.
+- **The 21st upload of one name no longer overwrites the 20th (#278).** A repeat upload
+  is kept beside the first (`wing.stl`, `wing-2.stl`, ...), but the last numbered name was
+  never checked, so the 21st and every later upload of that name landed on `wing-20.stl`.
+  Every candidate name is now checked, and past `-20` the name takes a short random tag.
+- **Two saves of one study at once no longer roll its fields back (#280).** A save wrote
+  back every field it had read, so a second writer overlapping it could restore a stale
+  value; the visible symptom was a transcript row reusing the previous row's `seq` and
+  being dropped by a reader keyed on it. A save now holds a short OS lock across its own
+  read, merge and write, and `capture_seq` is written as the larger of memory and disk.
+- **Concurrent manifest writes keep every record (#254, #120).** `study_state.record`
+  appends under an OS lock (`flock` on POSIX, `msvcrt.locking` on Windows), released by
+  the OS when its holder exits, so a crashed writer leaves no stale lock to judge.
+- **The opening task reads `starting` until the runner records it (#279).** While files
+  were on their way to the workspace, `study_status` said `working` with an empty
+  transcript, which a caller could read as a finished study and end.
+- **`openreynolds live cases` lists all the cases `live run` accepts (#277).** The eight
+  SPH cases register lazily and were runnable but not listed.
 
 ## [0.5.0] - 2026-11-24
 
@@ -2330,7 +2349,8 @@ on 2026-08-24:
 - A duplicate copy of the architecture notes at the repository root is gone; the one
   under the toolbox notes is the one that ships.
 
-[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/InviscidAI/OpenReynolds/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/InviscidAI/OpenReynolds/compare/v0.4.0...v0.4.1
