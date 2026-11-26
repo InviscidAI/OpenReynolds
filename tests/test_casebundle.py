@@ -219,3 +219,20 @@ def test_an_irreplaceable_tier_too_big_for_the_budget_is_sent_anyway(tmp_path):
     assert "definition" in report.included
     assert "may be refused" in " ".join(report.brief())
     assert _manifest(blob)["over_budget"] is True
+
+
+def test_a_collated_decomposition_does_not_travel(tmp_path):
+    """ui#143: the collated layout writes one `processorsN/`, not `processorN/`."""
+    root = tmp_path / "files"
+    root.mkdir()
+    case = _study(root)
+    for name in ("processors4", "processors4_0-1"):
+        for rel in ("1/U", "constant/polyMesh/owner"):
+            p = case / name / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("d" * 8192)
+    blob, _ = casebundle.build(root, study_id="s1")
+    names = _names(blob)
+    # Its `constant/` read as the case definition before, and travelled.
+    assert not any("/processors4" in n for n in names), sorted(names)
+    assert "cyl/1/U" in names

@@ -256,7 +256,7 @@ def load_template(path: Path | str | None) -> tuple[dict[str, Any], list[str]]:
 # -- finding the study a person pointed at -------------------------------------------
 
 
-_PROCESSOR = re.compile(r"^processor\d+$")
+_PROCESSOR = re.compile(r"^processors?\d+(_\d+-\d+)?$")
 """A decomposed run's per-rank directories. Each has a `constant/polyMesh`, so
 `study_state.is_case_dir` says yes to all four of them and `discover_cases` returned
 "the first of 6 cases" for a study with one case (#145). They are one case."""

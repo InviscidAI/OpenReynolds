@@ -520,7 +520,7 @@ def phase_status(name: str, root: Path | str = ".") -> str:
 _NCELLS = re.compile(rb"nCells:\s*(\d+)")
 
 
-PROCESSOR_DIR = re.compile(r"^processor\d+$", re.IGNORECASE)
+PROCESSOR_DIR = re.compile(r"^processors?\d+(_\d+-\d+)?$", re.IGNORECASE)
 """One rank's share of a decomposed case. It looks exactly like a case to
 `is_case_dir` -- it has the mesh and the fields -- and is not one."""
 
