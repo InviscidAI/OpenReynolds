@@ -148,7 +148,7 @@ def test_one_huge_file_is_left_and_named(backend, store):
     report = mirror.sync(browser_for(backend, store))
 
     assert [Path(p).name for p in report.pulled] == ["notes.md"]
-    assert "limit for one file" in report.skipped[0].reason
+    assert "limit for one file" in report.skipped[0].reason and report.skipped[0].too_big, "pull fetches it (bigfiles)"
 
 
 def test_the_per_file_cap_holds_even_when_taking_everything(backend, store):
@@ -174,6 +174,7 @@ def test_a_sync_stops_at_the_total_budget(backend, store):
 
     assert len(report.pulled) == 2
     assert [skip.reason for skip in report.skipped] == ["past the 1.5K budget for one sync"]
+    assert report.skipped[0].too_big
 
 
 def test_the_budget_is_spent_on_the_small_files_first(backend, store):

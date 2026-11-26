@@ -224,6 +224,9 @@ class Skip:
     path: str
     reason: str
     size: int = 0
+    too_big: bool = False
+    """Left for its size alone (the one-file limit, or the sync's budget): what
+    `openreynolds pull` then fetches from the workspace's copy (`bigfiles`)."""
 
     def line(self) -> str:
         return f"  {human(self.size):>8}  {self.path}   {self.reason}"
@@ -727,6 +730,7 @@ def _wanted(
                     entry.path,
                     f"{human(entry.size)}, over the {human(max_file_bytes)} limit for one file",
                     entry.size,
+                    too_big=True,
                 )
             )
             continue
@@ -832,7 +836,7 @@ def _within_budget(
     over = f"past the {human(max_total_bytes)} budget for one sync"
     for entry in sorted(now, key=lambda item: (item.size, item.path)):
         if entry.size > budget:
-            report.skipped.append(Skip(entry.path, over, entry.size))
+            report.skipped.append(Skip(entry.path, over, entry.size, too_big=True))
             continue
         budget -= entry.size
         wanted.append(entry)
