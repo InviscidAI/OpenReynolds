@@ -1088,7 +1088,7 @@ def test_a_collated_run_brings_its_newest_time_and_never_backfills_the_earlier(b
     browser = browser_for(backend, store)
 
     def tail(path) -> str:  # pulled names the copy here, skipped the workspace's path
-        text = str(path)
+        text = str(path).replace("\\", "/")
         return text[max(text.rfind("/case/"), text.rfind("/plain/")) + 1:]
 
     first = cycle(browser)
