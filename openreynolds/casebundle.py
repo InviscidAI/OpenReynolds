@@ -90,7 +90,7 @@ cap, and the failure would be a 413 at the end of a session -- the worst possibl
 moment to discover a configuration mismatch."""
 
 _TIME = re.compile(r"^\d+(\.\d+)?(e[-+]?\d+)?$", re.I)
-_PROCESSOR = re.compile(r"^processor\d+$")
+_PROCESSOR = re.compile(r"^processors?\d+(_\d+-\d+)?$")  # processorN/, or collated processorsN/
 
 MEDIA_SUFFIXES = {".png", ".gif", ".mp4", ".webm", ".svg", ".pdf"}
 GEOMETRY_SUFFIXES = {".stl", ".obj", ".step", ".stp", ".igs", ".iges"}

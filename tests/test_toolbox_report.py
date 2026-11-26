@@ -795,6 +795,17 @@ def test_a_decomposed_case_counts_as_one_case(report, mirrored):
     assert "the first of" not in rule
 
 
+def test_a_collated_decomposition_is_the_same_case_too(report, mirrored):
+    """ui#143: the collated layout's `processorsN/` (`processorsN_lo-hi/`) carries a
+    mesh like a case does, and is one too few names for the `processor\\d+` rule."""
+    _top, _home, case = mirrored
+    for name in ("processors4", "processors4_0-1"):
+        (case / name / "constant" / "polyMesh").mkdir(parents=True)
+    chosen, rule, others = report.choose_case(case, "")
+    assert chosen == case and others == [], (rule, others)
+    assert "6 processor*" in rule and "the first of" not in rule, rule
+
+
 def test_a_negligible_coefficient_is_not_a_headline(report, mirrored, tmp_path):
     """`Cs (last): 3.2709e-20` was printed as a cover key number to five figures. The
     side force on a symmetric body is zero and that is the solver's round-off; quoting

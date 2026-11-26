@@ -206,6 +206,16 @@ PROCESSOR_DATA = "processor decomposition data"
 
 _PROCESSOR_DIR = re.compile(r"^processor\d+$")
 
+_COLLATED_DIR = re.compile(r"^processors\d+(_\d+-\d+)?$")
+"""The collated layout's one directory for every rank: `processorsN/`, or
+`processorsN_lo-hi/` with several I/O ranks. A live cycle copies its newest time, which
+is what the hosted viewer draws a parallel solve from until it is reconstructed (ui#106),
+but never backfills an earlier one: a long solve writes a whole copy of the fields at
+every write, the hosted runner deletes the ones a newer time has superseded once they
+are in the bucket, and a backfill would bring them straight back (ui#143)."""
+
+DECOMPOSED_EARLIER = "of a decomposed run: only its newest time comes during a solve"
+
 
 @dataclass(frozen=True)
 class Skip:
@@ -401,8 +411,8 @@ def _live_verdict(
     relative: str, newest: dict[str, str]
 ) -> tuple[str | None, tuple[str, str] | None]:
     """`reason_to_skip_live`, and, when the reason is an earlier time, the case and
-    the time directory it judged: `("case/processors4", "20")` for
-    `case/processors4/20/U`. Returned from the same walk so the two cannot disagree
+    the time directory it judged: `("case", "20")` for
+    `case/20/U`. Returned from the same walk so the two cannot disagree
     about which numbered directory on a path was the time."""
     parts = relative.split("/")
     for index, part in enumerate(parts[:-1]):
@@ -684,7 +694,10 @@ def _wanted(
         held = None
         if live:
             reason, held = _live_verdict(relative, newest)
-            if held is not None and earlier_times:
+            if held is not None and _COLLATED_DIR.match(held[0].rsplit("/", 1)[-1]):
+                # One reason for all of them, so a long solve's report says it once.
+                reason, held = f"{EARLIER_TIME} {DECOMPOSED_EARLIER}", None
+            elif held is not None and earlier_times:
                 reason = None
             else:
                 held = None

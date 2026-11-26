@@ -126,3 +126,14 @@ def test_a_lock_held_by_a_killed_writer_costs_no_wait(state, study):
     state.record_rung(1, "pass", root=study, class_key="c")
     assert time.perf_counter() - started < 1.0
     assert [r["kind"] for r in state.artifacts(root=study)] == ["other", state.RUNG_KIND]
+
+
+def test_a_collated_decomposition_is_not_a_case_of_its_own(state, study):
+    """ui#143: the collated layout's `processorsN/` carries a mesh like a case does."""
+    (study / "system").mkdir()
+    (study / "system" / "controlDict").write_text("application simpleFoam;\n")
+    for name in ("processors4", "processors4_0-1", "processor0"):
+        (study / name / "constant" / "polyMesh").mkdir(parents=True)
+    (study / "processors_old" / "constant" / "polyMesh").mkdir(parents=True)
+    found = [p.name for p in state.discover_cases(root=study)]
+    assert found == [study.name, "processors_old"], found

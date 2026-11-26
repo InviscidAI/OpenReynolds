@@ -40,6 +40,20 @@ All notable changes to this project are recorded here. The format follows
   time and each is crossed off as it lands, so a pass that fails part way never places
   the first ones twice, and a file is given up on only after failing for ten minutes.
 
+### Fixed
+
+- **A collated decomposed run's earlier times are no longer copied home.** OpenFOAM's
+  collated layout writes one `processorsN/` directory (`processorsN_lo-hi/` with several
+  I/O ranks) rather than one `processorN/` per rank. A live cycle still copies its newest
+  time, which the hosted viewer draws a parallel solve from until it is reconstructed,
+  but no longer backfills the earlier ones: a long solve writes a whole copy of the
+  fields at every write, and one hosted study's copy grew by about 1.5 GB an hour, to
+  39 GB. The hosted runner now deletes a superseded one once it is uploaded, and a
+  backfill would have brought it back. Run locally nothing is lost: the local viewer
+  does not read decomposed data. The case bundle, the report and
+  `study_state.discover_cases` recognise the collated name too; `toolbox/disk.py`'s
+  prune candidates are unchanged.
+
 ## [0.5.0] - 2026-11-24
 
 ### Added

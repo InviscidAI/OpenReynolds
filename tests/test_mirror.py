@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import shutil
 import pytest
 from click.testing import CliRunner
 
@@ -1056,10 +1057,10 @@ def test_an_earlier_time_comes_whole_or_not_at_all(backend, store, monkeypatch):
     monkeypatch.setattr(mirror, "EARLIER_BYTES_PER_CYCLE", 5_000)
     whole(
         backend,
-        (f"{HOME}/case/processors4/3/U", 3_000),
-        (f"{HOME}/case/processors4/2/U", 2_000),
-        (f"{HOME}/case/processors4/2/p", 2_000),
-        (f"{HOME}/case/processors4/1/U", 1_500),
+        (f"{HOME}/case/3/U", 3_000),
+        (f"{HOME}/case/2/U", 2_000),
+        (f"{HOME}/case/2/p", 2_000),
+        (f"{HOME}/case/1/U", 1_500),
     )
     browser = browser_for(backend, store)
     first = cycle(browser)
@@ -1073,6 +1074,39 @@ def test_an_earlier_time_comes_whole_or_not_at_all(backend, store, monkeypatch):
     second = cycle(browser)
     assert {Path(p).parent.name for p in second.pulled} == {"1"}
     assert second.skipped == []
+
+
+def test_a_collated_run_brings_its_newest_time_and_never_backfills_the_earlier(backend, store):
+    """ui#143: the viewer draws a parallel solve off `processorsN/` (ui#106), so its
+    newest time still comes every cycle; an earlier one never does. A long solve wrote
+    24.9 GB of them onto a runner disk every session there shares, and the runner now
+    deletes a superseded one once it is in the bucket: a backfill would bring it back."""
+    rows = [(f"{HOME}/case/processors4/3/U", 3_000), (f"{HOME}/case/processors4/2/U", 2_000),
+            (f"{HOME}/case/processors4_0-1/3/U", 3_000), (f"{HOME}/case/processors4_0-1/1/U", 1_000),
+            (f"{HOME}/plain/3/U", 3_000), (f"{HOME}/plain/2/U", 2_000)]
+    whole(backend, *rows)
+    browser = browser_for(backend, store)
+
+    def tail(path) -> str:  # pulled names the copy here, skipped the workspace's path
+        text = str(path).replace("\\", "/")
+        return text[max(text.rfind("/case/"), text.rfind("/plain/")) + 1:]
+
+    first = cycle(browser)
+    pulled = sorted(tail(p) for p in first.pulled)
+    assert pulled == ["case/processors4/3/U", "case/processors4_0-1/3/U", "plain/2/U", "plain/3/U"], pulled
+    decomposed = sorted(tail(s.path) for s in first.skipped)
+    assert decomposed == ["case/processors4/2/U", "case/processors4_0-1/1/U"], decomposed
+    assert {s.reason for s in first.skipped} == {f"{mirror.EARLIER_TIME} {mirror.DECOMPOSED_EARLIER}"}
+
+    # The solve writes 4; the hosted runner deletes 3, superseded and uploaded. The next
+    # cycle brings 4 and leaves 3 where it is.
+    here = store.files_dir / "study-test" / "case"
+    for gone in ("processors4/3", "processors4_0-1/3"):
+        shutil.rmtree(here / gone)
+    whole(backend, *rows, (f"{HOME}/case/processors4/4/U", 3_000), (f"{HOME}/case/processors4_0-1/4/U", 3_000))
+    again = cycle(browser)
+    assert sorted(tail(p) for p in again.pulled) == ["case/processors4/4/U", "case/processors4_0-1/4/U"]
+    assert not (here / "processors4" / "3").exists() and not (here / "processors4_0-1" / "3").exists()
 
 
 def test_the_sync_budget_goes_to_the_newest_time_before_the_backfill(backend, store):
