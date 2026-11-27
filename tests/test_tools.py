@@ -19,6 +19,8 @@ def test_tool_list_is_deterministic():
         "cad",
         "checkpoint",
         "fetch",
+        # Withheld off the hosted service, where there are no earlier studies (`earlier.py`).
+        "import_study",
         "job_check",
         "job_kill",
         "job_start",

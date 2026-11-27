@@ -214,6 +214,9 @@ class ToolContext:
     local: bool = False
     """Whether the workspace is a container on the person's own machine
     (`backend/docker.py`), which changes what the system prompt says about it."""
+    earlier: Any = None
+    """The person's earlier studies on the hosted service (`earlier.Earlier`), for
+    `import_study`. None off the service, and then the tool is not offered."""
     solver: str = solvers.OPENFOAM
     """This study's solver (`solvers.py`): `openfoam` or `felix`. It decides the tool
     list (`tools_for`), how `job_start` reads a launch, and the system prompt the loop
@@ -244,9 +247,13 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
     The refusal text still exists -- `live_tool.handler` returns it -- because a call
     can arrive from a replayed transcript or another harness without passing this list.
 
-    None of the three can change during a session: the desk and the reviewer are built
-    once, before the first request, the solver is fixed, and nothing pip-installs Warp
-    into a running interpreter. Nothing else is conditional. `checkpoint` used to be --
+    `import_study` is conditional on the hosted service (`ctx.earlier`, `earlier.py`):
+    off it there are no earlier studies to copy, and it is not in `FELIX_TOOLS`.
+
+    None of these can change during a session: the desk and the reviewer are built
+    once, before the first request, the solver is fixed, nothing pip-installs Warp
+    into a running interpreter, and `ctx.earlier` is set once from the configuration
+    as the context is built. Nothing else is conditional. `checkpoint` used to be --
     offered only in structured mode, so a
     `/mode` switch into or out of it changed the tool list mid-conversation, which
     rewrote the prompt cache from position 0 and, worse, invalidated every thinking
@@ -264,6 +271,8 @@ def tools_for(ctx: ToolContext) -> list[dict[str, Any]]:
         withheld.add("mesh_review")
     if not live_tool.offered():
         withheld.add("live_sim")
+    if getattr(ctx, "earlier", None) is None:
+        withheld.add("import_study")
     solver = getattr(ctx, "solver", solvers.OPENFOAM)
     # No `auto` branch. A study still choosing used to be offered `choose_solver`
     # alone and then, mid-conversation, the chosen solver's prompt and tools -- and a
@@ -780,6 +789,41 @@ CHECKPOINT_TOOL: dict[str, Any] = {
 """In every list, every mode (`tools_for`): a tool list that changed with `/mode` was a
 mid-conversation change to what the thread's thinking blocks are bound to."""
 
+IMPORT_STUDY_TOOL: dict[str, Any] = {
+    "name": "import_study",
+    "description": (
+        "Bring an earlier study's files into this workspace. Every study starts on a "
+        "fresh, empty workspace, so when the person refers to earlier work (\"continue "
+        "from my tank study\", \"use the mesh from last time\") call this first. Without "
+        "`study` it lists their earlier studies (id, date, title). With `study` it copies "
+        "that study's files, or the file or folder at `path` in it, into "
+        "<this study>/from-<id>/, each at its path relative to the earlier study's "
+        "folder. The copy is as of that study's last checkpoint."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "study": {
+                "type": "string",
+                "description": "The earlier study's id, or words from its title. Leave out to list.",
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "A file or folder in the earlier study, relative to its folder "
+                    "(e.g. case/constant/triSurface). Leave out for all of it."
+                ),
+            },
+            "into": {
+                "type": "string",
+                "description": "Folder name to copy into, inside this study. Default from-<id>.",
+            },
+        },
+    },
+}
+"""Hosted OpenFOAM studies only (`tools_for` withholds it without `ctx.earlier`)."""
+
+TOOLS.append(IMPORT_STUDY_TOOL)
 for _offered in (TOOLS, FELIX_TOOLS):
     # In place, so `TOOLS` and `FELIX_TOOLS` stay the objects `tools_for` hands back --
     # the same object every request -- and stay sorted by name.
@@ -2299,6 +2343,13 @@ def _checkpoint(ctx: ToolContext, args: dict[str, Any]) -> str:
     return f"The person did not approve the {stage} checkpoint and gave no reason."
 
 
+def _import_study(ctx: ToolContext, args: dict[str, Any]) -> str:
+    if ctx.earlier is None:
+        return ("Earlier studies can be brought in only on the hosted service; this "
+                "workspace is not one of its.")
+    return ctx.earlier.run(args)
+
+
 def _send_to_agent(ctx: ToolContext, args: dict[str, Any]) -> str:
     """`send_to_agent` called by the main agent itself, which has nobody to send to.
 
@@ -2318,6 +2369,7 @@ _HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], ToolResult]] = {
     "cad": _cad,
     "checkpoint": _checkpoint,
     "fetch": _fetch,
+    "import_study": _import_study,
     "job_check": _job_check,
     "job_kill": _job_kill,
     "job_start": _job_start,
