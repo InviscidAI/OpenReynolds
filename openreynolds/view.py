@@ -121,6 +121,11 @@ class View(Protocol):
         session, `seconds` after the session began asking for it; the header has
         long since named the instance, so a view showing "starting" stops."""
 
+    def workspace_starting(self) -> None:
+        """A workspace that failed is being started again (a ceiling raised, or the
+        service back in reach): a view that showed it failed shows it starting until
+        `workspace_ready` or `workspace_failed` says how the new start went."""
+
     def workspace_failed(self, reason: str) -> None:
         """The workspace will not come: its start was refused or failed, or it came up
         and could not be set up. Said in place of `workspace_ready`, beside the notice

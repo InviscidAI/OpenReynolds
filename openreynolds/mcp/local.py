@@ -279,6 +279,9 @@ class LocalView(View):
             self._set(instance_id=instance_id)
         self._set(workspace=WORKSPACE_READY)
 
+    def workspace_starting(self) -> None:
+        self._set(workspace=WORKSPACE_STARTING)
+
     def workspace_failed(self, reason: str) -> None:
         self._set(workspace=WORKSPACE_FAILED)
         self.stage_text = ""

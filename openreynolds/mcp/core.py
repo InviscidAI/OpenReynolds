@@ -154,6 +154,9 @@ class Host(Protocol):
     # `Deliveries.add` was given: who sent the files, for a host that takes them more
     # than one way.
     def files_note(self, via: str, placed: list[str], left: list[str], failed: list[str]) -> str: ...
+    # Optional, and served as a tool only by a host that has it (HOSTED_ONLY):
+    # `delete_study(study_id) -> {"study_id", "deleted", "freed_mb", "workspace", "note"}`.
+    # `studies()` may also carry `size_mb` on a card and `storage` beside the cards.
 
 
 class HostDefaults:
@@ -549,7 +552,12 @@ def state_of(row: dict[str, Any], picture: dict[str, Any] | None, delivering: bo
             return "waiting_for_approval"
         if not opening:
             return "working"
-    if delivering or (session.get("workspace") != WORKSPACE_READY and picture.get("turn") != "user"):
+    # A workspace that FAILED is not one still starting: the start was refused (the
+    # account out of storage, the plan's limit) and the agent is saying so. Read as
+    # `starting`, a caller polled a study that would never start for as long as it had
+    # patience (OpenReynolds#287), as the web page's chip once counted on (#48).
+    if delivering or (session.get("workspace") not in (WORKSPACE_READY, WORKSPACE_FAILED)
+                      and picture.get("turn") != "user"):
         return "starting"
     if open_approvals(picture):
         return "waiting_for_approval"
@@ -725,6 +733,17 @@ NEXT = {
 }
 
 
+WORKSPACE_FAILED_NEXT = (
+    "The study's workspace did not start, so nothing can run until it does; the transcript says "
+    "why. A start that failed to reach the service is sent again with your next send_message. If "
+    "the cause needs fixing first, end_study, fix it, and start_study with this study_id."
+)
+WORKSPACE_FAILED_ROOM = (
+    " If the account is out of storage, delete_study on finished studies frees room "
+    "(list_studies shows what each holds)."
+)
+
+
 # -- the tools -----------------------------------------------------------------------------
 
 DESCRIPTIONS: dict[str, str] = {
@@ -780,7 +799,23 @@ DESCRIPTIONS: dict[str, str] = {
         "End a study's session: running jobs are stopped, the workspace is shut down and every "
         "file is kept. The study can be continued later with start_study."
     ),
-    "list_studies": "This account's studies, newest first, with the live sessions.",
+    "list_studies": (
+        "This account's studies, newest first, with the live sessions. Where the host can "
+        "say, each study carries size_mb (its workspace disk, as last measured) and `storage` "
+        "says what the account holds in all; storage held by no listed study is under "
+        "storage.not_in_this_list, with the ids of hidden studies that delete_study frees it by. "
+        "storage.parked_mb is held by workspaces idle for days, as snapshots: it does not count "
+        "against the limit, and deleting those studies frees nothing toward it."
+    ),
+    "delete_study": (
+        "Delete a finished study and free the storage its workspace holds, for an account "
+        "that is out of room (a new study cannot start while the account is over its "
+        "storage limit). IRREVERSIBLE: the workspace and every file in it are destroyed, "
+        "and the study leaves list_studies. Download anything you still need first "
+        "(get_results, download_url). Refused while a session on the study is live: "
+        "end_study first. A workspace another study still uses is kept, and the answer "
+        "says which study."
+    ),
     "get_results": (
         "What a study came to: Reynolds' final message, results.json if it wrote one, the "
         "report and pictures as download links, and the study's file list. Works on a running "
@@ -940,6 +975,12 @@ def status_answer(host: Host, session_id: str, row: dict[str, Any], picture: dic
     approvals = open_approvals(picture, host)
     if state == "waiting_for_approval" and any(a["about"] == "ceiling" for a in approvals):
         answer["next"] = CEILING_NEXT
+    # Not over an open approval: a study paused at its ceiling fails its start, and
+    # approving is what starts it again -- telling the caller to end it would be wrong.
+    if session.get("workspace") == WORKSPACE_FAILED and state in ("working", "waiting_for_input"):
+        answer["workspace"] = "failed"
+        answer["next"] = WORKSPACE_FAILED_NEXT + (
+            WORKSPACE_FAILED_ROOM if getattr(host, "delete_study", None) is not None else "")
     if cut:
         answer["more"] = "There is more transcript; call study_status again with next_after_seq."
     if approvals:
@@ -1000,13 +1041,33 @@ def approval_line(decision: str, note: str = "") -> str:
 def studies_list(host: Host, limit: int = 20) -> dict[str, Any]:
     """This account's studies, newest first, with the live sessions."""
     got = host.studies()
-    cards = [
-        {"study_id": c.get("study_id"), "title": c.get("title"), "created_at": c.get("created_at")}
-        for c in (got.get("studies") or [])[: max(1, min(int(limit or 20), 100))]
-    ]
+    cards = []
+    for c in (got.get("studies") or [])[: max(1, min(int(limit or 20), 100))]:
+        card = {"study_id": c.get("study_id"), "title": c.get("title"), "created_at": c.get("created_at")}
+        if c.get("size_mb") is not None:
+            card["size_mb"] = c["size_mb"]
+        cards.append(card)
     live = [{"session_id": s.get("session_id"), "study_id": s.get("study_id") or None,
              "status": s.get("status")} for s in got.get("sessions") or []]
-    return {"studies": cards, "live_sessions": live}
+    out: dict[str, Any] = {"studies": cards, "live_sessions": live}
+    if got.get("storage"):
+        out["storage"] = got["storage"]
+    return out
+
+
+HOSTED_ONLY = frozenset({"delete_study"})
+"""Tools only a host that answers them serves (`build_server` asks the host): a study on
+this machine is a folder, and deleting it is the person's to do with their own tools."""
+
+
+def study_delete(host: Host, study_id: str) -> dict[str, Any]:
+    """Delete a study and free its workspace's storage: what the host freed, its words."""
+    delete = getattr(host, "delete_study", None)
+    if delete is None:
+        raise McpError("deleting a study is not available here")
+    if not str(study_id or "").strip():
+        raise McpError("study_id is required (list_studies names them)")
+    return delete(str(study_id).strip())
 
 
 def study_results(host: Host, study_id: str) -> dict[str, Any]:
@@ -1140,6 +1201,11 @@ def build_server(host: Host, *, name: str = "reynolds", title: str = "Reynolds C
     @server.tool(description=describe("list_studies"))
     async def list_studies(limit: int = 20) -> dict[str, Any]:
         return await call(lambda: studies_list(host, limit))
+
+    if getattr(host, "delete_study", None) is not None:
+        @server.tool(description=describe("delete_study"))
+        async def delete_study(study_id: str) -> dict[str, Any]:
+            return await call(lambda: study_delete(host, study_id))
 
     @server.tool(description=describe("get_results"))
     async def get_results(study_id: str) -> dict[str, Any]:

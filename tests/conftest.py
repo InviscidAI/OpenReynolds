@@ -461,6 +461,15 @@ def fast_polling(monkeypatch):
 class RecordingView(View):
     """A view that keeps what it was told, so tests can assert on it."""
 
+    def workspace_starting(self) -> None:
+        self.workspace_states.append("starting")
+
+    def workspace_failed(self, reason: str) -> None:
+        self.workspace_states.append("failed")
+
+    def workspace_ready(self, instance_id: str, seconds: float) -> None:
+        self.workspace_states.append("ready")
+
     def __init__(self):
         self.headers = []
         self.text = []
@@ -478,6 +487,7 @@ class RecordingView(View):
         self.steps = []
         self.interjections = []
         self.statuses = []
+        self.workspace_states = []
         self.listings = []
         self.mirrors = []
         self.progresses = []

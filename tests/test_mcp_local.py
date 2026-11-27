@@ -171,7 +171,7 @@ def until(world: Any, session_id: str, want: str, after: int = 0) -> dict[str, A
 
 def test_the_tools_are_the_hosted_servers_tools(world):
     tools = {t.name: t for t in asyncio.run(world.server.list_tools())}
-    assert set(tools) == {k for k in core.DESCRIPTIONS if ":" not in k}
+    assert set(tools) == {k for k in core.DESCRIPTIONS if ":" not in k} - core.HOSTED_ONLY
     start = tools["start_study"].input_schema["properties"]
     assert set(start) == {"task", "upload_ids", "study_id", "depth", "mode", "model", "effort", "notes", "solver"}
 
@@ -704,3 +704,75 @@ def test_a_host_words_the_files_note_for_whoever_sent_the_files():
     deliveries.add("sess3", "drag", [{"key": "k3", "name": "wing.stl"}])
     assert deliveries.attempt("sess3") is True
     assert host.said[-1] == "drag\n\nInput files, uploaded by the caller:\n- /work/s1/uploads/wing.stl"
+
+
+class _DeletingHost(LocalHost):
+    """A host that deletes studies and measures storage, as the hosted app's does."""
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.deleted: list[str] = []
+
+    def delete_study(self, study_id: str) -> dict[str, Any]:
+        self.deleted.append(study_id)
+        return {"study_id": study_id, "deleted": True, "freed_mb": 2048, "workspace": "deleted", "note": "freed"}
+
+    def studies(self) -> dict[str, Any]:
+        return {"studies": [{"study_id": "s1", "title": "a", "created_at": "t", "size_mb": 2048},
+                            {"study_id": "s2", "title": "b", "created_at": "t"}],
+                "sessions": [], "storage": {"used_mb": 2048}}
+
+
+def test_delete_study_is_served_only_by_a_host_that_deletes(tmp_path: Path):
+    """A study on this machine is a folder: the local server lists no delete tool, and a
+    host that can delete gets one that hands the id over and answers its words."""
+    host = _DeletingHost(load_config=lambda: Cfg(tmp_path), local_workspace=lambda: None,
+                         staging_dir=tmp_path / "staging", cwd=tmp_path)
+    server = core.build_server(host)
+    w = type("W", (), {"server": server})()
+    tools = {t.name for t in asyncio.run(server.list_tools())}
+    assert "delete_study" in tools
+    answer = call(w, "delete_study", study_id=" s1 ")
+    assert host.deleted == ["s1"] and answer["freed_mb"] == 2048
+    with pytest.raises(core.McpError, match="study_id is required"):
+        call(w, "delete_study", study_id=" ")
+    listed = call(w, "list_studies")
+    assert listed["studies"][0]["size_mb"] == 2048 and "size_mb" not in listed["studies"][1]
+    assert listed["storage"] == {"used_mb": 2048}
+    host.close(wait_s=5)
+
+
+def test_the_local_list_carries_no_storage_it_cannot_measure(world):
+    assert "delete_study" not in {t.name for t in asyncio.run(world.server.list_tools())}
+    assert set(call(world, "list_studies")) == {"studies", "live_sessions"}
+
+
+def test_a_failed_workspace_never_reads_as_starting():
+    """OpenReynolds#287: a start refused for storage left the caller polling `starting`
+    while the agent said why. The state is the agent's, and the answer says what to do."""
+    picture = {"session": {"status": "running", "workspace": core.WORKSPACE_FAILED},
+               "turn": "agent", "items": []}
+    assert core.state_of({"status": "running"}, picture, False) == "working"
+    picture["session"]["workspace"] = core.WORKSPACE_STARTING
+    assert core.state_of({"status": "running"}, picture, False) == "starting"
+
+    class Quiet(core.HostDefaults):
+        def transcript_items(self, study_id, after_seq):
+            return []
+
+    picture["session"]["workspace"] = core.WORKSPACE_FAILED
+    answer = core.status_answer(Quiet(), "sess", {"status": "running"}, picture, "working")
+    assert answer["workspace"] == "failed" and "end_study" in answer["next"]
+    assert "delete_study" not in answer["next"], "only a host that deletes offers it"
+
+    class Deletes(Quiet):
+        def delete_study(self, study_id):
+            return {}
+
+    answer = core.status_answer(Deletes(), "sess", {"status": "running"}, picture, "working")
+    assert "delete_study" in answer["next"]
+    # A study paused at its ceiling fails its start; approving starts it again.
+    picture["items"] = [{"kind": "approval", "id": "r1", "title": "ceiling", "status": "open",
+                         "about": "ceiling"}]
+    answer = core.status_answer(Deletes(), "sess", {"status": "running"}, picture, "waiting_for_approval")
+    assert "workspace" not in answer and "end_study" not in answer["next"]
