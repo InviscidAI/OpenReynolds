@@ -5779,13 +5779,15 @@ def _run_interactive(
             )
             if wake.kind == "eof":
                 return
-            if wake.kind in ("job", "narrate"):
+            if wake.kind in ("job", "narrate", "disk"):
                 if loop.blocked_reason:
                     # The service is refusing calls for a reason waiting does not fix.
                     # A job ending is a fact worth keeping in the thread for whenever
                     # this resumes; progress chatter is not, and neither is a turn --
                     # it would be refused exactly as the last ninety were.
-                    if wake.kind == "job":
+                    # The disk under a job filling is a fact too, and `watch` has
+                    # already counted it as told.
+                    if wake.kind in ("job", "disk"):
                         loop.inform(wake.text)
                     continue
                 report = (_finished_job_wake(loop, view, wake.text, wake.finished)
@@ -5962,11 +5964,16 @@ def _run_one_shot(
                 f"running - resume with --study {store.session.study_id}"
             )
             return "timeout"
-        if wake.kind != "job":
+        if wake.kind == "disk":
+            # The disk under a running job is filling: the agent gets a turn to act on
+            # it, and the wait goes on for the job.
+            report = wake.text
+        elif wake.kind != "job":
             break
-        report = _finished_job_wake(loop, view, wake.text, wake.finished)
-        if report is None:
-            return _not_completed(loop)
+        else:
+            report = _finished_job_wake(loop, view, wake.text, wake.finished)
+            if report is None:
+                return _not_completed(loop)
         loop.inform(report)
         if not _run_turn(loop, view):
             return _not_completed(loop)

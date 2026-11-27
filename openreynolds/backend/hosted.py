@@ -1530,6 +1530,7 @@ def _job_status(body: dict[str, Any]) -> JobStatus:
         ended_at=body.get("ended_at"),
         log_size=body.get("log_size"),
         killed_by=body.get("killed_by"),
+        disk=body.get("disk") if isinstance(body.get("disk"), dict) else None,
     )
 
 
