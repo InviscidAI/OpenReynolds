@@ -46,7 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import ceiling, convergence, images
+from . import ceiling, convergence, disknote, images
 from . import solvers, trace
 # `live_tool` imports pathlib and nothing else at module scope: the Warp import is
 # behind `openreynolds.live.__getattr__`, and this module is imported by every session,
@@ -1829,7 +1829,7 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     wait_s = min(asked_wait, JOB_WAIT_MAX_S)
     waited_note = ""
     if wait_s > 0 and status.running:
-        status, waited, heard, left = _hold(ctx, job_id, status, wait_s)
+        status, waited, heard, left = _hold(ctx, job_id, status, wait_s, disk=True)
         waited_note = f"[waited {waited:.0f}s]"
         if asked_wait > JOB_WAIT_MAX_S:
             waited_note += (
@@ -1857,6 +1857,9 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
     header = describe_job(status)
     if waited_note:
         header += " " + waited_note
+    if status.running and status.disk_note:
+        header += "\n[disk] " + status.disk_note
+        disknote.mark(status)
     header += _running_on(ctx, record, status)
     if record is not None:
         sigpipe = _sigpipe_note(status.exit_code, record.cmd)
@@ -1877,7 +1880,7 @@ def _job_check(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 
 def _hold(ctx: ToolContext, job_id: str, status: JobStatus,
-          wait_s: float) -> tuple[JobStatus, float, bool, bool]:
+          wait_s: float, disk: bool = False) -> tuple[JobStatus, float, bool, bool]:
     """Watch a running job until it ends, `wait_s` runs out, or the person writes or
     leaves. Returns the last status read, the seconds spent, and those two answers.
 
@@ -1893,7 +1896,11 @@ def _hold(ctx: ToolContext, job_id: str, status: JobStatus,
     began = time.monotonic()
     heard = left = False
     looked = began
-    while status.running and time.monotonic() - began < wait_s:
+    # With `disk`, a disk filling under the job (`disknote`) ends the wait, as the
+    # person writing does: the agent may have to change the run before the disk is
+    # full. Only `job_check` asks, because it is the caller that shows the note.
+    while (status.running and not (disk and disknote.is_news(status))
+           and time.monotonic() - began < wait_s):
         heard = _heard(ctx)
         left = _leaving(ctx)
         if heard or left:

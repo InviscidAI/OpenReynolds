@@ -126,6 +126,14 @@ class JobStatus:
     log_size: int | None = None
     killed_by: str | None = None
     """The log line that matched a `kill_on` pattern, when one did."""
+    disk: dict[str, Any] | None = None
+    """The workspace disk under a running job, as the service last saw it: `share` of
+    what the solver can write, `free_gb`, `volume_gb`, and `note` past the line where
+    the agent should hear about it (`disknote`). None where the service says nothing."""
+
+    @property
+    def disk_note(self) -> str | None:
+        return (self.disk or {}).get("note") or None
 
     @property
     def running(self) -> bool:

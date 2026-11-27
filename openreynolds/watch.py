@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from . import disknote
 from .backend.base import Backend, BackendError, JobStatus
 from .browse import human
 from .progress import (_READ_FELIX_FACTS, TIME, felix_job_facts, felix_job_summary,
@@ -159,7 +160,7 @@ class FinishedJob:
 @dataclass
 class Wake:
     kind: str
-    """job | user | eof | idle | timeout | narrate"""
+    """job | user | eof | idle | timeout | narrate | disk"""
     text: str = ""
     finished: tuple[FinishedJob, ...] = ()
 
@@ -204,9 +205,20 @@ def watch(
                 return Wake("user", typed)
 
         finished_jobs: list[FinishedJob] = []
-        finished = _collect_finished(backend, store, view, finished_jobs)
+        still: dict[str, JobStatus] = {}
+        finished = _collect_finished(backend, store, view, finished_jobs, still)
         if finished:
             return Wake("job", finished, tuple(finished_jobs))
+        # The disk under a running job is filling (`disknote`). A solve runs detached,
+        # so waiting for the next narration -- ten minutes -- or for the job to end may
+        # be waiting for the disk to fill: the agent is woken now, once per disk size.
+        for job_id, status in still.items():
+            note = disknote.take(status)
+            if note:
+                record = store.session.jobs.get(job_id)
+                name = (record.name if record else None) or job_id[:8]
+                return Wake("disk", f"The workspace disk under job {name} is filling; the "
+                                       f"job is still running.\n{note}")
 
         running = store.live_jobs()
         if not running:
@@ -320,6 +332,7 @@ def _collect_finished(
     store: Store,
     view: View,
     finished_jobs: list[FinishedJob] | None = None,
+    still_running: dict[str, JobStatus] | None = None,
 ) -> str:
     """Report on every job that stopped running since the last poll."""
     reports = []
@@ -332,6 +345,8 @@ def _collect_finished(
             continue
 
         if status.running:
+            if still_running is not None:
+                still_running[record.job_id] = status
             continue
 
         store.update_job(

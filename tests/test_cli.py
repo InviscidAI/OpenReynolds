@@ -712,6 +712,28 @@ def test_unattended_waiting_can_be_bounded(loop, backend, store, view, quiet_con
     assert any(store.session.study_id in i for i in view.infos), "it says how to resume"
 
 
+def test_a_disk_filling_under_the_job_gives_a_one_shot_run_a_turn_and_it_waits_on(
+        loop, backend, store, view, quiet_console):
+    """The service's disk note wakes the agent (`disknote`); in a -p run that is a turn
+    to act on it, not the end of the wait for the job."""
+    from openreynolds import disknote
+    from openreynolds.backend.base import JobStatus
+    disknote._told.clear()
+    backend.job_start("pimpleFoam", name="solve")
+    store.record_job("job-1", cmd="pimpleFoam", name="solve")
+    backend.jobs["job-1"] = JobStatus(job_id="job-1", name="solve", status="running", log_size=1,
+                                      disk={"volume_gb": 100, "note": "The workspace disk is 84% full."})
+    install_model(loop, [message([text_block("started")]), message([text_block("noted")])])
+
+    outcome = cli._run_one_shot(loop, backend, store, "run it", view, NullReader(),
+                                max_wait_minutes=0.05)
+
+    assert outcome == "timeout", "it went on waiting for the job after the disk turn"
+    told = [m for m in loop.messages if "84% full" in str(m.get("content"))]
+    assert told, "the agent was given the note"
+    disknote._told.clear()
+
+
 def test_without_a_bound_it_still_waits_for_the_job(loop, backend, store, view, quiet_console):
     """The default is unchanged: closing the laptop on a long solve is the point."""
     finishing_jobs(backend)
