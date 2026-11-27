@@ -15,6 +15,7 @@ home.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -24,6 +25,8 @@ from .browse import human
 LISTED = 30
 """Earlier studies shown at once, newest first."""
 FAILED_SHOWN = 10
+SHORT = 3
+"""Words this long or shorter ("my", "the", "run") say nothing about which study."""
 
 
 @dataclass
@@ -64,10 +67,19 @@ class Earlier:
         return report(found, got)
 
 
+def title(study: dict[str, Any]) -> str:
+    """The study's title, or "" when it has none. A row the agent opened before the
+    person's first message reached the web app is titled with the study's own id
+    (OpenReynolds `Capture.start`), which says nothing the id column does not. On one
+    line: the web app's title is the first message, upload note and all."""
+    text = " ".join(str(study.get("title") or "").split())
+    return "" if text == str(study.get("id") or "") else text
+
+
 def listing(studies: list[dict[str, Any]]) -> str:
     if not studies:
         return "There are no earlier studies on this account."
-    lines = [f"{s['id']}  {str(s.get('created_at') or '')[:10]}  {s.get('title') or '(untitled)'}"
+    lines = [f"{s['id']}  {str(s.get('created_at') or '')[:10]}  {title(s) or '(untitled)'}"
              for s in studies[:LISTED]]
     more = len(studies) - LISTED
     tail = f"\n...and {more} older." if more > 0 else ""
@@ -75,26 +87,39 @@ def listing(studies: list[dict[str, Any]]) -> str:
             "set to the id to copy one in.\n" + "\n".join(lines) + tail)
 
 
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > SHORT}
+
+
 def pick(studies: list[dict[str, Any]], wanted: str) -> dict[str, Any] | str:
-    """The study `wanted` names: by id, else by a title it matches alone."""
+    """The study `wanted` names: by id; else the one title that holds those words,
+    in any order ("truck airflow" finds "Simulate airflow around this truck"). When
+    none holds them all, the ones that share a word are offered, not a guess."""
     for s in studies:
         if s.get("id") == wanted:
             return s
     low = wanted.lower()
-    titled = [s for s in studies if low in str(s.get("title") or "").lower()]
+    want = _words(wanted)
+    titled = [s for s in studies if low in title(s).lower()]
+    if not titled and want:
+        titled = [s for s in studies if want <= _words(title(s))]
     if len(titled) == 1:
         return titled[0]
     if titled:
         return (f"{len(titled)} earlier studies have \"{wanted}\" in their title; give the id "
                 "of the one meant.\n" + listing(titled).split("\n", 1)[1])
+    near = [s for s in studies if want & _words(title(s))]
+    if near:
+        return (f"No earlier study's title holds all of {wanted!r}. These share a word with "
+                "it; call again with the id of the one meant.\n" + listing(near).split("\n", 1)[1])
     return f"No earlier study of this account is called {wanted!r}. " + listing(studies)
 
 
 def report(study: dict[str, Any], got: dict[str, Any]) -> str:
-    title = study.get("title") or study["id"]
+    name = title(study) or study["id"]
     as_of = f", as of {got['as_of'][:16].replace('T', ' ')} UTC" if got.get("as_of") else ""
     text = (f"Copied {got.get('files', 0)} files ({human(int(got.get('bytes') or 0))}) of "
-            f"\"{title}\" from {got.get('from')} into {got.get('into')}{as_of}. Each file keeps "
+            f"\"{name}\" from {got.get('from')} into {got.get('into')}{as_of}. Each file keeps "
             "its path relative to the earlier study's folder.")
     if got.get("already"):
         text += f" {got['already']} were there already and were left as they are."

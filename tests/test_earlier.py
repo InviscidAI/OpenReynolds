@@ -10,6 +10,10 @@ STUDIES = [
     {"id": "s1", "title": "Tank v1", "created_at": "2026-11-10T09:00:00Z", "instance_id": "i1"},
     {"id": "gone", "title": "deleted one", "created_at": "2026-11-01T09:00:00Z", "instance_id": "i0",
      "deleted_at": "2026-11-02T00:00:00Z"},
+    {"id": "20261115-134546-cd85", "title": "20261115-134546-cd85", "created_at": "2026-11-15T09:00:00Z",
+     "instance_id": "i4"},
+    {"id": "truck", "title": "Simulate airflow around this truck at 25 m/s\n(uploaded to the workspace: /work/truck/t.stl)", "created_at": "2026-11-05T09:00:00Z",
+     "instance_id": "i5"},
     {"id": "laptop", "title": "run on my laptop", "created_at": "2026-10-01T09:00:00Z", "instance_id": None},
 ]
 
@@ -69,6 +73,24 @@ def test_words_that_match_several_or_none_ask_for_the_id():
     assert "No earlier study" in none and "s2" in none
     assert e.run({"study": "gone"}).startswith("No earlier study"), "a deleted one is not offered"
     assert client.asked == []
+
+
+def test_a_request_in_its_own_words_finds_the_title():
+    """The agent passes the person's phrase, which is rarely the title verbatim."""
+    client = Client()
+    e, _ = _earlier(client)
+    e.run({"study": "airflow truck"})
+    assert client.asked[-1][1] == "truck", "every word is in the title, in another order"
+    near = e.run({"study": "my truck with a finer mesh"})
+    assert near.startswith("No earlier study's title holds all") and "truck" in near
+    assert "s2" not in near, "only the ones that share a word are offered"
+    assert len(client.asked) == 1, "a near match is offered, not copied"
+
+
+def test_a_title_that_is_only_the_id_lists_as_untitled():
+    text = _earlier(Client())[0].run({})
+    assert "20261115-134546-cd85  2026-11-15  (untitled)" in text
+    assert "25 m/s (uploaded to the workspace" in text, "a title is listed on one line"
 
 
 def test_files_that_failed_or_were_left_are_named():
