@@ -212,6 +212,11 @@ def test_the_next_message_starts_it_again_when_this_ones_start_failed(monkeypatc
     assert "until the session is resumed" not in first
     assert any("starting the workspace again" in n for n in run.view.notices)
     assert run.loop.start_refusal is None
+    # Each failure is followed by a start said as starting, so an MCP caller does not
+    # read "failed" (and end the study) while the new start comes up (#287).
+    states = run.view.workspace_states
+    assert states[-1] == "ready" and all(
+        b == "starting" for a, b in zip(states, states[1:]) if a == "failed"), states
 
 
 def test_a_start_that_fails_again_is_sent_once_per_message(monkeypatch, tmp_path):

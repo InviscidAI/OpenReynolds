@@ -271,6 +271,9 @@ class JsonView(View):
         a `bash` will answer at once rather than after the start reads this."""
         self.emit("workspace_ready", instance_id=instance_id, seconds=round(seconds, 3))
 
+    def workspace_starting(self) -> None:
+        self.emit("workspace_starting")
+
     def workspace_failed(self, reason: str) -> None:
         self.emit("workspace_failed", reason=reason)
 

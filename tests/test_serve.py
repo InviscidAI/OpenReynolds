@@ -104,7 +104,7 @@ def test_the_index_says_what_this_is_and_lists_every_route(server):
     assert {row["route"] for row in index["routes"]} == set(serve.ROUTES)
     assert {row["capability"] for row in index["routes"]} == {
         name for name in core.DESCRIPTIONS if ":" not in name
-    }, "the nine capabilities, and nothing invented here"
+    } - core.HOSTED_ONLY, "the local capabilities, and nothing invented here"
     for row in index["routes"]:
         assert row["what"] == core.description(server.host, row["capability"])
     assert ask(server, "GET", "/nowhere").status == 404

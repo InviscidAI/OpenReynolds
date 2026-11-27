@@ -1113,7 +1113,7 @@ def test_a_resumed_study_with_no_workspace_on_record_gets_its_own():
     assert not cli._needs_own_workspace(True, "ws-2", none), "a named workspace is used"
 
 
-@pytest.mark.parametrize("status, refusal", [(402, True), (403, True), (409, True), (503, False), (None, False)])
+@pytest.mark.parametrize("status, refusal", [(402, True), (403, True), (409, True), (507, True), (503, False), (None, False)])
 def test_a_refusal_is_not_reported_as_an_outage(status, refusal):
     from openreynolds import cli
     assert cli._is_refusal(BackendError("no", code="x", status=status)) is refusal

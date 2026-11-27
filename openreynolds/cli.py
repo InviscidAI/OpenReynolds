@@ -166,8 +166,9 @@ def quiet_stdout() -> None:
 
 def _is_refusal(exc: BackendError) -> bool:
     """The workspace service answered and said no: payment (402), the plan (403), the
-    held cap or a paused study (409). Not an outage, and not one a retry clears."""
-    return getattr(exc, "status", None) in (402, 403, 409)
+    held cap or a paused study (409), or the account out of storage (507, foamd's
+    `account_volume_full`). Not an outage, and not one a retry clears."""
+    return getattr(exc, "status", None) in (402, 403, 409, 507)
 
 
 def _needs_own_workspace(resuming: bool, instance_id: str | None, store: Store) -> bool:
@@ -4412,6 +4413,10 @@ def _start_again(
         return False
     loop.refusal_said = None
     tracker.workspace_starting(getattr(loop.cfg, "workspace_eta_s", 0.0))
+    try:
+        view.workspace_starting()   # the view said `failed`; an MCP caller read that as "end it"
+    except Exception:  # noqa: BLE001 - a view must not stop the start (one predating the hook too)
+        pass
     view.notice("starting the workspace again now that the ceiling is raised" if raised
                 else "starting the workspace again")
     threading.Thread(
